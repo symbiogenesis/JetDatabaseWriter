@@ -8,10 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
-using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -23,7 +21,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="tables">The cached user-table catalog.</param>
 /// <param name="rows">Decodes <c>MSysObjects</c> rows as strings.</param>
-internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDecoder rows)
+/// <param name="properties">Reads persisted column properties and hydrates calculated result types.</param>
+internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDecoder rows, ColumnPropertyReader properties)
 {
     /// <summary>
     /// Returns the <c>ResultType</c> a calculated column's persisted properties
@@ -31,15 +30,7 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
     /// </summary>
     /// <param name="target">The column's persisted property target.</param>
     internal static ColumnType ResolveCalculatedResultType(ColumnPropertyTarget? target)
-    {
-        ColumnPropertyEntry? rt = target?.Find(Constants.ColumnPropertyNames.ResultType);
-        return rt?.Value.Length >= 1
-            && (rt.DataType == ByteType
-                || rt.DataType == IntegerType
-                || rt.DataType == LongIntegerType)
-            ? (ColumnType)rt.Value[0]
-            : default;
-    }
+        => ColumnPropertyReader.ResolveCalculatedResultType(target);
 
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -102,7 +93,7 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
             return null;
         }
 
-        await this.HydrateCalculatedResultTypesAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
+        _ = await properties.HydrateCalculatedResultTypesAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
         return td;
     }
 
@@ -126,46 +117,8 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        TableDef? msys = await this.GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
-        if (msys is null)
-        {
-            return null;
-        }
-
-        int idxId = msys.FindColumnIndex("Id");
-        int idxLvProp = msys.FindColumnIndex("LvProp");
-        if (idxId < 0 || idxLvProp < 0)
-        {
-            return null;
-        }
-
-        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(2, msys, cancellationToken).ConfigureAwait(false))
-        {
-            if (!CatalogValueReader.TryParseInt64(row, idxId, out long id))
-            {
-                continue;
-            }
-
-            if (CatalogValueReader.TdefPageFromId(id) != tdefPage)
-            {
-                continue;
-            }
-
-            byte[]? blob = BinaryStringParser.TryDecodeBase64DataUri(
-                CatalogValueReader.GetStringOrEmpty(row, idxLvProp),
-                "application/octet-stream",
-                out byte[] bytes)
-                ? bytes
-                : null;
-            return ColumnPropertyBlock.Parse(blob, db.Format);
-        }
-
-        return null;
-    }
+    internal ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
+        => properties.ReadLvPropForTableAsync(tdefPage, cancellationToken);
 
     /// <summary>
     /// Finds the TDEF page number for a system table by name (case-insensitive).
@@ -286,41 +239,5 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
         }
 
         return diag.ToString();
-    }
-
-    private async ValueTask HydrateCalculatedResultTypesAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
-    {
-        if (!tableDef.Columns.Exists(static col => col.IsCalculated))
-        {
-            return;
-        }
-
-        ColumnPropertyBlock? properties = await this.ReadLvPropForTableAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (properties is null)
-        {
-            return;
-        }
-
-        bool changed = false;
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            ColumnInfo col = tableDef.Columns[i];
-            if (!col.IsCalculated)
-            {
-                continue;
-            }
-
-            ColumnType resultType = ResolveCalculatedResultType(properties.FindTarget(col.Name));
-            if (resultType != default && resultType != col.CalculatedResultType)
-            {
-                tableDef.Columns[i] = col.WithCalculatedResultType(resultType);
-                changed = true;
-            }
-        }
-
-        if (changed)
-        {
-            tableDef.InitializeColumnMetadata();
-        }
     }
 }

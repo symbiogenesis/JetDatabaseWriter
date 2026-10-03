@@ -82,6 +82,7 @@ JetDatabaseWriter/
 │   ├── CatalogRowReader.cs                (read-only MSysObjects row scans and system-table lookup)
 │   ├── CatalogWriter.cs                   (MSysObjects / MSysACEs row inserts, renames, and deletions)
 │   ├── CatalogValueReader.cs              (safe MSys* row access and tolerant invariant scalar parsing)
+│   ├── ColumnPropertyReader.cs            (reads a table's LvProp blob and hydrates calculated-column result types)
 │   ├── TableCatalog.cs                    (cached user-table catalog and name lookup, shared by reader and writer)
 │   └── Models/
 │       ├── CatalogArtifactPlan.cs
@@ -411,7 +412,8 @@ AccessReader → ReaderServices
   ComplexItemReader   → ComplexColumnReader
   LinkedTableReader   → CatalogReader, LinkedSourcePolicy
   ComplexColumnReader → CatalogReader, RowDecoder
-  CatalogReader       → TableCatalog, RowDecoder
+  CatalogReader       → TableCatalog, RowDecoder, ColumnPropertyReader
+  ColumnPropertyReader → RowDecoder
   TableCatalog        → CatalogRowReader
   RowDecoder          → ReaderPageCache, LongValueDecoder
   LongValueDecoder    → ReaderPageCache
@@ -436,7 +438,8 @@ AccessWriter → WriterServices
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
   IndexMaintainer     → PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
   TableSnapshotReader → RowDecoder, CatalogReader
-  CatalogReader       → TableCatalog, RowDecoder
+  CatalogReader       → TableCatalog, RowDecoder, ColumnPropertyReader
+  ColumnPropertyReader → RowDecoder
   RowDecoder          → ReaderPageCache (capacity 0), LongValueDecoder
   TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder
   DataPageInserter    → PageAllocator, CatalogRowReader

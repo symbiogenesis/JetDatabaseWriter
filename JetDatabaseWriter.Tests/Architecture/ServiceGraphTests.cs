@@ -120,6 +120,7 @@ public sealed class ServiceGraphTests
             typeof(RowDecoder),
             typeof(TableCatalog),
             typeof(CatalogReader),
+            typeof(ColumnPropertyReader),
             typeof(ComplexColumnReader),
             typeof(ComplexItemReader),
             typeof(LinkedTableReader),
@@ -157,6 +158,7 @@ public sealed class ServiceGraphTests
             typeof(TableSnapshotReader),
             typeof(RowDecoder),
             typeof(CatalogReader),
+            typeof(ColumnPropertyReader),
         ];
 
         foreach (Type service in expected)
