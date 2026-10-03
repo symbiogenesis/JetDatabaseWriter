@@ -977,15 +977,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
             }
 
             int rowStart = raw & Constants.DataPage.RowOffsetMask;
-            int rowEnd = this.PageSizeBytes - 1;
-            int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
-            int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
-            if (nextIdx < posCount)
-            {
-                rowEnd = positions[nextIdx] - 1;
-            }
-
-            yield return new RowBound(r, rowStart, rowEnd - rowStart + 1);
+            int rowEnd = FindNextRowStart(positions, posCount, rowStart, this.PageSizeBytes);
+            yield return new RowBound(r, rowStart, rowEnd - rowStart);
         }
     }
 
@@ -1021,8 +1014,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
         // Cold (cache-miss) scan only: warm rescans are served from the
         // row-bounds cache. Rent the two scratch buffers from the shared pool
         // instead of allocating int[numRows] per page; numRows is bounded by the
-        // page's row-offset table size. The existing Array.Sort/Array.BinarySearch
-        // logic is preserved (Span<int>.Sort is unavailable on netstandard2.1).
+        // page's row-offset table size. Array.Sort is used because Span<int>.Sort
+        // is unavailable on netstandard2.1.
         int[] rawOffsets = ArrayPool<int>.Shared.Rent(numRows);
         int[] positions = ArrayPool<int>.Shared.Rent(numRows);
         try
@@ -1064,15 +1057,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
                 }
 
                 int rowStart = raw & Constants.DataPage.RowOffsetMask;
-                int rowEnd = this.PageSizeBytes - 1;
-                int searchIdx = Array.BinarySearch(positions, 0, posCount, rowStart);
-                int nextIdx = searchIdx >= 0 ? searchIdx + 1 : ~searchIdx;
-                if (nextIdx < posCount)
-                {
-                    rowEnd = positions[nextIdx] - 1;
-                }
-
-                result[idx++] = new RowBound(r, rowStart, rowEnd - rowStart + 1);
+                int rowEnd = FindNextRowStart(positions, posCount, rowStart, this.PageSizeBytes);
+                result[idx++] = new RowBound(r, rowStart, rowEnd - rowStart);
             }
 
             return result;
@@ -1082,6 +1068,39 @@ internal sealed class DatabaseFile : IAsyncDisposable
             ArrayPool<int>.Shared.Return(rawOffsets);
             ArrayPool<int>.Shared.Return(positions);
         }
+    }
+
+    /// <summary>
+    /// Returns the end (exclusive) of the row that starts at <paramref name="rowStart"/>:
+    /// the first offset in <paramref name="sortedPositions"/> strictly greater than
+    /// <paramref name="rowStart"/>, or <paramref name="pageSize"/> when there is none.
+    /// The offsets include deleted slots, and Access leaves deleted slots pointing
+    /// at the same offset as a live row, so the search skips every entry equal to
+    /// <paramref name="rowStart"/> rather than taking the neighbour of whichever
+    /// equal entry a binary search lands on.
+    /// </summary>
+    /// <param name="sortedPositions">Every slot's masked row offset, sorted ascending.</param>
+    /// <param name="count">The number of valid entries in <paramref name="sortedPositions"/>.</param>
+    /// <param name="rowStart">The row's start offset.</param>
+    /// <param name="pageSize">The page size, which ends the highest row.</param>
+    private static int FindNextRowStart(int[] sortedPositions, int count, int rowStart, int pageSize)
+    {
+        int lo = 0;
+        int hi = count;
+        while (lo < hi)
+        {
+            int mid = lo + ((hi - lo) >> 1);
+            if (sortedPositions[mid] <= rowStart)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
+        }
+
+        return lo < count ? sortedPositions[lo] : pageSize;
     }
 
     // ── Row layout decoding (forwards to RowDecodePlan; used by writer column reads) ────

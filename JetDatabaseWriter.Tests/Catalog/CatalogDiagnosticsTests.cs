@@ -1,10 +1,18 @@
 namespace JetDatabaseWriter.Tests.Catalog;
 
+using System;
+using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.Data;
+using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
+using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -17,16 +25,16 @@ using Xunit;
 public sealed partial class CatalogDiagnosticsTests
 {
     /// <summary>
-    /// The scan summary reports the decodable catalog rows only. Both fixtures carry
-    /// three live <c>MSysObjects</c> rows that cannot be decoded, which the count used to include
-    /// (28 and 38).
+    /// Every live catalog row of these fixtures decodes. Three rows of each share
+    /// their offset with deleted slots, and the scan used to give them zero bytes
+    /// and skip them as undecodable (25 and 35).
     /// </summary>
     /// <param name="fixture">The fixture file name under the Jackcess tree.</param>
     /// <param name="expectedRows">The expected "Total rows scanned" count.</param>
     [Theory]
-    [InlineData("V2003/indexTestV2003.mdb", 25)]
-    [InlineData("V2007/unsupportedFieldsTestV2007.accdb", 35)]
-    public async Task ListTables_Diagnostics_CountsOnlyDecodableCatalogRows(string fixture, int expectedRows)
+    [InlineData("V2003/indexTestV2003.mdb", 28)]
+    [InlineData("V2007/unsupportedFieldsTestV2007.accdb", 38)]
+    public async Task ListTables_Diagnostics_CountsEveryLiveCatalogRow(string fixture, int expectedRows)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string path = System.IO.Path.Combine(TestDatabases.JackcessRoot, fixture);
@@ -39,6 +47,33 @@ public sealed partial class CatalogDiagnosticsTests
         _ = await reader.ListTablesAsync(ct);
 
         Assert.Equal(expectedRows, ParseRowsScanned(reader.LastDiagnostics));
+    }
+
+    /// <summary>
+    /// A live catalog row whose column count is zero cannot be decoded. The scan
+    /// leaves it out of "Total rows scanned", as the table reader leaves it out of
+    /// <c>MSysObjects</c>.
+    /// </summary>
+    [Fact]
+    public async Task ListTables_Diagnostics_SkipsUndecodableCatalogRow()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.TestV2003, ct);
+        long declaredRows = await ZeroColumnCountOfLastUserTableRowAsync(bytes, ct);
+
+        await using var ms = new MemoryStream(bytes, writable: false);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            ms,
+            new AccessReaderOptions { DiagnosticsEnabled = true, UseLockFile = false },
+            leaveOpen: true,
+            ct);
+
+        _ = await reader.ListTablesAsync(ct);
+        int rowsScanned = ParseRowsScanned(reader.LastDiagnostics);
+        using DataTable msys = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
+
+        Assert.Equal(declaredRows - 1, rowsScanned);
+        Assert.Equal(msys.Rows.Count, rowsScanned);
     }
 
     /// <summary>
@@ -76,6 +111,33 @@ public sealed partial class CatalogDiagnosticsTests
         Match match = RowsScannedRegex().Match(diagnostics);
         Assert.True(match.Success, $"No 'Total rows scanned' line in diagnostics:\n{diagnostics}");
         return int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Zeroes the column-count field of the last user table's <c>MSysObjects</c>
+    /// row in <paramref name="bytes"/> and returns the row count the catalog's
+    /// TDEF declares.
+    /// </summary>
+    /// <param name="bytes">The database image, changed in place.</param>
+    /// <param name="cancellationToken">A token used to cancel the reads.</param>
+    private static async ValueTask<long> ZeroColumnCountOfLastUserTableRowAsync(byte[] bytes, CancellationToken cancellationToken)
+    {
+        await using var ms = new MemoryStream(bytes, writable: false);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        DatabaseFile db = harness.Database;
+        TableDef? msys = await harness.ReadTableDefAsync(2, cancellationToken);
+        Assert.NotNull(msys);
+
+        List<CatalogRow> rows = await new CatalogRowReader(db).GetCatalogRowsAsync(msys, cancellationToken);
+        CatalogRow target = rows.Last(row => row.IsDecoded && row.ObjectType == 1 && !row.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase));
+
+        byte[] page = await harness.ReadPageCopyAsync(target.PageNumber, cancellationToken);
+        RowBound bound = db.EnumerateLiveRowBounds(page).Single(b => b.RowIndex == target.RowIndex);
+        int rowOffset = checked((int)(target.PageNumber * db.PageSizeBytes)) + bound.RowStart;
+        bytes.AsSpan(rowOffset, db.RowColumnCountFieldSize).Clear();
+
+        byte[] tdef = await harness.ReadPageCopyAsync(2, cancellationToken);
+        return BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(db.TDef.NumRows));
     }
 
     [GeneratedRegex(@"Total rows scanned: (\d+)")]
