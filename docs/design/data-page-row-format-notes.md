@@ -58,10 +58,14 @@ writer's snapshots and long-value walks).
 
 A row never spans pages, so it is at most the page size less the data-page
 header and one row-offset slot: 2,036 bytes on Jet3 and 4,080 on Jet4/ACE
-(`DataPageLayout.MaxRowLength`). The writer moves MEMO values over 1,024
-bytes and OLE values over 256 bytes to LVAL pages first, and
+(`DataPageLayout.MaxRowLength`). MEMO values over 1,024 bytes and OLE
+values over 256 bytes go to LVAL pages and take a 12-byte header in the row.
+`TableRowStore.InsertRowDataLocAsync` serializes the row with a zeroed
+placeholder for each such header before it writes any LVAL or data page, so
 `RowEncoder.SerializeRow` throws `JetLimitationException` for a longer row
-before a data page is chosen. It used to append an empty page and then throw
+with the file unchanged; until then the LVAL pages were written first and
+stayed behind, unreferenced, after the throw. The writer used to append an
+empty data page and then throw
 `ArgumentOutOfRangeException` from the copy, or `InvalidDataException` after
 copying a row one byte too long over the row-offset table;
 `DataPageInserter.WriteRowToPageAsync` now checks the free space before it
