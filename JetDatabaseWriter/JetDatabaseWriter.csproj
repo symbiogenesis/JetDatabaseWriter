@@ -2,20 +2,31 @@
   <PropertyGroup>
     <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
     <PackageId>JetDatabaseWriter</PackageId>
-    <Version>4.0.0</Version>
     <Authors>Diego Ripera, Edward Miller</Authors>
     <Company>Ripera</Company>
     <Description>Pure-managed reader and writer for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required.</Description>
     <PackageTags>access;jet;mdb;accdb;database;microsoft-access</PackageTags>
-    <PackageProjectUrl>https://github.com/diegoripera/JetDatabaseWriter</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/diegoripera/JetDatabaseWriter</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/symbiogenesis/JetDatabaseWriter</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/symbiogenesis/JetDatabaseWriter</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageReleaseNotes>v4.0.0 — Async-only API, full encryption/password support (Jet3 XOR, Jet4 RC4, ACCDB AES), lockfile handling, scaffolding CLI tool, create new database files.</PackageReleaseNotes>
+    <PackageReleaseNotes>https://github.com/symbiogenesis/JetDatabaseWriter/releases</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- No .snupkg: DotNet.ReproducibleBuilds embeds the PDB in the DLL, so it would be empty. -->
+    <!--
+      MinVer sets the version from the latest vX.Y.Z tag reachable from HEAD: a tagged
+      commit packs as X.Y.Z and any later commit as a prerelease of the next patch.
+      With no 4.x tag yet, untagged builds are 4.0.0-alpha.0.<height>. See PUBLISH.md.
+    -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerMinimumMajorMinor>4.0</MinVerMinimumMajorMinor>
+    <!--
+      Checks on every pack that each public API of the netstandard2.1 build also exists in
+      the net10.0 build. A PackageValidationBaselineVersion is added once a version is on
+      nuget.org (see PUBLISH.md).
+    -->
+    <EnablePackageValidation>true</EnablePackageValidation>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
@@ -41,6 +52,7 @@
 
   <ItemGroup>
     <PackageReference Include="ClosedXML.Parser" />
+    <PackageReference Include="MinVer" PrivateAssets="all" />
   </ItemGroup>
 
   <!--
