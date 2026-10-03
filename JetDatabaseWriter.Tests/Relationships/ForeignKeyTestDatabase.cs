@@ -105,6 +105,41 @@ internal static class ForeignKeyTestDatabase
         return ms;
     }
 
+    /// <summary>
+    /// Returns <c>P</c> with row (1, 'one') and <c>C</c> with row (1, 1, 'a'),
+    /// related by <c>FK_C_P</c> from <c>C.ParentId</c> to <c>P.Id</c>, which
+    /// cascades updates and deletes. When <paramref name="secondChild"/> is
+    /// given, the database also holds <c>D</c> (<c>Id</c> primary key,
+    /// <c>ParentId</c>) with row (1, 1), and that relationship, created after
+    /// <c>FK_C_P</c>.
+    /// </summary>
+    /// <param name="db">Caches the fixture files.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="secondChild">The relationship from <c>D</c> to <c>P</c>, or <see langword="null"/> for no table <c>D</c>.</param>
+    /// <returns>The database, positioned at 0.</returns>
+    public static async Task<MemoryStream> CreateCascadingAsync(DatabaseCache db, DatabaseFormat format, RelationshipDefinition? secondChild)
+    {
+        MemoryStream ms = await CreateAsync(db, format, [[1, "one"]], [[1, 1, "a"]]);
+        await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_C_P", "P", "Id", "C", "ParentId") { CascadeUpdates = true, CascadeDeletes = true },
+                Ct);
+            if (secondChild != null)
+            {
+                await writer.CreateTableAsync(
+                    "D",
+                    [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))],
+                    Ct);
+                await writer.InsertRowAsync("D", [1, 1], Ct);
+                await writer.CreateRelationshipAsync(secondChild, Ct);
+            }
+        }
+
+        ms.Position = 0;
+        return ms;
+    }
+
     /// <summary>Gets the writer options for <paramref name="mode"/>.</summary>
     /// <param name="mode">How the writer runs the operations.</param>
     /// <returns>The options.</returns>

@@ -19,12 +19,13 @@ using WriteMode = JetDatabaseWriter.Tests.Writer.TransactionReadVisibilityTests.
 /// <see cref="InvalidOperationException"/> naming the relationship and what is
 /// missing, instead of reporting a missing parent row or skipping the check.
 /// A write the relationship does not constrain (a null foreign key, an update
-/// that leaves the key alone, a delete that matches nothing) still succeeds.
-/// The relationships are planted straight into <c>MSysRelationships</c>,
-/// because <c>CreateRelationshipAsync</c> and <c>DropTableAsync</c> never
-/// leave one dangling. The class also covers parent rows inserted earlier in
-/// the same batch. Jet3 resolves the parent through its key set; Jet4 and
-/// ACCDB try the index seek first.
+/// that leaves the key alone, a delete that matches nothing) still succeeds,
+/// and a write it refuses changes no row, even when another relationship
+/// cascades first. The relationships are planted straight into
+/// <c>MSysRelationships</c>, because <c>CreateRelationshipAsync</c> and
+/// <c>DropTableAsync</c> never leave one dangling. The class also covers
+/// parent rows inserted earlier in the same batch. Jet3 resolves the parent
+/// through its key set; Jet4 and ACCDB try the index seek first.
 /// </summary>
 /// <param name="db">Caches the fixture files.</param>
 public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -166,6 +167,97 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         }
 
         Assert.Equal(["1|uno"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+    }
+
+    /// <summary>
+    /// A key update that an unresolvable relationship refuses changes no row,
+    /// even though a relationship read before it cascades updates: the
+    /// relationships are resolved before any child row is rewritten.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the update.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task KeyUpdate_CascadingRelationshipBeforeUnresolvableOne_ChangesNoRow(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateCascadingAsync(db, format, secondChild: null);
+        await ForeignKeyTestDatabase.PlantRelationshipAsync(ms, "FK_NoFkColumn", "C", "NoSuchFk", "P", "Id");
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 8 }, Ct));
+                AssertCannotBeEnforced(ex, "FK_NoFkColumn", "table 'C' has no column 'NoSuchFk'");
+            });
+        }
+
+        Assert.Equal(["1|one"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["1|1|a"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+    }
+
+    /// <summary>
+    /// A delete that an unresolvable relationship refuses deletes no row, even
+    /// though a relationship read before it cascades deletes.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the delete.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Delete_CascadingRelationshipBeforeUnresolvableOne_DeletesNoRow(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateCascadingAsync(db, format, secondChild: null);
+        await ForeignKeyTestDatabase.PlantRelationshipAsync(ms, "FK_NoColumn", "C", "ParentId", "P", "NoSuchColumn");
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
+                AssertCannotBeEnforced(ex, "FK_NoColumn", "table 'P' has no column 'NoSuchColumn'");
+            });
+        }
+
+        Assert.Equal(["1|one"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["1|1|a"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+    }
+
+    /// <summary>
+    /// A delete deletes no row when the relationships of a table it cascades
+    /// into cannot be resolved, even though another relationship of the
+    /// deleted table cascades first: <c>P</c> cascades to <c>C</c> and then to
+    /// <c>D</c>, whose relationship to a missing table refuses the delete.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the delete.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Delete_UnresolvableRelationshipOfACascadedTable_DeletesNoRow(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateCascadingAsync(
+            db,
+            format,
+            secondChild: new RelationshipDefinition("FK_D_P", "P", "Id", "D", "ParentId") { CascadeDeletes = true });
+        await ForeignKeyTestDatabase.PlantRelationshipAsync(ms, "FK_NoChild", "NoSuchChild", "ParentId", "D", "Id");
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
+                AssertCannotBeEnforced(ex, "FK_NoChild", "foreign table 'NoSuchChild' was not found");
+            });
+        }
+
+        Assert.Equal(["1|one"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["1|1|a"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        Assert.Equal(["1|1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "D"));
     }
 
     /// <summary>

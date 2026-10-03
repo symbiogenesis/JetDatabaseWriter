@@ -316,7 +316,7 @@ internal sealed class TableDataWriter(
 
             // PK-side: cascade or reject only the relationships whose
             // referenced key this update changes.
-            await enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
+            await enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
         }
 
         // Pre-write unique-index enforcement: after FK checks succeed,
@@ -381,7 +381,9 @@ internal sealed class TableDataWriter(
         // FK relationship names this table as the primary side, capture the
         // deleted PK tuples and let EnforceFkOnPrimaryDeleteAsync
         // cascade-delete dependent child rows (or throw when cascade is
-        // disabled).
+        // disabled). It finds and checks every dependent row, at every
+        // cascade level, before it deletes any, so a refused delete leaves
+        // the database unchanged.
         var matchingRows = new List<LocatedRow>();
         foreach (LocatedRow row in rows)
         {
@@ -412,7 +414,6 @@ internal sealed class TableDataWriter(
                 tableDef,
                 deletedParentRows,
                 fkCtx,
-                depth: 0,
                 cancellationToken).ConfigureAwait(false);
         }
 
