@@ -138,6 +138,48 @@ internal static class IndexKeyEncoder
         return result;
     }
 
+    /// <summary>
+    /// Decodes the value of an ascending, non-null <c>Integer</c> or
+    /// <c>Long Integer</c> key column from the start of an index entry: the
+    /// <see cref="Constants.IndexEntryFlags.AscendingNonNull"/> flag byte and
+    /// the big-endian value with its sign bit flipped, as
+    /// <see cref="EncodeEntry"/> writes them. Bytes after the column's key,
+    /// such as later key columns, are ignored.
+    /// </summary>
+    /// <param name="columnType">The key column's type.</param>
+    /// <param name="entryKey">The entry's key bytes, starting at the column's flag byte.</param>
+    /// <param name="value">The decoded value, or 0 when the key cannot be decoded.</param>
+    /// <returns>
+    /// <see langword="false"/> for any other column type, a null or descending
+    /// key, or a key too short to hold the value.
+    /// </returns>
+    public static bool TryDecodeIntegralKey(ColumnType columnType, ReadOnlySpan<byte> entryKey, out long value)
+    {
+        value = 0;
+        int size = 0;
+        if (columnType == IntegerType)
+        {
+            size = 2;
+        }
+        else if (columnType == LongIntegerType)
+        {
+            size = 4;
+        }
+
+        if (size == 0 || entryKey.Length < 1 + size || entryKey[0] != AscendingNonNull)
+        {
+            return false;
+        }
+
+        Span<byte> bigEndian = stackalloc byte[4];
+        entryKey.Slice(1, size).CopyTo(bigEndian);
+        bigEndian[0] ^= 0x80;
+        value = size == 2
+            ? BinaryPrimitives.ReadInt16BigEndian(bigEndian)
+            : BinaryPrimitives.ReadInt32BigEndian(bigEndian);
+        return true;
+    }
+
     private static byte[] EncodeKey(ColumnType columnType, object value)
     {
         switch (columnType)

@@ -217,6 +217,86 @@ internal sealed class IndexCursor
         }
     }
 
+    /// <summary>
+    /// Returns the last entry of the B-tree rooted at
+    /// <paramref name="rootPageNumber"/>, the one with the largest key, or
+    /// <see langword="null"/> when the tree has no entries or cannot be walked
+    /// (a page that is not an index page, a missing child, a cycle, or more
+    /// than <c>MaxDepth</c> levels). It descends through each intermediate
+    /// page's last entry (its <c>tail_page</c> when it has none), then follows
+    /// the leaf level's <c>next_page</c> chain to its end, because a tail leaf
+    /// appended after the rightmost summary is reachable only that way (§4.5),
+    /// and steps back through <c>prev_page</c> over empty leaves.
+    /// </summary>
+    /// <param name="rootPageNumber">The root page number.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    public async ValueTask<IndexEntry?> TryReadLastEntryAsync(long rootPageNumber, CancellationToken cancellationToken)
+    {
+        if (rootPageNumber <= 0 || this.pageSize <= this.layout.FirstEntryOffset)
+        {
+            return null;
+        }
+
+        long pageNumber = rootPageNumber;
+        byte[] page = await this.readPage(pageNumber, cancellationToken).ConfigureAwait(false);
+        for (int depth = 0; !IndexPageCodec.IsLeaf(page); depth++)
+        {
+            if (depth >= MaxDepth || !IndexPageCodec.IsIntermediate(page))
+            {
+                return null;
+            }
+
+            List<DecodedIntermediateEntry> summaries = IndexPageCodec.DecodeIntermediateEntries(this.layout, page, this.pageSize);
+            pageNumber = summaries.Count > 0 ? summaries[^1].ChildPage : IndexPageCodec.ReadTailPage(this.layout, page);
+            if (pageNumber <= 0)
+            {
+                return null;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            page = await this.readPage(pageNumber, cancellationToken).ConfigureAwait(false);
+        }
+
+        var visited = new HashSet<long> { pageNumber };
+        for (long next = IndexPageCodec.ReadNextPage(this.layout, page); next > 0; next = IndexPageCodec.ReadNextPage(this.layout, page))
+        {
+            if (!visited.Add(next))
+            {
+                return null;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            page = await this.readPage(next, cancellationToken).ConfigureAwait(false);
+            if (!IndexPageCodec.IsLeaf(page))
+            {
+                return null;
+            }
+        }
+
+        var visitedBack = new HashSet<long>();
+        while (true)
+        {
+            List<IndexEntry> entries = IndexPageCodec.DecodeLeafEntries(this.layout, page, this.pageSize);
+            if (entries.Count > 0)
+            {
+                return entries[^1];
+            }
+
+            long previous = IndexPageCodec.ReadPrevPage(this.layout, page);
+            if (previous <= 0 || !visitedBack.Add(previous))
+            {
+                return null;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            page = await this.readPage(previous, cancellationToken).ConfigureAwait(false);
+            if (!IndexPageCodec.IsLeaf(page))
+            {
+                return null;
+            }
+        }
+    }
+
     private async ValueTask<byte[]?> FindCandidateLeafAsync(
         long rootPageNumber,
         byte[] searchKey,

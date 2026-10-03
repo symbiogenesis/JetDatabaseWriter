@@ -203,6 +203,133 @@ public sealed class IndexCursorTests
         Assert.Equal([(999, 7)], matches);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task TryReadLastEntry_SingleLeaf_ReturnsLargestKey(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, BuildIntEntries(8));
+        Assert.True(IndexPageCodec.IsLeaf(tree.Pages[tree.RootPageNumber]));
+
+        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+
+        AssertLastKey(7, last);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task TryReadLastEntry_MultiLevelTree_ReturnsLargestKey(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, BuildIntEntries(900));
+        Assert.True(IndexPageCodec.IsIntermediate(tree.Pages[tree.RootPageNumber]));
+
+        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+
+        AssertLastKey(899, last);
+        Assert.Equal(100 + (899 / 200), last!.Value.DataPage);
+        Assert.Equal(899 % 200, last.Value.DataRow);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task TryReadLastEntry_FollowsNextPageBeyondLastSummary(DatabaseFormat format)
+    {
+        // A leaf Access appended after the rightmost one, chained through
+        // next_page but not yet named by any intermediate summary (§4.5).
+        TreeFixture tree = BuildTree(format, BuildIntEntries(900));
+        AppendLeaf(tree, [new IndexEntry(EncodeIntKey(5000), DataPage: 999, DataRow: 3)]);
+
+        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+
+        AssertLastKey(5000, last);
+        Assert.Equal(999, last!.Value.DataPage);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task TryReadLastEntry_SkipsEmptyRightmostLeaf(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, BuildIntEntries(900));
+        AppendLeaf(tree, []);
+
+        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+
+        AssertLastKey(899, last);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task TryReadLastEntry_EmptyIndex_ReturnsNull(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, []);
+
+        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+
+        Assert.Null(last);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task TryReadLastEntry_CycleInLeafChain_ReturnsNull(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, BuildIntEntries(900));
+        long tailPageNumber = FindTailLeafPage(tree);
+        long firstLeaf = tree.Pages.First(page => IndexPageCodec.IsLeaf(page.Value) && IndexPageCodec.ReadPrevPage(tree.Layout, page.Value) == 0).Key;
+        IndexPageCodec.WriteNextPage(tree.Layout, tree.Pages[tailPageNumber], firstLeaf);
+
+        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+
+        Assert.Null(last);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task TryReadLastEntry_RootIsNotAnIndexPage_ReturnsNull(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, BuildIntEntries(8));
+        tree.Pages[tree.RootPageNumber][0] = Constants.PageTypes.Data;
+
+        IndexEntry? last = await CreateCursor(tree).TryReadLastEntryAsync(tree.RootPageNumber, this.cancellationToken);
+
+        Assert.Null(last);
+    }
+
+    private static void AssertLastKey(int expected, IndexEntry? last)
+    {
+        Assert.NotNull(last);
+        Assert.True(IndexKeyEncoder.TryDecodeIntegralKey(LongIntegerType, last.Value.Key, out long key));
+        Assert.Equal(expected, key);
+    }
+
+    /// <summary>
+    /// Adds a leaf holding <paramref name="entries"/> after the tree's last
+    /// leaf, linked through <c>next_page</c> and <c>prev_page</c> only, as
+    /// Access appends a tail leaf before any intermediate summary names it.
+    /// </summary>
+    /// <param name="tree">The tree.</param>
+    /// <param name="entries">The new leaf's entries.</param>
+    private static void AppendLeaf(TreeFixture tree, List<IndexEntry> entries)
+    {
+        long tailPageNumber = FindTailLeafPage(tree);
+        long appended = tree.Pages.Keys.Max() + 1;
+        tree.Pages[appended] = IndexPageCodec.BuildLeafPage(
+            tree.Layout,
+            tree.PageSize,
+            ParentTdefPage,
+            entries,
+            prevPage: tailPageNumber,
+            nextPage: 0,
+            tailPage: 0,
+            enablePrefixCompression: true);
+        IndexPageCodec.WriteNextPage(tree.Layout, tree.Pages[tailPageNumber], appended);
+    }
+
     private static IndexCursor CreateCursor(TreeFixture tree)
         => new(
             tree.Layout,
