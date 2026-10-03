@@ -580,7 +580,7 @@ New writer-side helper, now owned by `IndexMaintainer`: `TryMaintainIndexesIncre
 - Any key column is `Numeric` AND the column was written by a pre-W23 build (descriptor `NumericPrecision == 0`) — fall back to the W13 snapshot-driven canonical-scale pre-pass. W23+ NUMERIC columns engage the fast path using the declared scale.
 - The index root is not a single leaf (`IndexPageCodec.IsSingleRootLeaf` returns false).
 - The encoder rejects any value (text outside General Legacy, etc.).
-- The spliced entry list overflows the leaf payload area (`IndexPageCodec.TryBuildLeafPage` returns `null`).
+- Historical: the spliced entry list overflows the leaf payload area (`IndexPageCodec.TryBuildLeafPage` returns `null`). Since 2026-10 the overflowing leaf's entries plus the change set are built into a multi-level tree (`IndexBTreeEditor.TryPlaceTreeAsync`) and `first_dp` is patched to its root, so neither user tables nor system tables leave the incremental path at the first root-leaf overflow (`C13` remains only for a tree that cannot be built, such as a single entry larger than a page). System tables have no bulk fallback, so before this change the 302nd `CreateTableAsync` on a writer-created ACCDB threw when `MSysACEs` reached 603 entries.
 
 Per-call hint shape: each public mutation builds `IReadOnlyList<(RowLocation Loc, object[] Row)>` for inserted and/or deleted rows and passes them as the hint. The hint is consumed by `EncodeHintEntries` (per real-idx, per row, encoded in col_map order).
 
