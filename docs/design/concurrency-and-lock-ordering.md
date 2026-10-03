@@ -19,7 +19,7 @@ recorded in [Why these are not consolidated](#why-these-are-not-consolidated).
 
 ## The primitives
 
-The library has **eight** distinct coordination mechanisms. Six are in-process;
+The library has **nine** distinct coordination mechanisms. Seven are in-process;
 two are cross-process / cross-opener (advisory). Each has a single, distinct
 responsibility — the apparent overlap noted in the audit is superficial (see the
 closing section).
@@ -34,6 +34,7 @@ closing section).
 | 6 | `lockFile` / `lockFileCoordinator` | `LockFileCoordinator` | [LockFileCoordinator.cs](../../JetDatabaseWriter/Transactions/LockFileCoordinator.cs) | Reader + writer instances | `.ldb` / `.laccdb` slot (cross-process) |
 | 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs#L21](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs#L21) | Internal to #1 | The gate's own drain bookkeeping |
 | 8 | `aesGate` | `Lock` / `object` | [PageDecryptionKeys.cs#L23](../../JetDatabaseWriter/Encryption/Models/PageDecryptionKeys.cs#L23) | One open database file | The cached AES-ECB page transforms: their lazy build and every page encrypt or decrypt |
+| 9 | `ownedDataPageIndex` gate | `SemaphoreSlim(1,1)` inside `AsyncLazyInitializer` | [AsyncLazyInitializer.cs](../../JetDatabaseWriter/Infrastructure/AsyncLazyInitializer.cs), built in [DatabaseFile.cs](../../JetDatabaseWriter/DatabaseFile.cs) (`BuildOwnedDataPageIndexAsync`) | One open database file (reader only) | The one-time whole-file pass that maps every data page to its table, run for the first table whose owned-pages usage map fails validation |
 
 > Note: #4 and #7 are both plain `lock` objects guarding unrelated in-memory
 > state (the writer's insert-page hint and the reader gate's drain bookkeeping).
@@ -51,8 +52,10 @@ order. Never acquire one earlier in this list while holding one later in it.
 
 ```
 1. operationGate lease            (reader only; wraps a whole public operation; reentrant)
-2. IoGate                         (one logical page I/O, or a journal attach/detach)
-3. ByteRangeLock per-page     (one durable page write; INSIDE IoGate)
+2. ownedDataPageIndex gate        (reader only; held across the whole-file owned-page pass,
+                                   whose page reads take IoGate on the seek-and-read path)
+3. IoGate                         (one logical page I/O, or a journal attach/detach)
+4. ByteRangeLock per-page     (one durable page write; INSIDE IoGate)
 
 — leaf locks (never held across an await, never nested under each other) —
    insertPageHintLock             (insert-page cache; pure memory)
@@ -68,8 +71,10 @@ order. Never acquire one earlier in this list while holding one later in it.
 The only pair that genuinely nests on a hot path is **`IoGate` (outer) →
 `ByteRangeLock` per-page (inner)**, inside
 [`WritePageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L750) and
-[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L782). Everything else
-is either strictly outer (the operation gate), a leaf, or lifetime-scoped.
+[`AppendPageAsync`](../../JetDatabaseWriter/DatabaseFile.cs#L782). The
+`ownedDataPageIndex` gate also nests outside `IoGate`, but at most once per
+reader, for the whole-file pass. Everything else is either strictly outer (the
+operation gate), a leaf, or lifetime-scoped.
 
 ### Key invariant: do not hold `IoGate` across a page-write call
 
@@ -156,6 +161,10 @@ operationGate lease  (reentrant: nested reader calls on the same async flow join
   └─ table-scan read-ahead: the next data page's read runs alongside the
      caller's decode of the current page, so two page reads can be in flight
   └─ owned-page cache build: ownedDataPagesCacheLock (leaf, memory only)
+  └─ owned-page index build (the first table whose usage map fails validation):
+       ownedDataPageIndex gate ──▶ ReadPageAsync for every page from 3 to the end of file
+       (each takes IoGate on the seek-and-read path) ──▶ release the gate
+       (other operations that need the index await the gate for the whole pass)
 ```
 
 A path-opened reader's file handle is synchronous (`FileOptions.None`; see
@@ -164,9 +173,15 @@ as a blocking read on a thread-pool thread. On Windows the I/O manager
 serializes I/O on a synchronous file object: the read-ahead pair and
 concurrent scans on one reader queue their reads in the kernel, below every
 lock listed here, and still overlap them with decode. That queue adds no lock
-to this hierarchy and cannot deadlock with one, because no reader lock is held
-while the OS reads, except `IoGate` on the seek-and-read path, which already
-serializes that path's reads. The writer opens an overlapped handle.
+to this hierarchy and cannot close a deadlock cycle, because it never waits on
+a library lock: a queued read waits only for the reads ahead of it, and each
+of those completes without taking one. Library gates are held while the OS
+reads: the operation lease across every read, the `ownedDataPageIndex` gate
+across the whole-file pass, and `IoGate` across each read on the seek-and-read
+path. The library only ever awaits them (`WaitAsync`, or the disposal drain)
+and never blocks a thread on one, so a read queued in the kernel can delay the
+operations waiting on those gates but cannot deadlock them. The writer opens
+an overlapped handle.
 
 When the read starts on a thread-pool thread with no synchronization context
 and the default task scheduler, a path-opened reader runs it on that thread
@@ -207,6 +222,7 @@ lockFileCoordinator.DisposeAfterAsync(
 | Primitive | Reentrant? | Mechanism / consequence |
 |-----------|-----------|--------------------------|
 | `operationGate` | Yes | `AsyncLocal<int> operationDepth`; nested calls on one async flow join the active root operation |
+| `ownedDataPageIndex` gate | No | Binary `SemaphoreSlim(1,1)` — the index build only reads pages; it must never ask for the owned-page index itself |
 | `IoGate` | No | Binary `SemaphoreSlim(1,1)` — re-entering on the same flow self-deadlocks; never hold it across a `*PageAsync` call |
 | `ByteRangeLock` per-page | No | OS advisory byte-range lock; re-locking the same range blocks |
 | `insertPageHintLock` | No | Plain `lock`; leaf only |
