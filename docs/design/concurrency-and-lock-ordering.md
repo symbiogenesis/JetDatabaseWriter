@@ -2,7 +2,7 @@
 
 Status: active reference
 Date: 2026-06-16
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 This note is the single, canonical description of the synchronization model used
 by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
@@ -157,6 +157,16 @@ operationGate lease  (reentrant: nested reader calls on the same async flow join
      caller's decode of the current page, so two page reads can be in flight
   └─ owned-page cache build: ownedDataPagesCacheLock (leaf, memory only)
 ```
+
+A path-opened reader's file handle is synchronous (`FileOptions.None`; see
+"Page I/O handle" in `read-performance-bottlenecks.md`), so each page read runs
+as a blocking read on a thread-pool thread. On Windows the I/O manager
+serializes I/O on a synchronous file object: the read-ahead pair and
+concurrent scans on one reader queue their reads in the kernel, below every
+lock listed here, and still overlap them with decode. That queue adds no lock
+to this hierarchy and cannot deadlock with one, because no reader lock is held
+while the OS reads, except `IoGate` on the seek-and-read path, which already
+serializes that path's reads. The writer opens an overlapped handle.
 
 ### Disposal
 

@@ -38,6 +38,7 @@ guidance below to produce new evidence before changing the core reader.
 - `Query<T>().Include(...)` over a related customer/order pair: `JetDatabaseWriter.Benchmarks/Queries/QueryIncludeBenchmarks.cs`
 - Attachment reads (`GetAttachmentsAsync`, `Rows()`, `Rows<T>()` with `ComplexCellValue.ReadAttachments`), writer-authored and Access-authored: `JetDatabaseWriter.Benchmarks/Reader/ComplexColumnReadBenchmarks.cs`
 - Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
+- Opening and scanning a file the OS has not cached (Windows only): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderColdScanBenchmarks.cs`
 - Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
 - Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
 - Shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
@@ -120,6 +121,7 @@ git history) and are not reproduced here.
 | Include (same run) | `QueryIncludeBenchmarks` over 1,000 customers and 10,000 orders: the collection include took 52.7 ms and 18 MB, the same include filtered, ordered and capped at five orders per customer 51.9 ms, and the reference include (each order's customer) 9.3 ms and 4 MB. | The collection include costs 5-6 times the reference include over the same rows; filtering per parent runs after the load, so it saves nothing. Profile the collection path before changing it. |
 | Attachment reads (same run) | `ComplexColumnReadBenchmarks`: 150 writer-authored 16 KB attachments took 14.7 ms through `GetAttachmentsAsync`, 18.0 ms through a `Rows()` scan and 21.0 ms through `Rows<T>()` plus `ComplexCellValue.ReadAttachments`. The 16 Access-authored Northwind category images took 8.4, 10.5 and 10.7 ms. | No change. Reading attachments through the parent row costs 23-43% more than reading the flat table directly. |
 | Public seeks (same run) | `PublicSeekBenchmarks` over the 10,000 orders: 1,000 primary-key lookups took 38.7 ms (15 MB) through `SeekRowsAsync` and 31.9 ms through `FromIndex(...).WhereEquals`, against 2.9 ms for one `Rows<T>()` scan that keeps the same 1,000 keys. A 250-row `WhereBetween` on the `OrderDate` index took 0.47 ms. The same 1,000 lookups as `Rows<T>(o => o.OrderId == key)` took 525 ms and 58 MB; each call compiles its predicate (`Expression.Compile`) and lists the table's indexes before it seeks. | A seek costs about 32-39 µs and 15 KB, so one full scan of this table beats about 75 single-key seeks. The inferred `Rows<T>(predicate)` seek costs about 0.5 ms more per call than an explicit one; profile its per-call setup before recommending it in loops. |
+| Page I/O handle (2026-10-03, Arm64, .NET 10.0.12, A/B of Release builds in interleaved processes on a shared machine) | Opening path-opened readers with a synchronous handle and no access hint, instead of an overlapped handle with the `RandomAccess` or `SequentialScan` hint, took a warm page read from 15-19 µs to 8-10 µs, warm MEMO scans from 97-124 ms to 67-76 ms and OLE scans from 42-58 ms to 36-46 ms, and the open and first scan of an uncached copy of the OLE table from 2.3-3.2 s to 0.18-0.66 s. | Keep `FileOptions.None` for path-opened readers in every mode; see "Page I/O handle" below. Re-measure on x64 and slower storage before changing it. |
 
 ## Historical baseline
 
@@ -244,10 +246,12 @@ Primary code path:
 
 ### 6. Table-scan read-ahead
 
-`PageReadOptimizationMode` controls whether path-opened databases use random-
-access file options and whether eligible simple table scans use a conservative
-one-page read-ahead path. The default `Auto` mode enables random-access reads
-for path-opened readers, but table-scan read-ahead is more selective than
+`PageReadOptimizationMode` controls whether path-opened readers of the net10.0
+build read pages with positional `RandomAccess` reads and whether eligible
+simple table scans use a conservative one-page read-ahead path. It does not
+change how the file is opened (see "Page I/O handle" below). The default `Auto`
+mode enables random-access reads for path-opened readers, but table-scan
+read-ahead is more selective than
 explicit `Enabled`: it requires a file-backed stream, no active transaction
 journal, and enough table pages to benefit after the first page. `Disabled`
 preserves the seek/read path and suppresses table-scan read-ahead. The read-
@@ -289,7 +293,8 @@ that investigation's 15-21 interleaved rounds of warm scans, `Auto` went from
 111-138% of `Disabled` on the MEMO and OLE tables to 91-108%. A later replay of
 the OLE scan's 2,021 page reads, on the same machine while other builds ran,
 could not separate the builds before and after this change: 15-19 µs per read
-either way, in both modes.
+either way, in both modes. Both modes paid a larger cost, the file handle's
+type; see "Page I/O handle" below.
 
 Keep this as automatic with opt-out. Do not add tunable depth or LVAL-heavy
 read-ahead without a fresh profile that shows a gain.
@@ -304,6 +309,67 @@ Primary code path:
 - Every table scan in `TableReader`: `Rows()`, `Rows<T>()`, `RowsAsStrings`,
   `ReadDataTableAsync`, `ReadTableAsync<T>`, `ReadTableAsStringsAsync`,
   `ReadFirstTableAsStringsAsync`, and `GetRealRowCountAsync`
+
+### 7. Page I/O handle
+
+A path-opened reader opens its file with `FileOptions.None` in every
+`PageReadOptimizationMode`: a synchronous handle, without
+`FILE_FLAG_OVERLAPPED`, and with no `RandomAccess` or `SequentialScan` hint.
+Before 2026-10-03 it opened an overlapped (`FileOptions.Asynchronous`) handle
+with the `RandomAccess` hint in `Auto` and `Enabled` and the `SequentialScan`
+hint in `Disabled`. Page reads stay asynchronous to the caller:
+`RandomAccess.ReadAsync` (net10.0 build, `Auto` and `Enabled`) and
+`FileStream.ReadAsync` (`Disabled`, and every mode of the netstandard2.1
+build) run a synchronous read on a thread-pool thread, which is how .NET reads
+every file on Unix.
+
+On Windows an overlapped read completes through the I/O completion port and a
+thread-pool callback even when the OS cache already holds the page; .NET does
+not skip the completion port for reads that succeed at once, and 0-1% of the
+overlapped reads were complete when awaited. The 2026-10-03 investigation
+replayed a warm scan's 4 KB page reads at 14.8-19.1 µs each on the overlapped
+handle, 3.8-4.9 µs as `RandomAccess.ReadAsync` on a synchronous one and
+2.8-3.6 µs as a blocking `RandomAccess.Read`. On files the OS had not cached,
+the hints and the overlapped handle also defeated the OS read-ahead: 9,800
+sequential 4 KB reads took 965-1,040 ms on the old handles, 654 ms on a
+synchronous handle with `SequentialScan`, 584 ms with `RandomAccess` and 47 ms
+with no hint. Why `SequentialScan` was slow there is not understood.
+
+A/B of Release builds before and after the change (2026-10-03, Arm64, NVMe,
+.NET 10.0.12, the benchmark databases, path-opened readers with default
+options except where noted). Ranges are the medians of four interleaved
+processes on a machine shared with other builds, `Auto` and `Disabled`
+together unless split:
+
+| Case | Overlapped handle with a hint | Synchronous handle, no hint |
+|---|---|---|
+| The OLE scan's 2,021 page reads replayed through `DatabaseFile.ReadPageAsync`, no page cache | 15.0-19.0 µs per read | 7.9-9.8 µs |
+| Warm `Rows()` of the 2,000-row OLE table | 42-58 ms | 36-46 ms |
+| Warm `Rows()` of the 5,000-row MEMO table | 97-124 ms | 67-76 ms |
+| Warm `Rows()` of the 25,000-row numeric table, `Auto` | 10.2-19.9 ms | 8.9-14.0 ms |
+| Open and first `Rows()` of an uncached copy, OLE table (includes the 25,228-page whole-file owned-page pass) | 2.3-3.2 s | 0.18-0.66 s |
+| Open and first `Rows()` of an uncached copy, numeric table | 64-404 ms | 54-176 ms (within the noise) |
+
+Each page read now holds a pool thread while the OS reads, as `FileStream`
+does by default; an overlapped read held none while the device worked. On
+Windows the I/O manager serializes I/O on a synchronous file object, so the
+read-ahead pair and concurrent scans on one reader queue their reads in the
+kernel instead of overlapping them; they still overlap reads with decode. All
+of this was measured on one Arm64 machine with local NVMe storage. Re-run
+`AccessReaderColdScanBenchmarks` on x64, a hard disk or a network share before
+changing the options again; with many concurrent scans on slow storage, open
+more readers. The writer still opens an overlapped handle with the
+`RandomAccess` hint, which a separate, measured change would revisit.
+
+A caller that opens the `FileStream` itself for
+`AccessReader.OpenAsync(Stream)` gets the same benefit by opening it without
+`FileOptions.Asynchronous` and without an access hint.
+
+Primary code path:
+
+- `AccessReader.CreateStream`
+- `DatabaseFile.ReadPageAsync`
+- `DatabaseFile.ReadPageRandomAccessAsync`
 
 ## When read performance still feels slow
 
@@ -460,6 +526,7 @@ dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *Access
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *QueryIncludeBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *ComplexColumnReadBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *PublicSeekBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderColdScanBenchmarks* --job short
 ```
 
 Summary decisions from the refresh:
