@@ -67,21 +67,45 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal IAsyncEnumerable<object?[]> EnumerateRawOleTypedRowsForTdefAsync(
+        long tdefPage,
+        TableDef td,
+        CancellationToken cancellationToken)
+        => this.EnumerateRawOleTypedRowsForTdefAsync(tdefPage, td, wantedColumns: null, cancellationToken);
+
+    /// <summary>
+    /// Yields every row of the table at <paramref name="tdefPage"/> as typed
+    /// values, decoding only the columns <paramref name="wantedColumns"/> selects
+    /// and leaving the others <see langword="null"/>. OLE columns hold their
+    /// stored bytes unchanged, as in the overload without a mask. Catalog reads
+    /// use the mask so that an <c>MSysObjects</c> scan for one table's
+    /// <c>LvProp</c> reads only the <c>Id</c> and <c>LvProp</c> of each row.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="td">Parsed table definition.</param>
+    /// <param name="wantedColumns">The columns to decode, by column index, or <see langword="null"/> for every column.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async IAsyncEnumerable<object?[]> EnumerateRawOleTypedRowsForTdefAsync(
         long tdefPage,
         TableDef td,
+        bool[]? wantedColumns,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        bool[] wantedColumns = new bool[td.Columns.Count];
+        // The typed decode skips the raw OLE columns and every unwanted one;
+        // the raw OLE columns that are wanted are filled from their stored bytes below.
+        bool[] typedColumns = new bool[td.Columns.Count];
+        bool[] rawColumns = new bool[td.Columns.Count];
         bool hasRawColumns = false;
-        for (int i = 0; i < wantedColumns.Length; i++)
+        for (int i = 0; i < typedColumns.Length; i++)
         {
+            bool wanted = wantedColumns is null || (i < wantedColumns.Length && wantedColumns[i]);
             bool raw = IsRawOleColumn(td.Columns[i]);
-            wantedColumns[i] = !raw;
-            hasRawColumns |= raw;
+            typedColumns[i] = wanted && !raw;
+            rawColumns[i] = wanted && raw;
+            hasRawColumns |= rawColumns[i];
         }
 
-        var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, strictParsing);
+        var decodePlan = RowDecodePlan.CreateTyped(td, typedColumns, strictParsing);
         IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         foreach (long pageNumber in pageNumbers)
         {
@@ -118,7 +142,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
                     for (int i = 0; i < row.Length; i++)
                     {
                         ColumnInfo column = td.Columns[i];
-                        if (IsRawOleColumn(column))
+                        if (rawColumns[i])
                         {
                             ColumnSlice slice = RowDecodePlan.ResolveColumnSliceForDirectDecode(db, page, rb.RowStart, rb.RowSize, layout, column);
                             row[i] = slice.Kind == ColumnSliceKind.Var
