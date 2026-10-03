@@ -101,7 +101,6 @@ CommitTransactionAsync
   │     foreach buffered page (ascending page order):
   │         WritePageAsync
   │           └─ IoGate ──▶ ByteRangeLock per-page ──▶ seek/write/flush ──▶ release both
-  │     BumpCommitLockByteAsync  (ReadPageAsync + WritePageAsync)
   │     FlushDurableAsync
   └─ release commit-lock (finally)
 ```
