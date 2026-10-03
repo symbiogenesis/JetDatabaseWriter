@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Relationships;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -80,61 +79,6 @@ internal sealed class RelationshipEnforcer(
     public ValueTask<IReadOnlyList<FkRelationship>> GetEnforcedRelationshipsAsync(CancellationToken cancellationToken)
         => catalog.GetEnforcedRelationshipsAsync(cancellationToken);
 
-    public async ValueTask<HashSet<string>> GetParentKeySetAsync(FkRelationship rel, FkContext ctx, CancellationToken cancellationToken)
-    {
-        if (ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? cached))
-        {
-            return cached;
-        }
-
-        var set = new HashSet<string>(StringComparer.Ordinal);
-
-        DataTable parent;
-        try
-        {
-            parent = await snapshots.ReadTableSnapshotAsync(rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidOperationException)
-        {
-            ctx.ParentKeySets[rel.Name] = set;
-            return set;
-        }
-
-        try
-        {
-            int[] indexesByColumn = new int[rel.PrimaryColumns.Count];
-            bool ok = true;
-            for (int index = 0; index < rel.PrimaryColumns.Count; index++)
-            {
-                indexesByColumn[index] = parent.Columns.IndexOf(rel.PrimaryColumns[index]);
-                if (indexesByColumn[index] < 0)
-                {
-                    ok = false;
-                    break;
-                }
-            }
-
-            if (ok)
-            {
-                foreach (DataRow row in parent.Rows)
-                {
-                    string? key = RelationshipKeyBuilder.Build(row.ItemArray, indexesByColumn);
-                    if (key != null)
-                    {
-                        _ = set.Add(key);
-                    }
-                }
-            }
-        }
-        finally
-        {
-            parent.Dispose();
-        }
-
-        ctx.ParentKeySets[rel.Name] = set;
-        return set;
-    }
-
     /// <summary>
     /// Checks that every non-null foreign key of a row about to be inserted
     /// into <paramref name="foreignTable"/> names an existing parent row.
@@ -144,7 +88,10 @@ internal sealed class RelationshipEnforcer(
     /// <param name="values">The row, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">A foreign key has no matching parent row.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A foreign key has no matching parent row, or a relationship that
+    /// constrains the row names a table or column that cannot be found.
+    /// </exception>
     public async ValueTask EnforceFkOnInsertAsync(
         string foreignTable,
         TableDef foreignDef,
@@ -154,12 +101,12 @@ internal sealed class RelationshipEnforcer(
     {
         foreach (FkRelationship rel in ctx.All)
         {
-            if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase)
-                || !TryMapColumns(rel.ForeignColumns, foreignDef, out int[] foreignColumnIndexes))
+            if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
+            int[] foreignColumnIndexes = RequireColumns(rel, foreignTable, rel.ForeignColumns, foreignDef);
             string? key = RelationshipKeyBuilder.Build(values, foreignColumnIndexes);
             if (key == null)
             {
@@ -183,7 +130,10 @@ internal sealed class RelationshipEnforcer(
     /// <param name="rows">Each matching row before and after the update, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">A changed foreign key has no matching parent row.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A changed foreign key has no matching parent row, or its relationship
+    /// names a primary table or column that cannot be found.
+    /// </exception>
     public async ValueTask EnforceFkOnForeignUpdateAsync(
         string foreignTable,
         TableDef foreignDef,
@@ -194,6 +144,8 @@ internal sealed class RelationshipEnforcer(
     {
         foreach (FkRelationship rel in ctx.All)
         {
+            // An update cannot assign a foreign-key column the table does not
+            // have, so it never changes the key of such a relationship.
             if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase)
                 || !TryMapColumns(rel.ForeignColumns, foreignDef, out int[] foreignColumnIndexes)
                 || !Array.Exists(foreignColumnIndexes, assignedColumns.Contains))
@@ -217,6 +169,23 @@ internal sealed class RelationshipEnforcer(
         }
     }
 
+    /// <summary>
+    /// Cascades or refuses the delete of <paramref name="deletedParentRows"/>
+    /// from <paramref name="primaryTable"/> for every relationship whose
+    /// primary table it is: dependent rows are deleted when the relationship
+    /// cascades deletes, and the delete is refused otherwise.
+    /// </summary>
+    /// <param name="primaryTable">The table rows are deleted from.</param>
+    /// <param name="primaryDef">The table's definition.</param>
+    /// <param name="deletedParentRows">The deleted rows, in table-column order.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="depth">The cascade depth.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">
+    /// A deleted key has dependent rows and the relationship does not cascade
+    /// deletes, or a relationship with a non-null deleted key names a table or
+    /// column that cannot be found.
+    /// </exception>
     public async ValueTask EnforceFkOnPrimaryDeleteAsync(
         string primaryTable,
         TableDef primaryDef,
@@ -234,20 +203,17 @@ internal sealed class RelationshipEnforcer(
                 continue;
             }
 
-            ResolvedTable childTable = await tableCatalog.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            CatalogEntry childEntry = childTable.Entry;
-            TableDef childDef = childTable.Definition;
-
-            if (!TryMapFkPairOrdinals(rel, primaryDef, childDef, out int[] primaryPkIdx, out int[] fkIdx))
-            {
-                continue;
-            }
-
+            int[] primaryPkIdx = RequireColumns(rel, primaryTable, rel.PrimaryColumns, primaryDef);
             List<object?[]> parentPkRows = RelationshipKeyBuilder.ProjectNonNullKeys(deletedParentRows, primaryPkIdx);
             if (parentPkRows.Count == 0)
             {
                 continue;
             }
+
+            ResolvedTable childTable = await this.ResolveRelationshipTableAsync(rel, "foreign table", rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry childEntry = childTable.Entry;
+            TableDef childDef = childTable.Definition;
+            int[] fkIdx = RequireColumns(rel, rel.ForeignTable, rel.ForeignColumns, childDef);
 
             ChildSeekIndex? childSeek = await this.seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (childSeek != null)
@@ -342,7 +308,11 @@ internal sealed class RelationshipEnforcer(
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="depth">The cascade depth.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">A changed key has dependent rows and the relationship does not cascade updates.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A changed key has dependent rows and the relationship does not cascade
+    /// updates, or a relationship whose key changes names a foreign table or
+    /// column that cannot be found.
+    /// </exception>
     public async ValueTask EnforceFkOnPrimaryUpdateAsync(
         string primaryTable,
         TableDef primaryDef,
@@ -356,6 +326,8 @@ internal sealed class RelationshipEnforcer(
 
         foreach (FkRelationship rel in ctx.All)
         {
+            // An update cannot assign a primary column the table does not
+            // have, so it never changes the key of such a relationship.
             if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase)
                 || !TryMapColumns(rel.PrimaryColumns, primaryDef, out int[] primaryPkIdx)
                 || !Array.Exists(primaryPkIdx, assignedColumns.Contains))
@@ -389,13 +361,10 @@ internal sealed class RelationshipEnforcer(
                 continue;
             }
 
-            ResolvedTable childTable = await tableCatalog.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            ResolvedTable childTable = await this.ResolveRelationshipTableAsync(rel, "foreign table", rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             CatalogEntry childEntry = childTable.Entry;
             TableDef childDef = childTable.Definition;
-            if (!TryMapColumns(rel.ForeignColumns, childDef, out int[] fkIdx))
-            {
-                continue;
-            }
+            int[] fkIdx = RequireColumns(rel, rel.ForeignTable, rel.ForeignColumns, childDef);
 
             ChildSeekIndex? childSeek = await this.seekPlanner.ResolveChildSeekIndexAsync(rel, ctx, cancellationToken).ConfigureAwait(false);
             if (childSeek != null)
@@ -467,28 +436,42 @@ internal sealed class RelationshipEnforcer(
         }
     }
 
-    private static bool TryMapFkPairOrdinals(
-        FkRelationship rel,
-        TableDef primaryDef,
-        TableDef childDef,
-        out int[] primaryPkIdx,
-        out int[] fkIdx)
+    /// <summary>
+    /// Maps a relationship's key columns to their ordinals in
+    /// <paramref name="definition"/>, or throws when one is not in the table.
+    /// </summary>
+    /// <param name="rel">The relationship.</param>
+    /// <param name="table">The table's name, for the message.</param>
+    /// <param name="names">The key columns on that side of the relationship.</param>
+    /// <param name="definition">The table definition.</param>
+    /// <returns>The ordinals, in the order of <paramref name="names"/>.</returns>
+    /// <exception cref="InvalidOperationException">A key column is not in the table.</exception>
+    private static int[] RequireColumns(FkRelationship rel, string table, IReadOnlyList<string> names, TableDef definition)
     {
-        int count = rel.PrimaryColumns.Count;
-        primaryPkIdx = new int[count];
-        fkIdx = new int[count];
-        for (int index = 0; index < count; index++)
+        int[] ordinals = new int[names.Count];
+        for (int index = 0; index < names.Count; index++)
         {
-            primaryPkIdx[index] = primaryDef.FindColumnIndex(rel.PrimaryColumns[index]);
-            fkIdx[index] = childDef.FindColumnIndex(rel.ForeignColumns[index]);
-            if (primaryPkIdx[index] < 0 || fkIdx[index] < 0)
+            ordinals[index] = definition.FindColumnIndex(names[index]);
+            if (ordinals[index] < 0)
             {
-                return false;
+                throw RelationshipCannotBeEnforced(rel, $"table '{table}' has no column '{names[index]}'");
             }
         }
 
-        return true;
+        return ordinals;
     }
+
+    /// <summary>
+    /// Builds the error for an enforced relationship whose table or key column
+    /// cannot be found. The writer refuses the write rather than skip the
+    /// check, because it cannot tell a missing object from one it failed to
+    /// find.
+    /// </summary>
+    /// <param name="rel">The relationship.</param>
+    /// <param name="problem">What is missing.</param>
+    /// <returns>The exception to throw.</returns>
+    private static InvalidOperationException RelationshipCannotBeEnforced(FkRelationship rel, string problem)
+        => new($"Foreign-key constraint '{rel.Name}' cannot be enforced: {problem}. DropRelationshipAsync removes the relationship.");
 
     /// <summary>Maps column names to their ordinals in <paramref name="definition"/>.</summary>
     /// <param name="names">The column names.</param>
@@ -589,6 +572,59 @@ internal sealed class RelationshipEnforcer(
         {
             throw ForeignKeyViolation(rel, foreignTable, kind);
         }
+    }
+
+    /// <summary>
+    /// Returns the normalized keys of every row of the relationship's primary
+    /// table, read once per call and kept in <see cref="FkContext.ParentKeySets"/>.
+    /// </summary>
+    /// <param name="rel">The relationship.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The parent keys.</returns>
+    /// <exception cref="InvalidOperationException">The primary table or a primary column cannot be found.</exception>
+    private async ValueTask<HashSet<string>> GetParentKeySetAsync(FkRelationship rel, FkContext ctx, CancellationToken cancellationToken)
+    {
+        if (ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? cached))
+        {
+            return cached;
+        }
+
+        ResolvedTable parent = await this.ResolveRelationshipTableAsync(rel, "primary table", rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        int[] primaryColumnIndexes = RequireColumns(rel, rel.PrimaryTable, rel.PrimaryColumns, parent.Definition);
+
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (LocatedRow row in await snapshots.ReadRowsAsync(parent.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
+        {
+            string? key = RelationshipKeyBuilder.Build(row.Values, primaryColumnIndexes);
+            if (key != null)
+            {
+                _ = set.Add(key);
+            }
+        }
+
+        ctx.ParentKeySets[rel.Name] = set;
+        return set;
+    }
+
+    /// <summary>
+    /// Resolves one of a relationship's tables, or throws when it cannot be
+    /// found. A user table resolves through the writer's table catalog, which
+    /// keeps calculated columns' result types; any other name falls back to
+    /// the system tables.
+    /// </summary>
+    /// <param name="rel">The relationship.</param>
+    /// <param name="role">The table's role in the relationship, for the message.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The table's catalog entry and definition.</returns>
+    /// <exception cref="InvalidOperationException">No table has that name.</exception>
+    private async ValueTask<ResolvedTable> ResolveRelationshipTableAsync(FkRelationship rel, string role, string tableName, CancellationToken cancellationToken)
+    {
+        ResolvedTable? resolved = await tableCatalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null
+            ? await tableCatalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false)
+            : await snapshots.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        return resolved ?? throw RelationshipCannotBeEnforced(rel, $"its {role} '{tableName}' was not found");
     }
 
     private async ValueTask<List<object?[]>?> TryReadAllRowsTypedAsync(

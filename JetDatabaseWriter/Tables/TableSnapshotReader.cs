@@ -71,6 +71,21 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     }
 
     /// <summary>
+    /// Resolves <paramref name="tableName"/>, a user or system table, to its
+    /// catalog entry and table definition, with calculated columns' result
+    /// types hydrated. Returns <see langword="null"/> when no table with
+    /// columns has that name.
+    /// </summary>
+    /// <param name="tableName">The table name (case-insensitive).</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal ValueTask<ResolvedTable?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        return catalog.ResolveTableAsync(tableName, cancellationToken);
+    }
+
+    /// <summary>
     /// Reads every live row of <paramref name="tableName"/> (a user or system
     /// table) into a <see cref="DataTable"/>, for writer workflows that insert
     /// the rows again. Complex columns stay as their raw references, OLE cells

@@ -541,11 +541,13 @@ Self-referential bulk inserts: `EnforceFkOnInsertAsync` checks `FkContext.Parent
 W16 fallback triggers (drop back to the W10 HashSet path):
 
 - `_format == DatabaseFormat.Jet3Mdb` (Jet3 user/PK index emission exists, but relationship seek enforcement remains gated off for Jet3 and falls back to snapshot validation).
-- Parent table missing from the catalog.
+- Parent table missing from the user-table catalog. The HashSet path resolves the parent again with the system-table fallback, and throws when it is not found there either (below).
 - No real-idx slot covers `rel.PrimaryColumns` exactly (sharing per §3.3 is honoured — a non-FK user index over the same columns is acceptable).
 - `first_dp == 0` (the W3 placeholder before the first MaintainIndexes pass).
 - Any key column type is not seekable (currently `Boolean`) or its descriptor-aware encoder rejects the concrete value.
 - `IndexKeyEncoder.EncodeEntry` throws on any FK-side value.
+
+Unresolvable relationships (2026-10): an enforced relationship whose primary or foreign table, or one of whose key columns, cannot be found fails closed. Every write the relationship would have to check throws `InvalidOperationException` ("Foreign-key constraint 'X' cannot be enforced: its primary table 'T' was not found", or "table 'T' has no column 'C'"): an insert with a non-null foreign key (any insert when a foreign-key column itself is missing), an update that changes the foreign key, an update that changes the referenced key, and a delete of primary-table rows whose key is not null (any matching delete when the primary column itself is missing). The HashSet path used to read a missing parent as an empty table and report "no matching row", and the primary side threw a bare "Table 'T' was not found.", or skipped a relationship whose key column was missing. Null foreign keys (unless a foreign-key column itself is missing), updates that leave the key alone and deletes that match nothing never resolve the relationship, so they still succeed. `DropRelationshipAsync` removes such a relationship.
 
 Validation: 3 new round-trip tests in `JetDatabaseWriter.Tests/Relationships/ForeignKeyEnforcementTests.cs` — large parent (5 000 rows, deep-key probe), text key (General Legacy round-trip on the seek path), bulk children (per-call cache reuse). The existing 11 W10 tests pass unchanged. **Validation gap (§8):** the cursor only reads bytes this library wrote. Pointing it at an Access-authored leaf is still pending — the format-probe corpus does not yet single out an FK index over a small enough column count to make a focused byte-level diff cheap.
 
