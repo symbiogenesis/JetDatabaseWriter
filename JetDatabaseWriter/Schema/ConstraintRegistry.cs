@@ -17,8 +17,16 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <summary>
 /// Per-table client-side constraint registry. Manages column-level constraints
 /// (NOT NULL, auto-increment, default values, validation rules) and applies them
-/// at insert time. Keyed by table name (case-insensitive).
+/// at insert and update time. Keyed by table name (case-insensitive).
 /// </summary>
+/// <remarks>
+/// A table created by this writer is registered from its <see cref="ColumnDefinition"/>
+/// list, including the CLR <see cref="ColumnDefinition.DefaultValue"/> and
+/// <see cref="ColumnDefinition.ValidationRule"/>. Any other table is hydrated from its
+/// TDEF and <c>MSysObjects.LvProp</c>, which carry Required, AutoNumber, the calculated
+/// expression and the persisted <c>DefaultValue</c> and <c>ValidationRule</c>
+/// expressions, but not CLR delegates.
+/// </remarks>
 /// <param name="readTableSnapshot">
 /// Delegate used to read a table snapshot for seeding auto-increment counters.
 /// </param>
@@ -188,6 +196,7 @@ internal sealed class ConstraintRegistry(
         }
 
         List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints = null;
+        CalculatedExpressionEvaluationContext? defaultContext = null;
         try
         {
             for (int i = 0; i < list.Count; i++)
@@ -206,6 +215,18 @@ internal sealed class ConstraintRegistry(
                 {
                     value = c.DefaultValue;
                     isNull = false;
+                }
+                else if (isNull && c.DefaultValueExpression != null)
+                {
+                    ColumnDefaultValue defaultValue = c.DefaultValuePlan ??= ColumnDefaultValue.Compile(c.DefaultValueExpression);
+                    if (defaultValue.TryEvaluate(
+                        c.ClrType,
+                        () => defaultContext ??= new CalculatedExpressionEvaluationContext(tableDef, list, values, force: false),
+                        out object evaluated))
+                    {
+                        value = evaluated;
+                        isNull = false;
+                    }
                 }
 
                 if (isNull && c.IsAutoIncrement)
@@ -234,6 +255,7 @@ internal sealed class ConstraintRegistry(
 
             CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false);
             ValidateCalculatedResults(tableName, list, values);
+            CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null);
         }
         catch
         {
@@ -263,10 +285,12 @@ internal sealed class ConstraintRegistry(
     /// Applies the update-time constraint pass to <paramref name="values"/>, the
     /// full post-update image of one row. Every column in
     /// <paramref name="assignedColumns"/> is checked the way an insert checks a
-    /// supplied value: null is rejected for a NOT NULL or AutoNumber column, and
-    /// a non-null value must satisfy the column's validation rule. Defaults are
-    /// not substituted, because a default applies only when a row is created.
-    /// Calculated columns are then recomputed from the new values.
+    /// supplied value: null is rejected for a NOT NULL or AutoNumber column, a
+    /// non-null value must satisfy the column's <see cref="ColumnConstraint.ValidationRule"/>
+    /// delegate, and any value must satisfy its persisted
+    /// <see cref="ColumnConstraint.ValidationRuleExpression"/>. Defaults are not
+    /// substituted, because a default applies only when a row is created.
+    /// Calculated columns are recomputed from the new values.
     /// </summary>
     /// <param name="tableName">The table name, for error messages.</param>
     /// <param name="tableDef">The table definition.</param>
@@ -288,7 +312,8 @@ internal sealed class ConstraintRegistry(
             return;
         }
 
-        foreach (int i in assignedColumns)
+        var assigned = new List<int>(assignedColumns);
+        foreach (int i in assigned)
         {
             ColumnConstraint c = list[i];
             if (c.IsCalculated)
@@ -318,6 +343,7 @@ internal sealed class ConstraintRegistry(
 
         CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true);
         ValidateCalculatedResults(tableName, list, values);
+        CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned);
     }
 
     private static ColumnConstraint ToConstraint(ColumnDefinition def) => new()
@@ -328,10 +354,64 @@ internal sealed class ConstraintRegistry(
         DefaultValue = def.DefaultValue,
         IsAutoIncrement = def.IsAutoIncrement,
         ValidationRule = def.ValidationRule,
+        DefaultValueExpression = NullIfBlank(def.DefaultValueExpression),
+        ValidationRuleExpression = NullIfBlank(def.ValidationRuleExpression),
+        ValidationText = def.ValidationText,
         IsCalculated = def.IsCalculated,
         CalculationExpression = def.CalculationExpression,
         CalculatedResultType = JetTypeInfo.TypeCodeFromDefinition(def),
     };
+
+    private static string? NullIfBlank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text;
+
+    /// <summary>
+    /// Evaluates the persisted <see cref="ColumnConstraint.ValidationRuleExpression"/> of each
+    /// non-calculated column in <paramref name="assignedColumns"/> (every column when
+    /// <see langword="null"/>) against the finished row. A rule this library cannot parse or
+    /// evaluate is not enforced; see <see cref="ColumnValidationRule"/>.
+    /// </summary>
+    /// <param name="tableName">The table name, for error messages.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="constraints">The column constraints, in table-column order.</param>
+    /// <param name="values">The row, in table-column order.</param>
+    /// <param name="assignedColumns">The columns to check, or <see langword="null"/> for all.</param>
+    /// <exception cref="ArgumentException">A rule evaluates to False.</exception>
+    private static void CheckValidationRuleExpressions(
+        string tableName,
+        TableDef tableDef,
+        List<ColumnConstraint> constraints,
+        object[] values,
+        List<int>? assignedColumns)
+    {
+        CalculatedExpressionEvaluationContext? context = null;
+        int count = assignedColumns?.Count ?? constraints.Count;
+        for (int n = 0; n < count; n++)
+        {
+            int i = assignedColumns?[n] ?? n;
+            ColumnConstraint c = constraints[i];
+            if (c.ValidationRuleExpression is null || c.IsCalculated)
+            {
+                continue;
+            }
+
+            ColumnValidationRule rule = c.ValidationRulePlan ??= ColumnValidationRule.Compile(c.ValidationRuleExpression, c.Name);
+            if (!rule.IsSupported)
+            {
+                continue;
+            }
+
+            context ??= new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force: false);
+            if (rule.Accepts(context))
+            {
+                continue;
+            }
+
+            object value = values[i];
+            string shown = value is null or DBNull ? "Null" : "'" + Convert.ToString(value, CultureInfo.InvariantCulture) + "'";
+            string message = $"Validation rule '{c.ValidationRuleExpression}' for column '{c.Name}' on table '{tableName}' rejected value {shown}.";
+            throw new ArgumentException(string.IsNullOrEmpty(c.ValidationText) ? message : message + " " + c.ValidationText);
+        }
+    }
 
     private static void ValidateCalculatedResults(string tableName, List<ColumnConstraint> constraints, object[] values)
     {
@@ -424,8 +504,12 @@ internal sealed class ConstraintRegistry(
     /// IsNullable comes from the LvProp <c>Required</c> Boolean when present
     /// (DAO/Access wire format), falling back to the legacy writer-private TDEF
     /// flag bit <c>0x08</c>. <c>FLAG_AUTO_LONG (0x04)</c> is restored from the
-    /// TDEF descriptor. DefaultValue and ValidationRule remain client-side and
-    /// are only present when the same writer instance declared them.
+    /// TDEF descriptor. The LvProp <c>DefaultValue</c>, <c>ValidationRule</c> and
+    /// <c>ValidationText</c> properties become the persisted default and rule
+    /// expressions. The CLR <see cref="ColumnConstraint.DefaultValue"/> and
+    /// <see cref="ColumnConstraint.ValidationRule"/> are only present when the
+    /// same writer instance declared them; a CLR default also reaches later
+    /// writers, because it is persisted as a literal <c>DefaultValue</c> expression.
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="tableDef">The table def.</param>
@@ -465,12 +549,23 @@ internal sealed class ConstraintRegistry(
             DatabaseFormat propertyFormat = properties?.Format ?? default;
             string? calculationExpression = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat);
 
+            // Access gives AutoNumber, calculated and complex columns no default; a stray
+            // DefaultValue property on one must not stop the column generating its value.
+            bool takesDefault = !isComplex && !isAutoIncrement && !col.IsCalculated;
+
             ColumnConstraint c = new()
             {
                 Name = col.Name,
                 ClrType = JetTypeInfo.GetClrType(constraintType) ?? typeof(object),
                 IsNullable = isNullable,
                 IsAutoIncrement = isAutoIncrement,
+                DefaultValueExpression = takesDefault
+                    ? NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat))
+                    : null,
+                ValidationRuleExpression = isComplex
+                    ? null
+                    : NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, propertyFormat)),
+                ValidationText = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, propertyFormat),
                 IsCalculated = col.IsCalculated,
                 CalculationExpression = calculationExpression,
                 CalculatedResultType = calculatedResultType,

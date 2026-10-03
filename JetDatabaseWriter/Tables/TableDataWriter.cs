@@ -61,8 +61,9 @@ internal sealed class TableDataWriter(
     /// <summary>
     /// Projects a named-column <see cref="RowValues"/> onto a positional
     /// <c>object[]</c> in table-column order. Columns not named in the row are
-    /// left as <see cref="DBNull.Value"/> so AutoNumber columns generate and any
-    /// other omitted column stores database null. Unknown column names throw.
+    /// left as <see cref="DBNull.Value"/> so AutoNumber columns generate, column
+    /// defaults apply, and any other omitted column stores database null. Unknown
+    /// column names throw.
     /// </summary>
     /// <param name="tableDef">The target table definition.</param>
     /// <param name="tableName">The table name, for error messages.</param>

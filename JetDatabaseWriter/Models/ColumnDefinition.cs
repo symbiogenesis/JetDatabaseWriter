@@ -52,9 +52,20 @@ public sealed record ColumnDefinition
     /// <summary>
     /// Gets an optional default value substituted for null / <see cref="DBNull.Value"/> at
     /// insert time. The value must be assignment-compatible with <see cref="ClrType"/>.
-    /// Enforced client-side by the <see cref="AccessWriter"/> instance that declared it —
-    /// not written into the file.
+    /// Defaults apply only when a row is created: an update that sets the column to null
+    /// stores null.
     /// </summary>
+    /// <remarks>
+    /// When <see cref="DefaultValueExpression"/> is not set, the value is also written into
+    /// <c>MSysObjects.LvProp</c> as a literal <c>DefaultValue</c> expression (for example
+    /// <c>7</c>, <c>"text"</c>, <c>True</c> or <c>#2024-02-29 08:30:00#</c>), so a later
+    /// <see cref="AccessWriter"/> and Microsoft Access apply the same default. Text, Boolean,
+    /// integer, floating-point, <see cref="decimal"/>, <see cref="DateTime"/> and
+    /// <see cref="Guid"/> values can be written this way; any other type, such as
+    /// <c>byte[]</c>, makes table creation throw <see cref="NotSupportedException"/>. The
+    /// literal is persisted only when the catalog has an <c>LvProp</c> column
+    /// (<see cref="AccessWriterOptions.WriteFullCatalogSchema"/>, the default).
+    /// </remarks>
     public object? DefaultValue { get; init; }
 
     /// <summary>
@@ -125,32 +136,83 @@ public sealed record ColumnDefinition
     /// <summary>
     /// Gets an optional client-side validation predicate invoked for every non-null value
     /// an insert supplies or an update assigns, before the row is written. Returning
-    /// <c>false</c> raises an <see cref="ArgumentException"/>. Not persisted — a CLR delegate
-    /// cannot be serialized into the JET file.
+    /// <c>false</c> raises an <see cref="ArgumentException"/>.
     /// </summary>
+    /// <remarks>
+    /// A CLR delegate cannot be serialized into the JET file, so this rule binds only the
+    /// <see cref="AccessWriter"/> instance that created the table, which keeps it across its
+    /// own column and table renames, additions and drops. A writer that opens the database
+    /// later does not enforce it. For a rule that every writer and Microsoft Access enforce,
+    /// use <see cref="ValidationRuleExpression"/>.
+    /// </remarks>
     public Func<object?, bool>? ValidationRule { get; init; }
 
     /// <summary>
-    /// Gets the persisted Jet expression string used as the column default at the database
-    /// engine level (e.g. <c>"0"</c>, <c>"\"hi\""</c>, <c>"=Now()"</c>). When set, this value
-    /// is written into <c>MSysObjects.LvProp</c> so it survives across writer instances and
-    /// is honoured by Microsoft Access. Takes precedence over <see cref="DefaultValue"/> for
-    /// persistence; the CLR <see cref="DefaultValue"/> continues to drive the in-process
-    /// <see cref="DBNull"/>-substitution path.
+    /// Gets the persisted Jet expression used as the column default (e.g. <c>"0"</c>,
+    /// <c>"\"hi\""</c>, <c>"=Now()"</c>, <c>"Date()"</c>). It is written into
+    /// <c>MSysObjects.LvProp</c>, so it survives across writer instances and is honoured by
+    /// Microsoft Access.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every <see cref="AccessWriter"/> evaluates the expression when an inserted row leaves
+    /// the column null / <see cref="DBNull.Value"/> (the same rule as
+    /// <see cref="DefaultValue"/>), converts the result to the column's type, and stores it.
+    /// An update that sets the column to null stores null. A persisted <c>DefaultValue</c>
+    /// written by Microsoft Access is applied the same way.
+    /// </para>
+    /// <para>
+    /// When both are set, the declaring writer uses the CLR <see cref="DefaultValue"/> and
+    /// persists this expression, so later writers use the expression.
+    /// </para>
+    /// <para>
+    /// The expression is evaluated with this library's calculated-column expression engine.
+    /// When it uses a function or syntax the engine does not support (for example
+    /// <c>GenGUID()</c> or <c>CurrentUser()</c>), evaluates to Null, or yields a value that
+    /// cannot be converted to the column's type, no default is applied and the column stays
+    /// null (so a NOT NULL column then rejects the row). Microsoft Access still applies it.
+    /// </para>
+    /// </remarks>
     public string? DefaultValueExpression { get; init; }
 
     /// <summary>
-    /// Gets the persisted Jet expression evaluated by the database engine on insert / update
-    /// (e.g. <c>"&gt;=0 And &lt;=100"</c>). Persisted in <c>MSysObjects.LvProp</c>. Independent
-    /// of the in-process <see cref="ValidationRule"/> delegate.
+    /// Gets the persisted Access validation rule for the column (e.g.
+    /// <c>"&gt;=0 And &lt;=100"</c>). Persisted in <c>MSysObjects.LvProp</c> and enforced
+    /// by every <see cref="AccessWriter"/> and by Microsoft Access. Independent of the
+    /// in-process <see cref="ValidationRule"/> delegate; when both are set, both apply.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The writer checks the rule against every value an insert stores (after default and
+    /// AutoNumber substitution) and every value an update assigns, before any row is
+    /// written, and throws <see cref="ArgumentException"/> when it rejects one; the message
+    /// includes <see cref="ValidationText"/>. A validation rule written by Microsoft Access is
+    /// enforced the same way.
+    /// </para>
+    /// <para>
+    /// As in Access, the column is the implicit left operand of a term that starts with an
+    /// operator (<c>"&lt;&gt;0"</c>, <c>"Is Not Null"</c>, <c>"Between 1 And 10"</c>,
+    /// <c>"In (1,2,3)"</c>, <c>"Like \"A*\""</c>, <c>"&lt;=Date()"</c>), a bare value term is
+    /// an equality test (<c>"0 Or &gt;100"</c>), and a term may also name the column
+    /// (<c>"Len([Code]) = 3"</c>). Comparisons with Null are Null and only a False result
+    /// rejects, so a rule that does not test for Null accepts Null.
+    /// </para>
+    /// <para>
+    /// The rule is evaluated with this library's calculated-column expression engine. A rule
+    /// that uses syntax or a function the engine does not support (for example
+    /// <c>DLookUp</c>), or whose evaluation fails, is not enforced by the writer rather than
+    /// blocking every write to the table. Microsoft Access still enforces it. Text
+    /// comparisons are ordinal and case-insensitive, which can differ from the database's
+    /// sort order for non-ASCII text.
+    /// </para>
+    /// </remarks>
     public string? ValidationRuleExpression { get; init; }
 
     /// <summary>
     /// Gets the user-facing message Microsoft Access displays when
     /// <see cref="ValidationRuleExpression"/> rejects a value. Persisted in
-    /// <c>MSysObjects.LvProp</c>.
+    /// <c>MSysObjects.LvProp</c>. The writer appends it to the message of the
+    /// <see cref="ArgumentException"/> it throws for the same rejection.
     /// </summary>
     public string? ValidationText { get; init; }
 

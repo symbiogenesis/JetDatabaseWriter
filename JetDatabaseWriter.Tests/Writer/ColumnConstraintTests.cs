@@ -421,13 +421,298 @@ public sealed class ColumnConstraintTests
         Assert.Equal(DBNull.Value, row["Code"]);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task ValidationRuleExpression_IsEnforcedOnInsertAndUpdate_InEveryWriter(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "RuleExpr";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)) { ValidationRuleExpression = ">=0 And <=100", ValidationText = "Score must be 0..100." },
+                ],
+                TestContext.Current.CancellationToken);
+
+            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync(table, [1, -5], TestContext.Current.CancellationToken));
+            Assert.Contains("Score must be 0..100.", ex.Message, StringComparison.Ordinal);
+
+            await writer.InsertRowAsync(table, [1, 50], TestContext.Current.CancellationToken);
+
+            // Like Access, a rule that does not test for Null lets Null through.
+            await writer.InsertRowAsync(table, [2, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        // A later writer reads the rule from MSysObjects.LvProp.
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync(table, [3, 500], TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 101 }, TestContext.Current.CancellationToken));
+
+            Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 99 }, TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, dt.Rows.Count);
+        Assert.Equal(99, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Score"]);
+        Assert.Equal(DBNull.Value, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2)["Score"]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DefaultValueExpression_IsAppliedOnInsert_InEveryWriter(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "DefaultExpr";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)) { DefaultValueExpression = "7" },
+                    new("Label", typeof(string), maxLength: 20) { DefaultValueExpression = "\"none\"" },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(table, [1, DBNull.Value, null], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [2, 3, "given"], TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(table, new RowValues { ["Id"] = 3 }, TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(3, dt.Rows.Count);
+        DataRow first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
+        DataRow second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
+        DataRow third = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3);
+        Assert.Equal(7, first["Score"]);
+        Assert.Equal("none", first["Label"]);
+        Assert.Equal(3, second["Score"]);
+        Assert.Equal("given", second["Label"]);
+        Assert.Equal(7, third["Score"]);
+        Assert.Equal("none", third["Label"]);
+    }
+
+    /// <summary>
+    /// A CLR <see cref="ColumnDefinition.DefaultValue"/> is persisted as a literal
+    /// <c>DefaultValue</c> expression, so a writer that did not declare it still
+    /// applies it.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task DefaultValue_IsAppliedByALaterWriter(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "ClrDefault";
+        var when = new DateTime(2024, 2, 29, 8, 30, 0);
+
+        List<ColumnDefinition> columns =
+        [
+            new("Id", typeof(int)),
+            new("Score", typeof(int)) { DefaultValue = 7 },
+            new("Name", typeof(string), maxLength: 20) { DefaultValue = "a \"b\"" },
+        ];
+
+        // Jet3 has no Numeric type, and the Jet3 row encoder cannot yet write an
+        // MSysObjects row whose LvProp blob pushes the variable area past 255 bytes.
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            columns.Add(new("Flag", typeof(bool)) { DefaultValue = true });
+            columns.Add(new("When", typeof(DateTime)) { DefaultValue = when });
+            columns.Add(new("Amount", typeof(decimal)) { DefaultValue = 12.34m, NumericPrecision = 10, NumericScale = 2 });
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(table, columns, TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1 }, TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(dt.AsEnumerable());
+        Assert.Equal(7, row["Score"]);
+        Assert.Equal("a \"b\"", row["Name"]);
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            Assert.Equal(true, row["Flag"]);
+            Assert.Equal(when, row["When"]);
+            Assert.Equal(12.34m, row["Amount"]);
+        }
+    }
+
+    /// <summary>
+    /// Persisted rules are hydrated and enforced inside an explicit transaction
+    /// and under <see cref="AccessWriterOptions.UseTransactionalWrites"/>.
+    /// </summary>
+    /// <param name="useTransactionalWrites">Whether the writer wraps each call in an auto-commit transaction.</param>
+    /// <param name="commit">Whether the explicit transaction commits or rolls back.</param>
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task PersistedRules_AreEnforcedInsideTransactions(bool useTransactionalWrites, bool commit)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        const string table = "RuleTx";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)) { DefaultValueExpression = "7", ValidationRuleExpression = "Between 0 And 10" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, 1], TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = useTransactionalWrites }))
+        {
+            await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync(table, [2, 11], TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = -1 }, TestContext.Current.CancellationToken));
+            await writer.InsertRowAsync(table, [3, DBNull.Value], TestContext.Current.CancellationToken);
+
+            if (commit)
+            {
+                await transaction.CommitAsync(TestContext.Current.CancellationToken);
+            }
+            else
+            {
+                await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            }
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(1, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Score"]);
+        if (commit)
+        {
+            Assert.Equal(2, dt.Rows.Count);
+            Assert.Equal(7, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 3)["Score"]);
+        }
+        else
+        {
+            Assert.Equal(1, dt.Rows.Count);
+        }
+    }
+
+    /// <summary>
+    /// Rules and defaults Microsoft Access wrote into the mdbtools Northwind sample
+    /// (Jet4): <c>Products.UnitPrice</c> has default <c>0</c> and rule <c>&gt;=0</c>,
+    /// <c>Products.Discontinued</c> has default <c>=No</c>, and
+    /// <c>Order Details.Discount</c> has rule <c>Between 0 And 1</c>.
+    /// </summary>
+    [Fact]
+    public async Task AccessAuthoredRulesAndDefaults_Jet4_AreEnforced()
+    {
+        await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.MdbtoolsNwind);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync("Products", new RowValues { ["ProductName"] = "Default probe" }, TestContext.Current.CancellationToken);
+
+            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.InsertRowAsync("Products", new RowValues { ["ProductName"] = "Bad price", ["UnitPrice"] = -1m }, TestContext.Current.CancellationToken));
+            Assert.Contains("You must enter a positive number.", ex.Message, StringComparison.Ordinal);
+
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.UpdateRowsAsync("Order Details", RowCriteria.All(), new RowValues { ["Discount"] = 2f }, TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable products = await reader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow probe = Assert.Single(products.AsEnumerable(), row => Equals(row["ProductName"], "Default probe"));
+        Assert.Equal(0m, probe["UnitPrice"]);
+        Assert.Equal((short)0, probe["UnitsInStock"]);
+        Assert.Equal(false, probe["Discontinued"]);
+        Assert.DoesNotContain(products.AsEnumerable(), row => Equals(row["ProductName"], "Bad price"));
+    }
+
+    /// <summary>
+    /// <c>OrderDetails.Quantity</c> in the Access-authored NorthwindTraders ACCDB
+    /// carries the rule <c>&gt;0</c> with its own validation text.
+    /// </summary>
+    [Fact]
+    public async Task AccessAuthoredRule_Accdb_RejectsUpdate()
+    {
+        await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.NorthwindTraders);
+
+        await using AccessWriter writer = await OpenWriterAsync(stream);
+        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await writer.UpdateRowsAsync("OrderDetails", RowCriteria.All(), new RowValues { ["Quantity"] = 0 }, TestContext.Current.CancellationToken));
+        Assert.Contains("Quantity should be greater than zero.", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A rule written with syntax or functions this library cannot evaluate is not
+    /// enforced by the writer, rather than blocking every insert into the table.
+    /// </summary>
+    [Fact]
+    public async Task ValidationRuleExpression_ThisLibraryCannotEvaluate_IsNotEnforced()
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        const string table = "RuleUnsupported";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)) { ValidationRuleExpression = "DLookUp(\"Id\",\"Other\") > 0" },
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(table, [1, -1], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(-1, Assert.Single(dt.AsEnumerable())["Score"]);
+    }
+
     [Fact]
     public async Task ValidationRule_IsNotPersistedAcrossReopen()
     {
         // ValidationRule is a Func<> delegate — it cannot be serialized to the
-        // database. On reopen, no validation fires for previously-guarded columns.
-        // This documents the gap; when persisted expression-based validation is
-        // implemented, this test should start failing.
+        // database, so it binds only the writer that declared it. On reopen, no
+        // validation fires for previously-guarded columns. A rule that must
+        // survive reopen belongs in ValidationRuleExpression (see
+        // ValidationRuleExpression_IsEnforcedOnInsertAndUpdate_InEveryWriter).
         await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
         const string table = "ValidNoPersist";
 
@@ -546,6 +831,16 @@ public sealed class ColumnConstraintTests
             options ?? new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
+    }
+
+    private static async ValueTask<MemoryStream> CopyFixtureAsync(string path)
+    {
+        Assert.True(File.Exists(path), $"Fixture not found: {path}");
+        byte[] bytes = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
+        var ms = new MemoryStream();
+        await ms.WriteAsync(bytes, TestContext.Current.CancellationToken);
+        ms.Position = 0;
+        return ms;
     }
 
     private static async ValueTask<uint> ReadTdefAutoNumberAsync(MemoryStream stream, string table)

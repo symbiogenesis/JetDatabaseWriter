@@ -83,7 +83,8 @@ public interface IAccessWriter : IAccessBase
     /// is by name rather than position, removing the silent-corruption risk of a
     /// positional <c>object?[]</c> whose order drifts from the schema. Columns not named
     /// are left to the engine's default (an AutoNumber column generates its next value;
-    /// any other omitted column stores database null).
+    /// any other omitted column stores its default value, or database null when it has
+    /// none).
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="row">The named-column values to insert.</param>

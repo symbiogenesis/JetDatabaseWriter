@@ -497,12 +497,14 @@ await writer.CreateTableAsync("Contacts", new[]
 | `IsNullable` | ✅ `MSysObjects.LvProp` (`Required`) | Inserts that leave the column null and updates that set it to null throw `InvalidOperationException`. Restored on reopen; surfaced to readers via `ColumnMetadata.IsNullable`. |
 | `IsAutoIncrement` | ✅ TDEF flag bit `FLAG_AUTO_LONG 0x04` | Supported for `byte`/`short`/`int`/`long`. Seeded from `max(existing) + 1` on first use. An update may assign an explicit value, which raises the stored high-water as an insert does, but setting the column to null throws `InvalidOperationException`. |
 | `IsPrimaryKey` | ✅ TDEF logical-index entry with `index_type = 0x01` | Shortcut for synthesizing a PK `IndexDefinition` named `"PrimaryKey"` from one or more columns (in declaration order). Forces the PK key columns to `IsNullable = false` on the emitted TDEF. Mixing this with an explicit PK `IndexDefinition` in the same call throws `ArgumentException`. Single- and multi-column PKs both participate in live B-tree leaf maintenance (composite-key path). |
-| `DefaultValue` | ⚠️ client-side only | CLR object substituted for `DBNull.Value` at insert time on the `AccessWriter` instance that declared it. For an engine-level default that Microsoft Access also honours, set `DefaultValueExpression` (it is auto-derived from `DefaultValue` when omitted). |
-| `ValidationRule` | ⚠️ client-side only | Checked against every non-null value an insert supplies or an update assigns; a rejection throws `ArgumentException`. A CLR `Func<>` cannot be serialized into the file. For an engine-level rule Microsoft Access also enforces, set `ValidationRuleExpression`. |
-| `DefaultValueExpression` | ✅ `MSysObjects.LvProp` (`DefaultValue`) | Jet expression string (e.g. `"0"`, `"\"hi\""`, `"=Now()"`). Surfaced to readers via `ColumnMetadata.DefaultValueExpression`. Wins over `DefaultValue` for persistence. |
-| `ValidationRuleExpression` | ✅ `MSysObjects.LvProp` (`ValidationRule`) | Jet expression string (e.g. `">=0 And <=100"`). Surfaced via `ColumnMetadata.ValidationRuleExpression`. |
-| `ValidationText` | ✅ `MSysObjects.LvProp` (`ValidationText`) | User-facing message Access shows when `ValidationRuleExpression` rejects a value. Surfaced via `ColumnMetadata.ValidationText`. |
+| `DefaultValue` | ✅ as a literal `DefaultValue` expression in `MSysObjects.LvProp` | CLR object substituted for `null` / `DBNull.Value` at insert time. Unless `DefaultValueExpression` is set, it is also persisted as a literal expression (`7`, `"text"`, `True`, `#2024-02-29 08:30:00#`), so a later `AccessWriter` and Microsoft Access apply the same default. Text, Boolean, numeric, `DateTime` and `Guid` values persist; other types such as `byte[]` throw `NotSupportedException` at table creation. Updates never apply defaults. |
+| `ValidationRule` | ⚠️ this writer only | Checked against every non-null value an insert supplies or an update assigns; a rejection throws `ArgumentException`. A CLR `Func<>` cannot be serialized into the file, so a writer that opens the database later does not enforce it. For a rule every writer and Microsoft Access enforce, set `ValidationRuleExpression`. |
+| `DefaultValueExpression` | ✅ `MSysObjects.LvProp` (`DefaultValue`) | Jet expression string (e.g. `"0"`, `"\"hi\""`, `"=Now()"`, `"Date()"`). Every `AccessWriter` evaluates it when an insert leaves the column `null` / `DBNull.Value`. Wins over `DefaultValue` for persistence; the declaring writer still uses a CLR `DefaultValue` when both are set. Surfaced to readers via `ColumnMetadata.DefaultValueExpression`. |
+| `ValidationRuleExpression` | ✅ `MSysObjects.LvProp` (`ValidationRule`) | Access rule with the column as implicit left operand (e.g. `">=0 And <=100"`, `"Is Not Null"`, `"Between 1 And 10"`, `"In (1,2,3)"`, `"Like \"A*\""`, `"0 Or >100"`). Every `AccessWriter` checks it against each value an insert stores and each value an update assigns; a rejection throws `ArgumentException`. Like Access, a rule that does not test for Null accepts Null. Surfaced via `ColumnMetadata.ValidationRuleExpression`. |
+| `ValidationText` | ✅ `MSysObjects.LvProp` (`ValidationText`) | User-facing message Access shows when `ValidationRuleExpression` rejects a value; the writer appends it to the `ArgumentException` message. Surfaced via `ColumnMetadata.ValidationText`. |
 | `Description` | ✅ `MSysObjects.LvProp` (`Description`) | Free-text column description shown in Access Design View. Surfaced via `ColumnMetadata.Description`. Preserved across `AddColumnAsync` / `DropColumnAsync` / `RenameColumnAsync`. |
+
+Column defaults and validation rules that Microsoft Access wrote into an existing database are applied the same way. For example, older versions of Access gave every Number column a default of `0`, so an insert that leaves such a column null stores `0`. The writer evaluates default and rule expressions with its calculated-column expression engine. An expression that uses syntax or a function the engine does not support (such as `GenGUID()`, `CurrentUser()` or `DLookUp`) is skipped by the writer rather than blocking every write to the table; Microsoft Access still applies it. Table-level (record) validation rules are not enforced.
 
 ### Insert rows — generic POCO
 
@@ -540,8 +542,9 @@ await writer.InsertRowsAsync("Contacts", new[]
 
 Positional object arrays match columns by position, so a reordered array silently
 corrupts data. `RowValues` matches by **column name** (case-insensitive) instead.
-Omitted columns default to database null (an AutoNumber column still generates its
-next value), so the order you assign columns is irrelevant:
+Omitted columns take the column's default value, or database null when it has none
+(an AutoNumber column still generates its next value), so the order you assign
+columns is irrelevant:
 
 ```csharp
 await writer.InsertRowAsync("Contacts", new RowValues
@@ -914,6 +917,9 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### Encryption
 - **`AccessWriter` cannot open Access-native flat Agile (`AccessEncryptionFormat.AccdbAgile`) files.** `OpenAsync` throws `NotSupportedException` and leaves the file untouched. This is the format `EncryptAsync` picks by default for `.accdb`. Decrypt, edit, and re-encrypt, or use `AccessEncryptionFormat.AccdbAgileCfb` for files the writer must open. See [Encryption Support](#encryption-support).
+
+### Column defaults and validation rules
+- **Persisted `DefaultValue` and `ValidationRule` expressions run on the library's own expression engine.** An expression that uses syntax or a function the engine does not support (for example `GenGUID()`, `CurrentUser()` or `DLookUp`) is skipped by the writer, not enforced; Microsoft Access still applies it. Table-level (record) validation rules are not enforced, and a CLR `ValidationRule` delegate binds only the writer that created the table.
 
 ### Compact & Repair
 - **`ShrinkDatabaseAsync` is a tail shrinker, not a full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.
