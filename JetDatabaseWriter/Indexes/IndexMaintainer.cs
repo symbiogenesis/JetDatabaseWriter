@@ -960,10 +960,11 @@ internal sealed class IndexMaintainer(
     /// </para>
     /// <list type="bullet">
     ///   <item><b>Single-leaf splice.</b> Root is a leaf
-    ///   (<c>page_type = 0x04</c>) with no sibling pointers AND the
-    ///   post-mutation entry list still fits on one page. The leaf is
-    ///   decoded, spliced, and re-emitted as a single page; <c>first_dp</c>
-    ///   is patched to the new leaf.</item>
+    ///   (<c>page_type = 0x04</c>) with no sibling pointers. The leaf is
+    ///   decoded and spliced; when the post-mutation entry list still fits on
+    ///   one page it is rewritten in place, and when it no longer does, the
+    ///   entries are built into a fresh multi-level tree (as below) and
+    ///   <c>first_dp</c> is patched to its root.</item>
     ///   <item><b>Multi-level rebuild from existing tree.</b>
     ///   Root is an intermediate (<c>0x03</c>) page. We descend to the
     ///   leftmost leaf, walk the leaf-sibling chain to collect every entry,
@@ -1359,8 +1360,22 @@ internal sealed class IndexMaintainer(
             byte[]? newLeaf = IndexPageCodec.TryBuildLeafPage(layout, db.PageSizeBytes, tdefPage, spliced);
             if (newLeaf is null)
             {
-                this.LastIncrementalBail = $"C13 spliced={spliced.Count}";
-                return false;
+                // The root leaf overflows: grow the index into a multi-level
+                // tree built from the leaf's own entries plus the change set,
+                // as the multi-level path does, and point first_dp at its
+                // root. Nothing is re-encoded from the table's rows, so system
+                // tables, which have no bulk fallback, grow too. The old root
+                // leaf is left orphaned, like a replaced multi-level tree.
+                IndexBTreeBuildResult? grown = await this.btreeEditor.TryPlaceTreeAsync(layout, tdefPage, spliced, runs, cancellationToken).ConfigureAwait(false);
+                if (grown is not { } grownTree)
+                {
+                    this.LastIncrementalBail = $"C13 spliced={spliced.Count}";
+                    return false;
+                }
+
+                Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)grownTree.RootPageNumber));
+                tdefDirty = true;
+                continue;
             }
 
             await db.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);

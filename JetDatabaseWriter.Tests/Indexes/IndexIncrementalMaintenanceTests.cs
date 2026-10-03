@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Indexes;
 
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -247,6 +248,72 @@ public sealed class IndexIncrementalMaintenanceTests
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task SingleInserts_PastRootLeafCapacity_StayIncremental(DatabaseFormat format)
+    {
+        // Single inserts in a scattered key order. The insert that overflows
+        // the single root leaf used to bail (C13) and rebuild every index
+        // from a snapshot of the table; it now grows the tree from the
+        // leaf's own entries, and every later insert stays incremental too.
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const int rowCount = 600;
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Code", typeof(string), maxLength: 32),
+                ],
+                [new IndexDefinition("PK", "Id") { IsPrimaryKey = true }, new IndexDefinition("IX_Code", "Code")],
+                this.ct);
+
+            var services = (WriterServices)FacadeInternals.ReadPrivateField(writer, "services")!;
+            for (int i = 0; i < rowCount; i++)
+            {
+                int id = ScatteredId(i);
+                await writer.InsertRowAsync("T", [id, FormattableString.Invariant($"c{id:D6}")], this.ct);
+                Assert.True(
+                    services.Indexes.LastIncrementalBail is null,
+                    $"Insert {i} (Id {id}) left the incremental path: {services.Indexes.LastIncrementalBail}.");
+            }
+        }
+
+        long tdefPage = await GetTDefPageNumberAsync(stream, "T");
+        stream.Position = 0;
+        await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(reopened.Database, tdefPage, this.ct);
+        Assert.Equal(2, roots.Count);
+        foreach (long root in roots)
+        {
+            Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, (await reopened.Database.ReadPageCopyAsync(root, this.ct))[0]);
+            await IndexLeafChain.AssertCoversLiveRowsAsync(reopened.Database, tdefPage, root, this.ct);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        Assert.Equal(rowCount, dt.Rows.Count);
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            for (int i = 0; i < rowCount; i += 37)
+            {
+                int id = ScatteredId(i);
+                int hits = 0;
+                await foreach (object[] row in reader.SeekRowsAsync("T", "PK", [id], this.ct))
+                {
+                    Assert.Equal(id, row[0]);
+                    hits++;
+                }
+
+                Assert.Equal(1, hits);
+            }
+        }
+    }
+
+    [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task FastPath_TextIndex_InsertReadableAfterIncrementalMaintenance(DatabaseFormat format)
@@ -294,7 +361,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await writer.InsertRowAsync("T", [1], this.ct);
         await writer.InsertRowAsync("T", [2], this.ct);
 
-        await Assert.ThrowsAsync<System.InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await writer.InsertRowAsync("T", [1], this.ct));
     }
 
@@ -335,6 +402,14 @@ public sealed class IndexIncrementalMaintenanceTests
             this.ct);
 
         Assert.False(incremental);
+    }
+
+    /// <summary>Maps 0, 1, 2, … to distinct keys spread over [0, 100,003): 7919 is prime and does not divide 100,003.</summary>
+    /// <param name="i">The insert number.</param>
+    private static int ScatteredId(int i)
+    {
+        long product = i * 7919L;
+        return (int)(product % 100_003);
     }
 
     private static int CountLeafEntries(byte[] fileBytes, int leafOffset, DatabaseFormat format)
@@ -402,7 +477,7 @@ public sealed class IndexIncrementalMaintenanceTests
     {
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken)
-            ?? throw new System.InvalidOperationException($"Table '{tableName}' not found in catalog.");
+            ?? throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
 
         return entry.TDefPage;
     }
