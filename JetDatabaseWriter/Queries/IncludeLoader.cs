@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tables;
 
@@ -20,8 +21,9 @@ using JetDatabaseWriter.Tables;
 /// stitching the related entities onto each root.
 /// </summary>
 /// <remarks>
-/// Join keys are read from each root POCO by column name (case-insensitive), the
-/// same convention the row mapper uses. Keys are compared by normalized value rather
+/// Join keys are read from each root POCO through <see cref="EntityMap"/>, the same
+/// column-to-property mapping the row mapper uses, so a key property renamed with
+/// <c>[Column("...")]</c> still joins. Keys are compared by normalized value rather
 /// than CLR type, so a relationship still matches when the two sides use different
 /// numeric types (for example a parent <c>int</c> <c>Id</c> against a child
 /// <c>double</c> <c>ParentId</c>). Binary (<c>byte[]</c>) keys compare by content, and a
@@ -404,12 +406,12 @@ internal static class IncludeLoader
 
     private static (string? Key, object?[]? Values) BuildKeyAndValues(object instance, IReadOnlyList<string> columns)
     {
-        Dictionary<string, PropertyInfo> properties = RuntimeRowMapper.GetProperties(instance.GetType());
+        var map = EntityMap.For(instance.GetType());
         object?[] values = new object?[columns.Count];
         string[] parts = new string[columns.Count];
         for (int i = 0; i < columns.Count; i++)
         {
-            if (!properties.TryGetValue(columns[i], out PropertyInfo? property))
+            if (map.FindByColumn(columns[i])?.Property is not PropertyInfo property)
             {
                 return (null, null);
             }
@@ -514,11 +516,11 @@ internal static class IncludeLoader
 
     private static string? BuildKeyFromObject(object instance, IReadOnlyList<string> columns)
     {
-        Dictionary<string, PropertyInfo> properties = RuntimeRowMapper.GetProperties(instance.GetType());
+        var map = EntityMap.For(instance.GetType());
         string[] parts = new string[columns.Count];
         for (int i = 0; i < columns.Count; i++)
         {
-            if (!properties.TryGetValue(columns[i], out PropertyInfo? property))
+            if (map.FindByColumn(columns[i])?.Property is not PropertyInfo property)
             {
                 return null;
             }
@@ -703,17 +705,14 @@ internal static class IncludeLoader
     }
 
     /// <summary>
-    /// Resolves the Access table name to match for a navigation's target POCO type: an
-    /// explicit <see cref="TableAttribute"/> overrides the default convention that the POCO
-    /// type name equals the table name, so a differently named type (such as a DTO or a
-    /// "tbl"-prefixed table) still binds.
+    /// Resolves the Access table name to match for a navigation's target POCO type through
+    /// <see cref="EntityMap.TableName"/>: an explicit <see cref="TableAttribute"/> overrides
+    /// the default convention that the POCO type name equals the table name, so a
+    /// differently named type (such as a DTO or a "tbl"-prefixed table) still binds.
     /// </summary>
     /// <param name="type">The navigation target entity type.</param>
     /// <returns>The table name to match against the relationship catalog.</returns>
-    private static string ResolveTableName(Type type) =>
-        type.GetCustomAttribute<TableAttribute>(inherit: true) is { Name.Length: > 0 } table
-            ? table.Name
-            : type.Name;
+    private static string ResolveTableName(Type type) => EntityMap.For(type).TableName;
 
     private static string Simplify(string name)
     {

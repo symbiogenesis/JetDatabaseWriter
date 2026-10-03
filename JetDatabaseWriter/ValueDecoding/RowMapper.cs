@@ -8,19 +8,20 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Maps <c>object[]</c> rows (keyed by column headers) to POCO instances of <typeparamref name="T"/>.
-/// Column-to-property matching is case-insensitive. Unmatched properties are left at their default value.
+/// Each column binds to the property <see cref="EntityMap"/> maps it to: the property's <c>[Column("...")]</c>
+/// name, or else its own name, compared case-insensitively; <c>[NotMapped]</c> properties are skipped.
+/// Unmatched properties are left at their default value.
 /// Uses compiled expression trees for high-performance property access.
 /// </summary>
 /// <typeparam name="T">The row type whose public properties are bound to column headers.</typeparam>
 internal static class RowMapper<T>
     where T : new()
 {
-    private static readonly Dictionary<string, Accessor> PropertyMap = BuildPropertyMap();
-
     private static readonly MethodInfo CoerceToTargetMethod =
         typeof(RowMapper<T>).GetMethod(nameof(CoerceToTarget), BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException("Failed to get method info for CoerceToTarget.");
@@ -33,6 +34,14 @@ internal static class RowMapper<T>
     /// lets the entries fall out naturally when a TableDef is evicted.
     /// </summary>
     private static readonly ConditionalWeakTable<TableDef, Func<T, object[]>> WriteCache = [];
+
+    /// <summary>
+    /// Gets the column name to compiled accessor map, built from <see cref="EntityMap"/> on
+    /// first use. It is built lazily rather than by the static initializer so that a mapping
+    /// error, such as two properties naming one column, surfaces as its own exception
+    /// instead of a <see cref="TypeInitializationException"/> that poisons the type.
+    /// </summary>
+    private static Dictionary<string, Accessor> PropertyMap => field ??= BuildPropertyMap();
 
     /// <summary>
     /// Builds the index mapping from column headers to compiled property accessors.
@@ -74,8 +83,8 @@ internal static class RowMapper<T>
     }
 
     /// <summary>
-    /// Returns the compiled <see cref="Accessor"/> for the property whose name
-    /// matches <paramref name="header"/> (case-insensitive), or
+    /// Returns the compiled <see cref="Accessor"/> for the property mapped to the
+    /// column <paramref name="header"/> (case-insensitive), or
     /// <see langword="null"/> when no property matches. Used by the
     /// direct-decoder builder.
     /// </summary>
@@ -263,7 +272,7 @@ internal static class RowMapper<T>
         for (int i = 0; i < count; i++)
         {
             Expression valueExpr;
-            if (PropertyMap.TryGetValue(td.Columns[i].Name, out Accessor? acc))
+            if (PropertyMap.TryGetValue(td.Columns[i].Name, out Accessor? acc) && acc.Property.CanRead)
             {
                 Type pt = acc.Property.PropertyType;
                 Expression propAccess = Expression.Property(itemParam, acc.Property);
@@ -366,15 +375,11 @@ internal static class RowMapper<T>
 
     private static Dictionary<string, Accessor> BuildPropertyMap()
     {
-        PropertyInfo[] props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
-        var map = new Dictionary<string, Accessor>(props.Length, StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < props.Length; i++)
+        IReadOnlyList<EntityProperty> properties = EntityMap.For(typeof(T)).Properties;
+        var map = new Dictionary<string, Accessor>(properties.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (EntityProperty property in properties)
         {
-            PropertyInfo prop = props[i];
-            if (prop.CanWrite)
-            {
-                map[prop.Name] = new Accessor(prop);
-            }
+            map[property.ColumnName] = new Accessor(property.Property);
         }
 
         return map;

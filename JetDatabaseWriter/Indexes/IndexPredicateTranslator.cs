@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 
 /// <summary>
@@ -25,9 +26,10 @@ using JetDatabaseWriter.Models;
 /// always sound.
 /// </para>
 /// <para>
-/// Property names are used verbatim as column names; the reader matches them to
-/// index key columns case-insensitively, exactly as the POCO row mapper matches
-/// properties to columns.
+/// Each property resolves to its column through <see cref="EntityMap"/>, the same
+/// mapping the POCO row mapper uses, so <c>[Column("...")]</c> renames are honoured and
+/// <c>[NotMapped]</c> properties are never pushed. The reader matches the column names
+/// to index key columns case-insensitively.
 /// </para>
 /// </remarks>
 internal static class IndexPredicateTranslator
@@ -177,7 +179,16 @@ internal static class IndexPredicateTranslator
             return false;
         }
 
-        columnName = property.Name;
+        // The column is the one the row mapper binds the property to, so a
+        // [Column("Last Name")] property seeks the "Last Name" index. A
+        // [NotMapped] or read-only property is not a column and is left to the
+        // client-side filter.
+        if (EntityMap.For(parameter.Type).FindByMember(property) is not EntityProperty mapped)
+        {
+            return false;
+        }
+
+        columnName = mapped.ColumnName;
         return true;
     }
 

@@ -95,7 +95,7 @@ public interface IAccessReader : IAccessBase
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/> asynchronously.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">The table name.</param>
     /// <param name="maxRows">The max rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -175,7 +175,7 @@ public interface IAccessReader : IAccessBase
     /// <see cref="Rows{T}(string, IProgress{long}?, CancellationToken)"/> remain
     /// client-side table scans unless enumeration short-circuits.
     /// </remarks>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="indexName">Index name (case-insensitive).</param>
     /// <returns>A fluent index-query builder.</returns>
@@ -197,9 +197,14 @@ public interface IAccessReader : IAccessBase
     /// <c>[Table("ActualName")]</c>
     /// (<see cref="System.ComponentModel.DataAnnotations.Schema.TableAttribute"/>) to bind a
     /// POCO whose name does not match its table. The root <paramref name="tableName"/> is
-    /// always passed explicitly, so the root type needs no attribute.
+    /// always passed explicitly, so the root type needs no attribute. Properties bind to
+    /// columns by the same rule everywhere: <c>[Column("Last Name")]</c>
+    /// (<see cref="System.ComponentModel.DataAnnotations.Schema.ColumnAttribute"/>) maps a
+    /// property to a differently named column for materialization, <c>Where</c> index
+    /// inference, index-ordered <c>OrderBy</c>, and <c>Include</c> join keys, and
+    /// <c>[NotMapped]</c> excludes a property.
     /// </remarks>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <returns>A composable query; enumerate with the async terminal extensions or <c>AsAsyncEnumerable()</c>.</returns>
     public IQueryable<T> Query<T>(string tableName)
@@ -323,7 +328,7 @@ public interface IAccessReader : IAccessBase
     /// and require a table scan unless enumeration short-circuits; use
     /// <see cref="FromIndex{T}(string, string)"/> for explicit index-backed reads.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
@@ -353,7 +358,7 @@ public interface IAccessReader : IAccessBase
     /// reports the count of matched rows yielded so far.
     /// </para>
     /// </remarks>
-    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="predicate">A row filter expression; drives index inference and the client-side filter.</param>
     /// <param name="progress">Optional progress reporter — receives the matched-row count.</param>

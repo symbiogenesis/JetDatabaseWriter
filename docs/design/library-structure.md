@@ -122,7 +122,7 @@ JetDatabaseWriter/
 │
 ├── ValueDecoding/                         (read-path: bytes → typed values)
 │   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, string rows, typed/direct slice decoding)
-│   ├── RowMapper.cs                       (object-array → POCO mapping and generic write projection)
+│   ├── RowMapper.cs                       (object-array → POCO mapping and generic write projection, via EntityMap)
 │   ├── RowCriteriaEvaluator.cs            (compiles RowCriteria against a table, evaluates decoded rows)
 │   ├── TypedValueParser.cs                (individual column type parsing)
 │   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
@@ -324,6 +324,10 @@ JetDatabaseWriter/
 │   ├── IncludeOrderOperation.cs           (OrderBy/ThenBy applied to a parent's loaded children)
 │   ├── IncludeSkipOperation.cs            (Skip applied to a parent's loaded children)
 │   └── IncludeTakeOperation.cs            (Take applied to a parent's loaded children)
+│
+├── Mapping/                               (POCO mapping model shared by typed reads, writes and LINQ)
+│   ├── EntityMap.cs                       (cached per-type property↔column map honouring [Column], [NotMapped], [Table])
+│   └── EntityProperty.cs                  (one mapped property and its column name)
 │
 ├── CompoundFile/                          (MS-CFB OLE structured storage)
 │   ├── CompoundFileReader.cs              (read .accdb wrapped in CFB container)

@@ -7,23 +7,23 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 
 /// <summary>
 /// Maps an <c>object?[]</c> row (keyed by column headers) onto a new instance of a
-/// runtime-resolved POCO type. Mirrors the case-insensitive property-name matching of
-/// the generic row mapper, but for a <see cref="Type"/> only known at runtime — as
+/// runtime-resolved POCO type. Binds columns to properties through <see cref="EntityMap"/>,
+/// the same rule the generic row mapper uses, but for a <see cref="Type"/> only known at runtime — as
 /// needed when eagerly loading a related entity discovered from a navigation property.
 /// </summary>
 internal static class RuntimeRowMapper
 {
-    private static readonly ConcurrentDictionary<Type, Dictionary<string, PropertyInfo>> PropertyCache = new();
     private static readonly ConcurrentDictionary<Type, Func<object>> InstanceFactories = new();
     private static readonly ConcurrentDictionary<Type, Func<IList>> ListFactories = new();
 
     /// <summary>
-    /// Creates an instance of <paramref name="type"/> and assigns each column whose
-    /// header matches a public settable property (case-insensitive).
+    /// Creates an instance of <paramref name="type"/> and assigns each column to the
+    /// property <see cref="EntityMap"/> maps it to.
     /// </summary>
     /// <param name="type">The target POCO type (must have a parameterless constructor).</param>
     /// <param name="headers">Column headers aligned with <paramref name="row"/>.</param>
@@ -32,12 +32,12 @@ internal static class RuntimeRowMapper
     public static object Map(Type type, IReadOnlyList<string> headers, object?[] row)
     {
         object instance = CreateInstance(type);
-        Dictionary<string, PropertyInfo> properties = GetProperties(type);
+        var map = EntityMap.For(type);
 
         int count = Math.Min(headers.Count, row.Length);
         for (int i = 0; i < count; i++)
         {
-            if (!properties.TryGetValue(headers[i], out PropertyInfo? property))
+            if (map.FindByColumn(headers[i])?.Property is not PropertyInfo property)
             {
                 continue;
             }
@@ -57,21 +57,6 @@ internal static class RuntimeRowMapper
 
         return instance;
     }
-
-    internal static Dictionary<string, PropertyInfo> GetProperties(Type type) =>
-        PropertyCache.GetOrAdd(type, static t =>
-        {
-            var map = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
-            foreach (PropertyInfo property in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                if (property.CanWrite && property.GetIndexParameters().Length == 0)
-                {
-                    map[property.Name] = property;
-                }
-            }
-
-            return map;
-        });
 
     internal static object CreateInstance(Type type) =>
         InstanceFactories.GetOrAdd(type, static t =>

@@ -59,7 +59,34 @@ internal static class EntityEmitter
         string ns,
         bool useRecords,
         bool nullable)
+        => Emit(className, className, columns, navigations, ns, useRecords, nullable);
+
+    /// <summary>
+    /// Emits the entity source for <paramref name="tableName"/>. A <c>[Table("...")]</c>
+    /// attribute is emitted when <paramref name="className"/> differs from the table name, and
+    /// a <c>[Column("...")]</c> attribute on every property whose name differs from its column
+    /// (for example <c>LastName</c> for a <c>Last Name</c> column), so the reader and writer
+    /// bind the generated type to the original names. Names that differ only in case need no
+    /// attribute, because the library matches names case-insensitively.
+    /// </summary>
+    /// <param name="className">The generated class name.</param>
+    /// <param name="tableName">The Access table name the class maps.</param>
+    /// <param name="columns">The table's columns.</param>
+    /// <param name="navigations">The navigation properties to emit.</param>
+    /// <param name="ns">The namespace of the generated class.</param>
+    /// <param name="useRecords">Whether to emit a record instead of a class.</param>
+    /// <param name="nullable">Whether to emit nullable reference type annotations.</param>
+    /// <returns>The generated C# source.</returns>
+    public static string Emit(
+        string className,
+        string tableName,
+        IReadOnlyList<ColumnMetadata> columns,
+        IReadOnlyList<ScaffoldNavigation> navigations,
+        string ns,
+        bool useRecords,
+        bool nullable)
     {
+        bool anyMappingAttribute = false;
         TypeDeclarationSyntax typeDecl = useRecords
             ? RecordDeclaration(Token(SyntaxKind.RecordKeyword), className)
                 .WithOpenBraceToken(Token(SyntaxKind.OpenBraceToken))
@@ -69,6 +96,12 @@ internal static class EntityEmitter
         typeDecl = typeDecl.AddModifiers(
             Token(SyntaxKind.PublicKeyword),
             Token(SyntaxKind.SealedKeyword));
+
+        if (!NamesMatch(className, tableName))
+        {
+            typeDecl = typeDecl.AddAttributeLists(NameAttribute("Table", tableName));
+            anyMappingAttribute = true;
+        }
 
         var usedNames = new HashSet<string>(StringComparer.Ordinal);
 
@@ -82,7 +115,16 @@ internal static class EntityEmitter
                 usedNames.Add(propName);
             }
 
-            typeDecl = typeDecl.AddMembers(BuildProperty(propName, col, nullable));
+            PropertyDeclarationSyntax property = BuildProperty(propName, col, nullable);
+            if (!NamesMatch(propName, col.Name))
+            {
+                property = property.AddAttributeLists(NameAttribute("Column", col.Name));
+                anyMappingAttribute = true;
+            }
+
+            typeDecl = typeDecl.AddMembers(property.WithLeadingTrivia(
+                Trivia(XmlDocSummary($"Column: {col}.")),
+                ElasticLineFeed));
         }
 
         bool anyCollection = false;
@@ -106,6 +148,11 @@ internal static class EntityEmitter
         if (anyCollection)
         {
             nsDecl = nsDecl.AddUsings(UsingDirective(ParseName("System.Collections.Generic")));
+        }
+
+        if (anyMappingAttribute)
+        {
+            nsDecl = nsDecl.AddUsings(UsingDirective(ParseName("System.ComponentModel.DataAnnotations.Schema")));
         }
 
         foreach (string extraNamespace in CollectColumnNamespaces(columns))
@@ -174,10 +221,28 @@ internal static class EntityEmitter
                 .WithSemicolonToken(Token(SyntaxKind.SemicolonToken));
         }
 
-        return property.WithLeadingTrivia(
-            Trivia(XmlDocSummary($"Column: {col}.")),
-            ElasticLineFeed);
+        return property;
     }
+
+    /// <summary>
+    /// Determines whether an emitted identifier already binds to an Access name without an
+    /// attribute. The library compares column and table names case-insensitively.
+    /// </summary>
+    /// <param name="identifier">The generated C# identifier.</param>
+    /// <param name="accessName">The Access table or column name.</param>
+    /// <returns><see langword="true"/> when no mapping attribute is needed.</returns>
+    private static bool NamesMatch(string identifier, string accessName) =>
+        string.Equals(identifier, accessName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Builds a <c>[Name("value")]</c> attribute list such as <c>[Column("Last Name")]</c>.</summary>
+    /// <param name="attributeName">The attribute name without the <c>Attribute</c> suffix.</param>
+    /// <param name="value">The name the attribute carries.</param>
+    /// <returns>The attribute list.</returns>
+    private static AttributeListSyntax NameAttribute(string attributeName, string value) =>
+        AttributeList(SingletonSeparatedList(
+            Attribute(IdentifierName(attributeName))
+                .WithArgumentList(AttributeArgumentList(SingletonSeparatedList(
+                    AttributeArgument(LiteralExpression(SyntaxKind.StringLiteralExpression, Literal(value))))))));
 
     private static PropertyDeclarationSyntax BuildReferenceNav(string name, string targetType, bool nullable)
     {
@@ -211,7 +276,8 @@ internal static class EntityEmitter
         source = source
             .Replace(eol + "namespace ", eol + eol + "namespace ", StringComparison.Ordinal)
             .Replace(eol + "    /// <summary>", eol + eol + "    /// <summary>", StringComparison.Ordinal)
-            .Replace("{" + eol + eol + "    /// <summary>", "{" + eol + "    /// <summary>", StringComparison.Ordinal);
+            .Replace("{" + eol + eol + "    /// <summary>", "{" + eol + "    /// <summary>", StringComparison.Ordinal)
+            .Replace(eol + eol + eol + "    /// <summary>", eol + eol + "    /// <summary>", StringComparison.Ordinal);
 
         int usingIdx = source.IndexOf(";" + eol + "using ", StringComparison.Ordinal);
         if (usingIdx >= 0)

@@ -78,7 +78,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
                 ? navs
                 : [];
 
-            await File.WriteAllTextAsync(filePath, EntityEmitter.Emit(className, columns, navigations, ns, useRecords, nullable), cancellationToken);
+            await File.WriteAllTextAsync(filePath, EntityEmitter.Emit(className, table, columns, navigations, ns, useRecords, nullable), cancellationToken);
             await output.WriteLineAsync($"  {table} -> {className}.cs ({columns.Count} columns)");
             generated++;
         }

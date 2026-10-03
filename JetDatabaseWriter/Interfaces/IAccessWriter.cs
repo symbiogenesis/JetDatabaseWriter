@@ -50,7 +50,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously inserts a single row by mapping a POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public readable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped and unmapped columns are written as null.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="item">The object whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -70,7 +70,7 @@ public interface IAccessWriter : IAccessBase
     /// <summary>
     /// Asynchronously inserts multiple rows by mapping each POCO's properties to the table's columns.
     /// </summary>
-    /// <typeparam name="T">A class with a parameterless constructor whose public readable properties match column names.</typeparam>
+    /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped and unmapped columns are written as null.</typeparam>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="items">Collection of objects whose properties supply the column values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
