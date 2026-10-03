@@ -67,6 +67,15 @@ public sealed record IndexMetadata
     public int RelatedTablePage { get; init; }
 
     /// <summary>
+    /// Gets the logical-index number (<c>rel_idx_num</c>) of the partner
+    /// index on the table at <see cref="RelatedTablePage"/>, or <c>-1</c>
+    /// when this index does not belong to a relationship. Exposed for
+    /// in-assembly consumers (tests) that check both sides of a relationship
+    /// point at each other; not part of the public schema surface.
+    /// </summary>
+    internal int RelatedIndexNumber { get; init; } = -1;
+
+    /// <summary>
     /// Gets a value indicating whether updates to the parent key cascade to the
     /// child rows (<c>cascade_ups</c> != <c>0</c>). Only meaningful for FK indexes.
     /// </summary>

@@ -177,12 +177,30 @@ internal sealed class LogicalTDefChain
         return resized;
     }
 
+    /// <summary>
+    /// Writes <paramref name="logicalBytes"/> back over the chain's pages,
+    /// allocating or freeing continuation pages as the used length requires,
+    /// and stamps the page type and <c>tdef_len</c> header fields.
+    /// </summary>
+    /// <param name="logicalBytes">The logical TDEF bytes.</param>
+    /// <param name="usedLength">The number of used logical bytes, including the 8-byte page header.</param>
+    /// <param name="allocatePageAsync">Allocates a continuation page.</param>
+    /// <param name="writePageAsync">Writes one physical page.</param>
+    /// <param name="deallocatePageAsync">Frees a continuation page that is no longer needed.</param>
+    /// <param name="writeFreeSpace">
+    /// <see langword="true"/> to stamp the Jet4 / ACE free-space word at
+    /// offset 2; <see langword="false"/> for Jet3, whose TDEF keeps the
+    /// <c>VC</c> signature there.
+    /// </param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the chain retains no physical page.</exception>
     internal async ValueTask WriteAsync(
         byte[] logicalBytes,
         int usedLength,
         Func<byte[], CancellationToken, ValueTask<long>> allocatePageAsync,
         Func<long, byte[], CancellationToken, ValueTask> writePageAsync,
         Func<long, CancellationToken, ValueTask> deallocatePageAsync,
+        bool writeFreeSpace,
         CancellationToken cancellationToken)
     {
         if (this.pageNumbers.Count == 0)
@@ -210,7 +228,10 @@ internal sealed class LogicalTDefChain
         logicalBytes[1] = 0x01;
         int tdefLength = Math.Max(0, usedLength - 8);
         Wi32(logicalBytes, 8, tdefLength);
-        Wu16(logicalBytes, 2, Math.Max(0, this.pageSizeBytes - tdefLength - 8));
+        if (writeFreeSpace)
+        {
+            Wu16(logicalBytes, 2, Math.Max(0, this.pageSizeBytes - tdefLength - 8));
+        }
 
         byte[][] pages = MaterializePages(logicalBytes, usedLength, this.pageSizeBytes, physicalPages);
         for (int pageIndex = 0; pageIndex < pages.Length; pageIndex++)

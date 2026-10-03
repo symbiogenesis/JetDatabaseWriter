@@ -11,11 +11,13 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1204
@@ -701,6 +703,461 @@ internal sealed class RelationshipManager(
     }
 
     // ════════════════════════════════════════════════════════════════
+    // Copy-and-swap schema rewrites (AddColumn / DropColumn / RenameColumn)
+    // ════════════════════════════════════════════════════════════════
+    //
+    // TableSchemaEditor rebuilds a table into a temporary copy and swaps the
+    // copy in. That usually moves the table to a new TDEF page and always
+    // renumbers its logical indexes, while relationship state lives in three
+    // places that must follow the table:
+    //   • the table's own FK logical-idx entries, which CreateTableAsync does
+    //     not emit for the copy;
+    //   • each partner table's FK logical-idx entry, whose rel_tbl_page and
+    //     rel_idx_num name this table's TDEF page and logical-idx number;
+    //   • the MSysRelationships rows, which name the key columns.
+    // The editor calls CaptureForRewriteAsync and EnsureKeyColumnsSurvive
+    // before it writes anything, EmitFkEntriesForRewriteAsync on the copy
+    // before the row copy (so the copy's single index rebuild fills the FK
+    // leaves), and CompleteRewriteAsync once the copy has replaced the table.
+    //
+    // Jet3 is the exception: this library cannot emit the Jet3 FK entry
+    // layout (CreateRelationshipAsync skips it too), so on Jet3 the copy gets
+    // no FK entries and CompleteRewriteAsync removes the partners' entries
+    // that pointed at the old TDEF, instead of leaving them pointing at a
+    // freed page. The MSysRelationships rows still describe the relationship.
+
+    /// <summary>
+    /// Captures the relationship state of <paramref name="tableName"/> before a
+    /// copy-and-swap schema rewrite: its FK logical-idx entries and the key
+    /// columns its <c>MSysRelationships</c> rows name.
+    /// </summary>
+    /// <param name="tableName">The table about to be rewritten.</param>
+    /// <param name="tdefPage">The table's current TDEF page.</param>
+    /// <param name="tableDef">The table's current definition.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The captured state.</returns>
+    internal async ValueTask<RelationshipRewriteState> CaptureForRewriteAsync(
+        string tableName,
+        long tdefPage,
+        TableDef tableDef,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<FkLogicalIndexSnapshot> fkEntries =
+            await this.ReadFkLogicalIndexesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+
+        var keyColumns = new List<RelationshipKeyColumn>();
+        long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        if (msysRelTdefPage > 0)
+        {
+            TableDef msysRelDef = await this.db.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+            List<RelationshipRowSnapshot> rows = await this.catalog.CollectRowsAsync(msysRelTdefPage, msysRelDef, _ => true, cancellationToken).ConfigureAwait(false);
+            foreach (RelationshipRowSnapshot row in rows)
+            {
+                if (string.Equals(row.SzObject, tableName, StringComparison.OrdinalIgnoreCase))
+                {
+                    keyColumns.Add(new RelationshipKeyColumn(row.SzRelationship, row.SzColumn));
+                }
+
+                if (string.Equals(row.SzReferencedObject, tableName, StringComparison.OrdinalIgnoreCase))
+                {
+                    keyColumns.Add(new RelationshipKeyColumn(row.SzRelationship, row.SzReferencedColumn));
+                }
+            }
+        }
+
+        return new RelationshipRewriteState(tableName, tdefPage, fkEntries, keyColumns);
+    }
+
+    /// <summary>
+    /// Throws when a schema rewrite would drop a column that a relationship
+    /// uses as a key column. Microsoft Access refuses the same change, and
+    /// neither the FK index entries nor the <c>MSysRelationships</c> rows could
+    /// follow the column.
+    /// </summary>
+    /// <param name="state">The state captured before the rewrite.</param>
+    /// <param name="mapColumnName">Maps each current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
+    /// <exception cref="InvalidOperationException">Thrown when a relationship key column would be dropped.</exception>
+    internal static void EnsureKeyColumnsSurvive(RelationshipRewriteState state, Func<string, string?> mapColumnName)
+    {
+        foreach (RelationshipKeyColumn key in state.KeyColumns)
+        {
+            if (mapColumnName(key.ColumnName) is null)
+            {
+                throw new InvalidOperationException(
+                    $"Column '{key.ColumnName}' of table '{state.TableName}' is a key column of relationship '{key.RelationshipName}'. " +
+                    "Drop the relationship before dropping the column.");
+            }
+        }
+
+        foreach (FkLogicalIndexSnapshot entry in state.FkEntries)
+        {
+            foreach (string column in entry.ColumnNames)
+            {
+                if (mapColumnName(column) is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Column '{column}' of table '{state.TableName}' is a key column of foreign-key index '{entry.Name}'. " +
+                        "Drop the relationship before dropping the column.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Re-emits the FK logical-idx entries captured in <paramref name="state"/>
+    /// on <paramref name="targetTdefPage"/>, the rebuilt copy of the table, with
+    /// their names, sides and cascade flags. Each entry gets a new logical-idx
+    /// number; an entry that points back at the same table (a self-referencing
+    /// relationship) is pointed at <paramref name="finalTdefPage"/> and its
+    /// partner's new number. Partner tables are not touched here; see
+    /// <see cref="CompleteRewriteAsync"/>. The new FK leaves are empty until the
+    /// caller rebuilds the copy's indexes. Emits nothing on Jet3.
+    /// </summary>
+    /// <param name="state">The state captured before the rewrite.</param>
+    /// <param name="targetTdefPage">The TDEF page of the rebuilt copy.</param>
+    /// <param name="targetDef">The rebuilt copy's table definition.</param>
+    /// <param name="finalTdefPage">The TDEF page the table occupies once the copy has replaced it.</param>
+    /// <param name="mapColumnName">Maps each captured column name to its name in the copy.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The map from each entry's old <c>index_num</c> to its new one.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when a key column is missing from the copy.</exception>
+    /// <exception cref="NotSupportedException">Thrown when the copy's TDEF cannot be mutated because its layout is malformed or not a TDEF.</exception>
+    internal async ValueTask<IReadOnlyDictionary<int, int>> EmitFkEntriesForRewriteAsync(
+        RelationshipRewriteState state,
+        long targetTdefPage,
+        TableDef targetDef,
+        long finalTdefPage,
+        Func<string, string?> mapColumnName,
+        CancellationToken cancellationToken)
+    {
+        var newIndexNumbers = new Dictionary<int, int>();
+        if (state.FkEntries.Count == 0 || this.db.Format == DatabaseFormat.Jet3Mdb)
+        {
+            return newIndexNumbers;
+        }
+
+        int[][] columnNumbers = new int[state.FkEntries.Count][];
+        for (int i = 0; i < state.FkEntries.Count; i++)
+        {
+            FkLogicalIndexSnapshot entry = state.FkEntries[i];
+            columnNumbers[i] = new int[entry.ColumnNames.Count];
+            for (int k = 0; k < entry.ColumnNames.Count; k++)
+            {
+                string? mapped = mapColumnName(entry.ColumnNames[k]);
+                int columnIndex = mapped is null ? -1 : targetDef.FindColumnIndex(mapped);
+                if (columnIndex < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Column '{entry.ColumnNames[k]}' of foreign-key index '{entry.Name}' is missing from the rebuilt table '{state.TableName}'.");
+                }
+
+                columnNumbers[i][k] = targetDef.Columns[columnIndex].ColNum;
+            }
+        }
+
+        // Each emitted entry is prepended to the logical-idx list, so emitting
+        // last-to-first keeps the original entry order. Each one also takes the
+        // next free logical-idx number, which lets a self-referencing pair
+        // learn its partner's number before either side is written.
+        LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(targetTdefPage, cancellationToken).ConfigureAwait(false);
+        if (!this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
+        {
+            throw new NotSupportedException(
+                $"TDEF at page {targetTdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
+        }
+
+        int nextIndexNumber = NextLogicalIdxNumber(chain.Bytes, in layout);
+        for (int i = state.FkEntries.Count - 1; i >= 0; i--)
+        {
+            newIndexNumbers[state.FkEntries[i].IndexNumber] = nextIndexNumber++;
+        }
+
+        for (int i = state.FkEntries.Count - 1; i >= 0; i--)
+        {
+            FkLogicalIndexSnapshot entry = state.FkEntries[i];
+            bool selfReferencing = entry.RelTblPage == state.TDefPage;
+            int relIdxNum = selfReferencing && newIndexNumbers.TryGetValue(entry.RelIdxNum, out int partnerNumber)
+                ? partnerNumber
+                : entry.RelIdxNum;
+
+            (FkSidePlan plan, List<string> existingNames) = await this.PrepareFkSideAsync(targetTdefPage, columnNumbers[i], cancellationToken).ConfigureAwait(false);
+            plan = plan with { LogicalIdxNum = newIndexNumbers[entry.IndexNumber] };
+            if (plan.AllocatesNewRealIdx)
+            {
+                byte[] leaf = IndexPageCodec.BuildLeafPage(
+                    IndexPageLayout.Jet4,
+                    this.db.PageSizeBytes,
+                    targetTdefPage,
+                    [],
+                    enablePrefixCompression: false);
+                long leafPage = await this.pageAllocator.AllocatePageAsync(leaf, cancellationToken).ConfigureAwait(false);
+                plan = plan.WithLeafPage(leafPage);
+            }
+
+            await this.EmitFkLogicalIdxAsync(
+                targetTdefPage,
+                columnNumbers[i],
+                IndexHelpers.MakeUniqueLogicalIdxName(entry.Name, existingNames),
+                plan,
+                relTblTypeThisSide: entry.RelTblType,
+                relIdxNumOtherSide: relIdxNum,
+                relTblPageOther: selfReferencing ? finalTdefPage : entry.RelTblPage,
+                cascadeUps: entry.CascadeUps,
+                cascadeDels: entry.CascadeDels,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return newIndexNumbers;
+    }
+
+    /// <summary>
+    /// Finishes a schema rewrite once the rebuilt copy has replaced the table.
+    /// Points each partner table's FK logical-idx entry at
+    /// <paramref name="finalTdefPage"/> and at the re-emitted entry's new
+    /// logical-idx number, or removes the partner's entry when this side was
+    /// not re-emitted (Jet3), and writes renamed key columns into the
+    /// <c>MSysRelationships</c> rows.
+    /// </summary>
+    /// <param name="state">The state captured before the rewrite.</param>
+    /// <param name="finalTdefPage">The TDEF page the table now occupies.</param>
+    /// <param name="newIndexNumbers">The map returned by <see cref="EmitFkEntriesForRewriteAsync"/>.</param>
+    /// <param name="mapColumnName">Maps each captured column name to its name after the rewrite.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    internal async ValueTask CompleteRewriteAsync(
+        RelationshipRewriteState state,
+        long finalTdefPage,
+        IReadOnlyDictionary<int, int> newIndexNumbers,
+        Func<string, string?> mapColumnName,
+        CancellationToken cancellationToken)
+    {
+        if (state.IsEmpty)
+        {
+            return;
+        }
+
+        foreach (FkLogicalIndexSnapshot entry in state.FkEntries)
+        {
+            if (entry.RelTblPage == state.TDefPage || entry.RelIdxNum < 0)
+            {
+                continue;
+            }
+
+            int? newIndexNumber = newIndexNumbers.TryGetValue(entry.IndexNumber, out int number) ? number : null;
+            await this.UpdatePartnerFkEntryAsync(
+                entry.RelTblPage,
+                entry.RelIdxNum,
+                state.TDefPage,
+                finalTdefPage,
+                newIndexNumber,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        await this.RenameKeyColumnsAsync(state, mapColumnName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads every FK logical-idx entry (<c>index_type = 0x02</c>) on the TDEF at
+    /// <paramref name="tdefPage"/>. Entries whose key columns cannot be resolved
+    /// against <paramref name="tableDef"/> are skipped.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table definition, used to name the key columns.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<IReadOnlyList<FkLogicalIndexSnapshot>> ReadFkLogicalIndexesAsync(
+        long tdefPage,
+        TableDef tableDef,
+        CancellationToken cancellationToken)
+    {
+        LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] td = chain.Bytes;
+        if (!this.TryParseFkTDefLayout(td, out FkTDefLayout layout))
+        {
+            return [];
+        }
+
+        var columnNames = new Dictionary<int, string>(tableDef.Columns.Count);
+        foreach (ColumnInfo column in tableDef.Columns)
+        {
+            columnNames[column.ColNum] = column.Name;
+        }
+
+        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(this.db, td, layout.LogIdxNamesStart, layout.NumIdx);
+        var result = new List<FkLogicalIndexSnapshot>();
+        for (int li = 0; li < layout.NumIdx && li < names.Count; li++)
+        {
+            int f = this.db.IndexLayoutInfo.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
+            if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] != (byte)IndexKind.ForeignKey)
+            {
+                continue;
+            }
+
+            int realIdxNum = Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset);
+            if (realIdxNum < 0 || realIdxNum >= layout.NumRealIdx
+                || !this.db.IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, layout.RealIdxDescStart, realIdxNum, out _, out List<KeyColumn> keyColumns)
+                || keyColumns.Count == 0)
+            {
+                continue;
+            }
+
+            var keyColumnNames = new List<string>(keyColumns.Count);
+            foreach (KeyColumn keyColumn in keyColumns)
+            {
+                if (!columnNames.TryGetValue(keyColumn.ColNum, out string? columnName))
+                {
+                    break;
+                }
+
+                keyColumnNames.Add(columnName);
+            }
+
+            if (keyColumnNames.Count != keyColumns.Count)
+            {
+                continue;
+            }
+
+            result.Add(new FkLogicalIndexSnapshot(
+                names[li],
+                Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset),
+                keyColumnNames,
+                td[f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblTypeOffset],
+                Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset),
+                Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset),
+                td[f + Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset],
+                td[f + Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset]));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// On the partner TDEF at <paramref name="partnerTdefPage"/>, finds the FK
+    /// logical-idx entry numbered <paramref name="partnerIndexNumber"/> that
+    /// points at <paramref name="oldTdefPage"/>. Points it at
+    /// <paramref name="newTdefPage"/> and <paramref name="newRelIdxNum"/>, or
+    /// removes it (with its name) when <paramref name="newRelIdxNum"/> is
+    /// <see langword="null"/> because the rewritten side has no matching entry.
+    /// Does nothing when the partner TDEF or entry is not found.
+    /// </summary>
+    /// <param name="partnerTdefPage">The partner table's TDEF page.</param>
+    /// <param name="partnerIndexNumber">The partner entry's <c>index_num</c>.</param>
+    /// <param name="oldTdefPage">The rewritten table's former TDEF page.</param>
+    /// <param name="newTdefPage">The rewritten table's TDEF page.</param>
+    /// <param name="newRelIdxNum">The re-emitted entry's logical-idx number, or <see langword="null"/> to remove the partner entry.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask UpdatePartnerFkEntryAsync(
+        long partnerTdefPage,
+        int partnerIndexNumber,
+        long oldTdefPage,
+        long newTdefPage,
+        int? newRelIdxNum,
+        CancellationToken cancellationToken)
+    {
+        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
+            partnerTdefPage,
+            this.db.PageSizeBytes,
+            this.db.ReadPageAsync,
+            DatabaseFile.ReturnPage,
+            retainPageNumbers: true,
+            cancellationToken).ConfigureAwait(false);
+        if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
+        {
+            return;
+        }
+
+        byte[] td = chain.Bytes;
+        for (int li = 0; li < layout.NumIdx; li++)
+        {
+            int f = this.db.IndexLayoutInfo.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
+            if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] != (byte)IndexKind.ForeignKey
+                || Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset) != partnerIndexNumber
+                || Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) != oldTdefPage)
+            {
+                continue;
+            }
+
+            if (newRelIdxNum is int relIdxNum)
+            {
+                Wi32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset, checked((int)newTdefPage));
+                Wi32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset, relIdxNum);
+                await this.WriteLogicalTDefChainAsync(chain, td, layout.CurrentEnd, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                _ = await this.RemoveLogicalIdxEntryAsync(chain, layout, li, cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+    }
+
+    /// <summary>
+    /// Writes the new names of renamed key columns into the
+    /// <c>MSysRelationships</c> rows that name them (<c>szColumn</c> where the
+    /// table is the child, <c>szReferencedColumn</c> where it is the parent).
+    /// </summary>
+    /// <param name="state">The state captured before the rewrite.</param>
+    /// <param name="mapColumnName">Maps each captured column name to its name after the rewrite.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask RenameKeyColumnsAsync(
+        RelationshipRewriteState state,
+        Func<string, string?> mapColumnName,
+        CancellationToken cancellationToken)
+    {
+        bool anyRenamed = false;
+        foreach (RelationshipKeyColumn key in state.KeyColumns)
+        {
+            if (IsRenamed(key.ColumnName))
+            {
+                anyRenamed = true;
+                break;
+            }
+        }
+
+        if (!anyRenamed)
+        {
+            return;
+        }
+
+        long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        if (msysRelTdefPage <= 0)
+        {
+            return;
+        }
+
+        TableDef msysRelDef = await this.db.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
+        int szColumnIdx = msysRelDef.FindColumnIndex("szColumn");
+        int szReferencedColumnIdx = msysRelDef.FindColumnIndex("szReferencedColumn");
+        if (szColumnIdx < 0 || szReferencedColumnIdx < 0)
+        {
+            return;
+        }
+
+        List<RelationshipRowSnapshot> rows = await this.catalog.CollectRowsAsync(msysRelTdefPage, msysRelDef, _ => true, cancellationToken).ConfigureAwait(false);
+        var replacementRows = new List<object[]>(rows.Count);
+        foreach (RelationshipRowSnapshot row in rows)
+        {
+            object[] values = (object[])row.RowValues.Clone();
+            if (string.Equals(row.SzObject, state.TableName, StringComparison.OrdinalIgnoreCase) && IsRenamed(row.SzColumn))
+            {
+                values[szColumnIdx] = mapColumnName(row.SzColumn)!;
+            }
+
+            if (string.Equals(row.SzReferencedObject, state.TableName, StringComparison.OrdinalIgnoreCase) && IsRenamed(row.SzReferencedColumn))
+            {
+                values[szReferencedColumnIdx] = mapColumnName(row.SzReferencedColumn)!;
+            }
+
+            replacementRows.Add(values);
+        }
+
+        await this.catalog.RewriteRowsAsync(msysRelTdefPage, msysRelDef, replacementRows, cancellationToken).ConfigureAwait(false);
+
+        bool IsRenamed(string columnName)
+            => mapColumnName(columnName) is string mapped && !string.Equals(mapped, columnName, StringComparison.Ordinal);
+    }
+
+    // ════════════════════════════════════════════════════════════════
     // Drop / Rename relationship
     // ════════════════════════════════════════════════════════════════
     //
@@ -984,23 +1441,47 @@ internal sealed class RelationshipManager(
             return -1;
         }
 
-        if (!this.TryGetLogicalIdxNameRange(td, in layout, matchEntryIdx, out int removedNameStart, out int removedNameLen))
+        return await this.RemoveLogicalIdxEntryAsync(chain, layout, matchEntryIdx, cancellationToken).ConfigureAwait(false)
+            ? releasedRealIdxNum
+            : -1;
+    }
+
+    /// <summary>
+    /// Removes the <paramref name="entryIndex"/>-th logical-idx entry and its
+    /// name record from the TDEF held in <paramref name="chain"/>, decrements
+    /// <c>num_idx</c>, and writes the chain back. The backing real-idx slot is
+    /// left in place. Works on every format's entry size. Returns
+    /// <see langword="false"/> when the name section cannot be walked.
+    /// </summary>
+    /// <param name="chain">The TDEF chain read from disk.</param>
+    /// <param name="layout">The parsed layout of <paramref name="chain"/>.</param>
+    /// <param name="entryIndex">The zero-based position of the entry to remove.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<bool> RemoveLogicalIdxEntryAsync(
+        LogicalTDefChain chain,
+        FkTDefLayout layout,
+        int entryIndex,
+        CancellationToken cancellationToken)
+    {
+        byte[] td = chain.Bytes;
+        if (!this.TryGetLogicalIdxNameRange(td, in layout, entryIndex, out int removedNameStart, out int removedNameLen))
         {
-            return -1;
+            return false;
         }
 
         // Mutate `td` in place via two left-shifts (Buffer.BlockCopy supports
-        // overlapping regions). Step 1 collapses the 28-byte logical-idx
-        // entry; step 2 collapses the variable-length name. The trailing
-        // variable-length-column block rides along with the second shift.
-        int removedEntryStart = layout.LogIdxStart + (matchEntryIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-        int afterEntry = removedEntryStart + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
+        // overlapping regions). Step 1 collapses the logical-idx entry; step 2
+        // collapses the variable-length name. The trailing variable-length-
+        // column block rides along with the second shift.
+        int entrySize = this.db.IndexLayoutInfo.LogicalEntrySize;
+        int removedEntryStart = this.db.IndexLayoutInfo.LogicalIdxEntryOffset(layout.LogIdxStart, entryIndex);
+        int afterEntry = removedEntryStart + entrySize;
 
-        // Step 1 — drop the 28-byte logical-idx entry.
+        // Step 1 — drop the logical-idx entry.
         Buffer.BlockCopy(td, afterEntry, td, removedEntryStart, layout.CurrentEnd - afterEntry);
-        int shiftedNameStart = removedNameStart - Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
+        int shiftedNameStart = removedNameStart - entrySize;
         int afterName = shiftedNameStart + removedNameLen;
-        int endAfterStep1 = layout.CurrentEnd - Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
+        int endAfterStep1 = layout.CurrentEnd - entrySize;
 
         // Step 2 — drop the name record.
         Buffer.BlockCopy(td, afterName, td, shiftedNameStart, endAfterStep1 - afterName);
@@ -1015,7 +1496,7 @@ internal sealed class RelationshipManager(
         Wi32(td, 8, finalEnd - 8);
 
         await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
-        return releasedRealIdxNum;
+        return true;
     }
 
     /// <summary>
@@ -1226,6 +1707,7 @@ internal sealed class RelationshipManager(
             this.pageAllocator.AllocatePageAsync,
             this.db.WritePageAsync,
             this.pageAllocator.DeallocatePageAsync,
+            writeFreeSpace: this.db.Format != DatabaseFormat.Jet3Mdb,
             cancellationToken);
 
     /// <summary>
@@ -1288,8 +1770,8 @@ internal sealed class RelationshipManager(
             return false;
         }
 
-        int logIdxStart = realIdxDescStart + (numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
-        int logIdxNamesStart = logIdxStart + (numIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
+        int logIdxStart = this.db.IndexLayoutInfo.LogicalIdxStart(realIdxDescStart, numRealIdx);
+        int logIdxNamesStart = this.db.IndexLayoutInfo.LogicalIdxNamesStart(logIdxStart, numIdx);
         int logIdxNamesLen = this.MeasureLogicalIdxNamesLength(td, logIdxNamesStart, numIdx);
         if (logIdxNamesLen < 0)
         {

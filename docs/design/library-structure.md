@@ -285,6 +285,9 @@ JetDatabaseWriter/
 │   ├── FkRelationship.cs                  (enforced FK metadata model)
 │   ├── FkContext.cs                       (per-mutation FK lookup cache)
 │   ├── RelationshipRowSnapshot.cs         (MSysRelationships row rewrite snapshot)
+│   ├── RelationshipRewriteState.cs        (a table's relationship state captured before a column add/drop/rename rewrite)
+│   ├── FkLogicalIndexSnapshot.cs          (one FK logical-index entry carried across that rewrite)
+│   ├── RelationshipKeyColumn.cs           (a relationship key column named by MSysRelationships)
 │   ├── LinkedTableManager.cs              (linked-table catalog scan, source-path policy, delimited-text read-through, link creation)
 │   ├── LinkedTableReader.cs               (reader-side link cache and read-through; opens a separate reader for Access-file links)
 │   └── LinkedSourcePolicy.cs              (linked-source open options plus the host path relative sources anchor to)
@@ -422,7 +425,7 @@ AccessWriter → WriterServices
   TableDataWriter     → TableCatalog, TableRowStore, IndexMaintainer, UniqueIndexChecker, AutoNumberMaintainer,
                         ConstraintRegistry, RelationshipEnforcer, ComplexColumnManager, TableSnapshotReader
   TableSchemaEditor   → TableCatalog, TableRowStore, IndexMaintainer, PageAllocator, LongValueEncoder, CatalogWriter,
-                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, TableSnapshotReader
+                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader
   RelationshipManager → TableCatalog, IndexMaintainer, PageAllocator, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
   RelationshipEnforcer → TableCatalog, TableRowStore, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader
   ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
