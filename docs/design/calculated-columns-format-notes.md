@@ -101,6 +101,20 @@ the rebuilt descriptor carries the result type, as the writer's own tables do.
 Rows that earlier builds of this library inserted into or updated in such
 tables were encoded by the descriptor type and are not repaired.
 
+`RenameColumnAsync` also rewrites the renamed column's references in every
+`Expression`, `ValidationRule` and `DefaultValue` of the table, before anything
+is written. `ExpressionFieldReferences` scans the stored text without parsing
+it, so an expression the engine cannot parse (a stored `%`) is renamed too. It
+skips string, `#date#` and `{guid ...}` literals, numbers and radix literals,
+and rewrites `[Old]`, a bare `Old` (not a keyword, a `vb` constant, a function
+call or a `$` name) and `[Table].[Old]` / `Table.Old` qualified by the table's
+own name as `[New]`. Other qualified names (`[Other].[Old]`, `Forms![F]![Old]`)
+are left alone. Every Access-authored expression in the fixtures uses
+`[Field]` brackets. A rename whose new name contains `]` throws
+`ArgumentException` when an expression names the column, since a bracketed
+name cannot hold `]`. What Access itself does when a field that a calculated
+column uses is renamed is not verified.
+
 Two result types have Access-specific payload encodings inside the wrapper:
 
 - `Boolean`: one byte, `0xFF` for true and `0x00` for false. Calculated booleans

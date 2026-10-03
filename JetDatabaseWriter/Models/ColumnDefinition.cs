@@ -169,7 +169,9 @@ public sealed record ColumnDefinition
     /// </para>
     /// <para>
     /// When both are set, the declaring writer uses the CLR <see cref="DefaultValue"/> and
-    /// persists this expression, so later writers use the expression.
+    /// persists this expression, so later writers use the expression. When a column the
+    /// expression names is renamed with <see cref="Interfaces.IAccessSchema.RenameColumnAsync"/>,
+    /// its references become <c>[New]</c>.
     /// </para>
     /// <para>
     /// The expression is evaluated with this library's calculated-column expression engine.
@@ -201,7 +203,9 @@ public sealed record ColumnDefinition
     /// <c>"In (1,2,3)"</c>, <c>"Like \"A*\""</c>, <c>"&lt;=Date()"</c>), a bare value term is
     /// an equality test (<c>"0 Or &gt;100"</c>), and a term may also name the column
     /// (<c>"Len([Code]) = 3"</c>). Comparisons with Null are Null and only a False result
-    /// rejects, so a rule that does not test for Null accepts Null.
+    /// rejects, so a rule that does not test for Null accepts Null. When a column the rule
+    /// names is renamed with <see cref="Interfaces.IAccessSchema.RenameColumnAsync"/>, its
+    /// references become <c>[New]</c>, so the rule stays enforced.
     /// </para>
     /// <para>
     /// The rule is evaluated with this library's calculated-column expression engine. A rule
@@ -364,6 +368,9 @@ public sealed record ColumnDefinition
     /// <c>%</c> operator, or that the parser cannot read, throws
     /// <see cref="ArgumentException"/>. Persisted in <c>MSysObjects.LvProp</c>
     /// as the <see cref="Constants.ColumnPropertyNames.Expression"/> property.
+    /// When a column the expression names is renamed with
+    /// <see cref="Interfaces.IAccessSchema.RenameColumnAsync"/>, its references
+    /// (<c>[Old]</c> or a bare <c>Old</c>) become <c>[New]</c>.
     /// </summary>
     public string? CalculationExpression { get; init; }
 
