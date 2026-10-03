@@ -20,6 +20,14 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
     public static DataPageLayout For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
         ? new DataPageLayout(TDefOff: 4, NumRows: 12, RowsStart: 14)
         : new DataPageLayout(TDefOff: 4, NumRows: 8, RowsStart: 10);
+
+    /// <summary>
+    /// Returns the longest row an empty data page of <paramref name="pageSize"/>
+    /// bytes holds: the page less its header and one 2-byte row-offset slot,
+    /// 2,036 bytes on Jet3 and 4,080 on Jet4/ACE.
+    /// </summary>
+    /// <param name="pageSize">The page size in bytes.</param>
+    public int MaxRowLength(int pageSize) => pageSize - this.RowsStart - 2;
 }
 
 /// <summary>

@@ -293,8 +293,10 @@ internal sealed class RowEncoder(DatabaseFile db)
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
     /// <exception cref="JetLimitationException">
-    /// A Jet3 row would have more than 255 columns or variable columns, or
-    /// 255 variable columns with an EOD the jump table cannot encode.
+    /// The row is longer than one data page holds
+    /// (<see cref="DataPageLayout.MaxRowLength"/>), or a Jet3 row would
+    /// have more than 255 columns or variable columns, or 255 variable columns
+    /// with an EOD the jump table cannot encode.
     /// </exception>
     internal byte[] SerializeRow(TableDef tableDef, object[] values)
     {
@@ -403,6 +405,14 @@ internal sealed class RowEncoder(DatabaseFile db)
         int baseRowLength = db.RowFields.NumCols + fixedAreaSize + varPayloadSize + db.RowFields.Eod + (varLen * db.RowFields.VarEntry) + db.RowFields.VarLen + nullMaskLen;
         int jumpSize = jet3 ? Jet3JumpTable.CountForLength(baseRowLength) : 0;
         int rowLength = baseRowLength + jumpSize;
+
+        // A row never spans pages, and the caller has written nothing yet.
+        int maxRowLength = db.DataPage.MaxRowLength(db.PageSizeBytes);
+        if (rowLength > maxRowLength)
+        {
+            throw new JetLimitationException(
+                $"The row is {rowLength} bytes, which exceeds the {maxRowLength}-byte maximum of one data page. Store fewer or shorter inline values; MEMO values over {Constants.LongValue.MaxInlineMemoBytes} bytes and OLE values over {Constants.LongValue.MaxInlineOleBytes} bytes are stored outside the row.");
+        }
 
         byte[] row = new byte[rowLength];
         int pos = 0;
