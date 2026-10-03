@@ -1347,15 +1347,17 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// position and EOD pointer) for a row at <paramref name="rowStart"/>.
     /// Returns <see langword="false"/> when the row is too small or otherwise
     /// malformed; on success <paramref name="layout"/> is populated and can be
-    /// passed to <see cref="ResolveColumnSlice"/> for any column.
+    /// passed to <see cref="ResolveColumnSlice"/> for any column. Jet3 offsets
+    /// past 255 are resolved through the row's jump table
+    /// (<see cref="Pages.Jet3JumpTable"/>).
     /// </summary>
     /// <param name="page">Data page containing the row.</param>
     /// <param name="rowStart">Offset of the row within <paramref name="page"/>.</param>
     /// <param name="rowSize">Total size of the row in bytes.</param>
     /// <param name="hasVarColumns">When <see langword="false"/>, the var-length
-    /// metadata is assumed to be omitted entirely (no varLen byte, no jump
-    /// bytes, no var-offset table, no EOD marker) — which is how Jet lays out
-    /// rows for tables with zero variable-length columns.</param>
+    /// metadata is not read (no varLen byte, no jump table, no var-offset
+    /// table, no EOD marker): Access omits it for tables with zero
+    /// variable-length columns, and the writer's unused trailer is skipped.</param>
     /// <param name="layout">Receives the parsed layout on success.</param>
     internal bool TryParseRowLayout(ReadOnlySpan<byte> page, int rowStart, int rowSize, bool hasVarColumns, out RowLayout layout)
         => RowDecodePlan.TryParseRowLayout(this.Format, this.RowFields, page, rowStart, rowSize, hasVarColumns, out layout);

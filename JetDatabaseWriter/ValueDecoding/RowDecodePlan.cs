@@ -86,17 +86,20 @@ internal sealed class RowDecodePlan
     /// position and EOD pointer) for a row at <paramref name="rowStart"/>.
     /// Returns <see langword="false"/> when the row is too small or otherwise
     /// malformed; on success <paramref name="layout"/> is populated and can be
-    /// passed to <see cref="ResolveColumnSlice"/> for any column.
+    /// passed to <see cref="ResolveColumnSlice"/> for any column. On Jet3 the
+    /// one-byte EOD and offsets get their high part from the row's jump table
+    /// (<see cref="Jet3JumpTable"/>), so <see cref="RowLayout.Eod"/> is the
+    /// full row-relative offset.
     /// </summary>
-    /// <param name="format">The database format (selects the Jet3 jump-byte rule).</param>
+    /// <param name="format">The database format (selects the Jet3 jump-table rule).</param>
     /// <param name="rowFields">Row-trailer field sizes for the format.</param>
     /// <param name="page">Data page containing the row.</param>
     /// <param name="rowStart">Offset of the row within <paramref name="page"/>.</param>
     /// <param name="rowSize">Total size of the row in bytes.</param>
     /// <param name="hasVarColumns">When <see langword="false"/>, the var-length
-    /// metadata is assumed to be omitted entirely (no varLen byte, no jump
-    /// bytes, no var-offset table, no EOD marker) — which is how Jet lays out
-    /// rows for tables with zero variable-length columns.</param>
+    /// metadata is not read (no varLen byte, no jump table, no var-offset
+    /// table, no EOD marker): Access omits it for tables with zero
+    /// variable-length columns, and the writer's unused trailer is skipped.</param>
     /// <param name="layout">Receives the parsed layout on success.</param>
     internal static bool TryParseRowLayout(
         DatabaseFormat format,
@@ -126,36 +129,36 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        int varLen;
-        int varTableStart;
-        int eod;
         if (!hasVarColumns)
         {
-            varLen = 0;
-            varTableStart = nullMaskPos;
-            eod = nullMaskPos;
+            layout = new RowLayout(numCols, nullMaskPos, VarLen: 0, VarTableStart: nullMaskPos, Eod: nullMaskPos);
+            return true;
         }
-        else
+
+        int varLenPos = nullMaskPos - rowFields.VarLen;
+        if (varLenPos < rowFields.NumCols)
         {
-            int varLenPos = nullMaskPos - rowFields.VarLen;
-            if (varLenPos < rowFields.NumCols)
-            {
-                return false;
-            }
-
-            varLen = rowFields.ReadVarLen(page, rowStart + varLenPos);
-            int jumpSz = format != DatabaseFormat.Jet3Mdb ? 0 : (rowSize / 256);
-            varTableStart = varLenPos - jumpSz - (varLen * rowFields.VarEntry);
-            int eodPos = varTableStart - rowFields.Eod;
-            if (eodPos < rowFields.NumCols)
-            {
-                return false;
-            }
-
-            eod = rowFields.ReadEod(page, rowStart + eodPos);
+            return false;
         }
 
-        layout = new RowLayout(numCols, nullMaskPos, varLen, varTableStart, eod);
+        int varLen = rowFields.ReadVarLen(page, rowStart + varLenPos);
+        int jumpEntries = format != DatabaseFormat.Jet3Mdb ? 0 : Jet3JumpTable.EntryCount(rowSize);
+        int varTableStart = varLenPos - jumpEntries - (varLen * rowFields.VarEntry);
+        int eodPos = varTableStart - rowFields.Eod;
+        if (eodPos < rowFields.NumCols)
+        {
+            return false;
+        }
+
+        // Every jump entry lies between the EOD byte and var_len, inside the row.
+        int usableJumps = Jet3JumpTable.UsableEntryCount(jumpEntries, eodPos);
+        int eod = rowFields.ReadEod(page, rowStart + eodPos);
+        if (usableJumps != 0)
+        {
+            eod += Jet3JumpTable.HighPart(page, rowStart, varLenPos, usableJumps, varLen);
+        }
+
+        layout = new RowLayout(numCols, nullMaskPos, varLen, varTableStart, eod, varLenPos, usableJumps);
         return true;
     }
 
@@ -217,12 +220,20 @@ internal sealed class RowDecodePlan
         }
 
         int varOff = rowFields.ReadVarEntry(page, rowStart + entryPos);
+        if (layout.JumpCount != 0)
+        {
+            varOff += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, col.VarIdx);
+        }
 
         int varEnd;
         if (col.VarIdx + 1 < layout.VarLen)
         {
             int nextEntry = layout.VarTableStart + ((layout.VarLen - 2 - col.VarIdx) * rowFields.VarEntry);
             varEnd = rowFields.ReadVarEntry(page, rowStart + nextEntry);
+            if (layout.JumpCount != 0)
+            {
+                varEnd += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, col.VarIdx + 1);
+            }
         }
         else
         {

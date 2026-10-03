@@ -42,6 +42,7 @@ applyTo: "**"
 | **Null mask** | Row bitmap indicating which columns are present; BOOL values are stored here rather than in the fixed area |
 | **Fixed row area** | Row section containing fixed-width column payloads |
 | **Variable-length trailer** | Row tail holding offsets for variable-width columns plus the EOD marker |
+| **Jump table (Jet3)** | `(rowLength - 1) / 256` one-byte entries between a Jet3 row's offset table and `var_len`, supplying the high part of its one-byte EOD and offsets: each entry is the index of the first offset at or past its 256-byte boundary, and an unreached boundary's entry is a `0xFF` dummy (`Jet3JumpTable`; see `docs/design/data-page-row-format-notes.md`) |
 | **PK** | Primary Key |
 | **FK** | Foreign Key |
 | **DDL** | Data Definition Language |
