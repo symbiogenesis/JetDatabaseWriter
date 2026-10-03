@@ -8,7 +8,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -563,8 +562,8 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         MemoryStream stream = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
 
         long pageBefore = await GetTDefPageAsync(stream, table);
-        Dictionary<long, List<IndexMetadata>> fksBefore = await ReadForeignKeyEntriesAsync(stream);
-        AssertForeignKeyLinksConsistent(fksBefore);
+        Dictionary<long, List<IndexMetadata>> fksBefore = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
+        ForeignKeyLinks.AssertConsistent(fksBefore);
         int touchingTable = fksBefore.Sum(pair => pair.Value.Count(i => pair.Key == pageBefore || i.RelatedTablePage == pageBefore));
         Assert.True(touchingTable > 0, $"Fixture table '{table}' should take part in a relationship with FK index entries.");
 
@@ -591,8 +590,8 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         }
 
         long pageAfter = await GetTDefPageAsync(stream, table);
-        Dictionary<long, List<IndexMetadata>> fksAfter = await ReadForeignKeyEntriesAsync(stream);
-        AssertForeignKeyLinksConsistent(fksAfter);
+        Dictionary<long, List<IndexMetadata>> fksAfter = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
+        ForeignKeyLinks.AssertConsistent(fksAfter);
 
         int totalBefore = fksBefore.Sum(pair => pair.Value.Count);
         int totalAfter = fksAfter.Sum(pair => pair.Value.Count);
@@ -604,65 +603,6 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         {
             Assert.Equal(relationshipsBefore, (await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken)).Count);
             Assert.Equal(rowsBefore, (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count);
-        }
-    }
-
-    /// <summary>
-    /// Reads every FK logical-index entry that belongs to a relationship from
-    /// every user table, following <c>rel_tbl_page</c> links to tables the
-    /// catalog scan does not list, keyed by TDEF page.
-    /// </summary>
-    /// <param name="stream">The database.</param>
-    private static async ValueTask<Dictionary<long, List<IndexMetadata>>> ReadForeignKeyEntriesAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
-        var pending = new Queue<long>();
-        foreach (CatalogEntry entry in await harness.Services.TableCatalog.GetUserTablesAsync(TestContext.Current.CancellationToken))
-        {
-            pending.Enqueue(entry.TDefPage);
-        }
-
-        var result = new Dictionary<long, List<IndexMetadata>>();
-        var seen = new HashSet<long>();
-        while (pending.Count > 0)
-        {
-            long page = pending.Dequeue();
-            if (!seen.Add(page))
-            {
-                continue;
-            }
-
-            TableDef? definition = await harness.ReadTableDefAsync(page, TestContext.Current.CancellationToken);
-            byte[]? tdef = await harness.Database.ReadTDefBytesAsync(page, TestContext.Current.CancellationToken);
-            if (definition is null || tdef is null)
-            {
-                result[page] = [];
-                continue;
-            }
-
-            List<IndexMetadata> fks = [.. IndexCatalogReader.ReadMetadata(harness.Database, tdef, definition.Columns).Where(i => i.Kind == IndexKind.ForeignKey && i.IsForeignKey)];
-            result[page] = fks;
-            foreach (IndexMetadata fk in fks)
-            {
-                pending.Enqueue(fk.RelatedTablePage);
-            }
-        }
-
-        return result;
-    }
-
-    private static void AssertForeignKeyLinksConsistent(Dictionary<long, List<IndexMetadata>> fksByPage)
-    {
-        foreach ((long page, List<IndexMetadata> fks) in fksByPage)
-        {
-            foreach (IndexMetadata fk in fks)
-            {
-                Assert.True(
-                    fksByPage.TryGetValue(fk.RelatedTablePage, out List<IndexMetadata>? partner)
-                        && partner.Any(p => p.IndexNumber == fk.RelatedIndexNumber && p.RelatedTablePage == page && p.RelatedIndexNumber == fk.IndexNumber),
-                    $"FK index '{fk.Name}' (#{fk.IndexNumber}) on TDEF page {page} points at page {fk.RelatedTablePage} entry #{fk.RelatedIndexNumber}, which does not point back.");
-            }
         }
     }
 

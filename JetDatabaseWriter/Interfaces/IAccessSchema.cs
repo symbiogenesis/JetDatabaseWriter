@@ -70,11 +70,16 @@ public interface IAccessSchema : IAccessBase
 
     /// <summary>
     /// Asynchronously drops (deletes) the specified table and all of its data.
-    /// Throws if the table does not exist.
+    /// Throws if the table does not exist. The table must not take part in any
+    /// foreign-key relationship, as its primary or its foreign table, including a
+    /// relationship that does not enforce referential integrity or one that relates
+    /// the table to itself: Microsoft Access refuses such a drop (error 3303), so drop
+    /// the relationships first with <see cref="DropRelationshipAsync"/>.
     /// </summary>
-    /// <param name="tableName">Name of the table to drop.</param>
+    /// <param name="tableName">Name of the table to drop (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the table does not exist, or, before anything is written, when a relationship names it; the message lists the relationships.</exception>
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
