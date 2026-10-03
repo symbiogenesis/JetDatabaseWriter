@@ -246,6 +246,21 @@ Delivered:
   These rules apply to persisted `DefaultValue` and `ValidationRule`
   expressions too, so `=Date()+7` and `>=Date()-30` are applied instead of
   being skipped as unsupported.
+- `And`, `Or`, `Not`, `Xor`, `Eqv` and `Imp` follow VBA (OLE Automation
+  `VarAnd` and friends; `AccessVariantOperators`): logical on two Booleans and
+  bitwise on numbers (`12 And 10` is 8, `Not 5` is -6, `True And 12` is 12).
+  Two Bytes give a Byte, any mix of Boolean, Byte and Integer an Integer, and
+  other numbers, dates and numeric text are rounded half to even to a Long
+  (`2.5 And 3` is 2); a value beyond the Long range throws
+  `OverflowException` and non-numeric text throws `InvalidCastException`.
+  Null is three-valued: `Null And False` is False, `Null And 0` is 0,
+  `Null Or True` is True, `Null Or 12` is 12, and every other combination
+  with Null, including `Not Null`, is Null; `Eqv` is `Not (a Xor b)` and
+  `Imp` is `(Not a) Or b`, so `False Imp Null` is True. A calculated Boolean
+  or numeric column can therefore store Null. Jackcess keeps these operators
+  logical; this follows OLE Automation, measured on Windows, and Access itself
+  was not checked. `ValidationRule` terms are still joined by the rule's own
+  `And`/`Or` logic, which only combines Boolean terms.
 - An evaluation failure keeps its exception type (`OverflowException`,
   `InvalidCastException`, `DivideByZeroException` and so on) but its message
   names the table, the calculated column and its expression, plus the value
@@ -261,7 +276,7 @@ Supported subset:
 
 - Operators: arithmetic (`+`, `-`, `*`, `/`, `\`, `^`, `Mod`, including date arithmetic), string
   concatenation (`&`), comparisons (`=`, `<>`, `>`, `>=`, `<`, `<=`), logical
-  word operators (`Not`, `And`, `Or`, `Xor`, `Eqv`, `Imp`), and Access special
+  and bitwise word operators (`Not`, `And`, `Or`, `Xor`, `Eqv`, `Imp`), and Access special
   comparisons (`Is [Not] Null`, `[Not] Like`, `[Not] Between`, `[Not] In`).
 - Constants and nulls: `True`/`False`, `Yes`/`No`, `On`/`Off`, common `vb*`
   constants, blank/null nodes, and `DBNull` values from the in-flight row.

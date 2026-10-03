@@ -444,6 +444,125 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     public void IntegerDivision_OperandBeyondLong_ThrowsOverflow()
         => Assert.Throws<OverflowException>(() => Evaluate("10000000000 \\ 1", typeof(int)));
 
+    /// <summary>
+    /// <c>And</c>, <c>Or</c>, <c>Xor</c>, <c>Eqv</c>, <c>Imp</c> and <c>Not</c> are bitwise
+    /// on numbers, as in VBA (OLE Automation VarAnd and friends): numeric operands are
+    /// rounded half to even to a Long, and True is -1.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    /// <param name="expected">The expected result.</param>
+    [Theory]
+    [InlineData("12 And 10", 8)]
+    [InlineData("12 Or 10", 14)]
+    [InlineData("12 Xor 10", 6)]
+    [InlineData("12 Eqv 10", -7)]
+    [InlineData("12 Imp 10", -5)]
+    [InlineData("Not 5", -6)]
+    [InlineData("Not 0", -1)]
+    [InlineData("Not -1", 0)]
+    [InlineData("True And 12", 12)]
+    [InlineData("True Or 12", -1)]
+    [InlineData("True Xor 12", -13)]
+    [InlineData("2.5 And 3", 2)]
+    [InlineData("3.5 And 7", 4)]
+    [InlineData("\"12\" And 10", 8)]
+    [InlineData("Not 2.5", -3)]
+    [InlineData("#2020-01-31# And 1", 1)]
+    [InlineData("[S] And 6", 4)]
+    public void LogicalOperators_OnNumbers_AreBitwise(string expression, int expected)
+    {
+        object result = EvaluateDeclared(expression, typeof(int), ("S", typeof(short), (short)12));
+
+        Assert.Equal(expected, Assert.IsType<int>(result));
+    }
+
+    [Theory]
+    [InlineData("[B1] And [B2]", 64)]
+    [InlineData("[B1] Or [B2]", 236)]
+    [InlineData("Not [B1]", 55)]
+    [InlineData("[B1] Imp [B2]", 119)]
+    public void LogicalOperators_OnBytes_StayByte(string expression, int expected)
+    {
+        object result = EvaluateDeclared(expression, typeof(object), ("B1", typeof(byte), (byte)200), ("B2", typeof(byte), (byte)100));
+
+        Assert.Equal((byte)expected, Assert.IsType<byte>(result));
+    }
+
+    [Theory]
+    [InlineData("True And True", true)]
+    [InlineData("True And False", false)]
+    [InlineData("False And False", false)]
+    [InlineData("True Or False", true)]
+    [InlineData("False Or False", false)]
+    [InlineData("True Xor True", false)]
+    [InlineData("True Xor False", true)]
+    [InlineData("True Eqv True", true)]
+    [InlineData("True Eqv False", false)]
+    [InlineData("True Imp False", false)]
+    [InlineData("False Imp False", true)]
+    [InlineData("Not True", false)]
+    [InlineData("Not 1 = 2", true)]
+    public void LogicalOperators_OnBooleans_StayBoolean(string expression, bool expected)
+    {
+        object result = Evaluate(expression, typeof(object));
+
+        Assert.Equal(expected, Assert.IsType<bool>(result));
+    }
+
+    /// <summary>
+    /// Null follows VBA's three-valued logic (measured with OLE Automation): And with a
+    /// zero or False operand is that operand, Or with a nonzero or True operand is that
+    /// operand, and every other combination with Null is Null.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    /// <param name="expected">The expected result as text: "Null", "True", "False" or a number.</param>
+    [Theory]
+    [InlineData("Null And False", "False")]
+    [InlineData("Null And True", "Null")]
+    [InlineData("Null And 0", "0")]
+    [InlineData("Null And 12", "Null")]
+    [InlineData("Null Or True", "True")]
+    [InlineData("Null Or False", "Null")]
+    [InlineData("Null Or 12", "12")]
+    [InlineData("Not Null", "Null")]
+    [InlineData("Null Xor True", "Null")]
+    [InlineData("Null Eqv True", "Null")]
+    [InlineData("Null Imp True", "True")]
+    [InlineData("Null Imp 0", "Null")]
+    [InlineData("False Imp Null", "True")]
+    [InlineData("True Imp Null", "Null")]
+    [InlineData("0 Imp Null", "-1")]
+    [InlineData("[N] And False", "False")]
+    public void LogicalOperators_WithNull_FollowVbaThreeValuedLogic(string expression, string expected)
+    {
+        object result = EvaluateDeclared(expression, typeof(object), ("N", typeof(int), DBNull.Value));
+
+        string actual = result switch
+        {
+            DBNull => "Null",
+            bool boolean => boolean ? "True" : "False",
+            _ => Convert.ToString(result, CultureInfo.InvariantCulture)!,
+        };
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void BitwiseOperand_OutOfRange_Throws()
+    {
+        Assert.Throws<OverflowException>(() => Evaluate("1E10 And 1", typeof(int)));
+        Assert.Throws<InvalidCastException>(() => Evaluate("\"abc\" And 1", typeof(int)));
+    }
+
+    [Theory]
+    [InlineData(1, "n")]
+    [InlineData(3, "y")]
+    public void IIfOnNumericAnd_UsesBitwiseResult(int a, string expected)
+    {
+        object result = Evaluate("IIf([A] And [B], \"y\", \"n\")", typeof(string), ("A", a), ("B", 2));
+
+        Assert.Equal(expected, result);
+    }
+
     private static object EvaluateDates(string expression, Type resultType)
         => EvaluateDeclared(
             expression,

@@ -18,6 +18,12 @@ internal static class CalculatedExpressionCoercion
             return DBNull.Value;
         }
 
+        // A column of no specific type keeps the value as evaluated.
+        if (targetType == typeof(object))
+        {
+            return value!;
+        }
+
         // Access converts True the OLE Automation way (VariantChangeType):
         // -1 in a signed numeric column, "-1" in a text column (ToText), 255 in
         // a Byte column, and day -1 (1899-12-29) as a date. Excel and Convert

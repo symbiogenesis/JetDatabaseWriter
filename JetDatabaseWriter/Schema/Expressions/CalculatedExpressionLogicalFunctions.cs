@@ -14,12 +14,16 @@ internal static class CalculatedExpressionLogicalFunctions
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IIF", 3, 3, EvaluateIIf, "IF"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "AND", 1, int.MaxValue, static function => EvaluateAnd(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "OR", 1, int.MaxValue, static function => EvaluateOr(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "NOT", 1, 1, static function => !ToBoolean(function.Arg(0))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "XOR", 2, int.MaxValue, static function => EvaluateXor(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "EQV", 2, 2, static function => ToBoolean(function.Arg(0)) == ToBoolean(function.Arg(1))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IMP", 2, 2, static function => !ToBoolean(function.Arg(0)) || ToBoolean(function.Arg(1))));
+
+        // The word operators And, Or, Not, Xor, Eqv and Imp, which the normalizer
+        // lowers to these calls: logical on Booleans, bitwise on numbers, and
+        // three-valued with Null, as in VBA (AccessVariantOperators).
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "AND", 2, 2, static function => AccessVariantOperators.And(function.Arg(0), function.Arg(1))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "OR", 2, 2, static function => AccessVariantOperators.Or(function.Arg(0), function.Arg(1))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "NOT", 1, 1, static function => AccessVariantOperators.Not(function.Arg(0))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "XOR", 2, 2, static function => AccessVariantOperators.Xor(function.Arg(0), function.Arg(1))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "EQV", 2, 2, static function => AccessVariantOperators.Eqv(function.Arg(0), function.Arg(1))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IMP", 2, 2, static function => AccessVariantOperators.Imp(function.Arg(0), function.Arg(1))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "LIKE", 2, 2, EvaluateLike));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "BETWEEN", 3, 3, EvaluateBetween));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IN", 2, int.MaxValue, EvaluateIn));
@@ -43,43 +47,6 @@ internal static class CalculatedExpressionLogicalFunctions
     /// <returns>Whether the argument is a date.</returns>
     private static bool IsDateValue(object value)
         => value is DateTime || (value is string && TryConvertDateTime(value, out _));
-
-    private static bool EvaluateAnd(CalculatedFunctionInvocation function)
-    {
-        for (int argIndex = 0; argIndex < function.Count; argIndex++)
-        {
-            if (!ToBoolean(function.Arg(argIndex)))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool EvaluateOr(CalculatedFunctionInvocation function)
-    {
-        for (int argIndex = 0; argIndex < function.Count; argIndex++)
-        {
-            if (ToBoolean(function.Arg(argIndex)))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool EvaluateXor(CalculatedFunctionInvocation function)
-    {
-        bool xorResult = false;
-        for (int argIndex = 0; argIndex < function.Count; argIndex++)
-        {
-            xorResult ^= ToBoolean(function.Arg(argIndex));
-        }
-
-        return xorResult;
-    }
 
     private static object EvaluateLike(CalculatedFunctionInvocation function)
     {
