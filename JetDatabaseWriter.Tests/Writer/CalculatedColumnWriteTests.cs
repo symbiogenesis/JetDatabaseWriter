@@ -714,6 +714,8 @@ public sealed class CalculatedColumnWriteTests
             Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
             Assert.Contains("'Pct'", exception.Message, StringComparison.Ordinal);
             Assert.Contains("'%'", exception.Message, StringComparison.Ordinal);
+            Assert.Equal("columns", exception.ParamName);
+            Assert.DoesNotContain("Parameter 'expression'", exception.Message, StringComparison.Ordinal);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -740,6 +742,8 @@ public sealed class CalculatedColumnWriteTests
                     TestContext.Current.CancellationToken));
 
             Assert.Contains("[Rate]%", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("'Pct'", exception.Message, StringComparison.Ordinal);
+            Assert.Equal("column", exception.ParamName);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
@@ -769,6 +773,7 @@ public sealed class CalculatedColumnWriteTests
                     TestContext.Current.CancellationToken));
             Assert.Contains("'Calc'", createException.Message, StringComparison.Ordinal);
             Assert.Contains(expression, createException.Message, StringComparison.Ordinal);
+            Assert.Equal("columns", createException.ParamName);
 
             await writer.CreateTableAsync("CalcAddBadSyntax", [new("Score", typeof(int))], TestContext.Current.CancellationToken);
             ArgumentException addException = await Assert.ThrowsAsync<ArgumentException>(async () =>
@@ -777,11 +782,146 @@ public sealed class CalculatedColumnWriteTests
                     new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = expression },
                     TestContext.Current.CancellationToken));
             Assert.Contains(expression, addException.Message, StringComparison.Ordinal);
+            Assert.Equal("column", addException.ParamName);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         Assert.DoesNotContain("CalcBadSyntax", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
         Assert.Equal("Score", Assert.Single(await reader.GetColumnMetadataAsync("CalcAddBadSyntax", TestContext.Current.CancellationToken)).Name);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "5%")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "[A] +")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "[A]*2")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "5%")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "[A] +")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "[A]*2")]
+    public async Task CreateTable_CalculatedColumnOnMdb_ThrowsNotSupportedBeforeCheckingExpression(DatabaseFormat format, string expression)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+                await writer.CreateTableAsync(
+                    "CalcMdb",
+                    [
+                        new("A", typeof(int)),
+                        new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = expression },
+                    ],
+                    TestContext.Current.CancellationToken));
+
+            Assert.Contains("only supported in ACCDB", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("'Calc'", exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain("CalcMdb", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "5%")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "[A] +")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "[A]*2")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "5%")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "[A] +")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "[A]*2")]
+    public async Task AddColumn_CalculatedColumnOnMdb_ThrowsNotSupportedBeforeCheckingExpression(DatabaseFormat format, string expression)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("CalcAddMdb", [new("A", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcAddMdb", [5], TestContext.Current.CancellationToken);
+
+            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+                await writer.AddColumnAsync(
+                    "CalcAddMdb",
+                    new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = expression },
+                    TestContext.Current.CancellationToken));
+
+            Assert.Contains("only supported in ACCDB", exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.Equal("A", Assert.Single(await reader.GetColumnMetadataAsync("CalcAddMdb", TestContext.Current.CancellationToken)).Name);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAddMdb", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal(5, Convert.ToInt32(row["A"], CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// A column the format cannot hold is refused before the table is even
+    /// looked up, so the error names the column rather than the missing table.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="kind">The kind of ACCDB-only column.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "calculated")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "calculated")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "largeNumber")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "extendedDate")]
+    public async Task AddColumn_AccdbOnlyColumnOnMdb_ThrowsNotSupportedBeforeReadingTable(DatabaseFormat format, string kind)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        ColumnDefinition column = kind switch
+        {
+            "calculated" => new("Calc", typeof(int)) { IsCalculated = true, CalculationExpression = "[A]*2" },
+            "largeNumber" => new("Big", typeof(long)),
+            _ => new("Stamp", typeof(DateTime)) { IsDateTimeExtended = true },
+        };
+
+        await using AccessWriter writer = await OpenWriterAsync(stream);
+        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await writer.AddColumnAsync("NoSuchTable", column, TestContext.Current.CancellationToken));
+
+        Assert.Contains("only supported in ACCDB", exception.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{column.Name}'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task CreateTable_InvalidTableName_IsReportedBeforeCalculatedExpression(string? tableName)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using AccessWriter writer = await OpenWriterAsync(stream);
+        ArgumentException exception = await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
+            await writer.CreateTableAsync(
+                tableName!,
+                [
+                    new("Rate", typeof(double)),
+                    new("Pct", typeof(double)) { IsCalculated = true, CalculationExpression = "5%" },
+                ],
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("tableName", exception.ParamName);
+        Assert.Equal(tableName is null ? typeof(ArgumentNullException) : typeof(ArgumentException), exception.GetType());
+    }
+
+    [Fact]
+    public async Task CreateTable_CalculatedAutoNumber_ThrowsNotSupportedBeforeCheckingExpression()
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+                await writer.CreateTableAsync(
+                    "CalcAuto",
+                    [
+                        new("Rate", typeof(double)),
+                        new("Counter", typeof(int)) { IsCalculated = true, IsAutoIncrement = true, CalculationExpression = "5%" },
+                    ],
+                    TestContext.Current.CancellationToken));
+
+            Assert.Contains("cannot be AutoNumber", exception.Message, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain("CalcAuto", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -1507,12 +1647,14 @@ public sealed class CalculatedColumnWriteTests
         return stream;
     }
 
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
+    private static ValueTask<MemoryStream> CreateFreshAccdbStreamAsync() => CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+
+    private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
     {
         var stream = new MemoryStream();
         await using (await AccessWriter.CreateDatabaseAsync(
             stream,
-            DatabaseFormat.AceAccdb,
+            format,
             new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken))

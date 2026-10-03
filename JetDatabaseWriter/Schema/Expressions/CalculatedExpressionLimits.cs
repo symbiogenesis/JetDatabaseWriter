@@ -19,8 +19,7 @@ internal static class CalculatedExpressionLimits
         if (expression.Length > maxLength)
         {
             throw new ArgumentException(
-                $"{description} length {expression.Length} exceeds the safety limit of {maxLength} characters.",
-                nameof(expression));
+                $"{description} length {expression.Length} exceeds the safety limit of {maxLength} characters.");
         }
 
         int nestingDepth = 0;
@@ -40,8 +39,7 @@ internal static class CalculatedExpressionLimits
                 if (columnReferences > MaxColumnReferences)
                 {
                     throw new ArgumentException(
-                        $"{description} references more than {MaxColumnReferences} columns.",
-                        nameof(expression));
+                        $"{description} references more than {MaxColumnReferences} columns.");
                 }
 
                 int endBracket = expression.IndexOf(']', charIndex + 1);
@@ -59,8 +57,7 @@ internal static class CalculatedExpressionLimits
                 if (nestingDepth > MaxExpressionNesting)
                 {
                     throw new ArgumentException(
-                        $"{description} nesting depth exceeds the safety limit of {MaxExpressionNesting}.",
-                        nameof(expression));
+                        $"{description} nesting depth exceeds the safety limit of {MaxExpressionNesting}.");
                 }
             }
             else if (current == ')' && nestingDepth > 0)
