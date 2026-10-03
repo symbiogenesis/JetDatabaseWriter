@@ -49,7 +49,7 @@ internal sealed class WriterServices
         var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, snapshotRows, columnProperties));
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db);
-        var longValueEncoder = new LongValueEncoder(db, this.PageAllocator);
+        var longValueEncoder = new LongValueEncoder(db, this.PageAllocator, options);
         var dataPages = new DataPageInserter(db, this.PageAllocator, this.CatalogRows);
         var tableRows = new TableRowStore(db, options, longValueEncoder, new RowEncoder(db), dataPages, tdefPageBuilder);
         var autoNumbers = new AutoNumberMaintainer(db);

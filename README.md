@@ -624,7 +624,7 @@ int scrubbed = await writer.ScrubFreePagesAsync();
 long truncated = await writer.ShrinkDatabaseAsync();
 ```
 
-`SecureEraseMode.DeletedRowsAndFreedPages` overwrites deleted row bodies and old MEMO/OLE LVAL pages before returning those LVAL pages to the Access global free list. `ScrubFreePagesAsync` overwrites pages already on the free list. `ShrinkDatabaseAsync` truncates free pages from the physical end of the file; it does not renumber live pages or perform a full Access Compact & Repair rebuild.
+`SecureEraseMode.DeletedRowsAndFreedPages` overwrites deleted row bodies and the deleted rows' MEMO/OLE LVAL data. Access can pack several long values onto one LVAL page, so an LVAL page returns to the Access global free list, overwritten, only when no other live value is left on it; otherwise only the deleted value's rows on it are overwritten and marked deleted. `ScrubFreePagesAsync` overwrites pages already on the free list. `ShrinkDatabaseAsync` truncates free pages from the physical end of the file; it does not renumber live pages or perform a full Access Compact & Repair rebuild.
 
 ### Add, drop, and rename columns
 

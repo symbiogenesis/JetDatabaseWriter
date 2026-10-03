@@ -198,10 +198,21 @@ internal static class LongValueStore
         }
     }
 
+    /// <summary>
+    /// Releases every LVAL row of an external long value: the one row of a
+    /// single-page value, or each row of a chain in order, stopping at a null
+    /// pointer or a row already visited.
+    /// </summary>
+    /// <param name="descriptor">The value's descriptor; inline values hold no LVAL rows.</param>
+    /// <param name="releaseRowAsync">
+    /// Releases the row a row pointer names and returns the next-row pointer
+    /// it held, or 0 when the row is not a live LVAL row, which ends the walk.
+    /// </param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
     internal static async ValueTask DeallocateExternalPagesAsync(
         LongValueDescriptor descriptor,
-        Func<uint, CancellationToken, ValueTask<uint>> readNextDpAsync,
-        Func<long, CancellationToken, ValueTask> deallocatePageAsync,
+        Func<uint, CancellationToken, ValueTask<uint>> releaseRowAsync,
         CancellationToken cancellationToken)
     {
         if (!descriptor.IsExternal || descriptor.FirstDp == 0)
@@ -211,12 +222,7 @@ internal static class LongValueStore
 
         if (descriptor.IsSinglePage)
         {
-            int singlePageNumber = PageNumber(descriptor.FirstDp);
-            if (singlePageNumber > 0)
-            {
-                await deallocatePageAsync(singlePageNumber, cancellationToken).ConfigureAwait(false);
-            }
-
+            _ = await releaseRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -225,17 +231,23 @@ internal static class LongValueStore
         while (currentDp != 0 && seen.Add(currentDp))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            int pageNumber = PageNumber(currentDp);
-            if (pageNumber <= 0)
-            {
-                return;
-            }
-
-            uint nextDp = await readNextDpAsync(currentDp, cancellationToken).ConfigureAwait(false);
-            await deallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            currentDp = nextDp;
+            currentDp = await releaseRowAsync(currentDp, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// Returns whether <paramref name="page"/> is an LVAL page: a data page
+    /// (type <c>0x01</c>) whose owner field holds the <c>"LVAL"</c> signature.
+    /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <returns><see langword="true"/> for an LVAL page.</returns>
+    internal static bool IsLvalPage(ReadOnlySpan<byte> page)
+        => page.Length >= 8
+            && page[0] == Constants.PageTypes.Data
+            && page[4] == (byte)'L'
+            && page[5] == (byte)'V'
+            && page[6] == (byte)'A'
+            && page[7] == (byte)'L';
 
     private static void WriteLvalPageHeader(byte[] page, LvalPageLayout layout, uint token, int rowStart)
     {

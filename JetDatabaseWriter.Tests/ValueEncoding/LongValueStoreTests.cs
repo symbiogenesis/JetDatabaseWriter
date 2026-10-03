@@ -188,29 +188,54 @@ public sealed class LongValueStoreTests
     }
 
     [Fact]
-    public async Task DeallocateExternalPagesAsync_Chained_DeallocatesEachCyclePageOnce()
+    public async Task DeallocateExternalPagesAsync_Chained_ReleasesEachCycleRowOnce()
     {
         uint firstDp = LongValueStore.MakeRowPointer(7, rowIndex: 0);
-        uint secondDp = LongValueStore.MakeRowPointer(8, rowIndex: 0);
+        uint secondDp = LongValueStore.MakeRowPointer(8, rowIndex: 2);
         var nextPointers = new Dictionary<uint, uint>
         {
             [firstDp] = secondDp,
             [secondDp] = firstDp,
         };
-        var deallocatedPages = new List<long>();
+        var releasedRows = new List<uint>();
 
         await LongValueStore.DeallocateExternalPagesAsync(
             LongValueDescriptor.Chained(length: 8192, firstDp, token: 0xAABBCCDD),
-            (lvalDp, _) => new ValueTask<uint>(nextPointers[lvalDp]),
-            (pageNumber, _) =>
+            (lvalDp, _) =>
             {
-                deallocatedPages.Add(pageNumber);
-                return ValueTask.CompletedTask;
+                releasedRows.Add(lvalDp);
+                return new ValueTask<uint>(nextPointers[lvalDp]);
             },
             CancellationToken.None);
 
-        Assert.Equal([7L, 8L], deallocatedPages);
+        Assert.Equal([firstDp, secondDp], releasedRows);
     }
+
+    [Fact]
+    public async Task DeallocateExternalPagesAsync_SinglePage_ReleasesOnlyItsRow()
+    {
+        uint lvalDp = LongValueStore.MakeRowPointer(9, rowIndex: 3);
+        var releasedRows = new List<uint>();
+
+        await LongValueStore.DeallocateExternalPagesAsync(
+            LongValueDescriptor.SinglePage(length: 500, lvalDp, token: 0),
+            (dp, _) =>
+            {
+                releasedRows.Add(dp);
+                return new ValueTask<uint>(LongValueStore.MakeRowPointer(10, rowIndex: 0));
+            },
+            CancellationToken.None);
+
+        Assert.Equal([lvalDp], releasedRows);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0x01, 0x01, 0x00, 0x00, (byte)'L', (byte)'V', (byte)'A', (byte)'L' }, true)]
+    [InlineData(new byte[] { 0x09, 0x01, 0x00, 0x00, (byte)'L', (byte)'V', (byte)'A', (byte)'L' }, false)]
+    [InlineData(new byte[] { 0x01, 0x01, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00 }, false)]
+    [InlineData(new byte[] { 0x01, 0x01, 0x00, 0x00, (byte)'L' }, false)]
+    public void IsLvalPage_RequiresDataPageWithLvalSignature(byte[] page, bool expected)
+        => Assert.Equal(expected, LongValueStore.IsLvalPage(page));
 
     private static byte[] Payload(int length)
     {

@@ -5,10 +5,13 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 public sealed class DataRemanenceTests
@@ -295,6 +298,63 @@ public sealed class DataRemanenceTests
                 "SecureLongValues",
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, table.Rows.Count);
+        }
+    }
+
+    /// <summary>
+    /// Access packs several long values onto one LVAL page: the SectionText
+    /// MEMOs of Learn IDs 1-6 in NorthwindTraders.accdb share page 521. A
+    /// SecureErase delete of ID 1 must scrub and release only its own LVAL row.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Fact]
+    public async Task DeleteRows_SecureEraseMode_SharedAccessLvalPage_KeepsOtherRowsLongValues()
+    {
+        if (!File.Exists(TestDatabases.NorthwindTraders))
+        {
+            Assert.Skip("NorthwindTraders.accdb is unavailable on this machine.");
+        }
+
+        await using var stream = new MemoryStream();
+        await using (FileStream source = File.OpenRead(TestDatabases.NorthwindTraders))
+        {
+            await source.CopyToAsync(stream, TestContext.Current.CancellationToken);
+        }
+
+        using DataTable before = await ReadLearnAsync(stream);
+        Assert.Equal(15, before.Rows.Count);
+
+        // Access stores this MEMO as compressed Unicode: FF FE, then one byte per character.
+        string deletedText = (string)before.Rows.Cast<DataRow>().Single(r => (int)r["ID"] == 1)["SectionText"];
+        byte[] deletedBytes = Encoding.Latin1.GetBytes(deletedText);
+        Assert.True(ContainsSequence(stream.ToArray(), deletedBytes));
+
+        await using (AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions
+            {
+                UseLockFile = false,
+                SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
+            }))
+        {
+            Assert.Equal(1, await writer.DeleteRowsAsync("Learn", "ID", 1, TestContext.Current.CancellationToken));
+        }
+
+        Assert.False(ContainsSequence(stream.ToArray(), deletedBytes));
+
+        using DataTable after = await ReadLearnAsync(stream);
+        Assert.Equal(14, after.Rows.Count);
+        foreach (DataRow row in after.Rows)
+        {
+            DataRow original = before.Rows.Cast<DataRow>().Single(r => Equals(r["ID"], row["ID"]));
+            Assert.Equal(original["SectionNo"], row["SectionNo"]);
+            Assert.Equal(original["SectionText"], row["SectionText"]);
+        }
+
+        static async Task<DataTable> ReadLearnAsync(MemoryStream stream)
+        {
+            await using AccessReader reader = await OpenReaderAsync(stream);
+            return await reader.ReadDataTableAsync("Learn", cancellationToken: TestContext.Current.CancellationToken);
         }
     }
 
