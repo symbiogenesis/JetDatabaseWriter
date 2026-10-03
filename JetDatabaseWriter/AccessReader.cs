@@ -192,9 +192,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the database.</returns>
     /// <remarks>
     /// The reader reads every page through the stream, one seek and read at a time.
-    /// On Windows a <see cref="FileStream"/> opened without
-    /// <see cref="FileOptions.Asynchronous"/> reads pages several times faster than
-    /// an overlapped one, because an overlapped read completes through the I/O
+    /// On Windows, in our measurements, a <see cref="FileStream"/> opened without
+    /// <see cref="FileOptions.Asynchronous"/> read pages about twice as fast as an
+    /// overlapped one, because an overlapped read completes through the I/O
     /// completion port even when the page is already in the OS cache. The path
     /// overload opens its file that way.
     /// </remarks>
