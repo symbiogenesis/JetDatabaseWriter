@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter;
 
+using System;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Transactions;
 
@@ -67,6 +68,10 @@ public sealed class AccessWriterOptions : AccessOptions
     /// failed operation possibly half-applied to its journal, and should be
     /// rolled back. Each journaled page costs
     /// <see cref="AccessBase.PageSize"/> bytes of process memory.
+    /// Must be at least <c>1</c>: <c>OpenAsync</c> and <c>CreateDatabaseAsync</c>
+    /// throw <see cref="System.ArgumentOutOfRangeException"/> (parameter
+    /// <c>options</c>) for zero or less, before they open, create or write the
+    /// file.
     /// Default: <c>16384</c> (~64 MiB at the standard 4&#8239;KiB ACE page size).
     /// </summary>
     public int MaxTransactionPageBudget { get; init; } = 16_384;
@@ -108,4 +113,23 @@ public sealed class AccessWriterOptions : AccessOptions
     /// </para>
     /// </summary>
     public bool UseTransactionalWrites { get; init; }
+
+    /// <summary>
+    /// Checks the options a writer cannot work with. <c>OpenAsync</c> and
+    /// <c>CreateDatabaseAsync</c> call it first, so a bad value fails before the
+    /// file is opened, created or written and before a lock-file slot is taken.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="MaxTransactionPageBudget"/> is zero or negative; the parameter named is <c>options</c>, the public parameter that carries it.</exception>
+    internal void Validate()
+    {
+        if (this.MaxTransactionPageBudget <= 0)
+        {
+#pragma warning disable CA2208 // The value arrives through the public methods' options parameter, which the exception names.
+            throw new ArgumentOutOfRangeException(
+                "options",
+                this.MaxTransactionPageBudget,
+                $"AccessWriterOptions.MaxTransactionPageBudget must be at least 1 page; it is {this.MaxTransactionPageBudget}.");
+#pragma warning restore CA2208
+        }
+    }
 }

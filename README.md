@@ -973,6 +973,8 @@ var writerOptions = new AccessWriterOptions("secretPassword")
 {
     UseLockFile = true,              // create .ldb/.laccdb lockfile (default: true)
     RespectExistingLockFile = true,  // throw IOException if lockfile already exists (default: true)
+    MaxTransactionPageBudget = 16_384, // pages one transaction may hold in memory (default: 16384); OpenAsync and
+                                       // CreateDatabaseAsync throw ArgumentOutOfRangeException for 0 or less
 };
 await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOptions);
 ```

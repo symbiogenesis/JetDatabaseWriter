@@ -92,10 +92,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </remarks>
     /// <exception cref="NotSupportedException">Thrown when the file uses Access-native flat Agile encryption (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. The file is not modified.</exception>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. The file is not modified.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The file is not opened.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Guard.RequireExistingDatabaseFile(path, nameof(path));
+
+        options ??= new AccessWriterOptions();
+        options.Validate();
 
         FileStream fs = CreateStream(path);
         return await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
@@ -113,12 +117,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
     /// <exception cref="NotSupportedException">Thrown when the stream holds an Access-native flat Agile database (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. Nothing is written to the stream.</exception>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. Nothing is written to the stream.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The stream is not read, written or disposed.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
         options ??= new AccessWriterOptions();
+        options.Validate();
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
@@ -200,17 +206,20 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
     /// <exception cref="IOException">Thrown when a database file already exists at <paramref name="path"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. No file is created.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
+        options ??= new AccessWriterOptions();
+        options.Validate();
 
         if (File.Exists(path))
         {
             throw new IOException($"Database file already exists: {path}");
         }
 
-        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options?.WriteFullCatalogSchema ?? true);
+        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options.WriteFullCatalogSchema);
 
         await using (FileStream fs = FileStreamFactory.Open(
             path,
@@ -227,7 +236,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            await writer.InitializeFreshDatabaseAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            await writer.InitializeFreshDatabaseAsync(format, options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -260,12 +269,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the new database.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. Nothing is written to the stream.</exception>
     public static async ValueTask<AccessWriter> CreateDatabaseAsync(Stream stream, DatabaseFormat format, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
+        options ??= new AccessWriterOptions();
+        options.Validate();
 
-        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options?.WriteFullCatalogSchema ?? true);
+        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options.WriteFullCatalogSchema);
         await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Position = 0;
@@ -273,7 +285,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
         try
         {
-            await writer.InitializeFreshDatabaseAsync(format, options?.WriteFullCatalogSchema ?? true, cancellationToken).ConfigureAwait(false);
+            await writer.InitializeFreshDatabaseAsync(format, options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
