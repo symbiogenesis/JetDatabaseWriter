@@ -11,7 +11,7 @@ using JetDatabaseWriter.Pages.Models;
 /// LRU of each data page's parsed live-row directory. Every cached read falls
 /// through to the <see cref="DatabaseFile"/> while a transaction journal is
 /// attached, and the cache is absent altogether when its capacity is zero or
-/// negative (or the reader was opened uncached).
+/// negative, as it is for the writer's reads of its own rows.
 /// </summary>
 internal sealed class ReaderPageCache : IDisposable
 {

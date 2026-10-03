@@ -13,7 +13,6 @@ using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
-using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
@@ -68,11 +67,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             this.Database.ByteRangeLock = options.CreateByteRangeLock(stream);
-            this.services = new WriterServices(
-                this.Database,
-                options,
-                this.Database.ByteRangeLock,
-                new TableSnapshotReader(this.Database.DatabasePath, stream, this.isAgileEncryptedRewrap, options.Password));
+            this.services = new WriterServices(this.Database, options, this.Database.ByteRangeLock);
         }
         catch
         {

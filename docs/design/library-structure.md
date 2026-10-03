@@ -301,7 +301,7 @@ JetDatabaseWriter/
 │   ├── TableDataWriter.cs                 (row DML: insert / update / delete batches)
 │   ├── TableSchemaEditor.cs               (table DDL: create / drop table, add / drop / rename column, page reclaim)
 │   ├── TableRowStore.cs                   (row primitives: write row bytes, mark deleted, adjust TDEF row count)
-│   └── TableSnapshotReader.cs             (uncached reader snapshots of the writer's own database)
+│   └── TableSnapshotReader.cs             (writer's decoded reads of its own rows, through its own DatabaseFile and journal)
 │
 ├── Queries/                               (read-path: LINQ IQueryable provider over a single table)
 │   ├── AccessQueryable.cs                 (composable, async-enumerable IQueryable<T> over one table)
@@ -380,10 +380,13 @@ No collaborator receives a facade, `AccessBase`, or a composition root, and none
 
 - no library type outside the facades holds or accepts any of those types, including inside generic arguments;
 - the collaborator graph reachable from each composition root is acyclic;
-- walking the live object graph from an open facade's services never reaches the facade; and
-- the facades declare no internal members beyond the three the writer's snapshot reader calls (`OpenUncachedAsync`, `ReadDataTableForSchemaRewriteAsync`, `ReadLvPropForTableAsync`).
+- walking the live object graph from an open facade's services never reaches the facade;
+- the writer's services hold exactly one `DatabaseFile`, the writer's own, and no `AccessReader`; and
+- the facades declare no internal members.
 
-Three exceptions are deliberate. The public `JetTransaction` handle calls back into the `TransactionLifecycle` that issued it, the same owner/handle shape as `DbConnection` and `DbTransaction`. `TableSnapshotReader` opens its own uncached `AccessReader` over the writer's file to snapshot rows, and `LinkedTableReader` opens a separate `AccessReader` on each Access-file link's source database. Neither receives or holds the reader that owns it.
+The writer reads its own file only through its own `DatabaseFile`. Workflows that read a table before changing it (update, delete, cascades, index rebuilds, schema rewrites, constraint seeding, and relationship enforcement) decode rows through `TableSnapshotReader`, which `WriterServices` builds from a `RowDecoder` over a capacity-0 `ReaderPageCache` and a `CatalogReader` over the writer's own `TableCatalog`. Every page therefore comes through `DatabaseFile.ReadPageAsync`, which consults an active transaction's journal and decrypts with the writer's page keys, and nothing read this way is cached between calls.
+
+Two exceptions are deliberate. The public `JetTransaction` handle calls back into the `TransactionLifecycle` that issued it, the same owner/handle shape as `DbConnection` and `DbTransaction`. `LinkedTableReader` opens a separate `AccessReader` on each Access-file link's source database; it does not receive or hold the reader that owns it.
 
 ---
 
@@ -423,6 +426,9 @@ AccessWriter → WriterServices
   CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogWriter, ConstraintRegistry
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
   IndexMaintainer     → PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
+  TableSnapshotReader → RowDecoder, CatalogReader
+  CatalogReader       → TableCatalog, RowDecoder
+  RowDecoder          → ReaderPageCache (capacity 0), LongValueDecoder
   TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder
   DataPageInserter    → PageAllocator, CatalogRowReader
   TableCatalog        → CatalogRowReader
@@ -449,12 +455,12 @@ ComplexColumns/   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Tables/,
 Relationships/    → Catalog/, ComplexColumns/, DelimitedText/, Indexes/, Pages/, Schema/, Tables/, ValueDecoding/,
                     Infrastructure/; DatabaseFile; opens a reader (linked sources)
 Tables/           → Catalog/, ComplexColumns/, Indexes/, LongValues/, Pages/, Relationships/, Schema/,
-                    ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile; opens a reader (writer snapshots)
+                    ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
 Queries/          → Indexes/, Tables/, Infrastructure/
 DatabaseFile (root)   → Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/, Infrastructure/
 AccessBase (root)     → DatabaseFile
-AccessReader (root)   → ReaderServices, Indexes/, Queries/, Encryption/, Schema/, Transactions/
-AccessWriter (root)   → WriterServices, Tables/, Relationships/, Encryption/, Schema/, Transactions/
+AccessReader (root)   → ReaderServices, Indexes/, Queries/, Encryption/, Transactions/
+AccessWriter (root)   → WriterServices, Relationships/, Encryption/, Schema/, Transactions/
 ReaderServices (root) → every reader collaborator
 WriterServices (root) → every writer collaborator
 ```

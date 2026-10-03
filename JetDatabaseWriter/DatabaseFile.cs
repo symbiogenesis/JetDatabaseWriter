@@ -1266,7 +1266,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
+        // Journal-aware: a table created or grown inside a transaction owns
+        // pages appended past the physical end of the file.
+        long totalPages = this.LogicalPageCount;
         if (tdefPage <= 0 || tdefPage >= totalPages)
         {
             return null;
@@ -1389,7 +1391,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
     {
         var pagesByOwner = new Dictionary<long, List<long>>();
-        long totalPages = this.DatabaseStream.Length / this.PageSizeBytes;
+        long totalPages = this.LogicalPageCount;
 
         for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {

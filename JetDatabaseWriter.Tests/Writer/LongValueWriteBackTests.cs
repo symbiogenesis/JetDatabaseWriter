@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -219,8 +220,8 @@ public sealed class LongValueWriteBackTests
         }
 
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable snapshot = await reader.ReadDataTableForSchemaRewriteAsync(TableName, TestContext.Current.CancellationToken);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable snapshot = await harness.Services.Snapshots.ReadTableSnapshotAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Equal(60, snapshot.Rows.Count);
         foreach (DataRow row in snapshot.Rows)
         {
@@ -264,8 +265,8 @@ public sealed class LongValueWriteBackTests
         }
 
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable child = await reader.ReadDataTableForSchemaRewriteAsync("Child", TestContext.Current.CancellationToken);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable child = await harness.Services.Snapshots.ReadTableSnapshotAsync("Child", TestContext.Current.CancellationToken);
         DataRow first = child.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 10);
         DataRow second = child.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 11);
         Assert.Equal(5, first["ParentId"]);
@@ -494,15 +495,15 @@ public sealed class LongValueWriteBackTests
         return AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
     }
 
-    /// <summary>Reads row <paramref name="id"/> through the writer's snapshot path, which returns stored OLE bytes.</summary>
+    /// <summary>Reads row <paramref name="id"/> through the writer's own snapshot reader, which returns stored OLE bytes.</summary>
     /// <param name="ms">The database stream.</param>
     /// <param name="id">The row id.</param>
     /// <returns>The snapshot row.</returns>
     private static async Task<DataRow> ReadSnapshotRowAsync(MemoryStream ms, int id)
     {
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable snapshot = await reader.ReadDataTableForSchemaRewriteAsync(TableName, TestContext.Current.CancellationToken);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable snapshot = await harness.Services.Snapshots.ReadTableSnapshotAsync(TableName, TestContext.Current.CancellationToken);
         return snapshot.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == id);
     }
 

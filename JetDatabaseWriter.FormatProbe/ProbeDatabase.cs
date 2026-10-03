@@ -60,7 +60,7 @@ internal sealed class ProbeDatabase : IAsyncDisposable
         {
             byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
             db = new DatabaseFile(stream, header, options.Password, path, leaveOpen: false, typeof(AccessReader), canCacheOwnedDataPages: true);
-            return new ProbeDatabase(db, new ReaderServices(db, options, suppressPageCache: false));
+            return new ProbeDatabase(db, new ReaderServices(db, options));
         }
         catch
         {

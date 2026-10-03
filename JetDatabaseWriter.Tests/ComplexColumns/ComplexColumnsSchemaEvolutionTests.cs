@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -47,7 +48,8 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
         Assert.Contains(meta, m => string.Equals(m.Name, "Note", StringComparison.OrdinalIgnoreCase));
 
-        DataTable raw = await reader.ReadDataTableForSchemaRewriteAsync("Documents", TestContext.Current.CancellationToken);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable raw = await harness.Services.Snapshots.ReadTableSnapshotAsync("Documents", TestContext.Current.CancellationToken);
         ComplexIdRef complexRef = Assert.IsType<ComplexIdRef>(raw.Rows[0]["Files"]);
         Assert.True(complexRef.Id > 0);
     }
