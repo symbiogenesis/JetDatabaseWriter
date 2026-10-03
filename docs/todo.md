@@ -196,7 +196,7 @@ At `6eab703`, none of the bugs from my earlier report was fixed. The five commit
     - `ComplexColumnsVersionHistoryTests.GetMultiValueItems_VersionHistoryColumn_FillsModified`.
   - Follow-up: complex columns on tables the writer creates have no index. Access gives each one a unique, Required index on the per-row reference.
   - Follow-up: updating an append-only Memo column does not append a version-history row, as Access does.
-- **Calculated columns and expressions: Access-authored calculated values were garbled on read and corrupted on write, and Byte, date, integer-division and logical results differed from Access.**
+- **Calculated columns and expressions: Access-authored calculated values were garbled on read and corrupted on write, and Byte, date, time, integer-division and logical results, literals and dates as text differed from Access.**
   - Result type. Access encodes a calculated column's cached value by its `ResultType` property, and Access-authored columns can carry a different descriptor type. In calcFieldTestV2010's Table1:
     - AllNames is a Text descriptor with a Memo result;
     - MonthlySalary and WeeklySalary are Double descriptors with Currency and Decimal results;
@@ -216,29 +216,49 @@ At `6eab703`, none of the bugs from my earlier report was fixed. The five commit
   - Integer division. `\` and `Mod` now round both operands half to even first, as VBA does.
   - Logical operators. `And`, `Or`, `Not`, `Xor`, `Eqv` and `Imp` are bitwise on numbers and three-valued with Null, as `VarAnd` and friends are. For example, `12 And 10` is 8 and `Null Or True` is True. These were measured with oleaut32. Access itself was not checked, and Jackcess keeps these operators logical.
   - Literals. The tokenizer read every `&` as concatenation and knew only double-quoted text. So `&H10`, `&O17` and `'abc'` were rejected, and calculated columns like `[First] & ' ' & [Last]` could not be declared. A stored default of `'N/A'` or a rule of `<=&HFF` was skipped as unsupported, so the default stored Null and the rule accepted everything. `CalculatedExpressionNormalizer` now reads a radix literal where an operand is expected, with VBA's typing: `&HFFFF` is the Integer -1, `&HFFFF&` is the Long 65535, and a bare `&17` is octal 15. After an operand, `&` still joins text. Single-quoted text, with `''` as an escaped quote, is now a text literal everywhere, so `ColumnValidationRule` no longer rewrites it on its own.
+  - Dates as text. A date that an expression turned into text went through `Convert.ToString` with the invariant culture. That covers `&`, `CStr`, `Format` with no format, a Text result column and a Text default. So `#2020-01-31 18:30:05#` became `01/31/2020 18:30:05`, and midnight kept `00:00:00`. VBA writes `1/31/2020 6:30:05 PM` and `1/31/2020`. The new `CalculatedExpressionCoercion.ToGeneralDateText` follows OLE Automation's `VarBstrFromDate` for en-US, measured with oleaut32:
+    - no zero padding, and a 12-hour clock with AM/PM;
+    - no time part at midnight, and no date part on day 0;
+    - a fraction of a second rounds up only when it is over one half.
+
+    `ToText`, `Format(d, "General Date")`, `Format(d, "")` and `FormatDateTime(d, vbGeneralDate)` use it. Access formats with the Windows locale; the library always uses the en-US form, whatever the current culture.
+  - Times without a date. VBA puts a time with no date on day 0, 1899-12-30, which is how Access stores a time on its own: `CDate("6:00:00 AM")` is 0.25. This was measured with VBScript under LCID 1033, whose date conversions are VBA's. Four things gave today's date instead:
+    - Time-only text. `ParseDate` fell back to `DateTime.Parse`. Once a day-0 date became General Date text with no date part, a time stored on its own no longer survived a trip through text: `CDate([T] & "")`, `CDate(CStr([T]))` and `Year(CStr([T]))` gave today's date and year. So did a `#6:00#` literal, which becomes `DATEVALUE("6:00")`.
+    - `Time()`. So a `=Time()` default stored today's date and time, where Access stores the time alone.
+    - `TimeValue`, which added today's date.
+    - `TimeSerial`, which added fractional hours, minutes and seconds to today's date. VBA rounds each argument half to even to an Integer and returns the total as a date serial. So `TimeSerial(25, 0, 0)` is 12/31/1899 1:00 AM, and `TimeSerial(6.5, 0, 0)` is 6:00 AM, where the engine gave today's date at 6:30 AM.
+
+    All four now give day 0. A `TimeSerial` argument outside the Integer range throws `OverflowException`.
+  - Dropping and rebuilding. `DropTableAsync`, and the `AddColumnAsync`, `DropColumnAsync` and `RenameColumnAsync` rewrites, free a table's long values through each row's Memo and OLE headers (`ReclaimTableStoragePagesAsync`). They read the table definition without `ResultType`, and a drop had already deleted the catalog row that holds it. So AllNames' headers were skipped.
+    - Access lists the LVAL pages it writes in each long-value column's own usage maps (for AllNames, rows 2 and 3 of Table1's usage-map page). The drop frees those pages, so Access's values were freed.
+    - The writer lists the LVAL pages it allocates in no usage map. So when the writer inserted a row and its AllNames value went to an LVAL page, that LVAL row stayed allocated and unreachable until Compact & Repair.
+
+    `DropTableCoreAsync` now reads the definitions, with their result types, before it deletes the catalog rows, through the new `TableCatalog.ReadTableDefAsync`. The transplant path passes the definition the rewrite already holds.
   - Tests:
     - `CalculatedColumnFixtureTests.AllNames_CalculatedMemo_DecodesAccessCachedText`.
     - `CalculatedColumnWriteTests`:
       - `AccessAuthoredCalculatedColumns_InsertAndUpdate_StoreEachValueAsItsResultType`;
       - `AccessAuthoredCalculatedMemo_OverInlineLimit_SpillsToLval`;
       - `AccessAuthoredCalculatedTable_AddColumn_KeepsCalculatedValues`;
+      - `AccessAuthoredCalculatedMemo_DropOrRewrite_ReleasesItsLvalRows`, for a drop and an `AddColumnAsync`, after checking that the writer's value went to an LVAL row beside Access's three;
       - `InsertAndUpdate_BooleanExpressionInByteColumn_Stores255`;
       - `InsertRow_CalculatedResultOverflow_ThrowsOverflowNamingColumnAndLeavesTableUnchanged`;
-      - `InsertRow_BitwiseFlagsExpression_StoresAccessResult`.
-    - `CalculatedExpressionAccessSemanticsTests` covers the conversions, operators and Null logic.
+      - `InsertRow_BitwiseFlagsExpression_StoresAccessResult`;
+      - `CreateTable_SingleQuotedAndHexExpressions_AreAcceptedAndEvaluated`;
+      - `InsertAndUpdate_DateInTextExpression_StoresGeneralDate`, under de-DE in every write mode.
+    - `CalculatedExpressionAccessSemanticsTests` covers:
+      - the conversions, operators, Null logic and literals;
+      - dates as text: `DateToText_IsEnUsGeneralDate`, `DateToText_RoundsToTheNearestSecond`, and `DateToText_IgnoresTheCurrentCulture` under de-DE, ja-JP and en-GB;
+      - day 0: `TimeOnlyText_IsOnDayZero`, `DayZeroDate_ThroughText_KeepsDayZero`, `TimeValueAndTimeSerial_AreOnDayZero`, `TimeSerial_ArgumentOutsideInteger_Overflows` and `Time_IsTheCurrentTimeOnDayZero`.
+    - `ConstraintRegistryTests` covers defaults and rules with single quotes and `&H`/`&O` literals, dates in Text defaults, and day-0 defaults: `#6:00#`, `=TimeValue`, `=TimeSerial`, and `=Time()` in `ApplyAsync_HydratedDefaultValue_TimeIsOnDayZero`.
     - `ColumnConstraintTests.DateArithmeticDefaultAndRule_AreApplied_InEveryWriter` and `SingleQuotedDefaultAndHexRule_AreApplied_InEveryWriter` cover Jet3, Jet4 and ACCDB in every write mode.
-    - `CalculatedColumnWriteTests.CreateTable_SingleQuotedAndHexExpressions_AreAcceptedAndEvaluated`.
-  - Dates as text. A date that an expression turned into text went through `Convert.ToString` with the invariant culture. That covers `&`, `CStr`, `Format` with no format, a Text result column and a Text default. So `#2020-01-31 18:30:05#` became `01/31/2020 18:30:05`, and midnight kept `00:00:00`. VBA writes `1/31/2020 6:30:05 PM` and `1/31/2020`. The new `CalculatedExpressionCoercion.ToGeneralDateText` follows OLE Automation's `VarBstrFromDate` for en-US, measured with oleaut32:
-    - no zero padding, and a 12-hour clock with AM/PM;
-    - no time part at midnight, and no date part on day 0;
-    - a fraction of a second rounds up only when it is over one half.
-
-    `ToText`, `Format(d, "General Date")`, `Format(d, "")` and `FormatDateTime(d, vbGeneralDate)` use it. Access formats with the Windows locale; the library always uses the en-US form, whatever the current culture. Tests:
-    - `CalculatedExpressionAccessSemanticsTests.DateToText_IsEnUsGeneralDate`, `DateToText_RoundsToTheNearestSecond` and `DateToText_IgnoresTheCurrentCulture`, under de-DE, ja-JP and en-GB;
-    - `CalculatedColumnWriteTests.InsertAndUpdate_DateInTextExpression_StoresGeneralDate`, under de-DE in every write mode.
-  - Times on day 0. In VBA a time with no date is on day 0, 1899-12-30, which is how Access stores a time on its own. The engine gave such times today's date: `ParseDate` fell back to `DateTime.Parse`, so a day-0 value written as text ("6:00:00 AM") came back with today's date through `CDate([T] & "")` or `CStr`, and so did a `#6:00#` literal; `Time()` returned the current date and time, so a common `=Time()` default stored today's date; `TimeValue` added today's date; and `TimeSerial` added fractional arguments to today's date, so `TimeSerial(6.5, 0, 0)` was 6:30 AM where VBA gives 6:00 AM. Time-only text now parses onto day 0, `Time()` and `TimeValue` return a time on day 0, and `TimeSerial` rounds each argument half to even to an Integer, overflows outside the Integer range and returns an OLE date serial, as VBA does (measured with VBScript under LCID 1033). `CalculatedExpressionAccessSemanticsTests` and `ConstraintRegistryTests` cover the conversions, literals and defaults.
-  - Dropping and rebuilding. `ReclaimTableStoragePagesAsync` frees a dropped or rebuilt table's long values by reading each row's MEMO and OLE headers, but it read the table definition without the calculated result types, and on the drop path after the `MSysObjects` row holding them was gone. So a calculated column whose result is Memo but whose descriptor is Text, like calcFieldTestV2010's AllNames, was read as Text and its LVAL rows were skipped. Values Access wrote were freed anyway, through the column's own usage maps, but the writer lists the LVAL pages it allocates in no usage map, so a value the writer stored there stayed allocated and unreachable until Compact & Repair. `DropTableCoreAsync` now reads the definitions, with result types, before deleting the catalog rows. `CalculatedColumnWriteTests.AccessAuthoredCalculatedMemo_DropOrRewrite_ReleasesItsLvalRows` checks that every LVAL row AllNames named is released after a drop and after an AddColumn.
   - Not repaired: cached values that earlier builds wrote.
+  - Follow-up: custom `Format` date codes are .NET's, so `Format(#2020-01-31 06:00#, "mm/dd/yyyy")` gives `00/31/2020` (`mm` is minutes in .NET); VBA gives `01/31/2020`.
+  - Follow-up: the other named date formats use .NET's invariant patterns. `FormatDateTime(DateSerial(2025, 2, 3), 2)` gives `02/03/2025` and `Format(#2020-01-31#, "Short Date")` gives `01/31/2020`, where VBA en-US gives `2/3/2025` and `1/31/2020`. Short Time and Long Date differ too.
+  - Follow-up: `DateValue` keeps the time. `CStr(DateValue(#2020-01-31 06:00#))` gives `1/31/2020 6:00:00 AM` and `CStr(DateValue("6:00:00 AM"))` gives `6:00:00 AM`; VBA gives `1/31/2020` and `12:00:00 AM`. A `#...#` literal becomes `DATEVALUE("...")`, so the fix has to keep a literal's time.
+  - Follow-up: `DateSerial` truncates its arguments, where VBA rounds them half to even. `DateSerial(2020, 1, 1.5)` and `DateSerial(2020, 1.6, 1)` both give 1/1/2020; VBScript gives 1/2/2020 and 2/1/2020.
+  - Follow-up: `Now()` and `Time()` keep fractions of a second, so a `=Now()` or `=Time()` default stores milliseconds. VBA's `Now` and `Time` are whole seconds.
+  - Follow-up: intermediate numbers are Decimal or Double, not VBA's Integer, Long or Double. `CStr(1/3)` has 28 digits (VBA: 15), `TypeName(&H10)` is `Double` (VBA: `Integer`), and `VarType(&HFFFF)` is 14 (VBA: 2).
 - **Index maintenance left page runs it had reserved marked used when it bailed or threw.** Several index paths reserved a run through `PageAllocator` before they knew they would link it, and no exit path gave it back, so the pages stayed used and unreachable until Access compacted the file:
   - A later index bailing in `TryMaintainIndexesIncrementalAsync` left the earlier rebuilt trees behind: 21 pages on Jet4 and ACCDB and 41 on Jet3 for a 4,000-row primary key.
   - A unique violation in `RebuildIndexesAsync` left 11 or 21.
