@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      Helpers that the tests and the format probe share but the library package must not
+      ship, such as finding and running a Windows PowerShell host that can load DAO. It
+      targets the test project's two frameworks and does not reference the library.
+    -->
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <RootNamespace>JetDatabaseWriter.TestSupport</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
+    <InternalsVisibleTo Include="JetDatabaseWriter.FormatProbe" />
+  </ItemGroup>
+</Project>

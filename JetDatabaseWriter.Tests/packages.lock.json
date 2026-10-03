@@ -197,10 +197,13 @@
       "jetdatabasewriter.scaffold": {
         "type": "Project",
         "dependencies": {
-          "JetDatabaseWriter": "[4.0.0, )",
+          "JetDatabaseWriter": "[1.0.0, )",
           "Microsoft.CodeAnalysis.CSharp": "[5.3.0, )",
           "System.CommandLine": "[2.0.9, )"
         }
+      },
+      "jetdatabasewriter.testsupport": {
+        "type": "Project"
       },
       "ClosedXML.Parser": {
         "type": "CentralTransitive",
@@ -419,6 +422,9 @@
           "System.Linq.Async": "[7.0.1, )",
           "System.Text.Encoding.CodePages": "[10.0.9, )"
         }
+      },
+      "jetdatabasewriter.testsupport": {
+        "type": "Project"
       },
       "ClosedXML.Parser": {
         "type": "CentralTransitive",

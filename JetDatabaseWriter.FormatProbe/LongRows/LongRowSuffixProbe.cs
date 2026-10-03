@@ -28,10 +28,10 @@ using JetDatabaseWriter.FormatProbe;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.TestSupport;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 internal static class LongRowSuffixProbe

@@ -1,6 +1,6 @@
 # Publishing JetDatabaseWriter
 
-Only the `JetDatabaseWriter` library is published to nuget.org. The scaffolding CLI, the tests, the benchmarks and the format probe are not packable.
+Only the `JetDatabaseWriter` library is published to nuget.org. The scaffolding CLI, the tests, the test-support library, the benchmarks and the format probe are not packable.
 
 ## How the version is set
 

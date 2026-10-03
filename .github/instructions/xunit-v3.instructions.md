@@ -13,6 +13,7 @@ applyTo: "**/*Tests*/**,**/*.Tests.csproj"
 - Use `dotnet test --project JetDatabaseWriter.Tests` as the base CLI command, adding the MTP options listed below as needed.
 - The repo uses SDK 10.x, so MTP options are passed directly to `dotnet test`. Never use a `--` separator before MTP options.
 - `JetDatabaseWriter.Tests` targets `net10.0` and `net8.0`. The `net8.0` leg loads the library's `netstandard2.1` build, so a plain `dotnet test` runs the suite twice. Add `-f net10.0` for a quicker local loop, and run both before pushing. Test code must compile on both: polyfills for newer BCL types go in `JetDatabaseWriter.Tests/Polyfills`, and `LibraryTarget.IsNetStandard` tells a test which library build it loaded. The scaffolding tests build for `net10.0` only.
+- Helpers that the tests and `JetDatabaseWriter.FormatProbe` share, such as the DAO PowerShell host resolver and `PowerShellProcessRunner`, live in the non-packable `JetDatabaseWriter.TestSupport` project, never in the library, so the package does not ship them. Run PowerShell or other child processes through `PowerShellProcessRunner` rather than reading a redirected stream to its end before `WaitForExit`, which ignores the timeout.
 
 ## Run Tests
 
