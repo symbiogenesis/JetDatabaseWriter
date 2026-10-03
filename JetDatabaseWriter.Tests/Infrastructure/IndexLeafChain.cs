@@ -69,6 +69,51 @@ internal static class IndexLeafChain
         return entries;
     }
 
+    /// <summary>
+    /// Returns every page of the index B-tree rooted at
+    /// <paramref name="rootPage"/>: the root, each intermediate page, each
+    /// child an intermediate entry or <c>tail_page</c> names, and each leaf.
+    /// Asserts that every page is an index page owned by
+    /// <paramref name="tdefPage"/>.
+    /// </summary>
+    /// <param name="db">The database file to read.</param>
+    /// <param name="tdefPage">The owning table's TDEF page.</param>
+    /// <param name="rootPage">The index root page (<c>first_dp</c>).</param>
+    /// <param name="cancellationToken">A token used to cancel the reads.</param>
+    /// <returns>The tree's page numbers.</returns>
+    public static async Task<HashSet<long>> ReadTreePagesAsync(DatabaseFile db, long tdefPage, long rootPage, CancellationToken cancellationToken)
+    {
+        var layout = IndexPageLayout.ForFormat(db.Format);
+        var pages = new HashSet<long>();
+        var pending = new Stack<long>();
+        pending.Push(rootPage);
+        while (pending.Count > 0)
+        {
+            long current = pending.Pop();
+            if (current == 0 || !pages.Add(current))
+            {
+                continue;
+            }
+
+            Assert.True(pages.Count < 100_000, $"The index tree rooted at {rootPage} does not end.");
+            byte[] page = await db.ReadPageCopyAsync(current, cancellationToken);
+            Assert.True(Ri32(page, 4) == tdefPage, $"Index page {current} is owned by page {Ri32(page, 4)}, not the table's TDEF {tdefPage}.");
+            if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                continue;
+            }
+
+            Assert.True(page[0] == Constants.IndexLeafPage.PageTypeIntermediate, $"Page {current} has type 0x{page[0]:X2}, not an index page.");
+            pending.Push(IndexPageCodec.ReadTailPage(layout, page));
+            foreach (DecodedIntermediateEntry child in IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes))
+            {
+                pending.Push(child.ChildPage);
+            }
+        }
+
+        return pages;
+    }
+
     /// <summary>Returns the root page (<c>first_dp</c>) of every real index of the table at <paramref name="tdefPage"/>.</summary>
     /// <param name="db">The database file to read.</param>
     /// <param name="tdefPage">The table's TDEF page.</param>
