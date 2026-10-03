@@ -7,10 +7,13 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 /// <summary>
 /// An Access column <c>DefaultValue</c> expression compiled for evaluation on insert.
-/// Numeric and <c>{guid ...}</c> literals are parsed directly, so a decimal default keeps
-/// all its digits. Anything else (<c>"text"</c>, <c>True</c>, <c>#2020-01-31#</c>,
-/// <c>Date()</c>, <c>=Now()</c>, <c>1+2</c>) is evaluated by the calculated-column
-/// expression engine, and the result is converted to the column's CLR type.
+/// Numeric and <c>{guid ...}</c> literals are parsed directly. A numeric literal is
+/// parsed once as a double, a float and a decimal: a Double or Single column takes its
+/// own parse, which is exact, and every other column takes the decimal, so a decimal
+/// default keeps all its digits. Anything else (<c>"text"</c>, <c>True</c>,
+/// <c>#2020-01-31#</c>, <c>Date()</c>, <c>=Now()</c>, <c>1+2</c>) is evaluated by the
+/// calculated-column expression engine, and the result is converted to the column's CLR
+/// type.
 /// </summary>
 internal sealed class ColumnDefaultValue
 {
@@ -18,14 +21,16 @@ internal sealed class ColumnDefaultValue
     /// The default for a column whose expression this library cannot parse. It never
     /// produces a value.
     /// </summary>
-    public static readonly ColumnDefaultValue Unsupported = new(null, null);
+    public static readonly ColumnDefaultValue Unsupported = new(null, null, null);
 
     private readonly object? literal;
+    private readonly NumericLiteral? number;
     private readonly CalculatedExpressionPlan? plan;
 
-    private ColumnDefaultValue(object? literal, CalculatedExpressionPlan? plan)
+    private ColumnDefaultValue(object? literal, NumericLiteral? number, CalculatedExpressionPlan? plan)
     {
         this.literal = literal;
+        this.number = number;
         this.plan = plan;
     }
 
@@ -51,17 +56,17 @@ internal sealed class ColumnDefaultValue
 
         if (TryParseGuidLiteral(text, out Guid guid))
         {
-            return new ColumnDefaultValue(guid, null);
+            return new ColumnDefaultValue(guid, null, null);
         }
 
-        if (decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal number))
+        if (NumericLiteral.TryParse(text, out NumericLiteral number))
         {
-            return new ColumnDefaultValue(number, null);
+            return new ColumnDefaultValue(null, number, null);
         }
 
         try
         {
-            return new ColumnDefaultValue(null, CalculatedExpressionPlan.Parse(text));
+            return new ColumnDefaultValue(null, null, CalculatedExpressionPlan.Parse(text));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or FormatException)
         {
@@ -73,23 +78,47 @@ internal sealed class ColumnDefaultValue
     /// Evaluates the default and converts it to <paramref name="clrType"/>. Returns
     /// <see langword="false"/>, leaving the column null, when the expression is
     /// unsupported, evaluates to Null, uses a function or name this library cannot
-    /// evaluate, or yields a value that cannot be converted to the column's type.
+    /// evaluate, or yields a value that cannot be converted to the column's type
+    /// (including a numeric literal too large for a Single column).
     /// </summary>
     /// <param name="clrType">The CLR type the column stores.</param>
-    /// <param name="createContext">Creates the evaluation context over the row being inserted.</param>
+    /// <param name="createContext">
+    /// Creates the evaluation context over the row being inserted. A numeric or
+    /// <c>{guid ...}</c> literal never calls it.
+    /// </param>
     /// <param name="value">The default value, converted to <paramref name="clrType"/>.</param>
     /// <returns>Whether a default value was produced.</returns>
     public bool TryEvaluate(Type clrType, Func<CalculatedExpressionEvaluationContext> createContext, out object value)
     {
         value = DBNull.Value;
-        if ((this.literal is null && this.plan is null) || !IsSupportedTarget(clrType))
+        if ((this.literal is null && this.number is null && this.plan is null) || !IsSupportedTarget(clrType))
         {
             return false;
         }
 
+        if (this.number is NumericLiteral number)
+        {
+            if (clrType == typeof(double))
+            {
+                value = number.AsDouble;
+                return true;
+            }
+
+            if (clrType == typeof(float))
+            {
+                if (number.AsSingle is not float single)
+                {
+                    return false;
+                }
+
+                value = single;
+                return true;
+            }
+        }
+
         try
         {
-            object raw = this.literal ?? this.plan!.Root.Evaluate(createContext(), this.plan);
+            object raw = this.number?.ForOtherTypes ?? this.literal ?? this.plan!.Root.Evaluate(createContext(), this.plan);
             if (IsNull(raw))
             {
                 return false;
@@ -126,4 +155,43 @@ internal sealed class ColumnDefaultValue
         || clrType == typeof(decimal)
         || clrType == typeof(DateTime)
         || clrType == typeof(Guid);
+
+    /// <summary>
+    /// A finite numeric literal, parsed once as each type a column can take it as.
+    /// Parsing it as a decimal first and converting would turn anything below about
+    /// 1e-28 into 0 and round the rest twice.
+    /// </summary>
+    /// <param name="AsDouble">The literal as a double.</param>
+    /// <param name="AsSingle">The literal as a float, or <see langword="null"/> when it is too large for one.</param>
+    /// <param name="AsDecimal">The literal as a decimal, or <see langword="null"/> when it is out of the decimal range.</param>
+    private readonly record struct NumericLiteral(double AsDouble, float? AsSingle, decimal? AsDecimal)
+    {
+        /// <summary>
+        /// Gets the value a column of any other type converts from: the decimal, which
+        /// keeps every digit of a decimal default, or the double when the literal is out
+        /// of the decimal range.
+        /// </summary>
+        public object ForOtherTypes => this.AsDecimal is decimal m ? m : this.AsDouble;
+
+        /// <summary>
+        /// Parses <paramref name="text"/> as a finite invariant-culture number. The
+        /// <c>NaN</c> and <c>Infinity</c> symbols are not Access literals and do not parse.
+        /// </summary>
+        /// <param name="text">The trimmed expression text.</param>
+        /// <param name="literal">The parsed literal.</param>
+        /// <returns>Whether <paramref name="text"/> is a finite numeric literal.</returns>
+        public static bool TryParse(string text, out NumericLiteral literal)
+        {
+            literal = default;
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) || !double.IsFinite(d))
+            {
+                return false;
+            }
+
+            float? single = float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float f) && float.IsFinite(f) ? f : null;
+            decimal? m = decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal parsed) ? parsed : null;
+            literal = new NumericLiteral(d, single, m);
+            return true;
+        }
+    }
 }

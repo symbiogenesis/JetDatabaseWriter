@@ -693,6 +693,94 @@ public sealed class ColumnConstraintTests
         }
     }
 
+    /// <summary>Gets each floating-point and date CLR default case in every format.</summary>
+    public static TheoryData<DatabaseFormat, string> ClrDefaultCases
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, string>();
+            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+            {
+                foreach (string kind in new[] { "TinyDouble", "LongDouble", "SubnormalSingle", "SingleOnDouble", "DateWithMilliseconds" })
+                {
+                    data.Add(format, kind);
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// A CLR default is applied as the value its persisted literal denotes, so the
+    /// declaring writer and a later one, which reads the literal back, store the same
+    /// value. A Double or Single literal used to be parsed as a decimal, so a later
+    /// writer stored 0 for 1e-30 and lost digits of others; the declaring writer stored
+    /// 0.1f on a Double column as 0.10000000149011612 where the literal says 0.1; and a
+    /// date default, persisted to the whole second, kept its milliseconds only in the
+    /// declaring writer.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="kind">The default; see <see cref="ClrDefaultCase"/>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(ClrDefaultCases))]
+    public async Task ClrDefault_IsTheSameInTheDeclaringAndALaterWriter(DatabaseFormat format, string kind)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "ClrDefaults";
+        (ColumnDefinition column, object expected) = ClrDefaultCase(kind);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(table, [new("Id", typeof(int)), column], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1 }, TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(table, new RowValues { ["Id"] = 2 }, TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(expected, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Value"]);
+        Assert.Equal(expected, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2)["Value"]);
+    }
+
+    /// <summary>
+    /// A NaN or infinite floating-point default is rejected: Access has no literal for
+    /// it, so it used to be persisted as <c>NaN</c> or <c>Infinity</c>, which no writer
+    /// could evaluate.
+    /// </summary>
+    /// <param name="kind"><c>DoubleNaN</c>, <c>DoublePositiveInfinity</c> or <c>SingleNegativeInfinity</c>.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("DoubleNaN")]
+    [InlineData("DoublePositiveInfinity")]
+    [InlineData("SingleNegativeInfinity")]
+    public async Task CreateTable_NonFiniteFloatingDefault_IsRejected(string kind)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        ColumnDefinition column = kind switch
+        {
+            "DoubleNaN" => new("Value", typeof(double)) { DefaultValue = double.NaN },
+            "DoublePositiveInfinity" => new("Value", typeof(double)) { DefaultValue = double.PositiveInfinity },
+            _ => new("Value", typeof(float)) { DefaultValue = float.NegativeInfinity },
+        };
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await writer.CreateTableAsync("NonFinite", [new("Id", typeof(int)), column], TestContext.Current.CancellationToken));
+            Assert.Contains("'Value'", ex.Message, StringComparison.Ordinal);
+            Assert.Equal("columns", ex.ParamName);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.DoesNotContain("NonFinite", await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+    }
+
     /// <summary>Gets each generated column kind, with a default declared on it, in every format that has the kind.</summary>
     public static TheoryData<DatabaseFormat, string> DefaultOnGeneratedColumnCases
     {
@@ -1177,6 +1265,28 @@ public sealed class ColumnConstraintTests
             TestContext.Current.CancellationToken);
         return length;
     }
+
+    /// <summary>
+    /// Builds a column named <c>Value</c> with a floating-point or date CLR default, and
+    /// the value every writer stores for it.
+    /// </summary>
+    /// <param name="kind">
+    /// <c>TinyDouble</c> (1e-30), <c>LongDouble</c> (17 significant digits),
+    /// <c>SubnormalSingle</c> (the smallest float), <c>SingleOnDouble</c> (0.1f on a
+    /// Double column, which stores 0.1) or <c>DateWithMilliseconds</c> (stored to the
+    /// whole second).
+    /// </param>
+    /// <returns>The column definition and the stored value.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="kind"/> is none of these.</exception>
+    private static (ColumnDefinition Column, object Expected) ClrDefaultCase(string kind) => kind switch
+    {
+        "TinyDouble" => (new("Value", typeof(double)) { DefaultValue = 1e-30 }, 1e-30),
+        "LongDouble" => (new("Value", typeof(double)) { DefaultValue = 1.2345678901234567e-20 }, 1.2345678901234567e-20),
+        "SubnormalSingle" => (new("Value", typeof(float)) { DefaultValue = float.Epsilon }, float.Epsilon),
+        "SingleOnDouble" => (new("Value", typeof(double)) { DefaultValue = 0.1f }, 0.1),
+        "DateWithMilliseconds" => (new("Value", typeof(DateTime)) { DefaultValue = new DateTime(2024, 2, 29, 8, 30, 15, 123) }, new DateTime(2024, 2, 29, 8, 30, 15)),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
 
     /// <summary>
     /// Builds a column named <c>Gen</c> whose value Access generates, with a default

@@ -406,7 +406,7 @@ internal sealed class ConstraintRegistry(
             Name = def.Name,
             ClrType = def.ClrType,
             IsNullable = def.IsNullable,
-            DefaultValue = takesDefault && def.DefaultValue is not DBNull ? def.DefaultValue : null,
+            DefaultValue = takesDefault ? ToAppliedClrDefault(def) : null,
             IsAutoIncrement = def.IsAutoIncrement,
             ValidationRule = def.ValidationRule,
             DefaultValueExpression = takesDefault ? NullIfBlank(def.DefaultValueExpression) : null,
@@ -417,6 +417,45 @@ internal sealed class ConstraintRegistry(
             CalculatedResultType = JetTypeInfo.TypeCodeFromDefinition(def),
             IsComplexReference = def.IsAttachment || def.IsMultiValue,
         };
+    }
+
+    /// <summary>
+    /// Returns the value the declaring writer stores for <paramref name="def"/>'s CLR
+    /// <see cref="ColumnDefinition.DefaultValue"/>. When no
+    /// <see cref="ColumnDefinition.DefaultValueExpression"/> is set, the CLR default is
+    /// persisted as a literal that later writers apply instead, so the declaring writer
+    /// applies what that literal denotes: a <see cref="double"/> or <see cref="float"/>
+    /// is read back from its literal as the column's type (<c>0.1f</c> on a Double column
+    /// is 0.1), and a <see cref="DateTime"/> is cut to the whole second, the resolution
+    /// of an Access date literal. Other values are stored as given; their literals are
+    /// exact.
+    /// </summary>
+    /// <param name="def">The column definition.</param>
+    /// <returns>The default to apply, or <see langword="null"/> for none.</returns>
+    private static object? ToAppliedClrDefault(ColumnDefinition def)
+    {
+        object? value = def.DefaultValue;
+        if (value is DBNull)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(def.DefaultValueExpression))
+        {
+            return value;
+        }
+
+        if (value is double d ? double.IsFinite(d) : value is float f && float.IsFinite(f))
+        {
+            var persisted = ColumnDefaultValue.Compile(JetExpressionConverter.ToJetExpression(value)!);
+            return persisted.TryEvaluate(def.ClrType, static () => throw new InvalidOperationException("A numeric literal needs no evaluation context."), out object parsed)
+                ? parsed
+                : value;
+        }
+
+        return value is DateTime dateTime
+            ? new DateTime(dateTime.Ticks - (dateTime.Ticks % TimeSpan.TicksPerSecond), dateTime.Kind)
+            : value;
     }
 
     private static bool TryGetComplexReference(object value, out long reference)

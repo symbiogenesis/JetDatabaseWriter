@@ -69,6 +69,16 @@ public sealed record ColumnDefinition
     /// <see cref="DBNull.Value"/> means no default.
     /// </para>
     /// <para>
+    /// Every writer, including the one that declares it, stores the value the literal
+    /// denotes. A <see cref="DateTime"/> default is persisted and applied to the whole
+    /// second, the resolution of an Access date literal. A <see cref="double"/> or
+    /// <see cref="float"/> default is applied as its literal reads back in the column's
+    /// type, so <c>0.1f</c> on a Double column stores 0.1; NaN and infinities have no
+    /// literal, and <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
+    /// <see cref="ArgumentException"/> for them. When <see cref="DefaultValueExpression"/>
+    /// is also set, the declaring writer stores this value as given.
+    /// </para>
+    /// <para>
     /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,
     /// <see cref="IsAttachment"/> or <see cref="IsMultiValue"/> columns, whose values Access
     /// generates: <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
