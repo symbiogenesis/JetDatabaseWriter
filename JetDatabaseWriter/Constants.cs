@@ -727,42 +727,23 @@ internal static class Constants
     /// sub-sections (real-idx physical descriptors, logical-idx entries) that
     /// follow the column descriptors. See
     /// <see href="docs/design/index-and-relationship-format-notes.md" /> §3.
+    /// The header field offsets (row count, AutoNumber counter, table type,
+    /// column and index counts, usage-map pointers) differ between Jet3 and
+    /// Jet4/ACE and live in <see cref="Pages.TDefHeaderLayout"/>.
     /// </summary>
     public static class TableDefinition
     {
+        /// <summary>TDEF <c>table_type</c> byte for a user table.</summary>
+        public const byte UserTableType = 0x4E;
+
+        /// <summary>TDEF <c>table_type</c> byte for a system table.</summary>
+        public const byte SystemTableType = 0x53;
+
         /// <summary>Conservative maximum number of columns accepted while parsing a TDEF.</summary>
         public const int MaxColumns = 4096;
 
         /// <summary>Conservative maximum logical / physical index count accepted while parsing a TDEF.</summary>
         public const int MaxIndexes = 1000;
-
-        /// <summary>
-        /// Byte offset within a TDEF page header where the live-row count is
-        /// stored as a little-endian <c>uint32</c>. Adjusted by every insert /
-        /// delete so the cached count stays in sync with what readers compute
-        /// by walking row offset arrays.
-        /// </summary>
-        public const int RowCountOffset = 16;
-
-        /// <summary>Byte offset of the owned-pages usage-map row pointer in a TDEF page.</summary>
-        public const int OwnedPagesRowOffset = 0x37;
-
-        /// <summary>Byte offset of the owned-pages usage-map page pointer in a TDEF page.</summary>
-        public const int OwnedPagesPageOffset = 0x38;
-
-        /// <summary>Byte offset of the free-pages usage-map row pointer in a TDEF page.</summary>
-        public const int FreePagesRowOffset = 0x3B;
-
-        /// <summary>Byte offset of the free-pages usage-map page pointer in a TDEF page.</summary>
-        public const int FreePagesPageOffset = 0x3C;
-
-        /// <summary>
-        /// Byte offset within a TDEF page header where Access stores the
-        /// AutoNumber high-water value as a little-endian <c>uint32</c>. DAO
-        /// uses this value to choose the next AutoNumber when it inserts into
-        /// a writer-created table.
-        /// </summary>
-        public const int AutoNumberOffset = 20;
 
         /// <summary>
         /// Size in bytes of one <c>col_map</c> slot within a real-idx physical

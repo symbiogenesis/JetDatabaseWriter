@@ -203,9 +203,6 @@ internal sealed class IndexMaintainer(
         return false;
     }
 
-    private static int ReadTableUsageMapPage(byte[] tdefBuffer)
-        => UsageMap.ReadUInt24(tdefBuffer, Constants.TableDefinition.OwnedPagesPageOffset);
-
     private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
         => UsageMap.WritePointer(tdefBuffer, usedPagesOffset, rowIndex, usageMapPage);
 
@@ -219,6 +216,9 @@ internal sealed class IndexMaintainer(
     /// <param name="reason">Why the indexes cannot be maintained.</param>
     private static JetLimitationException CreateUnmaintainableIndexesException(string tableName, string reason)
         => new($"The indexes of table '{tableName}' cannot be maintained: {reason}.");
+
+    private int ReadTableUsageMapPage(byte[] tdefBuffer)
+        => UsageMap.ReadUInt24(tdefBuffer, db.TDef.UsedPagesPage);
 
     private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
     {
@@ -346,7 +346,7 @@ internal sealed class IndexMaintainer(
         byte[] buffer = chain.Bytes;
 
         int numCols = Ru16(buffer, db.TDef.NumCols);
-        int numIdx = Ri32(buffer, db.TDef.NumCols + 2);
+        int numIdx = Ri32(buffer, db.TDef.NumIdx);
         int numRealIdx = Ri32(buffer, db.TDef.NumRealIdx);
 
         if (numIdx <= 0 || numRealIdx <= 0)
@@ -456,7 +456,7 @@ internal sealed class IndexMaintainer(
             }
 
             oldIndexPageGroups = await this.ReadIndexPageGroupsFromUsageMapAsync(
-                ReadTableUsageMapPage(tdefBuffer),
+                this.ReadTableUsageMapPage(tdefBuffer),
                 numRealIdx,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -547,7 +547,7 @@ internal sealed class IndexMaintainer(
 
         if (rebuiltIndexPageGroups is not null && HasAnyIndexPageGroup(rebuiltIndexPageGroups))
         {
-            long usageMapPage = ReadTableUsageMapPage(tdefBuffer);
+            long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
             await dataPages.UpdateTableIndexUsageMapRowsAsync(usageMapPage, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
             for (int realIdxNum = 0; realIdxNum < rebuiltIndexPageGroups.Length; realIdxNum++)
             {
@@ -758,7 +758,7 @@ internal sealed class IndexMaintainer(
             return true;
         }
 
-        long usageMapPage = ReadTableUsageMapPage(tdefBuffer);
+        long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
         if (usageMapPage <= 0 || usageMapPage >= db.PhysicalPageCount)
         {
             return false;

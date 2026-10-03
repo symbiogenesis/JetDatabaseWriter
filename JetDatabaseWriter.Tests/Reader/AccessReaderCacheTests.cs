@@ -464,10 +464,11 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private static byte[] ConvertOwnedUsageMapToReference(byte[] fileBytes, int pageSize, long tdefPage)
     {
         const int dataPageRowsStart = 14;
+        var tdefLayout = TDefHeaderLayout.For(DatabaseFormat.Jet4Mdb);
 
         int tdefOffset = checked((int)(tdefPage * pageSize));
-        int usageMapRow = fileBytes[tdefOffset + Constants.TableDefinition.OwnedPagesRowOffset];
-        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + Constants.TableDefinition.OwnedPagesRowOffset + 1);
+        int usageMapRow = fileBytes[tdefOffset + tdefLayout.UsedPages];
+        int usageMapPage = ReadUInt24(fileBytes, tdefOffset + tdefLayout.UsedPagesPage);
         int usageMapOffset = checked(usageMapPage * pageSize);
         int rowOffsetPosition = usageMapOffset + dataPageRowsStart + (usageMapRow * 2);
         int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(rowOffsetPosition, 2)) & 0x1FFF;

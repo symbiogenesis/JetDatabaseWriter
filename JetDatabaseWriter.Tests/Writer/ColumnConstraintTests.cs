@@ -846,18 +846,20 @@ public sealed class ColumnConstraintTests
     private static async ValueTask<uint> ReadTdefAutoNumberAsync(MemoryStream stream, string table)
     {
         long tdefPage;
+        int autoNumberOffset;
         stream.Position = 0;
         await using (ReaderHarness pages = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             CatalogEntry? entry = await pages.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
             tdefPage = entry.TDefPage;
+            autoNumberOffset = pages.Database.TDef.AutoNumber;
         }
 
         // Jet4 and ACE pages are both 4 KB; the counter is a uint32 in the TDEF header.
         byte[] file = stream.ToArray();
         return BinaryPrimitives.ReadUInt32LittleEndian(
-            file.AsSpan(checked((int)(tdefPage * Constants.PageSizes.Jet4)) + Constants.TableDefinition.AutoNumberOffset));
+            file.AsSpan(checked((int)(tdefPage * Constants.PageSizes.Jet4)) + autoNumberOffset));
     }
 
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)

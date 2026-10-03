@@ -121,7 +121,7 @@ internal static class IndexCatalogReader
     public static List<IndexMetadata> ReadMetadata(DatabaseFile db, byte[] td, IReadOnlyList<ColumnInfo> columns)
     {
         int numCols = Ru16(td, db.TDef.NumCols);
-        int numIdx = Ri32(td, db.TDef.NumCols + 2);
+        int numIdx = Ri32(td, db.TDef.NumIdx);
         int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
 
         // Defensive bounds: corrupt TDEFs can report absurd counts.

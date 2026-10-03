@@ -823,7 +823,7 @@ internal sealed class TableSchemaEditor(
 
         if (firstTdefPage is not null && db.Format != DatabaseFormat.Jet3Mdb)
         {
-            int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, Constants.TableDefinition.OwnedPagesPageOffset);
+            int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, db.TDef.UsedPagesPage);
             if (usageMapPage > 0)
             {
                 _ = pagesToFree.Add(usageMapPage);

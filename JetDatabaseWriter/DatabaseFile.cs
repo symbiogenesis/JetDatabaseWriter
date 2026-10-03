@@ -616,9 +616,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         var tableDef = new TableDef
         {
             Columns = cols,
-            RowCount = td.Length >= Constants.TableDefinition.RowCountOffset + sizeof(uint)
-                ? Ru32(td, Constants.TableDefinition.RowCountOffset)
-                : 0,
+            RowCount = Ru32(td, this.TDef.NumRows),
             HasDeletedColumns = hasDeletedColumns,
         };
         tableDef.InitializeColumnMetadata();
@@ -1288,15 +1286,13 @@ internal sealed class DatabaseFile : IAsyncDisposable
         try
         {
             if (tdef[0] != Constants.PageTypes.TableDefinition
-                || !UsageMap.TryReadPointer(tdef, Constants.TableDefinition.OwnedPagesRowOffset, out UsageMapPointer pointer)
+                || !UsageMap.TryReadPointer(tdef, this.TDef.UsedPages, out UsageMapPointer pointer)
                 || pointer.PageNumber <= 0)
             {
                 return null;
             }
 
-            uint declaredRows = tdef.Length >= Constants.TableDefinition.RowCountOffset + sizeof(uint)
-                ? Ru32(tdef, Constants.TableDefinition.RowCountOffset)
-                : 0;
+            uint declaredRows = Ru32(tdef, this.TDef.NumRows);
             return await this.TryReadMappedOwnedDataPagesAsync(
                 tdefPage,
                 pointer.PageNumber,

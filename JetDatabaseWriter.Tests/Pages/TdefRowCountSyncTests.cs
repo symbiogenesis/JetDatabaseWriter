@@ -16,7 +16,7 @@ using Xunit;
 /// Verifies the TDEF-page invariant that every per-real-idx
 /// <c>num_idx_rows</c> counter (4-byte LE u32 at offset
 /// <c>BlockEnd + i*RealIdxEntrySz + 4</c>) tracks the table-level
-/// <c>row_count</c> field at <see cref="Constants.TableDefinition.RowCountOffset"/>.
+/// <c>row_count</c> field at <see cref="TDefHeaderLayout.NumRows"/>.
 /// </para>
 /// <para>
 /// This invariant is required for DAO Compact &amp; Repair: when the two
@@ -120,7 +120,7 @@ public sealed class TdefRowCountSyncTests
             }
 
             uint rowCount = BinaryPrimitives.ReadUInt32LittleEndian(
-                fileBytes.AsSpan(o + Constants.TableDefinition.RowCountOffset, 4));
+                fileBytes.AsSpan(o + layout.NumRows, 4));
 
             int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(
                 fileBytes.AsSpan(o + layout.NumRealIdx, 4));

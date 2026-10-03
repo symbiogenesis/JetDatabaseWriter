@@ -247,10 +247,10 @@ internal static class EmittedPageInvariantAssert
         }
 
         int numCols = ReadUInt16(page, layout.NumCols);
-        int numVarCols = ReadUInt16(page, layout.NumCols - 2);
-        int numIdx = ReadInt32(page, layout.NumCols + 2);
+        int numVarCols = ReadUInt16(page, layout.NumVarCols);
+        int numIdx = ReadInt32(page, layout.NumIdx);
         int numRealIdx = ReadInt32(page, layout.NumRealIdx);
-        uint rowCount = ReadUInt32(page, Constants.TableDefinition.RowCountOffset);
+        uint rowCount = ReadUInt32(page, layout.NumRows);
 
         Assert.InRange(numCols, 0, 2048);
         Assert.InRange(numVarCols, 0, numCols);
@@ -288,17 +288,17 @@ internal static class EmittedPageInvariantAssert
 
     private static bool IsTdefHead(ReadOnlySpan<byte> page, TDefHeaderLayout layout)
     {
-        if (layout.NumCols < 5 || layout.NumCols + 2 >= page.Length)
+        if (layout.NumIdx + 4 > page.Length)
         {
             return false;
         }
 
-        if (page[layout.NumCols - 5] != 0x4E)
+        if (page[layout.TableType] != Constants.TableDefinition.UserTableType)
         {
             return false;
         }
 
-        int declaredCols = ReadUInt16(page, layout.NumCols - 4);
+        int declaredCols = ReadUInt16(page, layout.MaxCols);
         int repeatedCols = ReadUInt16(page, layout.NumCols);
         return declaredCols == repeatedCols;
     }

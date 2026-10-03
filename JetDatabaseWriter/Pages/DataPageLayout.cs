@@ -25,19 +25,72 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
 /// <summary>
 /// Per-format byte offsets within a TDEF page's table-definition block, plus
 /// the size of one real-index entry in the post-block skip region. Used by
-/// every TDEF parse / rewrite call site.
+/// every TDEF parse / rewrite call site. Jet4/ACE inserts a 4-byte field at
+/// offset 12 and a 16-byte block after the AutoNumber counter, so every
+/// header field after <c>tdef_len</c> sits at a different offset in Jet3
+/// (mdbtools HACKING.md, Jackcess <c>JetFormat</c>).
 /// </summary>
-/// <param name="NumCols">The number of cols.</param>
-/// <param name="NumRealIdx">The number of real index.</param>
+/// <param name="NumRows">Offset of the live-row count (uint32).</param>
+/// <param name="AutoNumber">Offset of the AutoNumber counter (uint32): the last value handed out.</param>
+/// <param name="TableType">Offset of the table-type byte (<c>0x4E</c> user, <c>0x53</c> system).</param>
+/// <param name="MaxCols">Offset of <c>max_cols</c> (uint16).</param>
+/// <param name="NumVarCols">Offset of <c>num_var_cols</c> (uint16).</param>
+/// <param name="NumCols">Offset of <c>num_cols</c> (uint16).</param>
+/// <param name="NumIdx">Offset of <c>num_idx</c>, the logical index count (int32).</param>
+/// <param name="NumRealIdx">Offset of <c>num_real_idx</c>, the physical index count (int32).</param>
+/// <param name="UsedPages">Offset of the owned-pages usage-map pointer (1-byte row + 3-byte page).</param>
+/// <param name="FreePages">Offset of the free-space usage-map pointer (1-byte row + 3-byte page).</param>
 /// <param name="BlockEnd">The block end.</param>
 /// <param name="RealIdxEntrySz">The real index entry size.</param>
-internal readonly record struct TDefHeaderLayout(int NumCols, int NumRealIdx, int BlockEnd, int RealIdxEntrySz)
+internal readonly record struct TDefHeaderLayout(
+    int NumRows,
+    int AutoNumber,
+    int TableType,
+    int MaxCols,
+    int NumVarCols,
+    int NumCols,
+    int NumIdx,
+    int NumRealIdx,
+    int UsedPages,
+    int FreePages,
+    int BlockEnd,
+    int RealIdxEntrySz)
 {
     /// <summary>Returns the TDEF header layout for <paramref name="format"/>.</summary>
     /// <param name="format">The format.</param>
     public static TDefHeaderLayout For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
-        ? new TDefHeaderLayout(NumCols: 45, NumRealIdx: 51, BlockEnd: 63, RealIdxEntrySz: 12)
-        : new TDefHeaderLayout(NumCols: 25, NumRealIdx: 31, BlockEnd: 43, RealIdxEntrySz: 8);
+        ? new TDefHeaderLayout(
+            NumRows: 16,
+            AutoNumber: 20,
+            TableType: 40,
+            MaxCols: 41,
+            NumVarCols: 43,
+            NumCols: 45,
+            NumIdx: 47,
+            NumRealIdx: 51,
+            UsedPages: 55,
+            FreePages: 59,
+            BlockEnd: 63,
+            RealIdxEntrySz: 12)
+        : new TDefHeaderLayout(
+            NumRows: 12,
+            AutoNumber: 16,
+            TableType: 20,
+            MaxCols: 21,
+            NumVarCols: 23,
+            NumCols: 25,
+            NumIdx: 27,
+            NumRealIdx: 31,
+            UsedPages: 35,
+            FreePages: 39,
+            BlockEnd: 43,
+            RealIdxEntrySz: 8);
+
+    /// <summary>Gets the offset of the owned-pages usage-map page number (3 bytes after the row byte).</summary>
+    public int UsedPagesPage => this.UsedPages + 1;
+
+    /// <summary>Gets the offset of the free-space usage-map page number (3 bytes after the row byte).</summary>
+    public int FreePagesPage => this.FreePages + 1;
 }
 
 /// <summary>
