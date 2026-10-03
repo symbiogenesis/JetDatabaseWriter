@@ -17,7 +17,9 @@ using System.Threading;
 /// makes the timeout useless: <c>ReadToEnd</c> returns only when every process holding the pipe
 /// has exited, so a hung host, or a child it started, blocked the caller for as long as it ran.
 /// Here both streams are read through events while the process runs, the timeout applies to the
-/// process itself, and a timed-out host is killed together with every process it started.
+/// process itself, and a timed-out host is killed together with every process it started. A
+/// process in that tree that this user may not terminate is left running, and the run still
+/// returns as a timeout instead of throwing.
 /// </remarks>
 internal static class PowerShellProcessRunner
 {
@@ -91,13 +93,13 @@ internal static class PowerShellProcessRunner
         {
             process.Kill(entireProcessTree: true);
         }
-        catch (InvalidOperationException)
+        catch (AggregateException)
         {
-            // The process exited after the timeout.
-        }
-        catch (Win32Exception)
-        {
-            // A process in the tree could not be killed (access denied or already exiting).
+            // Kill(entireProcessTree: true) kills every process in the tree it can and then
+            // reports each one it could not, such as a child running elevated, as a
+            // Win32Exception inside one AggregateException; it never throws Win32Exception
+            // itself, and a process that has already exited is not an error. The processes it
+            // could not kill keep running, and the run still returns as a timeout.
         }
 
         _ = process.WaitForExit(KillWaitTimeout);
