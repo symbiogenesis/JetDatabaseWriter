@@ -1,4 +1,4 @@
-None of the bugs from my earlier report is fixed at `HEAD` (6eab703). The five commits fixed the code's structure, not its behaviour. I re-ran my four repros against a fresh build of `HEAD` and all four still fail. Re-checking the code also turned up nine more data-loss or corruption bugs, which I ran myself. The test suite passes (3,832 passed, 29 DAO tests skipped, as usual), but no test covers any of these bugs.
+At `6eab703`, none of the bugs from my earlier report was fixed. The five commits fixed the code's structure, not its behaviour: my four repros still failed, re-checking the code turned up nine more data-loss or corruption bugs that I ran myself, and no test covered any of them. All of those (bugs 1–12) and every item the re-check agents reproduced are now fixed on main, each with regression tests; see "Fixed since 6eab703". The one exception is a CLR `ValidationRule` delegate, which can't be stored in the file, so it still applies only in the writer that declared it; this is now documented, and `ValidationRuleExpression` is the stored alternative. One new bug found while fixing them is still open (Jet3 long values, below), and the fixes turned up follow-ups that are listed under each entry and triaged in "Suggested next steps". The suite now runs on net10.0 and on net8.0, which loads the netstandard2.1 build: 8,846 passed, 0 failed, and the 29 DAO tests skipped on each leg as usual.
 
 ## What the five commits fixed
 - **The service-locator problem is gone.** Nothing outside the facades takes `AccessWriter`, `AccessReader` or `AccessBase` any more. `WriterServices` and `ReaderServices` now wire everything explicitly, the two dependency cycles are removed, and `ServiceGraphTests` guards this.
@@ -115,5 +115,14 @@ None. Every bug from my table is now under "Fixed since 6eab703".
 
 ## Suggested next steps
 1. **Turn the open repro above into a failing test first** (Jet3 long values), then fix it. The programs are in `scratchpad\recheck\*` and `scratchpad\repro2`/`repro3`.
+2. **Triage the follow-ups the fixes above turned up.** None has a failing test yet. These can lose or corrupt data, so they come first:
+   - `DropTableAsync` on a table in a relationship leaves the related tables' FK entries naming the freed TDEF page (RenameColumn entry).
+   - `TableCatalog` does not list some Access-authored tables, such as Orders, Employees and Products in NorthwindTraders.accdb (RenameColumn entry).
+   - A Jet3 row longer than 255 bytes throws `OverflowException` in `RowEncoder.SerializeRow`, which also blocks a Jet3 `CreateTableAsync` with about five CLR defaults (wide-table and constraints entries).
+   - A Jet3 decimal and a multi-value Decimal both store 12.34 as 12 (RenameColumn and complex-cell entries).
+   - Without a transaction, update and delete on a wide table written by an earlier build apply their row changes and then throw, and a cascade update to two child tables can stop after the first (wide-table and OLE entries).
+   - An explicit NULL inserted into a column with a stored default, such as any Number column in an older Access file, now stores the default (constraints entry).
+   - `RenameColumnAsync` leaves calculated expressions naming the old column (RenameColumn entry).
+   - `DetectEncryptionFormatAsync` reports an unencrypted writer-created Jet4 file as `Jet4Rc4`, so `EncryptAsync` refuses it (encryption entry).
 
 The per-claim results, with current file:line evidence and fix notes for all 14 flaws, are in `scratchpad\recheck.json` and `scratchpad\recheck-digest.md`.
