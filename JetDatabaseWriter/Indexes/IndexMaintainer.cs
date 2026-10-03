@@ -8,10 +8,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.ValueDecoding.Models;
@@ -208,6 +210,17 @@ internal sealed class IndexMaintainer(
     private static void WriteIndexUsageMapPointer(byte[] tdefBuffer, int usedPagesOffset, int rowIndex, long usageMapPage)
         => UsageMap.WritePointer(tdefBuffer, usedPagesOffset, rowIndex, usageMapPage);
 
+    /// <summary>
+    /// Builds the exception the bulk path throws when it cannot maintain a
+    /// table's indexes. Index maintenance is never skipped silently: a table
+    /// whose indexes cannot be rebuilt fails the mutation instead of leaving
+    /// stale B-trees behind.
+    /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="reason">Why the indexes cannot be maintained.</param>
+    private static JetLimitationException CreateUnmaintainableIndexesException(string tableName, string reason)
+        => new($"The indexes of table '{tableName}' cannot be maintained: {reason}.");
+
     private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
     {
         string message = $"Could not maintain {tableName} system-table indexes incrementally; full rebuild fallback is disabled.";
@@ -220,58 +233,52 @@ internal sealed class IndexMaintainer(
     }
 
     /// <summary>
-    /// Returns <c>true</c> when every real-idx slot on <paramref name="tdefPage"/>
-    /// references a valid in-range data page through its <c>first_dp</c>
-    /// pointer. Used by <see cref="InsertSystemRowAndMaintainAsync"/> to
-    /// avoid index maintenance on writer-bootstrapped system tables whose
-    /// real-idx descriptors point at unallocated pages.
+    /// Returns <c>true</c> when every real-idx slot of the TDEF chain rooted at
+    /// <paramref name="tdefPage"/> references a valid in-range data page
+    /// through its <c>first_dp</c> pointer. Used by
+    /// <see cref="InsertSystemRowAndMaintainAsync"/> to avoid index
+    /// maintenance on writer-bootstrapped system tables whose real-idx
+    /// descriptors point at unallocated pages.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        try
+        byte[]? td = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (td is null)
         {
-            if (page[0] != Constants.PageTypes.TableDefinition || Ru32(page, 4) != 0)
-            {
-                return false;
-            }
-
-            int numCols = Ru16(page, db.TDef.NumCols);
-            int numRealIdx = Ri32(page, db.TDef.NumRealIdx);
-            if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
-            {
-                return false;
-            }
-
-            int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, page, numCols, numRealIdx);
-            if (realIdxDescStart < 0)
-            {
-                return false;
-            }
-
-            long totalPages = db.PhysicalPageCount;
-            for (int ri = 0; ri < numRealIdx; ri++)
-            {
-                if (!db.IndexLayoutInfo.TryReadRealIdxSlot(page, realIdxDescStart, ri, out RealIdxSlot slot))
-                {
-                    return false;
-                }
-
-                long firstDp = (uint)Ri32(page, slot.FirstDpOffset);
-                if (firstDp <= 0 || firstDp >= totalPages)
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            return false;
         }
-        finally
+
+        int numCols = Ru16(td, db.TDef.NumCols);
+        int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
+        if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
-            DatabaseFile.ReturnPage(page);
+            return false;
         }
+
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            return false;
+        }
+
+        long totalPages = db.PhysicalPageCount;
+        for (int ri = 0; ri < numRealIdx; ri++)
+        {
+            if (!db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, ri, out RealIdxSlot slot))
+            {
+                return false;
+            }
+
+            long firstDp = (uint)Ri32(td, slot.FirstDpOffset);
+            if (firstDp <= 0 || firstDp >= totalPages)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -296,33 +303,38 @@ internal sealed class IndexMaintainer(
     }
 
     /// <summary>
-    /// Parsed snapshot of the per-table TDEF header bytes needed by the index
-    /// maintenance paths: the cloned page buffer, decoded column / index
-    /// counts, and the byte offset at which the real-idx descriptor block
-    /// begins (i.e. just past the column-name table).
+    /// Parsed snapshot of the per-table TDEF bytes needed by the index
+    /// maintenance paths: the logical TDEF chain (every page of a wide
+    /// table's definition, stitched into one buffer that remembers its
+    /// physical pages), decoded column / index counts, and the logical offset
+    /// at which the real-idx descriptor block begins (i.e. just past the
+    /// column-name table). Index <c>first_dp</c> and <c>used_pages</c>
+    /// offsets taken from it are logical too, so patches go into
+    /// <see cref="Buffer"/> and back to disk through
+    /// <see cref="DatabaseFile.WriteTDefChainInPlaceAsync"/>.
     /// </summary>
-    /// <param name="Buffer">The buffer.</param>
+    /// <param name="Chain">The logical TDEF chain.</param>
     /// <param name="NumCols">The number of cols.</param>
     /// <param name="NumIdx">The number of index.</param>
     /// <param name="NumRealIdx">The number of real index.</param>
     /// <param name="RealIdxDescStart">The real index desc start.</param>
-    /// <param name="FailedColumnIndex">The failed column index.</param>
-    /// <param name="FailedColumnNamePos">The failed column name pos.</param>
     private readonly record struct TdefPreamble(
-        byte[] Buffer,
+        LogicalTDefChain Chain,
         int NumCols,
         int NumIdx,
         int NumRealIdx,
-        int RealIdxDescStart,
-        int FailedColumnIndex,
-        int FailedColumnNamePos);
+        int RealIdxDescStart)
+    {
+        /// <summary>Gets the logical TDEF bytes; patches to it are written back with the chain.</summary>
+        public byte[] Buffer => this.Chain.Bytes;
+    }
 
     /// <summary>
-    /// Reads + clones the TDEF page, decodes <c>numCols</c> / <c>numIdx</c> /
-    /// <c>numRealIdx</c>, walks the column-name table, and returns the byte
+    /// Reads the whole TDEF chain, decodes <c>numCols</c> / <c>numIdx</c> /
+    /// <c>numRealIdx</c>, walks the column-name table, and returns the logical
     /// offset at which the real-idx descriptor block starts. Each caller maps
     /// the returned <see cref="TdefPreambleStatus"/> to its own bail policy
-    /// (silent return for the bulk path, <c>LastIncrementalBail</c> string for
+    /// (an exception for the bulk path, <c>LastIncrementalBail</c> string for
     /// the incremental and catalog-splice paths).
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
@@ -331,7 +343,8 @@ internal sealed class IndexMaintainer(
         long tdefPage,
         CancellationToken cancellationToken)
     {
-        byte[] buffer = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain chain = await db.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] buffer = chain.Bytes;
 
         int numCols = Ru16(buffer, db.TDef.NumCols);
         int numIdx = Ri32(buffer, db.TDef.NumCols + 2);
@@ -339,25 +352,18 @@ internal sealed class IndexMaintainer(
 
         if (numIdx <= 0 || numRealIdx <= 0)
         {
-            return (TdefPreambleStatus.Empty, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, -1, 0));
+            return (TdefPreambleStatus.Empty, new TdefPreamble(chain, numCols, numIdx, numRealIdx, 0));
         }
 
         if (numIdx > Constants.TableDefinition.MaxIndexes || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
-            return (TdefPreambleStatus.TooMany, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, -1, 0));
+            return (TdefPreambleStatus.TooMany, new TdefPreamble(chain, numCols, numIdx, numRealIdx, 0));
         }
 
-        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
-        for (int i = 0; i < numCols; i++)
-        {
-            if (db.ReadColumnName(buffer, ref namePos, out _) < 0)
-            {
-                return (TdefPreambleStatus.ColumnNameWalkFailed, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, 0, i, namePos));
-            }
-        }
-
-        return (TdefPreambleStatus.Ok, new TdefPreamble(buffer, numCols, numIdx, numRealIdx, namePos, -1, 0));
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, buffer, numCols, numRealIdx);
+        return realIdxDescStart < 0
+            ? (TdefPreambleStatus.ColumnNameWalkFailed, new TdefPreamble(chain, numCols, numIdx, numRealIdx, 0))
+            : (TdefPreambleStatus.Ok, new TdefPreamble(chain, numCols, numIdx, numRealIdx, realIdxDescStart));
     }
 
     /// <summary>
@@ -387,6 +393,7 @@ internal sealed class IndexMaintainer(
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
+    /// <exception cref="JetLimitationException">Thrown when the TDEF's index section cannot be parsed or an index names a column the table does not have, so the indexes cannot be rebuilt.</exception>
     public async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
     {
         // Jet3 (.mdb Access 97) live leaf maintenance is now
@@ -395,19 +402,22 @@ internal sealed class IndexMaintainer(
         // (§4.2) are pinned by the format probe and emitted by the same code
         // path Jet4/ACE uses, parameterised on `IndexPageLayout`.
 
-        // Read the TDEF page bytes. CreateTableAsync may now emit multi-page
-        // TDEF chains for wide schemas (>32 col / >16 idx on Jet3, ≫50 col on
-        // Jet4 / ACE). The single-page in-place mutation path used here will
-        // bail (TdefPreambleStatus != Ok or a downstream layout check) on
-        // those tables; that is the same fall-back trigger documented in
-        // §7.9 of docs/design/index-and-relationship-format-notes.md.
+        // Read the whole TDEF chain. Wide schemas (>32 col / >16 idx on Jet3,
+        // ≫50 col on Jet4 / ACE) span several pages, and their real-idx
+        // descriptors (with the first_dp / used_pages fields patched below)
+        // sit on a continuation page.
         (TdefPreambleStatus status, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (status == TdefPreambleStatus.Empty)
+        {
+            return;
+        }
+
         if (status != TdefPreambleStatus.Ok)
         {
-            // Bulk path is silent on every bail (Empty / TooMany /
-            // ColumnNameWalkFailed) — caller treats the table as having
-            // no maintainable indexes.
-            return;
+            string reason = status == TdefPreambleStatus.TooMany
+                ? $"its table definition declares {preamble.NumIdx} logical and {preamble.NumRealIdx} real indexes"
+                : "the column-name section of its table definition could not be walked";
+            throw CreateUnmaintainableIndexesException(tableName, reason);
         }
 
         byte[] tdefBuffer = preamble.Buffer;
@@ -459,11 +469,14 @@ internal sealed class IndexMaintainer(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Skip indexes whose key columns failed to resolve against the
-            // snapshot (deleted-column gap).
+            // Key columns are resolved by col_num, so deleted-column gaps are
+            // fine; an index naming a column the table does not have cannot
+            // be rebuilt, and is reported rather than left stale.
             if (!catalog.TryGetKeyColumnInfos(rieKey, out List<KeyColumnInfo>? keyColInfos))
             {
-                continue;
+                throw CreateUnmaintainableIndexesException(
+                    tableName,
+                    $"real index {rieKey} names a column the table does not have");
             }
 
             List<IndexEntry> entries = new(rowCount);
@@ -560,7 +573,7 @@ internal sealed class IndexMaintainer(
 
         if (tdefDirty)
         {
-            await db.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+            await db.WriteTDefChainInPlaceAsync(preamble.Chain, cancellationToken).ConfigureAwait(false);
         }
 
         if (oldIndexPageGroups is not null && rebuiltIndexPageGroups is not null && !HasLongOrComplexStorageColumns(tableDef)
@@ -888,11 +901,14 @@ internal sealed class IndexMaintainer(
     ///   correctly through any number of intermediate levels.</item>
     /// </list>
     /// <para>
-    /// Falls back when: no indexes are declared; any index has a multi-page
-    /// TDEF; the encoder rejects any value (text outside General Legacy,
-    /// oversized numeric mantissa, etc.); the index page chain is malformed;
-    /// or the spliced entry list cannot be repacked (e.g. a single entry
-    /// exceeds the payload area).
+    /// Falls back when: the TDEF's index section cannot be parsed; the table
+    /// carries a foreign-key logical index; the encoder rejects any value
+    /// (text outside General Legacy, oversized numeric mantissa, etc.); the
+    /// index page chain is malformed; or the spliced entry list cannot be
+    /// repacked (e.g. a single entry exceeds the payload area). Wide tables
+    /// whose TDEF spans several pages take the fast path like any other: the
+    /// whole chain is read, and <c>first_dp</c> / <c>used_pages</c> patches
+    /// are written back to whichever page holds them.
     /// </para>
     /// <para>
     /// Pre-write unique-index enforcement is handled separately
@@ -947,13 +963,14 @@ internal sealed class IndexMaintainer(
                 this.LastIncrementalBail = $"NumIdx_TooMany numIdx={preamble.NumIdx} numRealIdx={preamble.NumRealIdx}";
                 return false;
             case TdefPreambleStatus.ColumnNameWalkFailed:
-                this.LastIncrementalBail = $"C0 col-name walk i={preamble.FailedColumnIndex} namePos={preamble.FailedColumnNamePos}";
+                this.LastIncrementalBail = $"C0 col-name walk failed numCols={preamble.NumCols}";
                 return false;
             default:
                 return false;
         }
 
-        byte[] tdefBuffer = preamble.Buffer;
+        LogicalTDefChain tdefChain = preamble.Chain;
+        byte[] tdefBuffer = tdefChain.Bytes;
         int numIdx = preamble.NumIdx;
         int numRealIdx = preamble.NumRealIdx;
         int realIdxDescStart = preamble.RealIdxDescStart;
@@ -1132,7 +1149,7 @@ internal sealed class IndexMaintainer(
                 // in which case the bulk path below resnaps the tree.
                 if (tdefDirty)
                 {
-                    await db.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+                    await db.WriteTDefChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
                     tdefDirty = false;
                 }
 
@@ -1146,7 +1163,10 @@ internal sealed class IndexMaintainer(
                     cancellationToken).ConfigureAwait(false);
                 if (crossLeafHandled)
                 {
-                    tdefBuffer = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                    // The editor may have patched this index's first_dp on
+                    // disk; pick up the chain it wrote.
+                    tdefChain = await db.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                    tdefBuffer = tdefChain.Bytes;
                     continue;
                 }
 
@@ -1241,7 +1261,7 @@ internal sealed class IndexMaintainer(
 
         if (tdefDirty)
         {
-            await db.WritePageAsync(tdefPage, tdefBuffer, cancellationToken).ConfigureAwait(false);
+            await db.WriteTDefChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
         }
 
         return true;

@@ -203,9 +203,9 @@ internal sealed class RelationshipManager(
     /// Orchestrates the two-side per-TDEF FK index emission: pre-computes
     /// both sides' target real-idx slots (sharing where possible), allocates
     /// empty leaf pages for any newly-allocated real-idx slots, then mutates
-    /// each TDEF in place to append its FK logical-idx entry. Operates on
-    /// single-page TDEFs only; throws <see cref="NotSupportedException"/> if
-    /// either TDEF is multi-page or would overflow a single page after growth.
+    /// each TDEF to append its FK logical-idx entry. Either TDEF may be a
+    /// multi-page chain: each side is edited as one logical buffer and
+    /// rewritten over its chain, which grows by continuation pages as needed.
     /// </summary>
     /// <param name="relationship">The relationship.</param>
     /// <param name="primaryTdefPage">The primary TDEF page.</param>
@@ -416,8 +416,9 @@ internal sealed class RelationshipManager(
 
     /// <summary>
     /// Appends one FK logical-idx entry (and optionally a new real-idx
-    /// physical descriptor) to the TDEF at <paramref name="tdefPage"/>. The
-    /// TDEF must fit on a single page after the addition.
+    /// physical descriptor) to the TDEF chain at <paramref name="tdefPage"/>,
+    /// editing the stitched logical buffer and rewriting the chain, which
+    /// gains continuation pages when the addition needs them.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="columnNumbers">The column numbers.</param>

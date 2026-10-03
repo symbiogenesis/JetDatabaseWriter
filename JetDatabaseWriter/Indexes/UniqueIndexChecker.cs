@@ -3,9 +3,11 @@ namespace JetDatabaseWriter.Indexes;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Schema.Models;
@@ -22,50 +24,45 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader snapshots)
 {
     /// <summary>
-    /// Loads all unique / primary-key index descriptors for the given TDEF page.
-    /// Returns an empty list on Jet3 (no index emission) or when the TDEF
-    /// declares no indexes.
+    /// Loads all unique / primary-key index descriptors for the table whose
+    /// TDEF chain starts at <paramref name="tdefPage"/>. The whole chain is
+    /// read, because a wide table's index section sits on a continuation page.
+    /// Returns an empty list when the TDEF declares no indexes, and throws
+    /// rather than skip a unique index it cannot enforce.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tableDef">The table def.</param>
+    /// <param name="tableName">The table name, for error messages.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidDataException">The page at <paramref name="tdefPage"/> is not a table definition.</exception>
+    /// <exception cref="JetLimitationException">The index section cannot be parsed, or a unique index names a column the table does not have.</exception>
     internal async ValueTask<List<UniqueIndexDescriptor>> LoadUniqueIndexDescriptorsAsync(
-        long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
+        long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
     {
         var result = new List<UniqueIndexDescriptor>();
 
-        byte[] tdefPageBytes = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        byte[] tdefBuffer;
-        try
-        {
-            tdefBuffer = (byte[])tdefPageBytes.Clone();
-        }
-        finally
-        {
-            DatabaseFile.ReturnPage(tdefPageBytes);
-        }
+        byte[] tdefBuffer = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidDataException($"The table definition of '{tableName}' at page {tdefPage} could not be read.");
 
         int numCols = Ru16(tdefBuffer, db.TDef.NumCols);
         int numIdx = Ri32(tdefBuffer, db.TDef.NumCols + 2);
         int numRealIdx = Ri32(tdefBuffer, db.TDef.NumRealIdx);
-        if (numIdx <= 0 || numRealIdx <= 0
-            || numIdx > Constants.TableDefinition.MaxIndexes
-            || numRealIdx > Constants.TableDefinition.MaxIndexes)
+        if (numIdx <= 0 || numRealIdx <= 0)
         {
             return result;
         }
 
-        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
-        for (int i = 0; i < numCols; i++)
+        if (numIdx > Constants.TableDefinition.MaxIndexes || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
-            if (db.ReadColumnName(tdefBuffer, ref namePos, out _) < 0)
-            {
-                return result;
-            }
+            throw CreateUnenforceableException(tableName, $"its table definition declares {numIdx} logical and {numRealIdx} real indexes");
         }
 
-        int realIdxDescStart = namePos;
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, tdefBuffer, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            throw CreateUnenforceableException(tableName, "the column-name section of its table definition could not be walked");
+        }
+
         IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
         List<string> logIdxNames = IndexCatalogReader.ReadLogicalIdxNames(db, tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
@@ -81,7 +78,9 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
 
             if (!catalog.TryGetKeyColumnInfos(realIdxNum, out List<KeyColumnInfo>? keyColInfos))
             {
-                continue;
+                throw CreateUnenforceableException(
+                    tableName,
+                    $"unique index '{catalog.Catalog.GetNameOrFallback(realIdxNum)}' names a column the table does not have");
             }
 
             long rootPage = (uint)Ri32(tdefBuffer, slot.FirstDpOffset);
@@ -90,6 +89,9 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
 
         return result;
     }
+
+    private static JetLimitationException CreateUnenforceableException(string tableName, string reason)
+        => new($"Unique indexes on table '{tableName}' cannot be enforced: {reason}. The table is unchanged.");
 
     /// <summary>
     /// Encodes the composite index key for one row using a previously
@@ -164,7 +166,7 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
             return;
         }
 
-        List<UniqueIndexDescriptor> descriptors = await this.LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        List<UniqueIndexDescriptor> descriptors = await this.LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         if (descriptors.Count == 0)
         {
             return;
@@ -268,7 +270,7 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
             return;
         }
 
-        List<UniqueIndexDescriptor> descriptors = await this.LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        List<UniqueIndexDescriptor> descriptors = await this.LoadUniqueIndexDescriptorsAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         if (descriptors.Count == 0)
         {
             return;

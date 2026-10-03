@@ -81,9 +81,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
             expectedPage++;
         }
 
-        byte[] currentTdef = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        Wi32(currentTdef, firstDpOffset, checked((int)build.RootPageNumber));
-        await db.WritePageAsync(tdefPage, currentTdef, cancellationToken).ConfigureAwait(false);
+        await db.WriteTDefInt32Async(tdefPage, firstDpOffset, checked((int)build.RootPageNumber), cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -1402,15 +1400,13 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
         }
 
         // If the root intermediate split, patch the real-idx first_dp slot
-        // on the TDEF page to point at the freshly-allocated root. The new
-        // root page itself was already appended via newPageAppends above, so
-        // the page number is stable.
+        // in the TDEF to point at the freshly-allocated root. The new root
+        // page itself was already appended via newPageAppends above, so the
+        // page number is stable. firstDpOffset is a logical TDEF offset and
+        // may fall on a continuation page of a wide table's TDEF chain.
         if (stagingState.NewRootPage is long newRootPage)
         {
-            byte[] tdefBytes = await this.ReadAndClonePageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-
-            Wi32(tdefBytes, firstDpOffset, checked((int)newRootPage));
-            await db.WritePageAsync(tdefPage, tdefBytes, cancellationToken).ConfigureAwait(false);
+            await db.WriteTDefInt32Async(tdefPage, firstDpOffset, checked((int)newRootPage), cancellationToken).ConfigureAwait(false);
         }
 
         return true;
