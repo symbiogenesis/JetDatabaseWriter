@@ -185,7 +185,7 @@ applyTo: "**"
 
 | Term | Meaning |
 |---------|---------|
-| **MSysObjects** | Catalog table listing all database objects |
+| **MSysObjects** | Catalog table listing all database objects; its own TDEF is always page 2, whether or not a catalog row names it |
 | **MSysACEs** | Access Control Entries (security) |
 | **MSysRelationships** | Foreign key relationship definitions |
 | **MSysComplexColumns** | Links complex columns to their template tables |

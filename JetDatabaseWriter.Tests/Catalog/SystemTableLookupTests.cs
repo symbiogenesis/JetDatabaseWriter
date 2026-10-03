@@ -1,0 +1,214 @@
+namespace JetDatabaseWriter.Tests.Catalog;
+
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
+using Xunit;
+
+/// <summary>
+/// System tables are found by name through one <c>MSysObjects</c> lookup,
+/// <c>CatalogRowReader.FindSystemTableTdefPageAsync</c>, which the reader's
+/// <c>CatalogReader</c> and the writer share. <c>MSysObjects</c> itself is
+/// always TDEF page 2 (Jackcess <c>PAGE_SYSTEM_CATALOG</c>), so it resolves
+/// even in a file whose catalog has no row naming it, as in every Jet3, Jet4
+/// and slim-catalog ACCDB file the writer creates.
+/// </summary>
+public sealed class SystemTableLookupTests
+{
+    private const string CatalogTable = "MSysObjects";
+
+    private readonly CancellationToken ct = TestContext.Current.CancellationToken;
+
+    /// <summary>Gets every format the writer creates, with the full and the slim catalog schema.</summary>
+    public static TheoryData<DatabaseFormat, bool> CreatedDatabases
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, bool>();
+            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+            {
+                data.Add(format, true);
+                data.Add(format, false);
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// Every read API returns <c>MSysObjects</c> with its columns and rows on a
+    /// database the writer created; on Jet3, Jet4 and slim ACCDB files they used to
+    /// return a table with no columns, because no catalog row names
+    /// <c>MSysObjects</c> there.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="fullCatalog">Whether the database has the full catalog schema.</param>
+    [Theory]
+    [MemberData(nameof(CreatedDatabases))]
+    public async Task ReadApis_MSysObjects_OnCreatedDatabase_ReturnCatalogRows(DatabaseFormat format, bool fullCatalog)
+    {
+        byte[] bytes = await CreateDatabaseAsync(format, fullCatalog, this.ct);
+        TableDef catalog = await ReadCatalogTableDefAsync(bytes, this.ct);
+        Assert.NotEmpty(catalog.Columns);
+
+        await using AccessReader reader = await OpenReaderAsync(bytes, this.ct);
+        using DataTable data = await reader.ReadDataTableAsync(CatalogTable, cancellationToken: this.ct);
+        Assert.Equal(catalog.Columns.Select(c => c.Name), data.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
+        Assert.Equal(catalog.RowCount, data.Rows.Count);
+        Assert.Contains(data.Rows.Cast<DataRow>(), row => Equals(row["Name"], "T1"));
+
+        Assert.Equal(catalog.RowCount, await reader.GetRealRowCountAsync(CatalogTable, this.ct));
+        Assert.Equal(catalog.RowCount, await CountAsync(reader.Rows(CatalogTable, cancellationToken: this.ct)));
+        Assert.Equal(catalog.RowCount, await CountAsync(reader.RowsAsStrings(CatalogTable, cancellationToken: this.ct)));
+        Assert.Equal(catalog.Columns.Count, (await reader.GetColumnMetadataAsync(CatalogTable, this.ct)).Count);
+        _ = await reader.ListIndexesAsync(CatalogTable, this.ct);
+    }
+
+    /// <summary>
+    /// The reader's and the writer's system-table lookups resolve <c>MSysObjects</c>
+    /// to TDEF page 2 in files whose catalog has no row naming it.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task FindSystemTable_MSysObjects_WithoutCatalogRow_ResolvesPage2(DatabaseFormat format)
+    {
+        byte[] bytes = await CreateDatabaseAsync(format, fullCatalog: false, this.ct);
+
+        await using (var readStream = new MemoryStream(bytes, writable: false))
+        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
+        {
+            Assert.Equal(2, await reader.Services.Catalog.FindSystemTablePageAsync(CatalogTable, this.ct));
+            Assert.Equal(2, await reader.Services.Catalog.FindSystemTablePageAsync("msysobjects", this.ct));
+        }
+
+        await using var writeStream = new MemoryStream();
+        await writeStream.WriteAsync(bytes, this.ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(writeStream, cancellationToken: this.ct);
+        Assert.Equal(2, await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(CatalogTable, this.ct));
+    }
+
+    /// <summary>
+    /// A linked ODBC table (<c>MSysObjects</c> type 4) carries a local TDEF with the
+    /// remote table's columns. The reader resolves it to that definition, as it
+    /// did before the lookups were merged; the writer only resolves local tables.
+    /// </summary>
+    [Fact]
+    public async Task FindSystemTable_LinkedOdbc_ReaderResolvesLocalDefinition_WriterDoesNot()
+    {
+        const string linkedOdbcTable = "Ordrar";
+        byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.OdbcLinkerTestV2007, this.ct);
+
+        await using (var readStream = new MemoryStream(bytes, writable: false))
+        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
+        {
+            long tdefPage = await reader.Services.Catalog.FindSystemTablePageAsync(linkedOdbcTable, this.ct);
+            Assert.Equal(127, tdefPage);
+            TableDef? definition = await reader.ReadTableDefAsync(tdefPage, this.ct);
+            Assert.NotNull(definition);
+            Assert.Equal(20, definition.Columns.Count);
+        }
+
+        await using var writeStream = new MemoryStream();
+        await writeStream.WriteAsync(bytes, this.ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(writeStream, cancellationToken: this.ct);
+        Assert.Equal(0, await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(linkedOdbcTable, this.ct));
+    }
+
+    /// <summary>
+    /// A system table whose <c>MSysObjects</c> row is an overflow row resolves by
+    /// name and reads with its columns.
+    /// </summary>
+    /// <param name="fixture">The <see cref="TestDatabases"/> field naming the fixture.</param>
+    /// <param name="systemTable">The system table whose catalog row is an overflow row.</param>
+    [Theory]
+    [InlineData(nameof(TestDatabases.TestIndexPropertiesV2010), "MSysAccessXML")]
+    [InlineData(nameof(TestDatabases.QueryTestV2007), "MSysNavPaneGroups")]
+    public async Task ReadDataTable_SystemTableWithOverflowCatalogRow_HasColumns(string fixture, string systemTable)
+    {
+        string path = (string)typeof(TestDatabases).GetField(fixture)!.GetValue(null)!;
+        await using AccessReader reader = await TestDatabases.OpenAsync(path, cancellationToken: this.ct);
+
+        using DataTable data = await reader.ReadDataTableAsync(systemTable, cancellationToken: this.ct);
+        Assert.NotEmpty(data.Columns);
+    }
+
+    /// <summary>
+    /// The predicate lookup that finds complex-column flat tables by name suffix
+    /// (the fallback when <c>MSysComplexColumns</c> cannot be read) resolves every
+    /// flat table of ComplexFields.accdb to the TDEF the exact name resolves to.
+    /// </summary>
+    [Fact]
+    public async Task FindSystemTable_ByNameSuffix_FindsComplexFlatTables()
+    {
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(TestDatabases.ComplexFields, cancellationToken: this.ct);
+        await using AccessReader reader = await TestDatabases.OpenAsync(TestDatabases.ComplexFields, cancellationToken: this.ct);
+
+        var flatTables = new List<string>();
+        foreach (string table in await reader.ListTablesAsync(this.ct))
+        {
+            flatTables.AddRange((await reader.GetComplexColumnsAsync(table, this.ct)).Select(c => c.FlatTableName));
+        }
+
+        Assert.NotEmpty(flatTables);
+        foreach (string flatTable in flatTables)
+        {
+            long exact = await harness.Services.Catalog.FindSystemTablePageAsync(flatTable, this.ct);
+            long bySuffix = await harness.Services.Catalog.FindSystemTablePageAsync(
+                name => name.EndsWith(flatTable[flatTable.IndexOf('_', StringComparison.Ordinal)..], StringComparison.OrdinalIgnoreCase),
+                this.ct);
+            Assert.True(exact > 2, $"'{flatTable}' did not resolve.");
+            Assert.Equal(exact, bySuffix);
+        }
+    }
+
+    private static async ValueTask<byte[]> CreateDatabaseAsync(DatabaseFormat format, bool fullCatalog, CancellationToken cancellationToken)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            format,
+            new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = fullCatalog },
+            leaveOpen: true,
+            cancellationToken))
+        {
+            await writer.CreateTableAsync("T1", [new ColumnDefinition("Id", typeof(int))], cancellationToken);
+        }
+
+        return ms.ToArray();
+    }
+
+    private static async ValueTask<TableDef> ReadCatalogTableDefAsync(byte[] bytes, CancellationToken cancellationToken)
+    {
+        await using var ms = new MemoryStream(bytes, writable: false);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        TableDef? catalog = await harness.ReadTableDefAsync(2, cancellationToken);
+        Assert.NotNull(catalog);
+        return catalog;
+    }
+
+    private static async ValueTask<AccessReader> OpenReaderAsync(byte[] bytes, CancellationToken cancellationToken)
+        => await AccessReader.OpenAsync(new MemoryStream(bytes, writable: false), new AccessReaderOptions { UseLockFile = false }, leaveOpen: false, cancellationToken);
+
+    private static async ValueTask<long> CountAsync<T>(IAsyncEnumerable<T> source)
+    {
+        long count = 0;
+        await foreach (T item in source)
+        {
+            _ = item;
+            count++;
+        }
+
+        return count;
+    }
+}
