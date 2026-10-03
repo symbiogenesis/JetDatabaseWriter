@@ -3,7 +3,7 @@
 Status: closed; retained as archived baseline and caller guidance
 Date: 2026-05-20
 Closed: 2026-05-31
-Last updated: 2026-05-31
+Last updated: 2026-10-02
 
 This note is closed. It records the read-performance baseline for
 `AccessReader`, the caller guidance that falls out of the measurements, and the
@@ -32,6 +32,7 @@ guidance below to produce new evidence before changing the core reader.
 - DataTable strategy benchmarks: `JetDatabaseWriter.Benchmarks/DataTableMaterializationBenchmarks.cs`
 - Owned-page discovery benchmarks: `JetDatabaseWriter.Benchmarks/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
 - Table-scan read-ahead benchmarks: `JetDatabaseWriter.Benchmarks/AccessReaderTableScanReadAheadBenchmarks.cs`
+- Read-ahead eligibility benchmarks (long-value tables, small or disabled caches): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderReadAheadEligibilityBenchmarks.cs`
 - Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/SyntheticDatabases.cs`
 - Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
 - Shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
@@ -92,6 +93,7 @@ git history) and are not reproduced here.
 | DataTable strategies | Public numeric `ReadDataTableAsync` is 21.9 ms / 10.9 MB; `Rows.Add(object?[])` and `LoadDataRow` are about 21.4 ms but allocate 13.2 MB. Text alternatives are close: public 15.7 ms, `Rows.Add(object?[])` 13.7 ms, `LoadDataRow` 14.9 ms. | Keep production on the current `NewRow` path with `BeginLoadData` and `MinimumCapacity`; alternatives are not enough better to trade away conservative semantics. |
 | Owned-page discovery | Recognized per-table usage maps are about 2.3 ms for cold first-row/full-scan; forced whole-file fallback is about 15.7-15.8 ms on the same large-file shape. | Recognized maps avoid the O(total file pages) cold-start path. Keep the whole-file scan as a safety fallback for unfamiliar or invalid maps. |
 | Table-scan read-ahead | Warm full scans improve when page-read optimization is enabled: numeric 10.5 ms to 8.7 ms, text 8.8 ms to 6.9 ms, wide 19.0 ms to 16.8 ms. Cold first-row latency does not improve. | Keep the one-page read-ahead as an automatic but narrowly guarded throughput benefit with opt-out; do not add tunable depth or LVAL-heavy read-ahead now. |
+| Read-ahead eligibility (2026-10-02, Arm64, .NET 10.0.12, in-process ShortRun, two interleaved before/after runs) | Warm `Auto` scans of the 25K-row numeric table: page cache disabled 9.9-10.3 ms before, 8.6-8.7 ms after read-ahead was allowed; 2-page cache 10.4-10.5 ms before, 8.7-8.9 ms after; 256-page cache unchanged at 8.8-9.0 ms. A 5,000-row MEMO table (62-73 ms) and a 2,000-row single-page OLE table (22.5-26 ms) moved by less than the run-to-run noise when read-ahead was allowed, at every cache size. | Allow read-ahead at any page-cache size, including none. Keep MEMO, OLE, complex and attachment tables sequential: the cache-ownership hazard behind that exclusion is gone, but it measured no gain. |
 
 ## Historical baseline
 
@@ -225,16 +227,32 @@ journal, and enough table pages to benefit after the first page. `Disabled`
 preserves the seek/read path and suppresses table-scan read-ahead. The read-
 ahead path preserves row order and reuses the normal page cache.
 
-Eligibility is intentionally narrow: page cache enabled, cache size of at least
-three pages, more than one data page for explicit `Enabled` or at least three
-data pages for `Auto`, and no MEMO/OLE/complex/attachment columns. Those
-exclusions avoid cache re-entrancy and pooled-buffer ownership risks while
-long-value or complex-column resolution may read additional pages for the
-current row. In `Auto`, the first page is yielded before prefetch begins to
-avoid adding speculative I/O to first-row latency.
+Eligibility: no attached transaction journal, more than one data page for
+explicit `Enabled` or at least three data pages for `Auto`, and no
+MEMO/OLE/complex/attachment columns. Any page-cache size qualifies, including a
+disabled cache. Caches under three pages and disabled caches used to be
+excluded because the cache returned evicted buffers to the shared pool while a
+scan still read them. `ReaderPageCache` now leaves evicted buffers to the GC,
+so the exclusion was removed after the 2026-10-02 eligibility benchmark showed
+a 12-17% gain on small or disabled caches. The long-value exclusion is no longer
+a safety rule for the same reason, but the same benchmark showed no gain on
+MEMO or OLE tables, whose long-value page reads dwarf the one data page the
+prefetch overlaps, so those scans stay sequential. In `Auto`, the first page is
+yielded before prefetch begins to avoid adding speculative I/O to first-row
+latency.
+
+The two page reads in flight can complete, and decrypt, on two threads at once.
+Jet3 XOR and Jet4 RC4 decryption keep no state between pages; the cached
+AES-ECB transforms in `PageDecryptionKeys` are built and used under a private
+lock (see `concurrency-and-lock-ordering.md`).
+
+The same benchmark shows a separate cost: on the MEMO and OLE tables, `Auto`,
+whose path-opened readers use positionless `RandomAccess` page reads, was about
+20-30% slower than `Disabled`, which reads through the buffered `FileStream`,
+with or without read-ahead. The numeric table did not show it.
 
 Keep this as automatic with opt-out. Do not add tunable depth or LVAL-heavy
-read-ahead without a page-buffer lease model and a fresh profile.
+read-ahead without a fresh profile that shows a gain.
 
 Primary code path:
 
@@ -318,8 +336,9 @@ var options = new AccessReaderOptions
 The default `PageReadOptimizationMode.Auto` enables the guarded read-ahead path
 for file-backed scans with at least three data pages. Use `Enabled` only when a
 caller wants to force the less conservative path after previously disabling it.
-The path requires page caching and no MEMO/OLE/complex/attachment columns. It
-is most useful for warm full-scan throughput, not cold first-row latency.
+The path works at any page-cache size and skips tables with MEMO/OLE/complex/
+attachment columns. It is most useful for warm full-scan throughput, not cold
+first-row latency.
 
 ## Evidence-gated future ideas
 
@@ -374,9 +393,9 @@ real workload before changing the core decoder again. Useful comparisons:
   avoidable transient allocation beyond required final `string` creation.
 - Swapping the production `DataTable` insertion strategy based only on the prior
   `Rows.Add(object?[])` or `LoadDataRow` benchmark results.
-- Adding tunable read-ahead depth or enabling read-ahead for long-value-heavy
-  scans before there is a page-buffer lease model and a profile showing it will
-  pay for its complexity.
+- Adding tunable read-ahead depth without a profile showing it will pay for its
+  complexity, or enabling read-ahead for long-value-heavy scans, which measured
+  no gain on 2026-10-02.
 - Spending more time on lazy catalog loading unless new release-quality data
   contradicts the current `OpenAsync` floor.
 
@@ -390,6 +409,7 @@ dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *Access
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *DataTableMaterializationBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderOwnedPageDiscoveryBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderTableScanReadAheadBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderReadAheadEligibilityBenchmarks* --job short
 ```
 
 Summary decisions from the refresh:

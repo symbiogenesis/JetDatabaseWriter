@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -14,9 +15,10 @@ using Xunit;
 
 /// <summary>
 /// Table-scan read-ahead keeps a second page read in flight while the caller
-/// decodes the current page, and two operations on one reader can read pages at
-/// the same time. On AES-encrypted files those reads decrypt pages on two
-/// threads at once, and must still return the same rows as a sequential scan.
+/// decodes the current page. It must return the same rows as a sequential
+/// scan at every page-cache size, including caches smaller than the two pages
+/// in flight and no cache at all, and on AES-encrypted files, where the two
+/// reads can decrypt pages on two threads at once.
 /// </summary>
 public sealed class TableScanReadAheadTests : IDisposable
 {
@@ -27,6 +29,68 @@ public sealed class TableScanReadAheadTests : IDisposable
     private const int LongValueRowCount = 120;
 
     private readonly List<string> paths = [];
+
+    public static TheoryData<DatabaseFormat, int, PageReadOptimizationMode> PlainScanCases()
+    {
+        var data = new TheoryData<DatabaseFormat, int, PageReadOptimizationMode>();
+        foreach (DatabaseFormat format in (DatabaseFormat[])[DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb])
+        {
+            foreach (int cacheSize in (int[])[0, 1, 2, 8])
+            {
+                data.Add(format, cacheSize, PageReadOptimizationMode.Auto);
+                data.Add(format, cacheSize, PageReadOptimizationMode.Enabled);
+            }
+        }
+
+        return data;
+    }
+
+    public static TheoryData<DatabaseFormat, int> LongValueScanCases()
+    {
+        var data = new TheoryData<DatabaseFormat, int>();
+        foreach (DatabaseFormat format in (DatabaseFormat[])[DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb])
+        {
+            foreach (int cacheSize in (int[])[1, 2, 3, 8])
+            {
+                data.Add(format, cacheSize);
+            }
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(PlainScanCases))]
+    public async Task Scans_TinyOrNoPageCache_ReadAheadAndReturnEveryRow(DatabaseFormat format, int cacheSize, PageReadOptimizationMode mode)
+    {
+        string path = await this.CreateDatabaseAsync(format, withLongValues: false, encrypt: false);
+        ScanResult expected = await ReadBaselineAsync(path, PlainTable, password: null);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { PageCacheSize = cacheSize, PageReadOptimizationMode = mode, UseLockFile = false },
+            TestContext.Current.CancellationToken);
+
+        Assert.True(await ReadsAheadAsync(reader, PlainTable));
+        await AssertScansMatchAsync(reader, PlainTable, expected);
+    }
+
+    [Theory]
+    [MemberData(nameof(LongValueScanCases))]
+    public async Task Scans_LongValueTableLargerThanCache_ReturnEveryRow(DatabaseFormat format, int cacheSize)
+    {
+        string path = await this.CreateDatabaseAsync(format, withLongValues: true, encrypt: false);
+        ScanResult expected = await ReadBaselineAsync(path, LongValueTable, password: null);
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            path,
+            new AccessReaderOptions { PageCacheSize = cacheSize, PageReadOptimizationMode = PageReadOptimizationMode.Enabled, UseLockFile = false },
+            TestContext.Current.CancellationToken);
+
+        // Long-value tables stay sequential because read-ahead measured no gain on them.
+        Assert.False(await ReadsAheadAsync(reader, LongValueTable));
+        await AssertScansMatchAsync(reader, LongValueTable, expected);
+    }
 
     [Theory]
     [InlineData(0)]
@@ -43,6 +107,7 @@ public sealed class TableScanReadAheadTests : IDisposable
             new AccessReaderOptions(Password) { PageCacheSize = cacheSize, UseLockFile = false },
             TestContext.Current.CancellationToken);
 
+        Assert.True(await ReadsAheadAsync(reader, PlainTable));
         await AssertScansMatchAsync(reader, PlainTable, plain);
         await AssertScansMatchAsync(reader, LongValueTable, longValues);
     }
@@ -123,6 +188,17 @@ public sealed class TableScanReadAheadTests : IDisposable
                 // Best-effort cleanup.
             }
         }
+    }
+
+    private static async Task<bool> ReadsAheadAsync(AccessReader reader, string tableName)
+    {
+        ResolvedTable resolved = Assert.IsType<ResolvedTable>(
+            await FacadeInternals.Services(reader).Catalog.ResolveTableAsync(tableName, TestContext.Current.CancellationToken));
+        IReadOnlyList<long> pages = await FacadeInternals.Database(reader).GetOwnedDataPagesAsync(
+            resolved.Entry.TDefPage,
+            TestContext.Current.CancellationToken);
+        Assert.True(pages.Count >= 3, $"'{tableName}' should span at least 3 data pages; it spans {pages.Count}.");
+        return FacadeInternals.Services(reader).Tables.ShouldReadAheadTablePages(resolved.Definition, pages);
     }
 
     private static async Task AssertScansMatchAsync(AccessReader reader, string tableName, ScanResult expected)
