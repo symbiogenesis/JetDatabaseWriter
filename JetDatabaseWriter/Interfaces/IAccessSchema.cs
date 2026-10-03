@@ -93,6 +93,9 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously appends a new column to an existing table. Existing rows receive
     /// <see cref="DBNull.Value"/> for the new column. Implemented by copying the
     /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
+    /// The existing columns keep their data, their type and the properties the writer
+    /// models; other <c>MSysObjects.LvProp</c> properties are not carried over yet, as
+    /// described for <see cref="RenameColumnAsync"/>.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="column">The new column definition. Its name must not already exist on the table, and must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
@@ -112,7 +115,10 @@ public interface IAccessSchema : IAccessBase
     /// foreign-key relationship (drop the relationship first, as Microsoft Access requires),
     /// and no other column's calculated expression, validation rule or default value
     /// expression may name it (change or drop that column first). A mention inside a string
-    /// literal, or in the dropped column's own rule, does not count.
+    /// literal, or in the dropped column's own rule, does not count. The remaining columns
+    /// keep their data, their type and the properties the writer models; other
+    /// <c>MSysObjects.LvProp</c> properties are not carried over yet, as described for
+    /// <see cref="RenameColumnAsync"/>.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="columnName">The column to drop (case-insensitive).</param>
@@ -123,9 +129,15 @@ public interface IAccessSchema : IAccessBase
     public ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asynchronously renames a column on an existing table. Row data and every other
-    /// column property are preserved. Implemented by copying the table to a new schema
-    /// and renaming the result back to <paramref name="tableName"/>. When the column is a
+    /// Asynchronously renames a column on an existing table. Implemented by copying the
+    /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
+    /// Row data is preserved, and so are each column's type, size, precision and scale,
+    /// Unicode compression and the properties the writer models (<c>Required</c>,
+    /// <c>DefaultValue</c>, <c>ValidationRule</c>, <c>ValidationText</c>, <c>Description</c>
+    /// and the calculated expression). Other <c>MSysObjects.LvProp</c> properties are not
+    /// carried over yet: a column's <c>Caption</c> and <c>Format</c> and the table-level
+    /// <c>Filter</c>, <c>OrderBy</c> and <c>ValidationRule</c> are dropped, and a text
+    /// column's <c>AllowZeroLength</c> is written as No. When the column is a
     /// key column of a foreign-key relationship, the relationship's <c>MSysRelationships</c>
     /// rows are updated to the new name. Every calculated expression, validation rule and
     /// default value expression in the table that names the column is rewritten:
