@@ -9,34 +9,45 @@ permissions:
   contents: read
 
 jobs:
-  # The full CI run (Release build with analyzers, both test legs) must pass first.
+  # The full CI run (Release build with analyzers, both test legs, pack) must pass first.
   ci:
     uses: ./.github/workflows/ci.yml
 
+  # Publishes the package the CI run above built and tested; nothing is rebuilt here.
   publish:
     needs: ci
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg
+
+      # The tag must name the version CI packed, so a mistyped tag can't publish
+      # something else.
+      - name: Check package version
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:TAG.Substring(1)
+          $package = "nupkg/JetDatabaseWriter.$version.nupkg"
+          if (-not (Test-Path $package)) {
+            Get-ChildItem nupkg
+            throw "CI did not pack $package; the package version does not match the tag $env:TAG."
+          }
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          global-json-file: global.json
+          dotnet-version: 10.0.x
 
-      - name: Restore dependencies
-        run: dotnet restore ${{ github.workspace }}/JetDatabaseWriter/JetDatabaseWriter.csproj --locked-mode
-
-      - name: Build
-        run: dotnet build ${{ github.workspace }}/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-restore
-
-      - name: Create NuGet package
-        run: dotnet pack ${{ github.workspace }}/JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o ${{ github.workspace }}/nupkg
-
-      - name: List files (debug)
-        run: dir ${{ github.workspace }}\nupkg
-
+      # No --skip-duplicate: pushing a version nuget.org already has fails the run
+      # instead of reporting a publish that did not happen.
       - name: Push to NuGet.org
-        run: dotnet nuget push "${{ github.workspace }}\nupkg\*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push "nupkg/*.nupkg" --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json

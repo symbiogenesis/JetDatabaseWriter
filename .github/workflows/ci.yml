@@ -1,12 +1,15 @@
 name: CI
 
 on:
+  # Pushes to other branches run CI through their pull request (or workflow_dispatch),
+  # so a pull request from a branch in this repository runs once, not twice.
   push:
     branches:
-      - '**'
+      - main
   pull_request:
   workflow_dispatch:
-  # publish.yml calls this workflow so a tag is packed only after the tests pass.
+  # publish.yml calls this workflow so a tag is packed only after the tests pass, and
+  # then publishes the package this run uploads.
   workflow_call:
 
 permissions:
@@ -59,3 +62,15 @@ jobs:
 
       - name: Pack
         run: dotnet pack JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
+
+      # publish.yml pushes this artifact, so a release publishes the exact package
+      # these tests ran against instead of rebuilding it.
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: |
+            artifacts/nupkg/*.nupkg
+            artifacts/nupkg/*.snupkg
+          if-no-files-found: error
+          retention-days: 7
