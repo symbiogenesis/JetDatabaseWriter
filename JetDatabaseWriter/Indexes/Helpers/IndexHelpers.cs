@@ -53,19 +53,20 @@ internal static class IndexHelpers
     /// (used slots agree, unused slots are 0xFFFF). Returns <see langword="false"/>
     /// when the descriptor would extend past <paramref name="td"/>'s end.
     /// </summary>
+    /// <param name="layout">The format's TDEF index layout.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="phys">The physical column descriptor.</param>
     /// <param name="columnNumbers">The column numbers.</param>
-    public static bool RealIdxColMapMatches(byte[] td, int phys, int[] columnNumbers)
+    public static bool RealIdxColMapMatches(IndexLayout layout, byte[] td, int phys, int[] columnNumbers)
     {
-        if (phys + Constants.TableDefinition.Jet4.RealIdx.PhysSize > td.Length)
+        if (phys + layout.RealIdxPhysSize > td.Length)
         {
             return false;
         }
 
         for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
         {
-            int so = phys + Constants.TableDefinition.Jet4.RealIdx.ColMapOffset + (slot * Constants.TableDefinition.ColMapSlotSize);
+            int so = layout.ColMapSlotOffset(phys, slot);
             int cn = Ru16(td, so);
             if (slot < columnNumbers.Length)
             {

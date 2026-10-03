@@ -12,9 +12,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// page's real-index physical descriptor (§3.1) and logical-index entry
 /// (§3.2) sections. The Jet4 / ACE layouts differ from Jet3 by:
 /// <list type="bullet">
-/// <item>a 4-byte leading cookie prepended to every logical-idx entry, and</item>
-/// <item>a 4-byte <c>used_pages</c> slot inserted between <c>col_map</c> and
-/// <c>first_dp</c> in the real-idx physical descriptor.</item>
+/// <item>a 4-byte leading cookie prepended to, and a 4-byte zero trailer
+/// appended to, every logical-idx entry, and</item>
+/// <item>a 4-byte leading magic prepended to the real-idx physical
+/// descriptor (shifting <c>col_map</c>, <c>used_pages</c> and
+/// <c>first_dp</c> by 4), with 4 unknown bytes before <c>flags</c> and 5
+/// after it.</item>
 /// </list>
 /// Both shifts are folded into <see cref="LogicalEntryFieldsOffset"/> /
 /// <see cref="RealIdxFieldsOffset"/>; consumers add those to a slot start to
@@ -50,8 +53,9 @@ internal readonly struct IndexLayout
     public int LogicalEntrySize { get; }
 
     /// <summary>
-    /// Gets the byte offset within a real-idx physical descriptor at which
-    /// the post-<c>col_map</c> field block begins (Jet3: 0, Jet4/ACE: 4).
+    /// Gets the shift of a real-idx physical descriptor's
+    /// <c>col_map</c> / <c>used_pages</c> / <c>first_dp</c> fields relative to
+    /// the Jet3 layout (Jet3: 0, Jet4/ACE: 4, the leading magic).
     /// Add to a phys slot start, then offset by
     /// <see cref="Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset"/>.
     /// (For the <c>flags</c> byte, use <see cref="FlagsOffsetWithinPhys"/>
@@ -402,6 +406,103 @@ internal readonly struct IndexLayout
 
         keyColumns = this.ReadColMapEntries(td, info.PhysStart);
         return true;
+    }
+
+    /// <summary>
+    /// Writes a whole real-idx physical descriptor at
+    /// <paramref name="physStart"/>: the Jet4/ACE leading magic
+    /// (<see cref="Constants.TableDefinition.Jet4.RealIdx.LeadingMagic"/>; Jet3
+    /// has none), a <c>col_map</c> naming <paramref name="columnNumbers"/> in
+    /// order, each ascending, with the unused slots padded, a zero
+    /// <c>used_pages</c> pointer, <paramref name="firstDp"/> and
+    /// <paramref name="flags"/>. Every other byte of the descriptor is zeroed.
+    /// The inverse of <see cref="TryReadRealIdxSlotWithKeyColumns"/>.
+    /// </summary>
+    /// <param name="td">The logical TDEF buffer.</param>
+    /// <param name="physStart">Absolute offset of the descriptor within <paramref name="td"/>.</param>
+    /// <param name="columnNumbers">The key columns' <c>col_num</c> values, at most <see cref="Constants.TableDefinition.ColMapSlotCount"/>.</param>
+    /// <param name="flags">The real-idx <c>flags</c> byte.</param>
+    /// <param name="firstDp">The index root page.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="columnNumbers"/> names more columns than a <c>col_map</c> holds.</exception>
+    public void WriteRealIdxDescriptor(Span<byte> td, int physStart, ReadOnlySpan<int> columnNumbers, byte flags, long firstDp)
+    {
+        if (columnNumbers.Length > Constants.TableDefinition.ColMapSlotCount)
+        {
+            throw new ArgumentException(
+                $"A real index holds at most {Constants.TableDefinition.ColMapSlotCount} key columns; got {columnNumbers.Length}.",
+                nameof(columnNumbers));
+        }
+
+        Span<byte> phys = td.Slice(physStart, this.RealIdxPhysSize);
+        phys.Clear();
+        if (this.Format != DatabaseFormat.Jet3Mdb)
+        {
+            Wi32(phys, 0, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
+        }
+
+        for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
+        {
+            int so = this.ColMapStartWithinPhys + (slot * Constants.TableDefinition.ColMapSlotSize);
+            if (slot < columnNumbers.Length)
+            {
+                Wu16(phys, so, columnNumbers[slot]);
+                phys[so + 2] = Constants.TableDefinition.ColMapAscendingFlag;
+            }
+            else
+            {
+                Wu16(phys, so, Constants.TableDefinition.ColMapPaddingSlot);
+                phys[so + 2] = Constants.TableDefinition.ColMapDescendingFlag;
+            }
+        }
+
+        Wi32(phys, this.RealIdxFieldsOffset + Constants.TableDefinition.Jet3.RealIdx.FirstDpOffset, checked((int)firstDp));
+        phys[this.FlagsOffsetWithinPhys] = flags;
+    }
+
+    /// <summary>
+    /// Writes a whole logical-idx entry at <paramref name="entryStart"/>: on
+    /// Jet4/ACE the leading <see cref="Constants.TableDefinition.Jet4.FormatMagic"/>
+    /// cookie, the fields from +4 and a zero 4-byte trailer; on Jet3 the
+    /// fields from +0. The inverse of <see cref="TryReadLogicalEntry"/>.
+    /// </summary>
+    /// <param name="td">The logical TDEF buffer.</param>
+    /// <param name="entryStart">Absolute offset of the entry within <paramref name="td"/> (see <see cref="LogicalIdxEntryOffset"/>).</param>
+    /// <param name="indexNum">The logical index number (<c>index_num</c>).</param>
+    /// <param name="indexNum2">The backing real-idx slot (<c>index_num2</c>).</param>
+    /// <param name="relTblType">The relationship role (<c>rel_tbl_type</c>): 0 none, 1 parent side, 2 child side.</param>
+    /// <param name="relIdxNum">The partner entry's <c>index_num</c>, or -1.</param>
+    /// <param name="relTblPage">The partner table's TDEF page, or 0.</param>
+    /// <param name="cascadeUps">The <c>cascade_ups</c> byte.</param>
+    /// <param name="cascadeDels">The <c>cascade_dels</c> byte.</param>
+    /// <param name="indexType">The index kind (<c>index_type</c>).</param>
+    public void WriteLogicalEntry(
+        Span<byte> td,
+        int entryStart,
+        int indexNum,
+        int indexNum2,
+        byte relTblType,
+        int relIdxNum,
+        long relTblPage,
+        byte cascadeUps,
+        byte cascadeDels,
+        IndexKind indexType)
+    {
+        Span<byte> entry = td.Slice(entryStart, this.LogicalEntrySize);
+        entry.Clear();
+        if (this.Format != DatabaseFormat.Jet3Mdb)
+        {
+            Wi32(entry, 0, Constants.TableDefinition.Jet4.FormatMagic);
+        }
+
+        Span<byte> fields = entry[this.LogicalEntryFieldsOffset..];
+        Wi32(fields, Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset, indexNum);
+        Wi32(fields, Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset, indexNum2);
+        fields[Constants.TableDefinition.Jet3.LogicalIdx.RelTblTypeOffset] = relTblType;
+        Wi32(fields, Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset, relIdxNum);
+        Wi32(fields, Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset, checked((int)relTblPage));
+        fields[Constants.TableDefinition.Jet3.LogicalIdx.CascadeUpsOffset] = cascadeUps;
+        fields[Constants.TableDefinition.Jet3.LogicalIdx.CascadeDelsOffset] = cascadeDels;
+        fields[Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] = (byte)indexType;
     }
 
     /// <summary>

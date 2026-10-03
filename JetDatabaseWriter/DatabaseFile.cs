@@ -749,6 +749,42 @@ internal sealed class DatabaseFile : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Encodes <paramref name="name"/> as a TDEF name record, the inverse of
+    /// <see cref="ReadColumnName"/>: on Jet4 / ACE a 2-byte length and the
+    /// UTF-16LE bytes, on Jet3 a 1-byte length and the bytes in the
+    /// database's ANSI code page.
+    /// </summary>
+    /// <param name="name">The column or index name.</param>
+    /// <returns>The length-prefixed name record.</returns>
+    /// <exception cref="ArgumentException">Thrown when the encoded name is longer than its length prefix can hold (255 bytes on Jet3).</exception>
+    internal byte[] EncodeTDefNameRecord(string name)
+    {
+        bool jet3 = this.Format == DatabaseFormat.Jet3Mdb;
+        byte[] nameBytes = jet3 ? this.AnsiEncoding.GetBytes(name) : Encoding.Unicode.GetBytes(name);
+        int prefixSize = jet3 ? 1 : 2;
+        int maxLength = jet3 ? byte.MaxValue : ushort.MaxValue;
+        if (nameBytes.Length > maxLength)
+        {
+            throw new ArgumentException(
+                $"The name '{name}' encodes to {nameBytes.Length} bytes; a {this.Format} table definition stores at most {maxLength}.",
+                nameof(name));
+        }
+
+        byte[] record = new byte[prefixSize + nameBytes.Length];
+        if (jet3)
+        {
+            record[0] = (byte)nameBytes.Length;
+        }
+        else
+        {
+            Wu16(record, 0, nameBytes.Length);
+        }
+
+        Buffer.BlockCopy(nameBytes, 0, record, prefixSize, nameBytes.Length);
+        return record;
+    }
+
     // ── Page write I/O ───────────────────────────────────────────────
 
     internal async ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)

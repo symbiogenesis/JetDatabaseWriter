@@ -855,10 +855,10 @@ internal static class Constants
                 /// <summary><c>index_num2</c> (4 bytes): backing real-idx slot number.</summary>
                 public const int IndexNum2Offset = 4;
 
-                /// <summary><c>rel_tbl_type</c> (1 byte): 0x01 on FK entries.</summary>
+                /// <summary><c>rel_tbl_type</c> (1 byte): 0x01 on the parent side of an FK entry, 0x02 on the child side, 0x00 otherwise.</summary>
                 public const int RelTblTypeOffset = 8;
 
-                /// <summary><c>rel_idx_num</c> (4 bytes): partner-side real-idx slot number on FK entries.</summary>
+                /// <summary><c>rel_idx_num</c> (4 bytes): the partner FK entry's logical <c>index_num</c> (not its real-idx slot), or -1 on non-FK entries.</summary>
                 public const int RelIdxNumOffset = 9;
 
                 /// <summary><c>rel_tbl_page</c> (4 bytes): partner-side TDEF page on FK entries.</summary>
@@ -938,10 +938,10 @@ internal static class Constants
                 /// <summary><c>index_num2</c> (4 bytes): backing real-idx slot number.</summary>
                 public const int IndexNum2Offset = 8;
 
-                /// <summary><c>rel_tbl_type</c> (1 byte): 0x01 on FK entries.</summary>
+                /// <summary><c>rel_tbl_type</c> (1 byte): 0x01 on the parent side of an FK entry, 0x02 on the child side, 0x00 otherwise.</summary>
                 public const int RelTblTypeOffset = 12;
 
-                /// <summary><c>rel_idx_num</c> (4 bytes): partner-side real-idx slot number on FK entries.</summary>
+                /// <summary><c>rel_idx_num</c> (4 bytes): the partner FK entry's logical <c>index_num</c> (not its real-idx slot), or -1 on non-FK entries.</summary>
                 public const int RelIdxNumOffset = 13;
 
                 /// <summary><c>rel_tbl_page</c> (4 bytes): partner-side TDEF page on FK entries.</summary>

@@ -206,10 +206,11 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
             return null;
         }
 
+        IndexLayout layout = db.IndexLayoutInfo;
         for (int realIndex = 0; realIndex < numRealIndexes; realIndex++)
         {
-            int physicalDescriptorOffset = realIndexDescriptorStart + (realIndex * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
-            if (!IndexHelpers.RealIdxColMapMatches(tableDefinition, physicalDescriptorOffset, targetColumnNumbers))
+            int physicalDescriptorOffset = layout.RealIdxPhysOffset(realIndexDescriptorStart, realIndex);
+            if (!IndexHelpers.RealIdxColMapMatches(layout, tableDefinition, physicalDescriptorOffset, targetColumnNumbers))
             {
                 continue;
             }
@@ -217,10 +218,10 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
             bool[] ascending = new bool[targetColumnNumbers.Length];
             for (int slot = 0; slot < targetColumnNumbers.Length; slot++)
             {
-                ascending[slot] = (tableDefinition[physicalDescriptorOffset + 4 + (slot * 3) + 2] & 0x01) != 0;
+                ascending[slot] = (tableDefinition[layout.ColMapSlotOffset(physicalDescriptorOffset, slot) + 2] & 0x01) != 0;
             }
 
-            int firstDataPage = Ri32(tableDefinition, physicalDescriptorOffset + 38);
+            int firstDataPage = Ri32(tableDefinition, layout.FirstDpAbsoluteOffset(physicalDescriptorOffset));
             if (firstDataPage <= 0)
             {
                 continue;
