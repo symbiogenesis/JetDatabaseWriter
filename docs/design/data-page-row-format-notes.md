@@ -63,9 +63,9 @@ values over 256 bytes go to LVAL pages and take a 12-byte header in the row.
 `TableRowStore.InsertRowDataLocAsync` serializes the row with a zeroed
 placeholder for each such header before it writes any LVAL or data page, so
 `RowEncoder.SerializeRow` throws `JetLimitationException` for a longer row
-with the file unchanged; until then the LVAL pages were written first and
-stayed behind, unreferenced, after the throw. The writer used to append an
-empty data page and then throw
+with the file unchanged. (The LVAL pages used to be written first, and
+stayed behind, unreferenced, after the throw.) Before the check existed, the
+writer appended an empty data page and then threw
 `ArgumentOutOfRangeException` from the copy, or `InvalidDataException` after
 copying a row one byte too long over the row-offset table;
 `DataPageInserter.WriteRowToPageAsync` now checks the free space before it
