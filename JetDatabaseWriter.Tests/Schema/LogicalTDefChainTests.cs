@@ -46,6 +46,7 @@ public sealed class LogicalTDefChainTests
             AllocatePageAsync,
             (pageNumber, page, cancellationToken) => WritePageAsync(pages, pageNumber, page, cancellationToken),
             DeallocatePageAsync,
+            writeFreeSpace: true,
             this.ct);
 
         Assert.Equal(2, chain.PageNumbers.Count);
@@ -111,6 +112,7 @@ public sealed class LogicalTDefChainTests
             AllocateUnexpectedPageAsync,
             (pageNumber, page, cancellationToken) => WritePageAsync(pages, pageNumber, page, cancellationToken),
             DeallocatePageAsync,
+            writeFreeSpace: true,
             this.ct);
 
         Assert.Single(chain.PageNumbers);
@@ -129,6 +131,37 @@ public sealed class LogicalTDefChainTests
             _ = pages.Remove(pageNumber);
             return ValueTask.CompletedTask;
         }
+    }
+
+    [Fact]
+    public async Task WriteAsync_WithoutFreeSpace_KeepsJet3SignatureWord()
+    {
+        byte[] jet3Page = CreatePage(nextPage: 0);
+        jet3Page[2] = (byte)'V';
+        jet3Page[3] = (byte)'C';
+        var pages = new Dictionary<long, byte[]> { [10] = jet3Page };
+
+        LogicalTDefChain chain = await LogicalTDefChain.ReadRequiredAsync(
+            10,
+            PageSize,
+            (pageNumber, cancellationToken) => ReadPageAsync(pages, pageNumber, cancellationToken),
+            ReturnBorrowedPage,
+            retainPageNumbers: true,
+            this.ct);
+
+        const int usedLength = PageSize - 12;
+        await chain.WriteAsync(
+            chain.Bytes,
+            usedLength,
+            AllocateUnexpectedPageAsync,
+            (pageNumber, page, cancellationToken) => WritePageAsync(pages, pageNumber, page, cancellationToken),
+            (_, _) => ValueTask.CompletedTask,
+            writeFreeSpace: false,
+            this.ct);
+
+        Assert.Equal((byte)'V', pages[10][2]);
+        Assert.Equal((byte)'C', pages[10][3]);
+        Assert.Equal(usedLength - 8, Ri32(pages[10], 8));
     }
 
     private static byte[] CreatePage(long nextPage)

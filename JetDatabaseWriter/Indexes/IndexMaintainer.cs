@@ -393,7 +393,29 @@ internal sealed class IndexMaintainer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
     /// <exception cref="JetLimitationException">Thrown when the TDEF's index section cannot be parsed or an index names a column the table does not have, so the indexes cannot be rebuilt.</exception>
-    public async ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
+    public ValueTask MaintainIndexesAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
+        => this.RebuildIndexesAsync(tdefPage, tableDef, tableName, writtenRows: null, cancellationToken);
+
+    /// <summary>
+    /// The bulk rebuild behind <see cref="MaintainIndexesAsync"/>. When
+    /// <paramref name="writtenRows"/> is supplied, the indexes are built from
+    /// those rows and locations instead of decoding the table again. The schema
+    /// rewrite passes the rows it has just copied into the rebuilt table,
+    /// with the location each insert returned.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="writtenRows">Every live row of the table, in <paramref name="tableDef"/> column order, with its location; or <see langword="null"/> to decode every live row of the table.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
+    /// <exception cref="JetLimitationException">Thrown when the TDEF's index section cannot be parsed or an index names a column the table does not have, so the indexes cannot be rebuilt.</exception>
+    internal async ValueTask RebuildIndexesAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        IReadOnlyList<LocatedRow>? writtenRows,
+        CancellationToken cancellationToken)
     {
         // Jet3 (.mdb Access 97) live leaf maintenance is now
         // supported. The 39-byte real-idx + 20-byte logical-idx layouts
@@ -442,8 +464,10 @@ internal sealed class IndexMaintainer(
             return;
         }
 
-        // Every live row, decoded from the location its index entry points at.
-        List<LocatedRow> rows = await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        // Every live row, decoded from the location its index entry points at,
+        // unless the caller supplied the rows it wrote with their locations.
+        IReadOnlyList<LocatedRow> rows = writtenRows
+            ?? await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         bool tdefDirty = false;
         long[][]? rebuiltIndexPageGroups = db.Format == DatabaseFormat.Jet3Mdb ? null : new long[numRealIdx][];

@@ -634,7 +634,7 @@ await writer.RenameColumnAsync("Contacts", "Score", "Rating");
 await writer.DropColumnAsync("Contacts", "Phone");
 ```
 
-> These operations rewrite the whole table (copy rows to a new schema, then swap the catalog entry). Cost scales with row count.
+> These operations rewrite the whole table (copy rows to a new schema, then swap the catalog entry). Cost scales with row count. Every column keeps its properties (type, size, precision and scale, Unicode compression, calculated expression, persisted properties), and indexes and foreign-key relationships follow the rebuilt table: on Jet4 / ACE its relationship index entries are re-created and the related tables are re-linked to it, and renaming a key column updates `MSysRelationships`. On Jet3 the rebuilt table's relationship index entries, and the related tables' entries that pointed at it, are removed (the writer cannot emit Jet3 ones); the `MSysRelationships` rows are kept. Dropping a column that a relationship uses as a key column throws `InvalidOperationException`; drop the relationship first.
 
 ### Linked tables
 

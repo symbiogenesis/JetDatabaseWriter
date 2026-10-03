@@ -106,6 +106,7 @@ internal sealed class WriterServices
             this.CatalogArtifacts,
             this.ComplexColumns,
             constraints,
+            this.Relationships,
             snapshots,
             autoNumbers);
     }

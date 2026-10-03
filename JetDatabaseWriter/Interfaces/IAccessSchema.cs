@@ -85,19 +85,23 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously drops the named column from an existing table. The column's data is
     /// permanently lost. Implemented by copying the remaining columns to a new schema and
     /// renaming the result back to <paramref name="tableName"/>. The table must retain at
-    /// least one column after the drop.
+    /// least one column after the drop, and the column must not be a key column of a
+    /// foreign-key relationship (drop the relationship first, as Microsoft Access requires).
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="columnName">The column to drop (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value in a column being kept whose stored data cannot be read; copying the row would lose that value. An unreadable value in the dropped column does not block the drop.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the column is the table's last column or a relationship key column.</exception>
     public ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asynchronously renames a column on an existing table. Row data is preserved.
-    /// Implemented by copying the table to a new schema and renaming the result back to
-    /// <paramref name="tableName"/>.
+    /// Asynchronously renames a column on an existing table. Row data and every other
+    /// column property are preserved. Implemented by copying the table to a new schema
+    /// and renaming the result back to <paramref name="tableName"/>. When the column is a
+    /// key column of a foreign-key relationship, the relationship's <c>MSysRelationships</c>
+    /// rows are updated to the new name.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="oldColumnName">The current column name (case-insensitive).</param>

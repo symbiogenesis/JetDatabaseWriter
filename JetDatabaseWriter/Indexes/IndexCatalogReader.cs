@@ -220,6 +220,7 @@ internal static class IndexCatalogReader
                 IsRequired = (flags & Constants.TableDefinition.RequiredIndexFlag) != 0,
                 IsForeignKey = relIdxNum != -1,
                 RelatedTablePage = relIdxNum != -1 ? relTblPage : 0,
+                RelatedIndexNumber = relIdxNum,
 
                 // Per Jackcess IndexImpl: only bit 0x01 (CASCADE_DELETES_FLAG /
                 // CASCADE_UPDATES_FLAG) signals "cascade enabled". DAO/Access stamps

@@ -17,6 +17,7 @@ using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
@@ -30,7 +31,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Table DDL workflows behind <see cref="Interfaces.IAccessSchema"/>: create
 /// and drop tables, and add, drop, or rename columns. Column changes rebuild
 /// the table through a temporary copy that preserves rows, indexes, persisted
-/// column properties, client-side constraints, and complex-column artifacts.
+/// column properties, client-side constraints, complex-column artifacts, and
+/// foreign-key relationships (the table's FK index entries, its partners'
+/// links to it, and renamed key columns in <c>MSysRelationships</c>). A
+/// column that a relationship uses as a key column cannot be dropped.
 /// Dropped tables return their data, LVAL, index, usage-map, and TDEF pages to
 /// the global free map. The public facade owns the auto-commit scope around
 /// each call.
@@ -45,6 +49,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalogArtifacts">Creates tables and applies catalog replacement plans.</param>
 /// <param name="complexColumns">Allocates, emits, re-parents, drops, and renames complex-column artifacts.</param>
 /// <param name="constraints">Carries client-side column constraints across schema changes.</param>
+/// <param name="relationships">Carries foreign-key index entries and relationship links across a rebuild.</param>
 /// <param name="snapshots">Reads rows, index metadata, and persisted column properties before a rebuild.</param>
 /// <param name="autoNumbers">Carries the AutoNumber high-water value over to the rebuilt TDEF.</param>
 internal sealed class TableSchemaEditor(
@@ -58,6 +63,7 @@ internal sealed class TableSchemaEditor(
     CatalogArtifactWriter catalogArtifacts,
     ComplexColumnManager complexColumns,
     ConstraintRegistry constraints,
+    RelationshipManager relationships,
     TableSnapshotReader snapshots,
     AutoNumberMaintainer autoNumbers)
 {
@@ -188,6 +194,7 @@ internal sealed class TableSchemaEditor(
                 next[oldRow.Length] = DBNull.Value;
                 return next;
             },
+            name => name,
             cancellationToken);
     }
 
@@ -233,6 +240,7 @@ internal sealed class TableSchemaEditor(
 
                 return next;
             },
+            name => string.Equals(name, columnName, StringComparison.OrdinalIgnoreCase) ? null : name,
             cancellationToken);
     }
 
@@ -268,6 +276,7 @@ internal sealed class TableSchemaEditor(
                 return next;
             },
             (oldRow, _) => oldRow,
+            name => string.Equals(name, oldColumnName, StringComparison.OrdinalIgnoreCase) ? newColumnName : name,
             cancellationToken,
             projectIndexes: (existingIndexes, newDefs) =>
             {
@@ -366,10 +375,25 @@ internal sealed class TableSchemaEditor(
         }
     }
 
+    /// <summary>
+    /// Rebuilds <paramref name="tableName"/> into a temporary copy with the
+    /// projected schema, copies every row, and swaps the copy in. The table's
+    /// foreign-key index entries are re-emitted on the copy, and its partner
+    /// tables and <c>MSysRelationships</c> rows are pointed at the result.
+    /// </summary>
+    /// <param name="tableName">The table to rewrite.</param>
+    /// <param name="projectColumns">Builds the new column list from the current one.</param>
+    /// <param name="projectRow">Maps a current row to the new column list.</param>
+    /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="projectIndexes">Builds the new index list; defaults to <see cref="IndexHelpers.DefaultIndexProjection"/>.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns or drops a relationship key column.</exception>
+    /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
         Func<object[], TableDef, object[]> projectRow,
+        Func<string, string?> mapColumnName,
         CancellationToken cancellationToken,
         Func<IReadOnlyList<IndexMetadata>, IReadOnlyList<ColumnDefinition>, List<IndexDefinition>>? projectIndexes = null)
     {
@@ -431,6 +455,12 @@ internal sealed class TableSchemaEditor(
             throw new InvalidOperationException($"Table '{tableName}' must retain at least one column.");
         }
 
+        // Capture the table's relationship state, and refuse to drop a
+        // relationship key column, before anything is written.
+        RelationshipRewriteState relationshipState =
+            await relationships.CaptureForRewriteAsync(tableName, entry.TDefPage, tableDef, cancellationToken).ConfigureAwait(false);
+        RelationshipManager.EnsureKeyColumnsSurvive(relationshipState, mapColumnName);
+
         // Snapshot existing rows AND existing indexes BEFORE we mutate the catalog,
         // so the snapshot reader sees the original schema and we can forward
         // surviving index definitions to the rebuilt table.
@@ -457,39 +487,7 @@ internal sealed class TableSchemaEditor(
             projectedRows.Add(projected);
         }
 
-        string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
-        await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
-
-        ResolvedTable tempTable = await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
-        CatalogEntry tempEntry = tempTable.Entry;
-        TableDef tempDef = tempTable.Definition;
-
-        // The temp TDEF starts with an AutoNumber counter of 0. Carry the
-        // original's high-water value (and anything larger the copied rows
-        // hold) over to it, or values freed by deleting the top rows would be
-        // handed out again once the temp table takes the original's place.
-        long autoNumberHighWater = await autoNumbers.ReadHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        foreach (object[] projected in projectedRows)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await tableRows.InsertRowDataAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
-            autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
-        }
-
-        await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
-
-        // rebuild forwarded indexes once after the bulk row copy completes,
-        // so we don't pay the rebuild cost per row.
-        if (projectedIndexes.Count > 0 && snapshot.Rows.Count > 0)
-        {
-            await indexMaintainer.MaintainIndexesAsync(tempEntry.TDefPage, tempDef, tempName, cancellationToken).ConfigureAwait(false);
-        }
-
-        // Drop the original table, then rename the temp catalog entry to take its place.
-        // Pre-compute the LvProp blob from the projected columns so the catalog rename
-        // re-emits the persisted properties under the user-facing table name.
-        //
-        // identify complex columns being dropped or renamed by this rewrite
+        // Identify complex columns being dropped or renamed by this rewrite
         // BEFORE the cascade-skipping drop runs. Surviving complex columns (matched by
         // ComplexId between the existing and projected schemas) are preserved as-is —
         // their flat child tables and MSysComplexColumns rows stay attached to the
@@ -527,8 +525,63 @@ internal sealed class TableSchemaEditor(
             }
         }
 
+        bool transplant = newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0;
+
+        string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
+        await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
+
+        ResolvedTable tempTable = await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
+        CatalogEntry tempEntry = tempTable.Entry;
+        TableDef tempDef = tempTable.Definition;
+
+        // Re-emit the foreign-key index entries on the copy before the row copy,
+        // so the single index rebuild below also fills their leaves. A
+        // self-referencing entry points at the page the table ends up on: the
+        // original TDEF page when the copy is transplanted, else the copy's.
+        long finalTdefPage = transplant ? entry.TDefPage : tempEntry.TDefPage;
+        IReadOnlyDictionary<int, int> fkIndexNumbers = await relationships.EmitFkEntriesForRewriteAsync(
+            relationshipState,
+            tempEntry.TDefPage,
+            tempDef,
+            finalTdefPage,
+            mapColumnName,
+            cancellationToken).ConfigureAwait(false);
+        if (fkIndexNumbers.Count > 0)
+        {
+            tempDef = await db.ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
+        }
+
+        // The temp TDEF starts with an AutoNumber counter of 0. Carry the
+        // original's high-water value (and anything larger the copied rows
+        // hold) over to it, or values freed by deleting the top rows would be
+        // handed out again once the temp table takes the original's place.
+        long autoNumberHighWater = await autoNumbers.ReadHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var writtenRows = new List<LocatedRow>(projectedRows.Count);
+        foreach (object[] projected in projectedRows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
+            writtenRows.Add(new LocatedRow(location, projected));
+            autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
+        }
+
+        await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
+
+        // Rebuild forwarded indexes once after the bulk row copy completes,
+        // so we don't pay the rebuild cost per row. The rebuild keys the rows
+        // just written at the locations the inserts returned, rather than
+        // re-reading the copy. Re-emitted FK entries need the rebuild even on
+        // an empty table, so it records their leaves in the index usage map.
+        if (fkIndexNumbers.Count > 0 || (projectedIndexes.Count > 0 && writtenRows.Count > 0))
+        {
+            await indexMaintainer.RebuildIndexesAsync(tempEntry.TDefPage, tempDef, tempName, writtenRows, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Drop the original table, then rename the temp catalog entry to take its place.
+        // Pre-compute the LvProp blob from the projected columns so the catalog rename
+        // re-emits the persisted properties under the user-facing table name.
         byte[]? renamedLvProp = JetExpressionConverter.BuildLvPropBlob(newDefs, db.Format);
-        if (newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0)
+        if (transplant)
         {
             await this.TransplantTempTableToOriginalAsync(
                 tableName,
@@ -537,29 +590,34 @@ internal sealed class TableSchemaEditor(
                 tempEntry.TDefPage,
                 renamedLvProp,
                 cancellationToken).ConfigureAwait(false);
-            return;
         }
-
-        await this.DropTableCoreAsync(tableName, dropComplexChildren: false, cancellationToken).ConfigureAwait(false);
-        await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
-
-        foreach (ColumnDefinition survivor in newComplexById.Values)
+        else
         {
-            await complexColumns.UpdateComplexColumnParentTableIdAsync(
-                survivor.ComplexId,
-                checked((int)tempEntry.TDefPage),
-                cancellationToken).ConfigureAwait(false);
+            await this.DropTableCoreAsync(tableName, dropComplexChildren: false, cancellationToken).ConfigureAwait(false);
+            await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, renamedLvProp, cancellationToken).ConfigureAwait(false);
+
+            foreach (ColumnDefinition survivor in newComplexById.Values)
+            {
+                await complexColumns.UpdateComplexColumnParentTableIdAsync(
+                    survivor.ComplexId,
+                    checked((int)tempEntry.TDefPage),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach ((string colName, int complexId) in droppedComplex)
+            {
+                await complexColumns.DropSingleComplexChildAsync(colName, complexId, cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach ((string oldColName, string newColName, int complexId) in renamedComplex)
+            {
+                await complexColumns.RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
+            }
         }
 
-        foreach ((string colName, int complexId) in droppedComplex)
-        {
-            await complexColumns.DropSingleComplexChildAsync(colName, complexId, cancellationToken).ConfigureAwait(false);
-        }
-
-        foreach ((string oldColName, string newColName, int complexId) in renamedComplex)
-        {
-            await complexColumns.RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
-        }
+        // Point every partner table's FK entry at the table's final TDEF page
+        // and renumbered entries, and rename key columns in MSysRelationships.
+        await relationships.CompleteRewriteAsync(relationshipState, finalTdefPage, fkIndexNumbers, mapColumnName, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask TransplantTempTableToOriginalAsync(
