@@ -407,6 +407,33 @@ ColumnMetadata col = (await reader.GetColumnMetadataAsync("Bookmarks"))[1];
 
 POCO mapping accepts either a `Hyperlink` property or a plain `string` property — the conversion runs both ways. Compatibility surfaces (`RowsAsStrings`, `ReadTableAsStringsAsync`) continue to yield the raw `#`-delimited form. See [docs/design/hyperlink-format-notes.md](docs/design/hyperlink-format-notes.md) for the on-disk layout, escape semantics, and round-trip rules.
 
+### OLE Object columns
+
+An OLE Object column reads as `byte[]` holding the value's stored bytes, from every read API: `Rows`, `ReadTableAsync`, `ReadDataTableAsync`, `Rows<T>`, `ReadTableAsync<T>`, `Query<T>`, `FromIndex` and `SeekRowsAsync`. That is what DAO, ADO and Jackcess return. A value your code wrote comes back byte for byte. An object Microsoft Access inserted (a file dropped into the field, a Word document, a linked file) keeps Access's OLE header and the OLE object stream around it; `OleObjectValue` unwraps it on request:
+
+```csharp
+await foreach (Employee e in reader.Rows<Employee>("Employees"))
+{
+    OleObjectContent photo = OleObjectValue.Parse(e.Photo);
+    switch (photo.Kind)
+    {
+        case OleObjectKind.EmbeddedFile:   // an OLE Package: photo.FileName, photo.Content (the file)
+        case OleObjectKind.EmbeddedObject: // a Word, Excel, ... object: photo.ClassName, photo.Content (its native data)
+            await File.WriteAllBytesAsync(photo.FileName ?? $"{e.Id}.bin", photo.Content);
+            break;
+        case OleObjectKind.LinkedFile:     // a link: photo.SourcePath, no content
+        case OleObjectKind.NotWrapped:     // stored as is: photo.Content is the stored bytes
+        case OleObjectKind.Unknown:        // a header that does not parse: photo.Content is the stored bytes
+            break;
+    }
+}
+
+byte[] content = OleObjectValue.GetContent(storedBytes);       // Parse(...).Content
+string? mediaType = OleObjectValue.DetectMediaType(content);   // "image/jpeg", "application/pdf", ... or null
+```
+
+`Parse` never throws for any content: it checks every length against the bytes that are there, and returns the stored bytes as `Content`, with `Kind` `NotWrapped` or `Unknown`, when it cannot follow them. `MediaType` and `DetectMediaType` look for a file signature at the first byte only. The string APIs (`RowsAsStrings`, `ReadTableAsStringsAsync`, `ReadFirstTableAsStringsAsync`) render an OLE value as a `data:` URI of its stored bytes, with the media type of a signature at the first byte or `application/octet-stream`.
+
 ### String DataTable — compatibility
 
 ```csharp

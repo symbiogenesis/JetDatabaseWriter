@@ -135,7 +135,7 @@ Only meaningful on memo columns marked "Append Only" in Access. The reader follo
 
 ## 3. Attachment payload format
 
-The reader decodes this in `AttachmentWrapper.TryDecode`, from the stored `FileData` bytes (the flat table's OLE column is read raw, without the OLE-package unwrap and file-signature sniffing that ordinary OLE columns get). The writer encodes it in `AttachmentWrapper.Encode`.
+The reader decodes this in `AttachmentWrapper.TryDecode`, from the stored `FileData` bytes (the flat table's OLE column is read as its stored bytes, as every read API returns OLE values). The writer encodes it in `AttachmentWrapper.Encode`.
 
 **Verified against all 24 Access-authored attachments in the fixtures**: 2 `.txt` in `ComplexFields.accdb` `Documents.Attachments`, 3 `.txt` in each of `complexDataTestV2007.accdb` / `complexDataTestV2010.accdb` `Table1.attach-data`, and 16 `.jpg` in `NorthwindTraders.accdb` `ProductCategories.ProductCategoryImage`. The layout below is what all of them hold, and it matches Jackcess `AttachmentColumnInfoImpl.encodeData` / `decodeData`.
 

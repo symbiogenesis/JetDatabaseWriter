@@ -8,11 +8,9 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
-using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
@@ -27,8 +25,6 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
 {
     /// <summary>Gets a value indicating whether malformed values throw instead of decoding to a fallback.</summary>
     internal bool StrictParsing => strictParsing;
-
-    private static bool IsRawOleColumn(ColumnInfo column) => column.Type == ColumnType.OleType && !column.IsCalculated;
 
     /// <summary>
     /// Returns the column mask that selects <paramref name="columnNames"/> in
@@ -103,53 +99,45 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
 
     /// <summary>
     /// Yields every row of the table at <paramref name="tdefPage"/> as typed
-    /// values, except that OLE columns hold their stored bytes unchanged: no
-    /// OLE-package unwrap and no file-signature slicing. Complex-column flat
-    /// tables use this, because their <c>FileData</c> column holds an
-    /// attachment wrapper that must be decoded byte for byte.
+    /// values. OLE columns hold their stored bytes, as every typed read returns
+    /// them: complex-column flat tables rely on it, because their <c>FileData</c>
+    /// column holds an attachment wrapper that is decoded byte for byte.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal IAsyncEnumerable<object?[]> EnumerateRawOleTypedRowsForTdefAsync(
+    internal IAsyncEnumerable<object?[]> EnumerateTypedRowsForTdefAsync(
         long tdefPage,
         TableDef td,
         CancellationToken cancellationToken)
-        => this.EnumerateRawOleTypedRowsForTdefAsync(tdefPage, td, wantedColumns: null, cancellationToken);
+        => this.EnumerateTypedRowsForTdefAsync(tdefPage, td, wantedColumns: null, cancellationToken);
 
     /// <summary>
     /// Yields every row of the table at <paramref name="tdefPage"/> as typed
     /// values, decoding only the columns <paramref name="wantedColumns"/> selects
     /// and leaving the others <see langword="null"/>. OLE columns hold their
-    /// stored bytes unchanged, as in the overload without a mask. Catalog reads
-    /// use the mask so that an <c>MSysObjects</c> scan for one table's
-    /// <c>LvProp</c> reads only the <c>Id</c> and <c>LvProp</c> of each row.
+    /// stored bytes. Catalog reads use the mask so that an <c>MSysObjects</c> scan
+    /// for one table's <c>LvProp</c> reads only the <c>Id</c> and <c>LvProp</c> of
+    /// each row.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="wantedColumns">The columns to decode, by column index, or <see langword="null"/> for every column.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async IAsyncEnumerable<object?[]> EnumerateRawOleTypedRowsForTdefAsync(
+    internal async IAsyncEnumerable<object?[]> EnumerateTypedRowsForTdefAsync(
         long tdefPage,
         TableDef td,
         bool[]? wantedColumns,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // The typed decode skips the raw OLE columns and every unwanted one;
-        // the raw OLE columns that are wanted are filled from their stored bytes below.
-        bool[] typedColumns = new bool[td.Columns.Count];
-        bool[] rawColumns = new bool[td.Columns.Count];
-        bool hasRawColumns = false;
-        for (int i = 0; i < typedColumns.Length; i++)
+        bool[]? mask = null;
+        if (wantedColumns is not null)
         {
-            bool wanted = wantedColumns is null || (i < wantedColumns.Length && wantedColumns[i]);
-            bool raw = IsRawOleColumn(td.Columns[i]);
-            typedColumns[i] = wanted && !raw;
-            rawColumns[i] = wanted && raw;
-            hasRawColumns |= rawColumns[i];
+            mask = new bool[td.Columns.Count];
+            Array.Copy(wantedColumns, mask, Math.Min(wantedColumns.Length, mask.Length));
         }
 
-        var decodePlan = RowDecodePlan.CreateTyped(td, typedColumns, strictParsing);
+        var decodePlan = RowDecodePlan.CreateTyped(td, mask, strictParsing);
         IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         foreach (long pageNumber in pageNumbers)
         {
@@ -176,27 +164,10 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
                 }
 
                 object?[]? row = await this.CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
-                if (row == null)
+                if (row != null)
                 {
-                    continue;
+                    yield return row;
                 }
-
-                if (hasRawColumns && decodePlan.TryParseLayoutForDirectDecode(db, page, rb.RowStart, rb.RowSize, out RowLayout layout))
-                {
-                    for (int i = 0; i < row.Length; i++)
-                    {
-                        ColumnInfo column = td.Columns[i];
-                        if (rawColumns[i])
-                        {
-                            ColumnSlice slice = RowDecodePlan.ResolveColumnSliceForDirectDecode(db, page, rb.RowStart, rb.RowSize, layout, column);
-                            row[i] = slice.Kind == ColumnSliceKind.Var
-                                ? await longValues.ReadLongValueRawBytesAsync(page, rb.RowStart + slice.DataStart, slice.DataLen, cancellationToken).ConfigureAwait(false)
-                                : DBNull.Value;
-                        }
-                    }
-                }
-
-                yield return row;
             }
         }
     }
@@ -365,8 +336,9 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
                 }
                 else
                 {
+                    // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
                     buffer[i] = lvr.IsOle
-                        ? await longValues.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                        ? await longValues.ReadLongValueRawBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
                         : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
                 }
             }
@@ -444,14 +416,9 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
         }
 
         byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-        if (!reference.IsOle)
-        {
-            return longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false);
-        }
-
-        return decodePlan.PreservesLongValueBytes
+        return reference.IsOle
             ? payload
-            : OleObjectDecoder.DecodeOleValueBytes(payload, 0, payload.Length);
+            : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false);
     }
 
     /// <summary>

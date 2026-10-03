@@ -1,350 +1,352 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
-#if NET8_0_OR_GREATER
-using System.Buffers;
-#endif
-using JetDatabaseWriter.Infrastructure;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
+using System.Buffers.Binary;
+using System.Text;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 
 /// <summary>
-/// Decodes JET/ACE OLE Object column payloads. Unwraps common OLE 1.0 package
-/// envelopes, locates the embedded file bytes, and recognizes well-known file
-/// signatures. Raw-byte extraction (<see cref="DecodeOleValueBytes"/>) is the
-/// hot read path; the <c>data:</c>-URI/MIME-detection convenience
-/// (<see cref="TryDecodeOleObject"/>) is kept separate so byte projections never
-/// base64-encode. Extracted from <see cref="AccessReader"/> to keep content-type
-/// detection and data-URI formatting out of the storage-format reader.
+/// The structured OLE Object parser behind <see cref="OleObjectValue"/>, the media-type
+/// detection, and the <c>data:</c> URI the string read APIs render an OLE value as.
+/// Read APIs return OLE values as their stored bytes; nothing here runs on a read
+/// unless the caller asks for it, except the data URI, which renders the stored bytes.
 /// </summary>
+/// <remarks>
+/// Every length is read as an unsigned value and checked against the bytes that remain
+/// before it is used, so a truncated or inconsistent value is reported as
+/// <see cref="OleObjectKind.Unknown"/> instead of throwing. The layouts are in
+/// <see cref="OleObjectValue"/>'s remarks; they were checked against the
+/// Access-authored testOleV2007 and test2 fixtures.
+/// </remarks>
 internal static class OleObjectDecoder
 {
-#if NET8_0_OR_GREATER
-    private static readonly SearchValues<byte> OlePayloadSignatureFirstBytes = SearchValues.Create([0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF]);
-#else
-    private static readonly byte[] OlePayloadSignatureFirstBytes = [0x25, 0x42, 0x47, 0x49, 0x4D, 0x50, 0x7B, 0x89, 0xD0, 0xFF];
-#endif
+    /// <summary>The media type a data URI gets when no file signature starts the bytes.</summary>
+    internal const string DefaultMediaType = "application/octet-stream";
 
-    private delegate bool BytePatternMatcher<TState>(ReadOnlySpan<byte> window, ref TState state);
+    private const ushort AccessOleSignature = 0x1C15;
+    private const int AccessHeaderMinLength = 20;
+    private const uint OleVersion = 0x00000501;
+    private const uint LinkedFormatId = 1;
+    private const uint EmbeddedFormatId = 2;
+    private const ushort PackageSignature = 2;
+    private const ushort PackageLinkedFile = 1;
+    private const ushort PackageEmbeddedFile = 3;
+    private const string PackageClassName = "Package";
+
+    /// <summary>The ANSI code page Access writes OLE header and package strings in.</summary>
+    private static readonly Encoding Ansi = CreateAnsiEncoding();
 
     /// <summary>
-    /// Unwraps common OLE 1.0 package envelopes and scans the resulting payload
-    /// for known file signatures (images, PDFs, Office docs, archives),
-    /// returning an RFC-2397 base64 <c>data:</c> URI. Typical Access OLE fields
-    /// prepend a package header before the embedded file bytes, so package-aware
-    /// extraction must run before the generic sliding magic-byte scan.
+    /// Parses the stored bytes of an OLE Object value; see <see cref="OleObjectValue.Parse(byte[])"/>.
     /// </summary>
-    /// <param name="b">The second value or byte buffer.</param>
-    /// <param name="start">The start.</param>
-    /// <param name="len">The length in bytes.</param>
-    internal static string? TryDecodeOleObject(byte[] b, int start, int len)
+    /// <param name="stored">The stored bytes.</param>
+    internal static OleObjectContent Parse(byte[] stored)
     {
-        if (b == null || len < 4)
+        ReadOnlySpan<byte> value = stored;
+        if (value.Length < 2 || BinaryPrimitives.ReadUInt16LittleEndian(value) != AccessOleSignature)
+        {
+            return Raw(stored, OleObjectKind.NotWrapped, displayName: null, className: null);
+        }
+
+        if (value.Length < AccessHeaderMinLength)
+        {
+            return Raw(stored, OleObjectKind.Unknown, displayName: null, className: null);
+        }
+
+        int headerSize = BinaryPrimitives.ReadUInt16LittleEndian(value[2..]);
+        if (headerSize < AccessHeaderMinLength || headerSize > value.Length)
+        {
+            return Raw(stored, OleObjectKind.Unknown, displayName: null, className: null);
+        }
+
+        ReadOnlySpan<byte> header = value[..headerSize];
+        string? displayName = ReadHeaderString(header, BinaryPrimitives.ReadUInt16LittleEndian(value[12..]), BinaryPrimitives.ReadUInt16LittleEndian(value[8..]));
+        string? headerClassName = ReadHeaderString(header, BinaryPrimitives.ReadUInt16LittleEndian(value[14..]), BinaryPrimitives.ReadUInt16LittleEndian(value[10..]));
+
+        // The MS-OLEDS ObjectHeader follows Access's header.
+        var cursor = new Cursor(value, headerSize);
+        if (!cursor.TryReadUInt32(out uint version)
+            || version != OleVersion
+            || !cursor.TryReadUInt32(out uint formatId)
+            || !cursor.TryReadLengthPrefixedAnsi(out string className)
+            || !cursor.TryReadLengthPrefixedAnsi(out string topicName)
+            || !cursor.TryReadLengthPrefixedAnsi(out _))
+        {
+            return Raw(stored, OleObjectKind.Unknown, displayName, headerClassName);
+        }
+
+        string? objectClass = className.Length > 0 ? className : headerClassName;
+        if (formatId == LinkedFormatId)
+        {
+            return topicName.Length == 0
+                ? Raw(stored, OleObjectKind.Unknown, displayName, objectClass)
+                : new OleObjectContent { Kind = OleObjectKind.LinkedFile, DisplayName = displayName, ClassName = objectClass, SourcePath = topicName };
+        }
+
+        if (formatId != EmbeddedFormatId
+            || !cursor.TryReadUInt32(out uint nativeSize)
+            || !cursor.TryReadBytes(nativeSize, out ReadOnlySpan<byte> native))
+        {
+            return Raw(stored, OleObjectKind.Unknown, displayName, objectClass);
+        }
+
+        if (!string.Equals(objectClass, PackageClassName, StringComparison.OrdinalIgnoreCase))
+        {
+            byte[] nativeData = native.ToArray();
+            return new OleObjectContent
+            {
+                Kind = OleObjectKind.EmbeddedObject,
+                DisplayName = displayName,
+                ClassName = objectClass,
+                Content = nativeData,
+                MediaType = DetectMediaType(nativeData),
+            };
+        }
+
+        return ParsePackage(native, displayName, objectClass) ?? Raw(stored, OleObjectKind.Unknown, displayName, objectClass);
+    }
+
+    /// <summary>
+    /// Returns the media type a file signature at the first byte identifies; see
+    /// <see cref="OleObjectValue.DetectMediaType(ReadOnlySpan{byte})"/>.
+    /// </summary>
+    /// <param name="bytes">The bytes to look at.</param>
+    internal static string? DetectMediaType(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.StartsWith(Constants.OleMagicBytes.Jpeg))
+        {
+            return "image/jpeg";
+        }
+
+        if (bytes.StartsWith(Constants.OleMagicBytes.Png))
+        {
+            return "image/png";
+        }
+
+        if (bytes.StartsWith(Constants.OleMagicBytes.Gif))
+        {
+            return "image/gif";
+        }
+
+        if (bytes.StartsWith(Constants.OleMagicBytes.Bmp))
+        {
+            return "image/bmp";
+        }
+
+        if (bytes.StartsWith(Constants.OleMagicBytes.TiffLittleEndian) || bytes.StartsWith(Constants.OleMagicBytes.TiffBigEndian))
+        {
+            return "image/tiff";
+        }
+
+        if (bytes.StartsWith(Constants.OleMagicBytes.Pdf))
+        {
+            return "application/pdf";
+        }
+
+        if (bytes.StartsWith(Constants.OleMagicBytes.Zip))
+        {
+            return "application/zip";
+        }
+
+        if (bytes.StartsWith(Constants.OleMagicBytes.OleCompound))
+        {
+            return "application/msword";
+        }
+
+        return bytes.StartsWith(Constants.OleMagicBytes.Rtf) ? "application/rtf" : null;
+    }
+
+    /// <summary>
+    /// Renders stored OLE bytes as an RFC 2397 <c>data:</c> URI: the media type from a
+    /// signature at the first byte (<see cref="DetectMediaType"/>), else
+    /// <see cref="DefaultMediaType"/>, and every stored byte in base64.
+    /// </summary>
+    /// <param name="buffer">The buffer holding the value.</param>
+    /// <param name="offset">The value's offset in <paramref name="buffer"/>.</param>
+    /// <param name="length">The value's length.</param>
+    internal static string ToDataUri(byte[] buffer, int offset, int length)
+        => "data:" + (DetectMediaType(buffer.AsSpan(offset, length)) ?? DefaultMediaType) + ";base64," + Convert.ToBase64String(buffer, offset, length);
+
+    /// <summary>
+    /// Parses an OLE Package's native data: <c>u16 2</c>, the label and the source path
+    /// (ANSI, NUL-terminated), the icon index and the type (<c>u16</c> each), then for
+    /// type 3 the temporary path and the file (<c>u32</c> length each), and for type 1
+    /// a <c>u16</c> and the linked path. Returns <see langword="null"/> when the data does
+    /// not follow that layout.
+    /// </summary>
+    /// <param name="native">The package's native data.</param>
+    /// <param name="displayName">The display name from Access's header.</param>
+    /// <param name="className">The object's class.</param>
+    private static OleObjectContent? ParsePackage(ReadOnlySpan<byte> native, string? displayName, string? className)
+    {
+        var cursor = new Cursor(native, 0);
+        if (!cursor.TryReadUInt16(out ushort signature)
+            || signature != PackageSignature
+            || !cursor.TryReadAnsiZ(out string label)
+            || !cursor.TryReadAnsiZ(out string sourcePath)
+            || !cursor.TryReadUInt16(out _)
+            || !cursor.TryReadUInt16(out ushort type))
         {
             return null;
         }
 
-        if (TryExtractEmbeddedOlePackagePayload(b, start, len, out int payloadStart, out int payloadLength))
+        if (type == PackageEmbeddedFile)
         {
-            return TryCreateOleDataUriFromKnownMagic(b, payloadStart, payloadLength)
-                ?? ("data:application/octet-stream;base64," + Convert.ToBase64String(b, payloadStart, payloadLength));
+            if (!cursor.TryReadUInt32(out uint pathLength)
+                || !cursor.TryReadBytes(pathLength, out _)
+                || !cursor.TryReadUInt32(out uint dataLength)
+                || !cursor.TryReadBytes(dataLength, out ReadOnlySpan<byte> data))
+            {
+                return null;
+            }
+
+            byte[] file = data.ToArray();
+            return new OleObjectContent
+            {
+                Kind = OleObjectKind.EmbeddedFile,
+                DisplayName = displayName,
+                ClassName = className,
+                FileName = label,
+                SourcePath = sourcePath,
+                Content = file,
+                MediaType = DetectMediaType(file),
+            };
         }
 
-        return TryCreateOleDataUriFromKnownMagic(b, start, len);
+        if (type == PackageLinkedFile && cursor.TryReadUInt16(out _) && cursor.TryReadAnsiZ(out string linkPath))
+        {
+            return new OleObjectContent
+            {
+                Kind = OleObjectKind.LinkedFile,
+                DisplayName = displayName,
+                ClassName = className,
+                FileName = label,
+                SourcePath = linkPath.Length > 0 ? linkPath : sourcePath,
+            };
+        }
+
+        return null;
     }
 
-    internal static byte[] DecodeOleValueBytes(byte[] buffer, int offset, int length, bool allowInputReuse = false)
+    private static OleObjectContent Raw(byte[] stored, OleObjectKind kind, string? displayName, string? className) => new()
     {
-        if (buffer == null || length <= 0 || offset < 0 || offset >= buffer.Length)
-        {
-            return [];
-        }
+        Kind = kind,
+        DisplayName = displayName,
+        ClassName = className,
+        Content = stored,
+        MediaType = DetectMediaType(stored),
+    };
 
-        if (TryExtractEmbeddedOlePackagePayload(buffer, offset, length, out int payloadStart, out int payloadLength))
-        {
-            return CreateOlePayloadBytes(buffer, payloadStart, payloadLength, allowInputReuse);
-        }
-
-        if (TryFindOlePayloadRange(buffer, offset, length, out payloadStart, out payloadLength, out _))
-        {
-            return CreateOlePayloadBytes(buffer, payloadStart, payloadLength, allowInputReuse);
-        }
-
-        int boundedLength = Math.Min(length, buffer.Length - offset);
-        return boundedLength <= 0 ? [] : CreateOlePayloadBytes(buffer, offset, boundedLength, allowInputReuse);
-    }
-
-    private static string? TryCreateOleDataUriFromKnownMagic(byte[] buffer, int start, int len)
+    /// <summary>
+    /// Reads a NUL-terminated ANSI string that Access's header places at
+    /// <paramref name="offset"/>, or <see langword="null"/> when it does not fit the header.
+    /// </summary>
+    /// <param name="header">Access's OLE header.</param>
+    /// <param name="offset">The string's offset.</param>
+    /// <param name="length">The string's length, terminator included.</param>
+    private static string? ReadHeaderString(ReadOnlySpan<byte> header, int offset, int length)
     {
-        if (!TryFindOlePayloadRange(buffer, start, len, out int payloadStart, out int payloadLength, out string? mimeType))
+        if (length == 0 || offset < AccessHeaderMinLength || offset > header.Length - length)
         {
             return null;
         }
 
-        return "data:" + mimeType + ";base64," + Convert.ToBase64String(buffer, payloadStart, payloadLength);
+        ReadOnlySpan<byte> text = header.Slice(offset, length);
+        int terminator = text.IndexOf((byte)0);
+        return Ansi.GetString(terminator >= 0 ? text[..terminator] : text);
     }
 
-    private static bool TryFindOlePayloadRange(byte[] buffer, int start, int len, out int payloadStart, out int payloadLength, out string? mimeType)
+    private static Encoding CreateAnsiEncoding()
     {
-        payloadStart = 0;
-        payloadLength = 0;
-        mimeType = null;
-
-        int valueStart = Math.Max(start, 0);
-        int valueEnd = Math.Min(start + len, buffer.Length);
-        if (valueEnd - valueStart < 4)
-        {
-            return false;
-        }
-
-        int scanEnd = Math.Min(valueEnd, valueStart + 512);
-        string? matchedMimeType = null;
-        int candidate = FindMatchingBytePattern(
-            buffer,
-            valueStart,
-            scanEnd,
-            4,
-            OlePayloadSignatureFirstBytes,
-            static (window, ref state) => TryMatchOlePayloadMagic(window, out state),
-            ref matchedMimeType);
-        if (candidate < 0)
-        {
-            return false;
-        }
-
-        payloadStart = candidate;
-        payloadLength = valueEnd - candidate;
-        mimeType = matchedMimeType;
-        return true;
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return Encoding.GetEncoding(1252);
     }
 
-    private static int FindMatchingBytePattern<TState>(
-        byte[] buffer,
-        int searchStart,
-        int searchEnd,
-        int minimumPatternLength,
-#if NET8_0_OR_GREATER
-        SearchValues<byte> firstBytes,
-#else
-        byte[] firstBytes,
-#endif
-        BytePatternMatcher<TState> matcher,
-        ref TState state)
+    /// <summary>A bounds-checked reader over a span; a failed read leaves the position where it was.</summary>
+    private ref struct Cursor
     {
-        int searchLimit = searchEnd - minimumPatternLength + 1;
-        if (searchLimit <= searchStart)
+        private readonly ReadOnlySpan<byte> data;
+        private int position;
+
+        internal Cursor(ReadOnlySpan<byte> data, int position)
         {
-            return -1;
+            this.data = data;
+            this.position = position;
         }
 
-        ReadOnlySpan<byte> searchWindow = buffer.AsSpan(searchStart, searchLimit - searchStart);
-        int consumed = 0;
-        while (consumed < searchWindow.Length)
+        private readonly int Remaining => this.data.Length - this.position;
+
+        internal bool TryReadUInt16(out ushort value)
         {
-            int relative = IndexOfAny(searchWindow[consumed..], firstBytes);
-            if (relative < 0)
+            value = 0;
+            if (this.Remaining < sizeof(ushort))
             {
-                return -1;
+                return false;
             }
 
-            int candidate = searchStart + consumed + relative;
-            ReadOnlySpan<byte> window = buffer.AsSpan(candidate, searchEnd - candidate);
-            if (matcher(window, ref state))
+            value = BinaryPrimitives.ReadUInt16LittleEndian(this.data[this.position..]);
+            this.position += sizeof(ushort);
+            return true;
+        }
+
+        internal bool TryReadUInt32(out uint value)
+        {
+            value = 0;
+            if (this.Remaining < sizeof(uint))
             {
-                return candidate;
+                return false;
             }
 
-            consumed += relative + 1;
+            value = BinaryPrimitives.ReadUInt32LittleEndian(this.data[this.position..]);
+            this.position += sizeof(uint);
+            return true;
         }
 
-        return -1;
+        internal bool TryReadBytes(uint length, out ReadOnlySpan<byte> bytes)
+        {
+            bytes = default;
+            if (length > (uint)this.Remaining)
+            {
+                return false;
+            }
+
+            bytes = this.data.Slice(this.position, (int)length);
+            this.position += (int)length;
+            return true;
+        }
+
+        /// <summary>Reads an MS-OLEDS <c>LengthPrefixedAnsiString</c>: a <c>u32</c> length, terminator included, then the bytes.</summary>
+        /// <param name="value">The string, without its terminator; empty for a zero length.</param>
+        internal bool TryReadLengthPrefixedAnsi(out string value)
+        {
+            value = string.Empty;
+            int start = this.position;
+            if (!this.TryReadUInt32(out uint length) || !this.TryReadBytes(length, out ReadOnlySpan<byte> bytes))
+            {
+                this.position = start;
+                return false;
+            }
+
+            int terminator = bytes.IndexOf((byte)0);
+            value = Ansi.GetString(terminator >= 0 ? bytes[..terminator] : bytes);
+            return true;
+        }
+
+        /// <summary>Reads a NUL-terminated ANSI string.</summary>
+        /// <param name="value">The string, without its terminator.</param>
+        internal bool TryReadAnsiZ(out string value)
+        {
+            value = string.Empty;
+            int terminator = this.data[this.position..].IndexOf((byte)0);
+            if (terminator < 0)
+            {
+                return false;
+            }
+
+            value = Ansi.GetString(this.data.Slice(this.position, terminator));
+            this.position += terminator + 1;
+            return true;
+        }
     }
-
-#if NET8_0_OR_GREATER
-    private static int IndexOfAny(ReadOnlySpan<byte> source, SearchValues<byte> values) => source.IndexOfAny(values);
-#else
-    private static int IndexOfAny(ReadOnlySpan<byte> source, byte[] values) => source.IndexOfAny(values);
-#endif
-
-    private static bool TryMatchOlePayloadMagic(ReadOnlySpan<byte> window, out string? mimeType)
-    {
-        // ── Images ──
-        if (window.StartsWith(Constants.OleMagicBytes.Jpeg))
-        {
-            mimeType = "image/jpeg";
-            return true;
-        }
-
-        if (window.StartsWith(Constants.OleMagicBytes.Png))
-        {
-            mimeType = "image/png";
-            return true;
-        }
-
-        if (window.StartsWith(Constants.OleMagicBytes.Gif))
-        {
-            mimeType = "image/gif";
-            return true;
-        }
-
-        if (window.StartsWith(Constants.OleMagicBytes.Bmp))
-        {
-            mimeType = "image/bmp";
-            return true;
-        }
-
-        if (window.StartsWith(Constants.OleMagicBytes.TiffLittleEndian) ||
-            window.StartsWith(Constants.OleMagicBytes.TiffBigEndian))
-        {
-            mimeType = "image/tiff";
-            return true;
-        }
-
-        // ── Documents ──
-        if (window.StartsWith(Constants.OleMagicBytes.Pdf))
-        {
-            mimeType = "application/pdf";
-            return true;
-        }
-
-        // ZIP (also DOCX/XLSX/PPTX). For simplicity, return generic zip MIME.
-        if (window.StartsWith(Constants.OleMagicBytes.Zip))
-        {
-            mimeType = "application/zip";
-            return true;
-        }
-
-        // DOC (Word 97-2003): OLE compound file.
-        if (window.StartsWith(Constants.OleMagicBytes.OleCompound))
-        {
-            mimeType = "application/msword";
-            return true;
-        }
-
-        // RTF: {\rt
-        if (window.StartsWith(Constants.OleMagicBytes.Rtf))
-        {
-            mimeType = "application/rtf";
-            return true;
-        }
-
-        mimeType = null;
-        return false;
-    }
-
-    private static bool TryExtractEmbeddedOlePackagePayload(byte[] buffer, int start, int len, out int payloadStart, out int payloadLength)
-    {
-        const ushort olePackageSignature = 0x1C15;
-        const int oleVersion = 0x0501;
-        const ushort olePackageStreamSignature = 0x0002;
-        const int embeddedFilePackageType = 0x030000;
-
-        payloadStart = 0;
-        payloadLength = 0;
-
-        if (start < 0 || len < 24 || start > buffer.Length - 4)
-        {
-            return false;
-        }
-
-        int valueEnd = Math.Min(start + len, buffer.Length);
-        ReadOnlySpan<byte> value = buffer.AsSpan(start, valueEnd - start);
-        if (value.Length < 24 || Ru16(value, 0) != olePackageSignature)
-        {
-            return false;
-        }
-
-        int headerSize = Ru16(value, 2);
-        if (headerSize < 20 || headerSize > value.Length - 24)
-        {
-            return false;
-        }
-
-        int oleHeaderOffset = headerSize;
-        if (Ri32(value, oleHeaderOffset) != oleVersion)
-        {
-            return false;
-        }
-
-        int typeNameLength = Ri32(value, oleHeaderOffset + 8);
-        if (typeNameLength <= 0)
-        {
-            return false;
-        }
-
-        int dataBlockLengthOffset = oleHeaderOffset + 20 + typeNameLength;
-        if (dataBlockLengthOffset + 4 > value.Length)
-        {
-            return false;
-        }
-
-        int dataBlockLength = Ri32(value, dataBlockLengthOffset);
-        int dataBlockOffset = dataBlockLengthOffset + 4;
-        if (dataBlockLength <= 0 || dataBlockOffset + dataBlockLength > value.Length)
-        {
-            return false;
-        }
-
-        ReadOnlySpan<byte> dataBlock = value.Slice(dataBlockOffset, dataBlockLength);
-        if (dataBlock.Length < 2 || Ru16(dataBlock, 0) != olePackageStreamSignature)
-        {
-            return false;
-        }
-
-        int cursor = 2;
-        if (!TrySkipZeroTermAsciiString(dataBlock, ref cursor) ||
-            !TrySkipZeroTermAsciiString(dataBlock, ref cursor) ||
-            cursor + 8 > dataBlock.Length)
-        {
-            return false;
-        }
-
-        int packageType = Ri32(dataBlock, cursor);
-        cursor += 4;
-        if (packageType != embeddedFilePackageType)
-        {
-            return false;
-        }
-
-        int localFilePathLength = Ri32(dataBlock, cursor);
-        cursor += 4;
-        if (localFilePathLength < 0 || cursor + localFilePathLength + 4 > dataBlock.Length)
-        {
-            return false;
-        }
-
-        cursor += localFilePathLength;
-
-        int embeddedLength = Ri32(dataBlock, cursor);
-        cursor += 4;
-        if (embeddedLength <= 0 || cursor + embeddedLength > dataBlock.Length)
-        {
-            return false;
-        }
-
-        payloadStart = start + dataBlockOffset + cursor;
-        payloadLength = embeddedLength;
-        return true;
-    }
-
-    private static bool TrySkipZeroTermAsciiString(ReadOnlySpan<byte> value, ref int offset)
-    {
-        if ((uint)offset >= (uint)value.Length)
-        {
-            return false;
-        }
-
-        int terminator = value[offset..].IndexOf((byte)0x00);
-        if (terminator < 0)
-        {
-            return false;
-        }
-
-        offset += terminator + 1;
-        return true;
-    }
-
-    private static byte[] CreateOlePayloadBytes(byte[] buffer, int offset, int length, bool allowInputReuse) =>
-        allowInputReuse && offset == 0 && length == buffer.Length
-            ? buffer
-            : BinaryBuffer.CopySlice(buffer, offset, length);
 }

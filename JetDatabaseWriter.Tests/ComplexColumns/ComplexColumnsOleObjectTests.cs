@@ -4,21 +4,19 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>
 /// Read-side coverage for the OLE Object column type (TDEF code <c>0x0B</c>,
 /// LVAL chain) using the Jackcess <c>testOleV2007.accdb</c> fixture, which
 /// contains mixed OLE payloads, including package-wrapped text attachments and
-/// image content. The library unwraps common OLE 1.0 Package envelopes so OLE
-/// columns surface as the embedded payload bytes rather than the outer package
-/// header.
+/// image content. Reads return the stored bytes, OLE Package header included,
+/// and <see cref="OleObjectValue"/> unwraps the embedded file on request.
 ///
 /// <para>Jackcess analogue: <c>util/OleBlobTest.java</c>.
 /// </para>
@@ -106,12 +104,12 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
     }
 
     /// <summary>
-    /// The Jackcess <c>testOleV2007</c> fixture includes image payloads. The
-    /// typed reader should unwrap those OLE values to real image bytes instead
-    /// of returning the original wrapped OLE blob.
+    /// The Jackcess <c>testOleV2007</c> fixture includes image payloads. The typed
+    /// reader returns them wrapped as stored, and <see cref="OleObjectValue.GetContent"/>
+    /// unwraps them to real image bytes.
     /// </summary>
     [Fact]
-    public async Task TestOleV2007_ImageOleValues_DecodeToRecognizedImageBytes()
+    public async Task TestOleV2007_ImageOleValues_UnwrapToRecognizedImageBytes()
     {
         if (!File.Exists(TestDatabases.TestOleV2007))
         {
@@ -140,7 +138,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             {
                 foreach (int ordinal in oleOrdinals)
                 {
-                    byte[] bytes = ExtractOleBytes(row[ordinal]);
+                    byte[] bytes = OleObjectValue.GetContent(ExtractOleBytes(row[ordinal]));
                     if (bytes.Length == 0)
                     {
                         continue;
@@ -160,8 +158,8 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
     }
 
     /// <summary>
-    /// Package-wrapped non-image payloads should also be unwrapped to the
-    /// embedded file bytes rather than returned with the outer OLE header.
+    /// Package-wrapped non-image payloads unwrap, through <see cref="OleObjectValue.GetContent"/>,
+    /// to the embedded file bytes.
     /// </summary>
     [Fact]
     public async Task TestOleV2007_PackageWrappedTextOleValues_UnwrapToRawBytes()
@@ -199,7 +197,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             {
                 foreach (int ordinal in oleOrdinals)
                 {
-                    byte[] bytes = ExtractOleBytes(row[ordinal]);
+                    byte[] bytes = OleObjectValue.GetContent(ExtractOleBytes(row[ordinal]));
                     if (HasPrefix(bytes, expectedPrefix))
                     {
                         sawUnwrappedTextPayload = true;
@@ -223,18 +221,16 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
     }
 
     /// <summary>
-    /// TIFF bytes should be classified as <c>image/tiff</c> even when they are
-    /// not wrapped in a package envelope.
+    /// TIFF bytes are classified as <c>image/tiff</c> when they are not wrapped in
+    /// a package envelope.
     /// </summary>
     [Fact]
-    public void TryDecodeOleObject_RawTiffBytes_ReturnsTiffDataUri()
+    public void DetectMediaType_RawTiffBytes_ReturnsImageTiff()
     {
         byte[] bytes = [0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00];
 
-        string? dataUri = InvokeTryDecodeOleObject(bytes);
-
-        Assert.NotNull(dataUri);
-        Assert.StartsWith("data:image/tiff;base64,", dataUri, StringComparison.Ordinal);
+        Assert.Equal("image/tiff", OleObjectValue.DetectMediaType(bytes));
+        Assert.Equal(OleObjectKind.NotWrapped, OleObjectValue.Parse(bytes).Kind);
     }
 
     /// <summary>
@@ -362,12 +358,5 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
         }
 
         return true;
-    }
-
-    private static string? InvokeTryDecodeOleObject(byte[] bytes)
-    {
-        MethodInfo? method = typeof(OleObjectDecoder).GetMethod("TryDecodeOleObject", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(method);
-        return (string?)method.Invoke(null, [bytes, 0, bytes.Length]);
     }
 }

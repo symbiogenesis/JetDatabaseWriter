@@ -17,10 +17,10 @@ using Xunit;
 /// <summary>
 /// Updates, cascades and schema rewrites delete each affected row and insert
 /// it again from the writer's row snapshot. These tests pin that the snapshot
-/// carries MEMO / OLE values exactly: OLE bytes are not passed through the
-/// read API's OLE package unwrap or file-signature slicing, and a MEMO / OLE
-/// value whose LVAL data cannot be read is refused instead of being rewritten
-/// as placeholder text such as <c>"(memo on LVAL page)"</c>.
+/// carries MEMO / OLE values exactly, OLE values as their stored bytes, which
+/// the public read API also returns, and that a MEMO / OLE value whose LVAL data
+/// cannot be read is refused instead of being rewritten as placeholder text
+/// such as <c>"(memo on LVAL page)"</c>.
 /// </summary>
 public sealed class LongValueWriteBackTests
 {
@@ -134,7 +134,7 @@ public sealed class LongValueWriteBackTests
     {
         byte[] payload = BuildPayload(Enum.Parse<OlePayload>(payloadKind));
         await using MemoryStream ms = await CreateDatabaseAsync(format, [[1, "a", payload], [2, "b", DBNull.Value]]);
-        byte[] publicBefore = await ReadPublicOleAsync(ms, id: 1);
+        Assert.Equal(payload, await ReadPublicOleAsync(ms, id: 1));
 
         await using (AccessWriter writer = await OpenWriterAsync(ms))
         {
@@ -142,9 +142,8 @@ public sealed class LongValueWriteBackTests
             Assert.Equal(1, updated);
         }
 
-        // The public read still unwraps packages and slices at a signature, and
-        // returns what it returned before the update.
-        Assert.Equal(publicBefore, await ReadPublicOleAsync(ms, id: 1));
+        // The public read returns the stored bytes, before and after the update.
+        Assert.Equal(payload, await ReadPublicOleAsync(ms, id: 1));
 
         DataRow row = await ReadSnapshotRowAsync(ms, id: 1);
         Assert.Equal("changed", row["Note"]);
@@ -157,7 +156,7 @@ public sealed class LongValueWriteBackTests
     {
         byte[] payload = BuildPayload(Enum.Parse<OlePayload>(payloadKind));
         await using MemoryStream ms = await CreateDatabaseAsync(format, [[1, "a", payload], [2, "b", DBNull.Value]]);
-        byte[] publicBefore = await ReadPublicOleAsync(ms, id: 1);
+        Assert.Equal(payload, await ReadPublicOleAsync(ms, id: 1));
 
         string blobColumn = "Blob";
         await using (AccessWriter writer = await OpenWriterAsync(ms))
@@ -179,7 +178,7 @@ public sealed class LongValueWriteBackTests
             }
         }
 
-        Assert.Equal(publicBefore, await ReadPublicOleAsync(ms, id: 1, blobColumn));
+        Assert.Equal(payload, await ReadPublicOleAsync(ms, id: 1, blobColumn));
 
         DataRow row = await ReadSnapshotRowAsync(ms, id: 1);
         Assert.Equal(payload, Assert.IsType<byte[]>(row[blobColumn]));
@@ -459,7 +458,7 @@ public sealed class LongValueWriteBackTests
 
     /// <summary>
     /// Builds an OLE 1.0 "Package" object wrapping <paramref name="embedded"/>,
-    /// in the layout the read API unwraps.
+    /// in the layout <see cref="OleObjectValue"/> unwraps.
     /// </summary>
     /// <param name="embedded">The embedded file bytes.</param>
     /// <returns>The package bytes.</returns>

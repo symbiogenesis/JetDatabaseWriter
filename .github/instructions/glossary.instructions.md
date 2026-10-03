@@ -217,7 +217,7 @@ applyTo: "**"
 | **Chained LVAL** | Long-value payload spread across multiple linked LVAL pages |
 | **Storage mode** | LVAL header bit pattern selecting inline, single-page, or chained storage |
 | **24-bit length** | LVAL payload-length field width; caps addressable MEMO/OLE/attachment payloads at 16,777,215 bytes |
-| **Magic bytes** | File-signature bytes used to identify wrapped payload formats inside OLE columns |
+| **Magic bytes** | File-signature bytes at the start of an OLE value or its unwrapped content; `OleObjectValue.DetectMediaType` maps them to a media type |
 | **JPEG** | Joint Photographic Experts Group image format; detected by `FF D8 FF` magic bytes |
 | **PNG** | Portable Network Graphics image format; detected by `89 50 4E 47` magic bytes |
 | **GIF** | Graphics Interchange Format image format; detected by `GIF` magic bytes |
