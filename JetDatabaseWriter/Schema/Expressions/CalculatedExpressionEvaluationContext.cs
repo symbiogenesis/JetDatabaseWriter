@@ -13,13 +13,15 @@ internal sealed class CalculatedExpressionEvaluationContext
     private readonly IReadOnlyList<ColumnConstraint> constraints;
     private readonly object[] values;
     private readonly bool force;
+    private readonly string? tableName;
     private readonly Dictionary<string, int> columnIndexes;
     private readonly bool[] evaluating;
     private readonly bool[] evaluated;
     private double? lastRandomValue;
 
-    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force)
+    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force, string? tableName = null)
     {
+        this.tableName = tableName;
         this.constraints = constraints;
         this.values = values;
         this.force = force;
@@ -63,10 +65,13 @@ internal sealed class CalculatedExpressionEvaluationContext
         }
 
         this.evaluating[index] = true;
+        object? raw = null;
+        bool storing = false;
         try
         {
             constraint.CalculatedExpressionPlan ??= CalculatedExpressionPlan.Parse(constraint.CalculationExpression);
-            object raw = constraint.CalculatedExpressionPlan.Root.Evaluate(this, constraint.CalculatedExpressionPlan);
+            raw = constraint.CalculatedExpressionPlan.Root.Evaluate(this, constraint.CalculatedExpressionPlan);
+            storing = true;
             object coerced = CoerceResult(raw, constraint.ClrType);
             this.values[index] = coerced;
             this.evaluated[index] = true;
@@ -76,6 +81,12 @@ internal sealed class CalculatedExpressionEvaluationContext
         {
             this.evaluated[index] = true;
             return current;
+        }
+        catch (Exception ex) when (CalculatedExpressionErrors.IsWrappable(ex) && !CalculatedExpressionErrors.NamesColumn(ex))
+        {
+            // Name the column, table and expression; a failure in a calculated
+            // column this one references already names that column.
+            throw CalculatedExpressionErrors.ForColumn(constraint, this.tableName, ex, storing, raw);
         }
         finally
         {

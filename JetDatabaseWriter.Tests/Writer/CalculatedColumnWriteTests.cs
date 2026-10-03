@@ -1194,6 +1194,92 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(ColumnType.MemoType, tableDef.Columns.Single(c => c.Name == "AllNames").Type);
     }
 
+    /// <summary>
+    /// A Boolean expression in a Byte calculated column stores 255 for True and 0
+    /// for False (the OLE Automation conversion), on insert and when an update
+    /// recomputes it.
+    /// </summary>
+    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("transactional")]
+    [InlineData("explicit")]
+    public async Task InsertAndUpdate_BooleanExpressionInByteColumn_Stores255(string mode)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcByteFlag",
+                [
+                    new("Id", typeof(int)),
+                    new("Score", typeof(int)),
+                    new("Flag", typeof(byte)) { IsCalculated = true, CalculationExpression = "[Score] > 1" },
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        await WriteInModeAsync(stream, mode, async writer =>
+        {
+            await writer.InsertRowAsync("CalcByteFlag", [1, 3, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcByteFlag", [2, 0, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcByteFlag", [3, 5, DBNull.Value], TestContext.Current.CancellationToken);
+            int updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 2, new Dictionary<string, object?> { ["Score"] = 9 }, TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+            updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 3, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken);
+            Assert.Equal(1, updated);
+        });
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable table = await reader.ReadDataTableAsync("CalcByteFlag", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal((byte)255, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Flag"]);
+        Assert.Equal((byte)255, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Flag"]);
+        Assert.Equal((byte)0, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 3)["Flag"]);
+    }
+
+    /// <summary>
+    /// A calculated value the result type cannot hold throws an
+    /// <see cref="OverflowException"/> that names the table, column, expression
+    /// and value, and the row is not written.
+    /// </summary>
+    /// <param name="explicitTransaction">Whether the insert runs in a transaction that is then committed.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InsertRow_CalculatedResultOverflow_ThrowsOverflowNamingColumnAndLeavesTableUnchanged(bool explicitTransaction)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "CalcOverflow",
+                [
+                    new("Id", typeof(int)),
+                    new("A", typeof(int)),
+                    new("Hundreds", typeof(byte)) { IsCalculated = true, CalculationExpression = "[A] * 100" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcOverflow", [1, 2, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        await WriteInModeAsync(stream, explicitTransaction ? "explicit" : "none", async writer =>
+        {
+            OverflowException exception = await Assert.ThrowsAsync<OverflowException>(async () =>
+                await writer.InsertRowAsync("CalcOverflow", [2, 5, DBNull.Value], TestContext.Current.CancellationToken));
+            Assert.Contains("'Hundreds'", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("'CalcOverflow'", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("[A] * 100", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("500", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("Byte", exception.Message, StringComparison.Ordinal);
+        });
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcOverflow", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        Assert.Equal((byte)200, row["Hundreds"]);
+    }
+
     private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
     {
         await using AccessWriter writer = await OpenWriterAsync(

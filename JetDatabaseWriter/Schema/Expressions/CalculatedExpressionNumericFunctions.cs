@@ -31,7 +31,7 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CDBL", 1, 1, static function => Convert.ToDouble(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CSNG", 1, 1, static function => Convert.ToSingle(AsAccessNumber(function.Arg(0)), CultureInfo.InvariantCulture)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CBYTE", 1, 1, static function => Convert.ToByte(function.Arg(0), CultureInfo.InvariantCulture)));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CBYTE", 1, 1, static function => ToByte(function.Arg(0))));
     }
 
     private static object EvaluateIntegerDivision(CalculatedFunctionInvocation function)

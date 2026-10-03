@@ -223,6 +223,21 @@ Delivered:
   (`&`, `CStr` and Text result columns); `+` concatenates when both operands
   are text; and two text operands compare as text even when they look
   numeric (`"10" < "9"`).
+- Conversions follow OLE Automation's `VariantChangeType`, which VBA uses
+  (measured with oleaut32 on Windows; Access itself was not checked): a
+  Boolean is 255 or 0 in a Byte result column and in `CByte`, and a number or
+  Boolean is a date serial (days since 1899-12-30, so `True` is 1899-12-29) in
+  a Date result column, `CDate` and the date functions. `CByte(-1)` and
+  `CByte(256)` overflow. `IsDate` is True only for a date or text that parses
+  as one, so `IsDate(5)` is False as in VBA.
+- An evaluation failure keeps its exception type (`OverflowException`,
+  `InvalidCastException`, `DivideByZeroException` and so on) but its message
+  names the table, the calculated column and its expression, plus the value
+  and result type when the result could not be stored (`[A] * 100` in a Byte
+  column with `A = 5` "evaluated to 500, which a Byte result cannot hold").
+  The original exception is the `InnerException`. A column whose expression
+  references another calculated column reports the inner column's failure
+  once.
 - Calculated columns may reference earlier or later calculated columns in the
   same row; dependency evaluation is lazy and circular references are rejected.
 
