@@ -304,22 +304,7 @@ internal sealed class TableReader(
     /// <param name="progress">Optional progress reporter - receives row count after each page.</param>
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     internal ValueTask<DataTable> ReadTableAsync(string? tableName, uint? maxRows, IProgress<long>? progress, CancellationToken cancellationToken)
-        => this.ReadDataTableCoreAsync(tableName, maxRows, progress, forWriteBack: false, cancellationToken);
-
-    /// <summary>
-    /// Reads every row of <paramref name="tableName"/> for the writer's snapshots,
-    /// whose rows updates, cascades and schema rewrites insert again. Complex
-    /// columns stay as their raw references, OLE cells hold the stored bytes
-    /// exactly (no package unwrap or signature slicing), and a MEMO / OLE value
-    /// whose stored data cannot be read becomes an
-    /// <see cref="ValueDecoding.Models.UnreadableLongValue"/>, which the writer
-    /// refuses to store, instead of a placeholder. MEMO / OLE columns are
-    /// therefore typed <see cref="object"/>.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
-    internal ValueTask<DataTable> ReadDataTableForSchemaRewriteAsync(string tableName, CancellationToken cancellationToken)
-        => this.ReadDataTableCoreAsync(tableName, maxRows: null, progress: null, forWriteBack: true, cancellationToken);
+        => this.ReadDataTableCoreAsync(tableName, maxRows, progress, cancellationToken);
 
     /// <summary>Reads up to <paramref name="maxRows"/> rows mapped to <typeparamref name="T"/>.</summary>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
@@ -530,7 +515,6 @@ internal sealed class TableReader(
         string? tableName,
         uint? maxRows,
         IProgress<long>? progress,
-        bool forWriteBack,
         CancellationToken cancellationToken)
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
@@ -550,7 +534,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
-            DataTable? linkedTable = await linked.TryReadDataTableAsync(tableName, maxRows, progress, forWriteBack, cancellationToken).ConfigureAwait(false);
+            DataTable? linkedTable = await linked.TryReadDataTableAsync(tableName, maxRows, progress, cancellationToken).ConfigureAwait(false);
 
 #pragma warning disable CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
             return linkedTable ?? new DataTable(tableName);
@@ -566,12 +550,7 @@ internal sealed class TableReader(
             dt = new DataTable(tableName);
             foreach (ColumnInfo col in td.Columns)
             {
-                // Write-back snapshots keep complex references, and MEMO / OLE cells
-                // may hold an UnreadableLongValue, so those columns are untyped.
-                Type clrType = forWriteBack && col.Type is ComplexType or AttachmentType or MemoType or OleType
-                    ? typeof(object)
-                    : ResolveClrType(col);
-                _ = dt.Columns.Add(col.Name, clrType);
+                _ = dt.Columns.Add(col.Name, ResolveClrType(col));
             }
 
             if (IsRowLimitReached(0, maxRows))
@@ -581,7 +560,7 @@ internal sealed class TableReader(
                 return empty;
             }
 
-            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns && !forWriteBack
+            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
                 ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
                 : null;
             IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
@@ -601,9 +580,7 @@ internal sealed class TableReader(
             // never retained by the table.
             int colCount = td.Columns.Count;
             long loadedRows = 0;
-            RowDecodePlan decodePlan = forWriteBack
-                ? RowDecodePlan.CreateTypedForWriteBack(td, rows.StrictParsing)
-                : RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
+            var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
             object?[] rowBuffer = ArrayPool<object?>.Shared.Rent(colCount);
             try
             {
@@ -624,7 +601,7 @@ internal sealed class TableReader(
                             continue;
                         }
 
-                        if (td.HasComplexColumns && !forWriteBack)
+                        if (td.HasComplexColumns)
                         {
                             ComplexColumnReader.ResolveColumns(rowBuffer, td.Columns, complexData);
                         }

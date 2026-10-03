@@ -3,32 +3,32 @@ namespace JetDatabaseWriter.Tables;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
+using static JetDatabaseWriter.Enums.ColumnType;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// Reads point-in-time snapshots of the writer's own database through a
-/// transient, uncached <see cref="AccessReader"/> opened over the same backing
-/// file or stream. Used wherever a writer workflow needs fully decoded rows,
-/// index metadata, or persisted column properties before it mutates pages.
+/// Decodes the writer's own rows, index metadata, and persisted column
+/// properties for writer workflows that read a table before they change it.
+/// Every page is read through the writer's <see cref="DatabaseFile"/>, so
+/// inside a transaction these reads see the pages the transaction has
+/// journaled, and encrypted files are decrypted with the writer's own page
+/// keys. Nothing is cached between calls: <paramref name="rows"/> reads pages
+/// uncached, and table names resolve through the writer's
+/// <see cref="TableCatalog"/>, which schema changes invalidate.
 /// </summary>
-/// <param name="databasePath">The database file path, or empty when the writer was opened from a caller-owned stream.</param>
-/// <param name="databaseStream">The writer's backing stream.</param>
-/// <param name="readThroughStream">
-/// <see langword="true"/> to always read through <paramref name="databaseStream"/>
-/// even when <paramref name="databasePath"/> is set; required when the stream holds
-/// the decrypted inner database of an Office Crypto (Agile) container.
-/// </param>
-/// <param name="password">The database password.</param>
-internal sealed class TableSnapshotReader(
-    string databasePath,
-    Stream databaseStream,
-    bool readThroughStream,
-    ReadOnlyMemory<char> password)
+/// <param name="db">The writer's database file.</param>
+/// <param name="rows">Decodes rows from pages read through <paramref name="db"/>; its page cache must be disabled.</param>
+/// <param name="catalog">Resolves user and system table names over the writer's table catalog and reads persisted column properties.</param>
+internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, CatalogReader catalog)
 {
     /// <summary>
     /// Returns the values of a snapshot row with <see langword="null"/> cells
@@ -50,17 +50,58 @@ internal sealed class TableSnapshotReader(
     }
 
     /// <summary>
-    /// Reads every live row of <paramref name="tableName"/> into a
-    /// <see cref="DataTable"/> using the schema-rewrite decode rules.
+    /// Reads every live row of <paramref name="tableName"/> (a user or system
+    /// table) into a <see cref="DataTable"/>, for writer workflows that insert
+    /// the rows again. Complex columns stay as their raw references, OLE cells
+    /// hold the stored bytes exactly (no package unwrap or signature slicing),
+    /// and a MEMO / OLE value whose stored data cannot be read becomes an
+    /// <see cref="ValueDecoding.Models.UnreadableLongValue"/>, which the writer
+    /// refuses to store, instead of a placeholder. MEMO / OLE columns are
+    /// therefore typed <see cref="object"/>. Returns an empty table when no
+    /// table has that name.
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<DataTable> ReadTableSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        AccessReader reader = await this.OpenReaderAsync(useLockFile: true, cancellationToken).ConfigureAwait(false);
-        await using (reader)
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        List<object[]> snapshotRows = resolved is null
+            ? []
+            : await this.ReadRowValuesAsync(resolved.Entry.TDefPage, resolved.Definition, cancellationToken).ConfigureAwait(false);
+
+        DataTable? table = null;
+        try
         {
-            return await reader.ReadDataTableForSchemaRewriteAsync(tableName, cancellationToken).ConfigureAwait(false);
+            table = new DataTable(tableName);
+            if (resolved is not null)
+            {
+                foreach (ColumnInfo column in resolved.Definition.Columns)
+                {
+                    // Complex columns hold raw references, and MEMO / OLE cells
+                    // may hold an UnreadableLongValue, so those columns are untyped.
+                    Type clrType = column.Type is ComplexType or AttachmentType or MemoType or OleType ? typeof(object) : ResolveClrType(column);
+                    _ = table.Columns.Add(column.Name, clrType);
+                }
+            }
+
+            table.BeginLoadData();
+            foreach (object[] values in snapshotRows)
+            {
+                _ = table.Rows.Add(values);
+            }
+
+            table.EndLoadData();
+
+            DataTable result = table;
+            table = null;
+            return result;
+        }
+        finally
+        {
+            table?.Dispose();
         }
     }
 
@@ -73,11 +114,19 @@ internal sealed class TableSnapshotReader(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexMetadataSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
-        AccessReader reader = await this.OpenReaderAsync(useLockFile: true, cancellationToken).ConfigureAwait(false);
-        await using (reader)
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved is null)
         {
-            return await reader.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
+            return [];
         }
+
+        byte[]? tdef = await db.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        return tdef is null || tdef.Length < db.TDef.BlockEnd
+            ? []
+            : IndexCatalogReader.ReadMetadata(db, tdef, resolved.Definition.Columns);
     }
 
     /// <summary>
@@ -88,32 +137,58 @@ internal sealed class TableSnapshotReader(
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<ColumnPropertyBlock?> ReadLvPropBlockAsync(long tdefPage, CancellationToken cancellationToken)
+    internal ValueTask<ColumnPropertyBlock?> ReadLvPropBlockAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        AccessReader reader = await this.OpenReaderAsync(useLockFile: false, cancellationToken).ConfigureAwait(false);
-        await using (reader)
-        {
-            return await reader.ReadLvPropForTableAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        }
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        return catalog.ReadLvPropForTableAsync(tdefPage, cancellationToken);
     }
 
-    private ValueTask<AccessReader> OpenReaderAsync(bool useLockFile, CancellationToken cancellationToken)
+    /// <summary>
+    /// Decodes every live row on the data pages owned by <paramref name="tdefPage"/>,
+    /// in the page and row order of <see cref="DatabaseFile.ForEachLiveTableRowAsync"/>.
+    /// Rows too short or malformed to decode are skipped.
+    /// </summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="tableDef">The table definition, with calculated-column result types hydrated.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<List<object[]>> ReadRowValuesAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
-        var options = new AccessReaderOptions
-        {
-            FileShare = FileShare.ReadWrite,
-            ValidateOnOpen = false,
-            PageCacheSize = -1,
-            UseLockFile = useLockFile,
-            Password = password,
-        };
+        var result = new List<object[]>();
 
-        if (!string.IsNullOrEmpty(databasePath) && !readThroughStream)
-        {
-            return AccessReader.OpenUncachedAsync(databasePath, options, cancellationToken);
-        }
+        // Updates, cascades and schema rewrites insert these values again, so
+        // OLE cells keep their stored bytes exactly and an unreadable MEMO /
+        // OLE value becomes an UnreadableLongValue rather than a placeholder.
+        var decodePlan = RowDecodePlan.CreateTypedForWriteBack(tableDef, rows.StrictParsing);
+        await db.ForEachLiveTableRowAsync(
+            tdefPage,
+            async (row, token) =>
+            {
+                if (row.Location.RowSize < db.RowFields.NumCols)
+                {
+                    return true;
+                }
 
-        databaseStream.Position = 0;
-        return AccessReader.OpenUncachedAsync(databaseStream, options, leaveOpen: true, cancellationToken);
+                object?[]? values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, decodePlan, token).ConfigureAwait(false);
+                if (values is null)
+                {
+                    return true;
+                }
+
+                if (tableDef.HasHyperlinkColumns)
+                {
+                    TableReader.WrapHyperlinkColumns(values, tableDef.ClrTypes);
+                }
+
+                for (int i = 0; i < values.Length; i++)
+                {
+                    values[i] ??= DBNull.Value;
+                }
+
+                result.Add((object[])values);
+                return true;
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return result;
     }
 }

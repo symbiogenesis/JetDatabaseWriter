@@ -23,8 +23,7 @@ internal sealed class ReaderServices : IDisposable
     /// </summary>
     /// <param name="db">The open database file.</param>
     /// <param name="options">The reader options.</param>
-    /// <param name="suppressPageCache">Whether to skip allocating the page caches regardless of <see cref="AccessReaderOptions.PageCacheSize"/>.</param>
-    internal ReaderServices(DatabaseFile db, AccessReaderOptions options, bool suppressPageCache)
+    internal ReaderServices(DatabaseFile db, AccessReaderOptions options)
     {
         Guard.NotNull(options, nameof(options));
 
@@ -33,7 +32,7 @@ internal sealed class ReaderServices : IDisposable
             db.DatabasePath);
 
         this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader));
-        this.PageCache = new ReaderPageCache(db, suppressPageCache ? 0 : options.PageCacheSize);
+        this.PageCache = new ReaderPageCache(db, options.PageCacheSize);
 
         var rows = new RowDecoder(db, this.PageCache, new LongValueDecoder(db, this.PageCache), options.StrictParsing);
         this.TableCatalog = new TableCatalog(db, new CatalogRowReader(db));

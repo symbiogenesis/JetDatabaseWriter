@@ -42,11 +42,11 @@ public sealed class ServiceGraphTests
 
     /// <summary>
     /// Collaborators that open a separate <see cref="AccessReader"/> of their own:
-    /// the writer's transient snapshot of its file, and the reader of an
-    /// Access-file linked table's source database. None of them receives or
-    /// holds the reader that owns it.
+    /// the readers of an Access-file linked table's source database. None of
+    /// them receives or holds the reader that owns it. The writer reads its own
+    /// file through its own <see cref="DatabaseFile"/>, never through a reader.
     /// </summary>
-    private static readonly Type[] OpensSeparateReader = [typeof(TableSnapshotReader), typeof(LinkedTableReader), typeof(LinkedTableManager)];
+    private static readonly Type[] OpensSeparateReader = [typeof(LinkedTableReader), typeof(LinkedTableManager)];
 
     public static TheoryData<Type> CompositionRoots => [typeof(ReaderServices), typeof(WriterServices)];
 
@@ -155,12 +155,37 @@ public sealed class ServiceGraphTests
             typeof(CatalogArtifactWriter),
             typeof(IndexMaintainer),
             typeof(TransactionLifecycle),
+            typeof(TableSnapshotReader),
+            typeof(RowDecoder),
+            typeof(CatalogReader),
         ];
 
         foreach (Type service in expected)
         {
             Assert.Contains(service, state.Keys);
         }
+    }
+
+    [Fact]
+    public async Task OpenWriter_SnapshotReadsGoThroughTheWritersDatabaseFile()
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync();
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        HashSet<object> reachable = ReachableLibraryObjects(FacadeInternals.ReadPrivateField(writer, "services")!);
+        object database = FacadeInternals.Database(writer);
+
+        // Every database file and page cache the writer's services hold is the
+        // writer's own: no second file is opened to read rows back, and no
+        // page cache keeps pages between calls.
+        Assert.Single(reachable, item => item is DatabaseFile);
+        Assert.Contains(database, reachable);
+        Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.False(cache.IsEnabled));
+        Assert.DoesNotContain(reachable, item => item is AccessReader);
     }
 
     [Fact]
@@ -202,15 +227,15 @@ public sealed class ServiceGraphTests
     }
 
     /// <summary>
-    /// The facades carry no members for tests to reach into. The only internal
-    /// members left are the ones the writer's snapshot reader calls on the
-    /// reader it opens over its own file.
+    /// The facades carry no members for tests to reach into, and none for the
+    /// writer either: the writer reads its own file through its own
+    /// <see cref="DatabaseFile"/> instead of a reader opened over it.
     /// </summary>
     /// <param name="facade">The facade type.</param>
     /// <param name="expected">The internal members production code calls.</param>
     [Theory]
     [InlineData(typeof(AccessBase), new string[0])]
-    [InlineData(typeof(AccessReader), new[] { "OpenUncachedAsync", "ReadDataTableForSchemaRewriteAsync", "ReadLvPropForTableAsync" })]
+    [InlineData(typeof(AccessReader), new string[0])]
     [InlineData(typeof(AccessWriter), new string[0])]
     public void Facade_ExposesOnlyTheInternalMembersProductionCodeCalls(Type facade, string[] expected)
     {

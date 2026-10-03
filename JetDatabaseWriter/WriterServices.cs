@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter;
 
+using System.Diagnostics.CodeAnalysis;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
@@ -9,6 +10,7 @@ using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Transactions;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueEncoding;
 
 /// <summary>
@@ -26,14 +28,24 @@ internal sealed class WriterServices
     /// <param name="db">The open database file.</param>
     /// <param name="options">The writer options.</param>
     /// <param name="byteRangeLock">The cooperative JET byte-range lock bound to the database stream.</param>
-    /// <param name="snapshots">Reads decoded snapshots of the same database.</param>
-    internal WriterServices(DatabaseFile db, AccessWriterOptions options, JetByteRangeLock byteRangeLock, TableSnapshotReader snapshots)
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A capacity-0 ReaderPageCache allocates no caches, so its Dispose has nothing to release.")]
+    internal WriterServices(DatabaseFile db, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
     {
         this.CatalogRows = new CatalogRowReader(db);
         this.Catalog = new TableCatalog(db, this.CatalogRows);
         this.PageAllocator = new PageAllocator(db, options);
 
         TableCatalog catalog = this.Catalog;
+
+        // Decoded reads of the writer's own rows go through the same database
+        // file the writer writes, so they see an active transaction's journal.
+        // A capacity-0 page cache keeps nothing between calls, and names
+        // resolve through the writer's catalog, so DDL and rollback cannot
+        // leave a stale snapshot behind.
+        var snapshotPages = new ReaderPageCache(db, capacity: 0);
+        var snapshotRows = new RowDecoder(db, snapshotPages, new LongValueDecoder(db, snapshotPages), strictParsing: true);
+        var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, snapshotRows));
+        this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db);
         var longValueEncoder = new LongValueEncoder(db, this.PageAllocator);
         var dataPages = new DataPageInserter(db, this.PageAllocator, this.CatalogRows);
@@ -109,6 +121,9 @@ internal sealed class WriterServices
 
     /// <summary>Gets the read-only <c>MSysObjects</c> scanner.</summary>
     internal CatalogRowReader CatalogRows { get; }
+
+    /// <summary>Gets the decoded reads of the writer's own rows, index metadata, and column properties.</summary>
+    internal TableSnapshotReader Snapshots { get; }
 
     /// <summary>Gets the index B-tree maintainer.</summary>
     internal IndexMaintainer Indexes { get; }

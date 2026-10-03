@@ -5,7 +5,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Tables;
 
 /// <summary>
 /// Opens a database through the library's internal write layers — the
@@ -62,11 +61,7 @@ internal sealed class WriterHarness : IAsyncDisposable
         try
         {
             database.ByteRangeLock = options.CreateByteRangeLock(stream);
-            var services = new WriterServices(
-                database,
-                options,
-                database.ByteRangeLock,
-                new TableSnapshotReader(path, stream, readThroughStream: false, options.Password));
+            var services = new WriterServices(database, options, database.ByteRangeLock);
             return new WriterHarness(database, services);
         }
         catch

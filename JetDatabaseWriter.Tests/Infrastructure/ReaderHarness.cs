@@ -59,7 +59,7 @@ internal sealed class ReaderHarness : IAsyncDisposable
         var database = new DatabaseFile(stream, header, options.Password, path, leaveOpen, typeof(AccessReader), canCacheOwnedDataPages: true);
         try
         {
-            return new ReaderHarness(database, new ReaderServices(database, options, suppressPageCache: false));
+            return new ReaderHarness(database, new ReaderServices(database, options));
         }
         catch
         {

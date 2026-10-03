@@ -16,7 +16,6 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Queries;
-using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
@@ -75,15 +74,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="stream">An open, seekable stream for the database file.</param>
     /// <param name="header">Header bytes read from page 0.</param>
     /// <param name="leaveOpen">Whether the caller retains ownership of the stream. If false, the stream is disposed when the reader is disposed.</param>
-    /// <param name="suppressPageCache">Whether to skip allocating the per-reader page caches regardless of options.</param>
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "AccessBase takes ownership of the database file; DisposeAsync disposes it after the reader's services.")]
     private AccessReader(
         string path,
         AccessReaderOptions options,
         Stream stream,
         byte[] header,
-        bool leaveOpen = false,
-        bool suppressPageCache = false)
+        bool leaveOpen = false)
         : base(new DatabaseFile(
             stream,
             header,
@@ -104,7 +101,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         bool constructionComplete = false;
         try
         {
-            services = new ReaderServices(this.Database, options, suppressPageCache);
+            services = new ReaderServices(this.Database, options);
             this.services = services;
 
             bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
@@ -160,8 +157,25 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="options">Optional configuration options.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the specified database.</returns>
-    public static ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
-        => OpenAsync(path, options, suppressPageCache: false, cancellationToken);
+    public static async ValueTask<AccessReader> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Guard.RequireExistingDatabaseFile(path, nameof(path));
+
+        options ??= new AccessReaderOptions();
+
+        // CA2000: OpenAsync(stream, leaveOpen:false) intentionally takes ownership and disposes on all paths.
+#pragma warning disable CA2000
+        FileStream fs = CreateStream(path, options);
+#pragma warning restore CA2000
+        AccessReader reader = await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+        if (CanUseRandomAccessPageReads(reader.PageReadOptimizationMode))
+        {
+            reader.Database.EnableRandomAccessPageReadsIfSupported();
+        }
+
+        return reader;
+    }
 
     /// <summary>
     /// Asynchronously opens a JET database from a caller-supplied <see cref="Stream"/> and returns a new <see cref="AccessReader"/> instance.
@@ -173,29 +187,51 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the reader is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessReader"/> for the database.</returns>
-    public static ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
-        => OpenAsync(stream, options, leaveOpen, suppressPageCache: false, cancellationToken);
+    public static async ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+    {
+        Guard.RequireReadableSeekableStream(stream, nameof(stream));
+        cancellationToken.ThrowIfCancellationRequested();
 
-    /// <summary>
-    /// Opens a reader that allocates no page caches, for the writer's short-lived
-    /// snapshot reads of its own database.
-    /// </summary>
-    /// <param name="path">Path to the .mdb or .accdb file.</param>
-    /// <param name="options">Optional configuration options.</param>
-    /// <param name="cancellationToken">A token used to cancel the open operation.</param>
-    internal static ValueTask<AccessReader> OpenUncachedAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
-        => OpenAsync(path, options, suppressPageCache: true, cancellationToken);
+        options ??= new AccessReaderOptions();
+        try
+        {
+            string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
+            byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
 
-    /// <summary>
-    /// Opens a reader over a stream that allocates no page caches, for the
-    /// writer's short-lived snapshot reads of its own database.
-    /// </summary>
-    /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
-    /// <param name="options">Optional configuration options.</param>
-    /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the reader is disposed.</param>
-    /// <param name="cancellationToken">A token used to cancel the open operation.</param>
-    internal static ValueTask<AccessReader> OpenUncachedAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
-        => OpenAsync(stream, options, leaveOpen, suppressPageCache: true, cancellationToken);
+            // Office Crypto API ("Agile") encryption: the file is a real OLE
+            // compound document with EncryptionInfo + EncryptedPackage streams.
+            // EncryptionManager handles detection, password verification, and
+            // package decryption; on success we re-enter on the inner ACCDB
+            // bytes.
+            byte[]? decryptedAgile = await EncryptionManager
+                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, cancellationToken)
+                .ConfigureAwait(false);
+            if (decryptedAgile != null)
+            {
+                // We no longer need the source stream: dispose it unless the
+                // caller retains ownership via leaveOpen.
+                if (!leaveOpen)
+                {
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                }
+
+                var inner = new MemoryStream(decryptedAgile, writable: false);
+                byte[] innerHeader = await DatabaseFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
+                return new AccessReader(string.Empty, options, inner, innerHeader);
+            }
+
+            return new AccessReader(path, options, stream, header, leaveOpen);
+        }
+        catch
+        {
+            if (!leaveOpen)
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+            }
+
+            throw;
+        }
+    }
 
     /// <inheritdoc/>
     public ValueTask<DataTable> ReadFirstTableAsStringsAsync(uint? maxRows = null, CancellationToken cancellationToken = default)
@@ -362,30 +398,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public ValueTask<IReadOnlyDictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
         => this.services.Tables.ReadAllTablesAsync(progress, cancellationToken);
 
-    /// <summary>
-    /// Reads every row of <paramref name="tableName"/> for the writer's snapshots,
-    /// whose rows updates, cascades and schema rewrites insert again. Complex
-    /// columns stay as their raw references, OLE cells hold the stored bytes
-    /// exactly (no package unwrap or signature slicing), and a MEMO / OLE value
-    /// whose stored data cannot be read becomes an
-    /// <see cref="ValueDecoding.Models.UnreadableLongValue"/>, which the writer
-    /// refuses to store, instead of a placeholder. MEMO / OLE columns are
-    /// therefore typed <see cref="object"/>.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive).</param>
-    /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
-    internal ValueTask<DataTable> ReadDataTableForSchemaRewriteAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.services.Tables.ReadDataTableForSchemaRewriteAsync(tableName, cancellationToken);
-
-    /// <summary>
-    /// Reads and parses the <c>MSysObjects.LvProp</c> blob of the table whose TDEF
-    /// is <paramref name="tdefPage"/>, for the writer's constraint registry.
-    /// </summary>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
-        => this.services.Catalog.ReadLvPropForTableAsync(tdefPage, cancellationToken);
-
     /// <inheritdoc/>
     public override async ValueTask DisposeAsync()
     {
@@ -408,86 +420,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         catch (Exception ex)
         {
             operations.CompleteDispose(ex);
-            throw;
-        }
-    }
-
-    private static async ValueTask<AccessReader> OpenAsync(
-        string path,
-        AccessReaderOptions? options,
-        bool suppressPageCache,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        Guard.RequireExistingDatabaseFile(path, nameof(path));
-
-        options ??= new AccessReaderOptions();
-
-        // CA2000: OpenAsync(stream, leaveOpen:false) intentionally takes ownership and disposes on all paths.
-#pragma warning disable CA2000
-        FileStream fs = CreateStream(path, options);
-#pragma warning restore CA2000
-        AccessReader reader = await OpenAsync(
-            fs,
-            options,
-            leaveOpen: false,
-            suppressPageCache: suppressPageCache,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (CanUseRandomAccessPageReads(reader.PageReadOptimizationMode))
-        {
-            reader.Database.EnableRandomAccessPageReadsIfSupported();
-        }
-
-        return reader;
-    }
-
-    private static async ValueTask<AccessReader> OpenAsync(
-        Stream stream,
-        AccessReaderOptions? options,
-        bool leaveOpen,
-        bool suppressPageCache,
-        CancellationToken cancellationToken)
-    {
-        Guard.RequireReadableSeekableStream(stream, nameof(stream));
-        cancellationToken.ThrowIfCancellationRequested();
-
-        options ??= new AccessReaderOptions();
-        try
-        {
-            string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-            byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-
-            // Office Crypto API ("Agile") encryption: the file is a real OLE
-            // compound document with EncryptionInfo + EncryptedPackage streams.
-            // EncryptionManager handles detection, password verification, and
-            // package decryption; on success we re-enter on the inner ACCDB
-            // bytes.
-            byte[]? decryptedAgile = await EncryptionManager
-                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, cancellationToken)
-                .ConfigureAwait(false);
-            if (decryptedAgile != null)
-            {
-                // We no longer need the source stream: dispose it unless the
-                // caller retains ownership via leaveOpen.
-                if (!leaveOpen)
-                {
-                    await stream.DisposeAsync().ConfigureAwait(false);
-                }
-
-                var inner = new MemoryStream(decryptedAgile, writable: false);
-                byte[] innerHeader = await DatabaseFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
-                return new AccessReader(string.Empty, options, inner, innerHeader, suppressPageCache: suppressPageCache);
-            }
-
-            return new AccessReader(path, options, stream, header, leaveOpen, suppressPageCache);
-        }
-        catch
-        {
-            if (!leaveOpen)
-            {
-                await stream.DisposeAsync().ConfigureAwait(false);
-            }
-
             throw;
         }
     }

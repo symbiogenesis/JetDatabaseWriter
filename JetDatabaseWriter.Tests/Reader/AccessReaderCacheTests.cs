@@ -50,40 +50,6 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     }
 
     [Fact]
-    public async Task OpenUncachedAsync_WithPositivePageCacheSize_SuppressesCacheAllocation()
-    {
-        byte[] bytes = await db.GetFileAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        var options = new AccessReaderOptions
-        {
-            PageCacheSize = 256,
-            UseLockFile = false,
-        };
-
-        await using var cachedStream = new MemoryStream(bytes, writable: false);
-        await using (AccessReader cachedReader = await AccessReader.OpenAsync(
-            cachedStream,
-            options,
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-            Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), PageCacheFieldName));
-            Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), RowBoundsCacheFieldName));
-        }
-
-        await using var uncachedStream = new MemoryStream(bytes, writable: false);
-        await using AccessReader uncachedReader = await AccessReader.OpenUncachedAsync(
-            uncachedStream,
-            options,
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(256, uncachedReader.PageCacheSize);
-        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), PageCacheFieldName));
-        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), RowBoundsCacheFieldName));
-        Assert.NotEmpty(await uncachedReader.ListTablesAsync(TestContext.Current.CancellationToken));
-    }
-
-    [Fact]
     public async Task Rows_WithTinyPageCache_EvictsDuringLargeTableScan()
     {
         const string tableName = "LargeRows";
@@ -288,7 +254,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     }
 
     [Fact]
-    public async Task OpenUncachedAsync_ReturnsEquivalentRowsWithoutAllocatingPageCaches()
+    public async Task OpenAsync_WithZeroPageCacheSize_ReturnsRowsEquivalentToCachedReader()
     {
         await using MemoryStream source = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
@@ -298,22 +264,17 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             },
             TestContext.Current.CancellationToken);
         byte[] bytes = source.ToArray();
-        var options = new AccessReaderOptions
-        {
-            PageCacheSize = 16,
-            UseLockFile = false,
-        };
 
         await using var cachedStream = new MemoryStream(bytes, writable: false);
         await using var uncachedStream = new MemoryStream(bytes, writable: false);
         await using AccessReader cachedReader = await AccessReader.OpenAsync(
             cachedStream,
-            options,
+            new AccessReaderOptions { PageCacheSize = 16, UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
-        await using AccessReader uncachedReader = await AccessReader.OpenUncachedAsync(
+        await using AccessReader uncachedReader = await AccessReader.OpenAsync(
             uncachedStream,
-            options,
+            new AccessReaderOptions { PageCacheSize = 0, UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
