@@ -154,28 +154,6 @@ internal static class CalculatedExpressionNormalizer
         private const int UnaryLevel = 6;
         private const int AtomLevel = 8;
 
-        private static readonly Dictionary<string, string> WordOperators = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["AND"] = "AND",
-            ["OR"] = "OR",
-            ["XOR"] = "XOR",
-            ["EQV"] = "EQV",
-            ["IMP"] = "IMP",
-            ["MOD"] = "MOD",
-            ["LIKE"] = "LIKE",
-            ["BETWEEN"] = "BETWEEN",
-            ["IN"] = "IN",
-            ["IS"] = "IS",
-            ["NOT"] = "NOT",
-            ["NULL"] = "NULL",
-            ["TRUE"] = "TRUE",
-            ["FALSE"] = "FALSE",
-            ["YES"] = "YES",
-            ["NO"] = "NO",
-            ["ON"] = "ON",
-            ["OFF"] = "OFF",
-        };
-
         private readonly List<Token> tokens;
         private readonly string originalExpression;
         private int position;
@@ -259,7 +237,7 @@ internal static class CalculatedExpressionNormalizer
                     }
 
                     string text = expression[start..charIndex];
-                    result.Add(new Token(WordOperators.ContainsKey(text) ? TokenKind.Word : TokenKind.Identifier, text));
+                    result.Add(new Token(AccessExpressionKeywords.IsKeyword(text) ? TokenKind.Word : TokenKind.Identifier, text));
                     continue;
                 }
 
@@ -353,7 +331,7 @@ internal static class CalculatedExpressionNormalizer
             Token previous = tokens[^1];
             if (previous.Kind == TokenKind.Word)
             {
-                return previous.Text.ToUpperInvariant() is not ("NULL" or "TRUE" or "FALSE" or "YES" or "NO" or "ON" or "OFF");
+                return !AccessExpressionKeywords.IsValueWord(previous.Text);
             }
 
             return previous.Kind is TokenKind.Operator or TokenKind.Backslash or TokenKind.OpenParen or TokenKind.Comma;

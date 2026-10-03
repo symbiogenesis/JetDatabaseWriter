@@ -219,6 +219,7 @@ JetDatabaseWriter/
 │   ├── LinkedOdbcLvPropBuilder.cs         (generated linked-ODBC schema-cache property blocks)
 │   ├── LogicalTDefChain.cs                (logical TDEF bytes spanning chained table-definition pages)
 │   ├── Expressions/
+│   │   ├── AccessExpressionKeywords.cs             (Access word operators and literal words, shared by the parser and ExpressionFieldReferences)
 │   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)
 │   │   ├── CalculatedExpressionBinaryNode.cs       (binary operator AST node)
 │   │   ├── CalculatedExpressionCoercion.cs         (central Access null/date/number/text coercion semantics)
@@ -246,7 +247,8 @@ JetDatabaseWriter/
 │   │   ├── CalculatedFunctionEvaluator.cs          (function evaluator delegate)
 │   │   ├── CalculatedFunctionInvocation.cs         (bound function invocation context)
 │   │   ├── ColumnDefaultValue.cs                   (persisted column DefaultValue expression, evaluated on insert)
-│   │   └── ColumnValidationRule.cs                 (persisted column ValidationRule: implicit operand, three-valued logic)
+│   │   ├── ColumnValidationRule.cs                 (persisted column ValidationRule: implicit operand, three-valued logic)
+│   │   └── ExpressionFieldReferences.cs            (lexer that finds and renames a field's references in expression text, for column renames and drops)
 │   └── Models/
 │       ├── ColumnConstraint.cs
 │       ├── ConstraintRegistrySnapshot.cs  (registry contents + AutoNumber counters, restored on rollback)
