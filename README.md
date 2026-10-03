@@ -477,13 +477,22 @@ await writer.CreateTableAsync("Contacts", new[]
     new ColumnDefinition("ContactID", typeof(int)),
     new ColumnDefinition("Name",      typeof(string), maxLength: 100),
     new ColumnDefinition("Email",     typeof(string), maxLength: 255),
-    new ColumnDefinition("Score",     typeof(decimal)),
+    new ColumnDefinition("Score",     typeof(decimal)) { NumericPrecision = 5, NumericScale = 1 },
 });
 
 await writer.DropTableAsync("Contacts");
 ```
 
 `DropTableAsync` refuses, with `InvalidOperationException` and before it writes anything, to drop a table that a relationship names, as Microsoft Access does; drop the relationships first (see [Foreign-key relationships](#foreign-key-relationships)).
+
+#### Decimal and Currency columns
+
+A `decimal` column is an Access Decimal with the declared `NumericPrecision` and `NumericScale`, and a value is rounded half to even to that scale when it is stored. Without them it is Access's default Decimal(18,0), which holds whole numbers only, so `95.5` would be stored as `96`. Set `IsCurrency` for an Access Currency column instead, on any format. Currency keeps four decimal places, rounding half to even past them, and holds -922,337,203,685,477.5808 to 922,337,203,685,477.5807; a value outside that range throws `OverflowException`. `ColumnMetadata.IsCurrency` reports Currency columns, so copying a column's metadata into a `ColumnDefinition` creates the same type.
+
+```csharp
+new ColumnDefinition("UnitPrice", typeof(decimal)) { IsCurrency = true },
+new ColumnDefinition("Weight",    typeof(decimal)) { NumericPrecision = 10, NumericScale = 3 },
+```
 
 #### Column constraints
 

@@ -91,6 +91,16 @@ public sealed record ColumnMetadata
     public byte NumericScale { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether the column holds Access <c>Currency</c>
+    /// values: a Currency column, or a calculated column whose result type is
+    /// Currency. <see cref="ClrType"/> is then <see cref="decimal"/>, and
+    /// <see cref="NumericPrecision"/> and <see cref="NumericScale"/> are zero.
+    /// Copy it into <see cref="ColumnDefinition.IsCurrency"/> to create a column
+    /// of the same type.
+    /// </summary>
+    public bool IsCurrency { get; init; }
+
+    /// <summary>
     /// Gets a value indicating whether the column is an Access 2010+ calculated
     /// (expression) column. Detected via the
     /// <see cref="Constants.CalculatedColumn.ExtFlagMask"/> bits in the column
