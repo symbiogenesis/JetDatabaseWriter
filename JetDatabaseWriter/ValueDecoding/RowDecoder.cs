@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -201,7 +202,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
             return new ValueTask<object?[]?>(row);
         }
 
-        return this.ResolveLongValueRefsAsync(row!, page, cancellationToken);
+        return this.ResolveLongValueRefsAsync(row!, page, decodePlan, cancellationToken);
     }
 
     /// <summary>
@@ -234,7 +235,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
             return new ValueTask<bool>(true);
         }
 
-        return this.ResolveLongValueRefsIntoBufferAsync(buffer, decodePlan.ColumnCount, page, cancellationToken);
+        return this.ResolveLongValueRefsIntoBufferAsync(buffer, decodePlan.ColumnCount, page, decodePlan, cancellationToken);
     }
 
     /// <summary>
@@ -246,24 +247,60 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     /// <param name="buffer">The buffer.</param>
     /// <param name="validLength">The valid length.</param>
     /// <param name="page">The page bytes.</param>
+    /// <param name="decodePlan">The decode plan, which selects how MEMO / OLE values are resolved.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<bool> ResolveLongValueRefsIntoBufferAsync(object?[] buffer, int validLength, byte[] page, CancellationToken cancellationToken)
+    private async ValueTask<bool> ResolveLongValueRefsIntoBufferAsync(object?[] buffer, int validLength, byte[] page, RowDecodePlan decodePlan, CancellationToken cancellationToken)
     {
         for (int i = 0; i < validLength; i++)
         {
             if (buffer[i] is LongValueRef lvr)
             {
-                buffer[i] = lvr.IsOle
-                    ? await longValues.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
-                    : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+                if (decodePlan.PreservesLongValueBytes)
+                {
+                    buffer[i] = await this.ReadLongValueForWriteBackAsync(page, lvr.Start, lvr.Len, lvr.IsOle, decodePlan.GetColumnName(i), cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    buffer[i] = lvr.IsOle
+                        ? await longValues.ReadOleValueBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                        : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+                }
             }
             else if (buffer[i] is CalculatedLongValueRef clvr)
             {
-                buffer[i] = await this.ResolveCalculatedLongValueRefAsync(page, clvr, cancellationToken).ConfigureAwait(false);
+                buffer[i] = await this.ResolveCalculatedLongValueRefAsync(page, clvr, decodePlan, i, cancellationToken).ConfigureAwait(false);
             }
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Resolves a MEMO / OLE value for a row that will be written back: OLE
+    /// yields the stored bytes exactly and MEMO yields the stored text. A
+    /// value whose LVAL data cannot be read yields an
+    /// <see cref="UnreadableLongValue"/>, which the writer refuses to persist,
+    /// rather than a placeholder that it would store as data.
+    /// </summary>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="start">The offset of the 12-byte long-value descriptor.</param>
+    /// <param name="length">The length of the column slice.</param>
+    /// <param name="isOle">Whether the column is an OLE column.</param>
+    /// <param name="columnName">The column name, for the error message.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<object> ReadLongValueForWriteBackAsync(byte[] page, int start, int length, bool isOle, string columnName, CancellationToken cancellationToken)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = await longValues.ReadLongValueBytesExactAsync(page, start, length, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidDataException ex)
+        {
+            return new UnreadableLongValue(columnName, ex.Message);
+        }
+
+        return isOle ? bytes : db.DecodeTextForFormat(bytes, 0, bytes.Length);
     }
 
     /// <summary>
@@ -275,20 +312,42 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     /// </summary>
     /// <param name="row">The row values or row bytes.</param>
     /// <param name="page">The page bytes.</param>
+    /// <param name="decodePlan">The decode plan, which selects how MEMO / OLE values are resolved.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<object?[]?> ResolveLongValueRefsAsync(object?[] row, byte[] page, CancellationToken cancellationToken)
+    private async ValueTask<object?[]?> ResolveLongValueRefsAsync(object?[] row, byte[] page, RowDecodePlan decodePlan, CancellationToken cancellationToken)
     {
-        _ = await this.ResolveLongValueRefsIntoBufferAsync(row, row.Length, page, cancellationToken).ConfigureAwait(false);
+        _ = await this.ResolveLongValueRefsIntoBufferAsync(row, row.Length, page, decodePlan, cancellationToken).ConfigureAwait(false);
         return row;
     }
 
-    private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, CalculatedLongValueRef reference, CancellationToken cancellationToken)
+    private async ValueTask<object> ResolveCalculatedLongValueRefAsync(byte[] page, CalculatedLongValueRef reference, RowDecodePlan decodePlan, int columnIndex, CancellationToken cancellationToken)
     {
-        byte[] raw = await longValues.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
+        byte[] raw;
+        if (decodePlan.PreservesLongValueBytes)
+        {
+            try
+            {
+                raw = await longValues.ReadLongValueBytesExactAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidDataException ex)
+            {
+                return new UnreadableLongValue(decodePlan.GetColumnName(columnIndex), ex.Message);
+            }
+        }
+        else
+        {
+            raw = await longValues.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
+        }
+
         byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-        return reference.IsOle
-            ? OleObjectDecoder.DecodeOleValueBytes(payload, 0, payload.Length)
-            : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+        if (!reference.IsOle)
+        {
+            return longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+        }
+
+        return decodePlan.PreservesLongValueBytes
+            ? payload
+            : OleObjectDecoder.DecodeOleValueBytes(payload, 0, payload.Length);
     }
 
     /// <summary>

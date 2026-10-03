@@ -78,6 +78,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="column">The new column definition. Its name must not already exist on the table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value whose stored data cannot be read; copying the row would lose that value.</exception>
     public ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -90,6 +91,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="columnName">The column to drop (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value in a column being kept whose stored data cannot be read; copying the row would lose that value. An unreadable value in the dropped column does not block the drop.</exception>
     public ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -102,6 +104,7 @@ public interface IAccessSchema : IAccessBase
     /// <param name="newColumnName">The new column name. Must not already exist on the table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value whose stored data cannot be read; copying the row would lose that value.</exception>
     public ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
 
     /// <summary>

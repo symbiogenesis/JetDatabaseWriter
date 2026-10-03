@@ -19,6 +19,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -409,6 +410,18 @@ internal sealed class TableSchemaEditor(
             ? projectIndexes(existingIndexes, newDefs)
             : IndexHelpers.DefaultIndexProjection(existingIndexes, newDefs);
 
+        // Project every row before creating the temp table, so a MEMO / OLE value
+        // the snapshot could not read refuses the rewrite before anything changes.
+        // A dropped column's unreadable value is projected away and does not block.
+        var projectedRows = new List<object[]>(snapshot.Rows.Count);
+        foreach (DataRow row in snapshot.Rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            object[] projected = projectRow(TableSnapshotReader.GetDbNullNormalizedItemArray(row), tableDef);
+            UnreadableLongValue.ThrowIfAny(projected, tableName);
+            projectedRows.Add(projected);
+        }
+
         string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
         await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
 
@@ -416,17 +429,9 @@ internal sealed class TableSchemaEditor(
         CatalogEntry tempEntry = tempTable.Entry;
         TableDef tempDef = tempTable.Definition;
 
-        foreach (DataRow row in snapshot.Rows)
+        foreach (object[] projected in projectedRows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object?[] sourceItems = row.ItemArray;
-            object[] sourceRow = new object[sourceItems.Length];
-            for (int i = 0; i < sourceItems.Length; i++)
-            {
-                sourceRow[i] = sourceItems[i] ?? DBNull.Value;
-            }
-
-            object[] projected = projectRow(sourceRow, tableDef);
             await tableRows.InsertRowDataAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
