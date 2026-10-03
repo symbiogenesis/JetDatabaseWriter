@@ -8,9 +8,9 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 internal static class CalculatedExpressionEvaluator
 {
-    public static void Apply(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force)
+    public static void Apply(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force, string? tableName = null)
     {
-        var context = new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force);
+        var context = new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force, tableName);
         for (int i = 0; i < constraints.Count; i++)
         {
             ColumnConstraint constraint = constraints[i];

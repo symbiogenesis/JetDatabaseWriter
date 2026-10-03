@@ -230,7 +230,7 @@ internal sealed class ConstraintRegistry(
                     ColumnDefaultValue defaultValue = c.DefaultValuePlan ??= ColumnDefaultValue.Compile(c.DefaultValueExpression);
                     if (defaultValue.TryEvaluate(
                         c.ClrType,
-                        () => defaultContext ??= new CalculatedExpressionEvaluationContext(tableDef, list, values, force: false),
+                        () => defaultContext ??= new CalculatedExpressionEvaluationContext(tableDef, list, values, force: false, tableName),
                         out object evaluated))
                     {
                         value = evaluated;
@@ -262,7 +262,7 @@ internal sealed class ConstraintRegistry(
                 values[i] = value ?? DBNull.Value;
             }
 
-            CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false);
+            CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false, tableName);
             ValidateCalculatedResults(tableName, list, values);
             CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null);
         }
@@ -338,7 +338,7 @@ internal sealed class ConstraintRegistry(
             }
         }
 
-        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true);
+        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true, tableName);
         ValidateCalculatedResults(tableName, list, values);
         CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned);
     }
@@ -397,7 +397,7 @@ internal sealed class ConstraintRegistry(
                 continue;
             }
 
-            context ??= new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force: false);
+            context ??= new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force: false, tableName);
             if (rule.Accepts(context))
             {
                 continue;

@@ -28,12 +28,21 @@ internal static class CalculatedExpressionLogicalFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "NZ", 1, 2, EvaluateNz));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "ISNULL", 1, 1, static function => IsNull(function.Arg(0)), "ISBLANK"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "ISNUMERIC", 1, 1, static function => TryConvertDecimal(function.Arg(0), out _), "ISNUMBER"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "ISDATE", 1, 1, static function => TryConvertDateTime(function.Arg(0), out _)));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "ISDATE", 1, 1, static function => IsDateValue(function.Arg(0))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "CBOOL", 1, 1, static function => ToBoolean(function.Arg(0))));
     }
 
     private static object EvaluateIIf(CalculatedFunctionInvocation function)
         => ToBoolean(function.Arg(0)) ? function.Arg(1) : function.Arg(2);
+
+    /// <summary>
+    /// VBA's <c>IsDate</c>: True for a date, or for text that parses as one. A number is
+    /// not a date even though it converts to one (<c>IsDate(5)</c> is False).
+    /// </summary>
+    /// <param name="value">The argument.</param>
+    /// <returns>Whether the argument is a date.</returns>
+    private static bool IsDateValue(object value)
+        => value is DateTime || (value is string && TryConvertDateTime(value, out _));
 
     private static bool EvaluateAnd(CalculatedFunctionInvocation function)
     {

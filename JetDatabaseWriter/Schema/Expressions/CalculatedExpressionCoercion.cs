@@ -5,6 +5,12 @@ using System.Globalization;
 
 internal static class CalculatedExpressionCoercion
 {
+    /// <summary>The OLE Automation serial of 0100-01-01, the earliest Access date.</summary>
+    private const double MinOleDate = -657434d;
+
+    /// <summary>The OLE Automation serial of 10000-01-01, one day past the latest Access date.</summary>
+    private const double MaxOleDateExclusive = 2958466d;
+
     internal static object CoerceResult(object? value, Type targetType)
     {
         if (IsNull(value))
@@ -12,10 +18,17 @@ internal static class CalculatedExpressionCoercion
             return DBNull.Value;
         }
 
-        // Access stores True as -1 in a numeric column and "-1" in a text
-        // column (Excel and Convert use 1 and "True"); ToText handles text.
+        // Access converts True the OLE Automation way (VariantChangeType):
+        // -1 in a signed numeric column, "-1" in a text column (ToText), 255 in
+        // a Byte column, and day -1 (1899-12-29) as a date. Excel and Convert
+        // use 1 and "True".
         if (value is bool boolean && targetType != typeof(bool) && targetType != typeof(string))
         {
+            if (targetType == typeof(byte))
+            {
+                return ToByte(boolean);
+            }
+
             value = boolean ? -1 : 0;
         }
 
@@ -31,7 +44,7 @@ internal static class CalculatedExpressionCoercion
 
         if (targetType == typeof(byte))
         {
-            return Convert.ToByte(value, CultureInfo.InvariantCulture);
+            return ToByte(value);
         }
 
         if (targetType == typeof(short))
@@ -328,6 +341,23 @@ internal static class CalculatedExpressionCoercion
         return Convert.ToDecimal(value, CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// Converts a value to a Byte the way OLE Automation does: True is 255 and
+    /// False is 0 (<c>CByte(True)</c> is 255), other values round half to even,
+    /// and anything outside 0..255 throws <see cref="OverflowException"/>.
+    /// </summary>
+    /// <param name="value">The value to convert.</param>
+    /// <returns>The byte value.</returns>
+    internal static byte ToByte(object? value)
+    {
+        if (value is bool boolean)
+        {
+            return boolean ? byte.MaxValue : (byte)0;
+        }
+
+        return Convert.ToByte(value, CultureInfo.InvariantCulture);
+    }
+
     internal static double ToDouble(object? value)
     {
         if (value is bool boolean)
@@ -359,6 +389,14 @@ internal static class CalculatedExpressionCoercion
         return bool.TryParse(text, out bool parsed) ? parsed : !string.IsNullOrEmpty(text);
     }
 
+    /// <summary>
+    /// Converts a value to a date the way OLE Automation does: a number or a
+    /// Boolean is a date serial, the days since 1899-12-30 (True is -1, so
+    /// 1899-12-29), and text is parsed as a date.
+    /// </summary>
+    /// <param name="value">The value to convert.</param>
+    /// <returns>The date.</returns>
+    /// <exception cref="OverflowException">The serial is outside the dates Access can hold (years 100 to 9999).</exception>
     internal static DateTime ToDateTime(object? value)
     {
         if (value is DateTime dateTime)
@@ -366,17 +404,29 @@ internal static class CalculatedExpressionCoercion
             return dateTime;
         }
 
-        if (value is double oaDouble)
+        if (value is bool or byte or short or int or long or float or double or decimal)
         {
-            return DateTime.FromOADate(oaDouble);
-        }
-
-        if (value is decimal oaDecimal)
-        {
-            return DateTime.FromOADate((double)oaDecimal);
+            return FromOleDate(ToDouble(value));
         }
 
         return ParseDate(ToText(value));
+    }
+
+    /// <summary>
+    /// Converts an OLE Automation date serial to a date, rejecting a serial
+    /// outside the range Access dates can hold (years 100 to 9999).
+    /// </summary>
+    /// <param name="serial">The days since 1899-12-30; the fraction is the time of day.</param>
+    /// <returns>The date.</returns>
+    /// <exception cref="OverflowException">The serial is outside the supported range.</exception>
+    internal static DateTime FromOleDate(double serial)
+    {
+        if (double.IsNaN(serial) || serial < MinOleDate || serial >= MaxOleDateExclusive)
+        {
+            throw new OverflowException($"Date serial {serial.ToString("R", CultureInfo.InvariantCulture)} is outside the range of an Access date.");
+        }
+
+        return DateTime.FromOADate(serial);
     }
 
     internal static DateTime ParseDate(string text)

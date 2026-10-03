@@ -227,6 +227,128 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A Boolean stored in a Byte result is 255 or 0, the OLE Automation
+    /// Bool-to-Byte conversion (VBA's <c>CByte(True)</c> is 255), not -1.
+    /// </summary>
+    /// <param name="a">The field value.</param>
+    /// <param name="expected">The stored byte.</param>
+    [Theory]
+    [InlineData(3, 255)]
+    [InlineData(0, 0)]
+    public void ByteResult_FromBoolean_Is255OrZero(int a, int expected)
+    {
+        object result = Evaluate("[A] > 1", typeof(byte), ("A", a));
+
+        Assert.Equal((byte)expected, Assert.IsType<byte>(result));
+    }
+
+    [Theory]
+    [InlineData("CByte(True)", 255)]
+    [InlineData("CByte(False)", 0)]
+    [InlineData("CByte(2.5)", 2)]
+    [InlineData("CByte(3.5)", 4)]
+    [InlineData("CByte(255)", 255)]
+    [InlineData("CByte(\"12\")", 12)]
+    public void CByte_FollowsOleAutomationConversion(string expression, int expected)
+    {
+        object result = Evaluate(expression, typeof(int));
+
+        Assert.Equal(expected, Assert.IsType<int>(result));
+    }
+
+    [Theory]
+    [InlineData("CByte(-1)")]
+    [InlineData("CByte(256)")]
+    public void CByte_OutOfRange_ThrowsOverflowNamingColumnAndExpression(string expression)
+    {
+        OverflowException exception = Assert.Throws<OverflowException>(() => Evaluate(expression, typeof(int)));
+
+        Assert.Contains("'Calc'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
+        Assert.IsType<OverflowException>(exception.InnerException);
+    }
+
+    [Fact]
+    public void ResultOutOfRange_ThrowsOverflowNamingValueAndResultType()
+    {
+        OverflowException exception = Assert.Throws<OverflowException>(() => Evaluate("[A] * 100", typeof(byte), ("A", 5)));
+
+        Assert.Contains("'Calc'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("[A] * 100", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("500", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Byte", exception.Message, StringComparison.Ordinal);
+        Assert.IsType<OverflowException>(exception.InnerException);
+    }
+
+    /// <summary>
+    /// A number or Boolean becomes a date through the OLE Automation date serial
+    /// (days since 1899-12-30), so True is 1899-12-29.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    /// <param name="expected">The expected date, as invariant text.</param>
+    [Theory]
+    [InlineData("43861.25", "2020-01-31 06:00:00")]
+    [InlineData("True", "1899-12-29 00:00:00")]
+    [InlineData("[N]", "2020-01-31 00:00:00")]
+    [InlineData("CDate([N])", "2020-01-31 00:00:00")]
+    [InlineData("CDate([N] + 0.5)", "2020-01-31 12:00:00")]
+    public void DateResult_FromNumberOrBoolean_UsesOleDateSerial(string expression, string expected)
+    {
+        object result = Evaluate(expression, typeof(DateTime), ("N", 43861));
+
+        Assert.Equal(expected, Assert.IsType<DateTime>(result).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [InlineData("IsDate(5)", false)]
+    [InlineData("IsDate([N])", false)]
+    [InlineData("IsDate(\"2025-02-03\")", true)]
+    [InlineData("IsDate(#2025-02-03#)", true)]
+    public void IsDate_Number_IsFalse(string expression, bool expected)
+    {
+        object result = Evaluate(expression, typeof(bool), ("N", 43861));
+
+        Assert.Equal(expected, Assert.IsType<bool>(result));
+    }
+
+    [Theory]
+    [InlineData("[D] > [N]", true)]
+    [InlineData("[D] = [N]", false)]
+    [InlineData("[D] = [N] + 1", true)]
+    [InlineData("[D] = 43862", true)]
+    public void DateComparison_WithIntegerField_ComparesAsDates(string expression, bool expected)
+    {
+        object result = EvaluateDeclared(
+            expression,
+            typeof(bool),
+            ("D", typeof(DateTime), new DateTime(2020, 2, 1)),
+            ("N", typeof(int), 43861));
+
+        Assert.Equal(expected, Assert.IsType<bool>(result));
+    }
+
+    [Fact]
+    public void NestedCalculatedFailure_NamesInnermostColumnOnce()
+    {
+        var tableDef = new TableDef();
+        tableDef.Columns.Add(new ColumnInfo { Name = "Inner" });
+        tableDef.Columns.Add(new ColumnInfo { Name = "Outer" });
+        ColumnConstraint[] constraints =
+        [
+            new() { Name = "Inner", ClrType = typeof(int), IsCalculated = true, CalculationExpression = "CByte(-1)" },
+            new() { Name = "Outer", ClrType = typeof(int), IsCalculated = true, CalculationExpression = "[Inner] + 1" },
+        ];
+        object[] values = [DBNull.Value, DBNull.Value];
+
+        OverflowException exception = Assert.Throws<OverflowException>(() => CalculatedExpressionEvaluator.Apply(tableDef, constraints, values, force: false, "T"));
+
+        Assert.Contains("'Inner'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("'T'", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("'Outer'", exception.Message, StringComparison.Ordinal);
+        Assert.IsType<OverflowException>(exception.InnerException);
+    }
+
     private static object Evaluate(string expression, Type resultType, params (string Name, object Value)[] inputs)
         => EvaluateDeclared(expression, resultType, [.. inputs.Select(input => (input.Name, input.Value.GetType(), input.Value))]);
 
