@@ -13,7 +13,7 @@ internal static class CalculatedExpressionDateTimeFunctions
     {
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATE", 0, 0, static _ => CurrentAccessLocalDateTime().Date, "TODAY"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "NOW", 0, 0, static _ => CurrentAccessLocalDateTime()));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIME", 0, 0, static _ => CurrentAccessLocalDateTime()));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIME", 0, 0, static _ => TimeOnDayZero(CurrentAccessLocalDateTime())));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEVALUE", 1, 1, static function => function.Arg(0) is DateTime date ? date : ParseDate(ToText(function.Arg(0)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATESERIAL", 3, 3, static function => DateSerial(checked((int)ToDecimal(function.Arg(0))), checked((int)ToDecimal(function.Arg(1))), checked((int)ToDecimal(function.Arg(2))))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEADD", 3, 3, static function => DateAdd(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), ToDateTime(function.Arg(2)))));
@@ -25,7 +25,7 @@ internal static class CalculatedExpressionDateTimeFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "HOUR", 1, 1, static function => ToDateTime(function.Arg(0)).Hour));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "MINUTE", 1, 1, static function => ToDateTime(function.Arg(0)).Minute));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "SECOND", 1, 1, static function => ToDateTime(function.Arg(0)).Second));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMEVALUE", 1, 1, static function => CurrentAccessLocalDateTime().Date + ToDateTime(function.Arg(0)).TimeOfDay));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMEVALUE", 1, 1, static function => TimeOnDayZero(ToDateTime(function.Arg(0)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMESERIAL", 3, 3, static function => EvaluateTimeSerial(function)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMER", 0, 0, static _ => CurrentAccessLocalDateTime().TimeOfDay.TotalSeconds));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "MONTHNAME", 1, 2, static function => CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(checked((int)ToDecimal(function.Arg(0))))));
@@ -38,11 +38,35 @@ internal static class CalculatedExpressionDateTimeFunctions
     private static DateTime CurrentAccessLocalDateTime() => DateTime.Now;
 #pragma warning restore RS0030
 
+    /// <summary>
+    /// VBA's TimeSerial, as measured with VBScript. Each argument rounds half to even
+    /// to an Integer, and the total seconds become an OLE date serial, which is a time
+    /// on day 0, 1899-12-30. So 25 hours is 12/31/1899 1:00 AM. A negative total keeps
+    /// OLE's reading of a negative serial: -1 hour (-0.0417) is 1:00 AM on day 0.
+    /// </summary>
+    /// <param name="function">The call, with the hours, minutes and seconds.</param>
+    /// <returns>The time.</returns>
+    /// <exception cref="OverflowException">An argument is outside the Integer range.</exception>
     private static DateTime EvaluateTimeSerial(CalculatedFunctionInvocation function)
-        => CurrentAccessLocalDateTime().Date
-            .AddHours(ToDouble(function.Arg(0)))
-            .AddMinutes(ToDouble(function.Arg(1)))
-            .AddSeconds(ToDouble(function.Arg(2)));
+    {
+        int seconds = (ToVbaInteger(function.Arg(0)) * 3600) + (ToVbaInteger(function.Arg(1)) * 60) + ToVbaInteger(function.Arg(2));
+        return FromOleDate(seconds / 86400d);
+    }
+
+    /// <summary>
+    /// Rounds an argument half to even to a VBA Integer (-32,768 to 32,767), as VBA
+    /// does for a function's Integer parameter.
+    /// </summary>
+    /// <param name="value">The argument.</param>
+    /// <returns>The rounded value.</returns>
+    /// <exception cref="OverflowException">The rounded value is outside the Integer range.</exception>
+    private static int ToVbaInteger(object value)
+    {
+        int rounded = AccessVariantOperators.ToRoundedLong(value);
+        return rounded is < short.MinValue or > short.MaxValue
+            ? throw new OverflowException($"{rounded.ToString(CultureInfo.InvariantCulture)} is outside the range of an Integer.")
+            : rounded;
+    }
 
     private static DateTime DateSerial(int year, int month, int day)
     {

@@ -445,7 +445,8 @@ internal static class CalculatedExpressionCoercion
     /// <summary>
     /// Converts a value to a date the way OLE Automation does: a number or a
     /// Boolean is a date serial, the days since 1899-12-30 (True is -1, so
-    /// 1899-12-29), and text is parsed as a date.
+    /// 1899-12-29), and text is parsed as a date (<see cref="ParseDate"/>), where a
+    /// time with no date is on day 0.
     /// </summary>
     /// <param name="value">The value to convert.</param>
     /// <returns>The date.</returns>
@@ -482,6 +483,24 @@ internal static class CalculatedExpressionCoercion
         return DateTime.FromOADate(serial);
     }
 
+    /// <summary>
+    /// Returns the time of day of <paramref name="value"/> on OLE Automation day 0,
+    /// 1899-12-30, which is where VBA puts a time that has no date: <c>Time</c>,
+    /// <c>TimeValue</c> and <c>CDate("6:00")</c>.
+    /// </summary>
+    /// <param name="value">The date whose time of day is kept.</param>
+    /// <returns>The time on day 0.</returns>
+    internal static DateTime TimeOnDayZero(DateTime value) => OleDateZero + value.TimeOfDay;
+
+    /// <summary>
+    /// Parses date text. Text with a time and no date is a time on day 0, 1899-12-30,
+    /// as in VBA (<c>CDate("6:00:00 AM")</c> is 0.25). So the General Date text of a
+    /// day-0 date (<see cref="ToGeneralDateText"/>) reads back as the same date, and a
+    /// <c>#6:00#</c> literal is day 0 too.
+    /// </summary>
+    /// <param name="text">The text to parse.</param>
+    /// <returns>The date.</returns>
+    /// <exception cref="FormatException">The text is not a date.</exception>
     internal static DateTime ParseDate(string text)
     {
         string[] formats = [
@@ -496,7 +515,10 @@ internal static class CalculatedExpressionCoercion
             return exact;
         }
 
-        return DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces);
+        // Without NoCurrentDateDefault, text with no date part takes today's date.
+        // With it, that text gets 0001-01-01, a date no Access date can have.
+        var parsed = DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault);
+        return parsed.Date == DateTime.MinValue ? TimeOnDayZero(parsed) : parsed;
     }
 
     internal static bool TryConvertDecimal(object? value, out decimal result)

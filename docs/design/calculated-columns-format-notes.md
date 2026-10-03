@@ -277,6 +277,16 @@ Delivered:
   locale, so a non-US Access installation writes other text; this library
   always uses the en-US form. The other named formats (`Short Date`,
   `Long Time` and so on) still use .NET's invariant patterns.
+- A time with no date is on day 0 (1899-12-30), as in VBA. This was measured
+  with VBScript, whose date conversions are VBA's, under LCID 1033. It covers
+  time-only text (`CDate("6:00 PM")`), `#6:00#` literals, `Time()`,
+  `TimeValue` and `TimeSerial`. So a day-0 date turned into General Date text
+  reads back as day 0, and a `=Time()` default stores no date.
+  - `TimeSerial` rounds each argument half to even to an Integer. An argument
+    outside -32,768 to 32,767 throws `OverflowException`.
+  - It then adds the arguments up as an OLE date serial. So
+    `TimeSerial(25, 0, 0)` is 12/31/1899 1:00 AM, and `TimeSerial(-1, 0, 0)`
+    is -0.0417, which OLE reads as 1:00 AM on day 0.
 - Conversions follow OLE Automation's `VariantChangeType`, which VBA uses
   (measured with oleaut32 on Windows; Access itself was not checked): a
   Boolean is 255 or 0 in a Byte result column and in `CByte`, and a number or

@@ -742,6 +742,114 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         }
     }
 
+    /// <summary>
+    /// Text with a time and no date, and a <c>#...#</c> literal like it, is a time on day
+    /// 0 (1899-12-30), as in VBA. This was measured with VBScript, whose date conversions
+    /// are VBA's, under LCID 1033. So a day-0 date written as General Date text
+    /// (<c>6:00:00 AM</c>) reads back as day 0. It used to take today's date.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    /// <param name="expected">The expected text.</param>
+    [Theory]
+    [InlineData("CStr(CDate(CStr(CDate(0.25))))", "6:00:00 AM")]
+    [InlineData("CStr(CDate(CStr(CDate(0))))", "12:00:00 AM")]
+    [InlineData("CStr(CDate(\"6:00:00 AM\"))", "6:00:00 AM")]
+    [InlineData("CStr(CDate(\"18:30\"))", "6:30:00 PM")]
+    [InlineData("CStr(CDate(\"6:00 PM\") + 1)", "12/31/1899 6:00:00 PM")]
+    [InlineData("CStr(#6:00#)", "6:00:00 AM")]
+    [InlineData("CStr(Year(CStr(CDate(0.25))))", "1899")]
+    [InlineData("CStr(Day(\"6:00:00 AM\"))", "30")]
+    public void TimeOnlyText_IsOnDayZero(string expression, string expected)
+    {
+        object result = EvaluateDates(expression, typeof(string));
+
+        Assert.Equal(expected, result);
+    }
+
+    /// <summary>
+    /// A day-0 date, which is how Access stores a time on its own, keeps its date when
+    /// an expression turns it into text and back into a date.
+    /// </summary>
+    /// <param name="expression">The expression, over T = 1899-12-30 06:00, for a Date result.</param>
+    [Theory]
+    [InlineData("CDate([T] & \"\")")]
+    [InlineData("CDate(CStr([T]))")]
+    [InlineData("[T] & \"\"")]
+    [InlineData("Format([T], \"General Date\")")]
+    public void DayZeroDate_ThroughText_KeepsDayZero(string expression)
+    {
+        var time = new DateTime(1899, 12, 30, 6, 0, 0);
+
+        object result = EvaluateDeclared(expression, typeof(DateTime), ("T", typeof(DateTime), time));
+
+        Assert.Equal(time, result);
+    }
+
+    /// <summary>
+    /// TimeValue and TimeSerial return a time on day 0, as VBA does (measured with
+    /// VBScript). TimeSerial rounds each argument half to even to an Integer and turns
+    /// the total into an OLE date serial. So 25 hours is 12/31/1899 1:00 AM, and a
+    /// negative total keeps OLE's day-0 reading, so -1 hour is 1:00 AM. Both used to add
+    /// today's date.
+    /// </summary>
+    /// <param name="expression">The expression, over D = 2020-01-31 06:00.</param>
+    /// <param name="expected">The expected text.</param>
+    [Theory]
+    [InlineData("CStr(TimeValue(\"6:00\"))", "6:00:00 AM")]
+    [InlineData("CStr(TimeValue(\"18:30:05\"))", "6:30:05 PM")]
+    [InlineData("CStr(TimeValue(\"1/31/2020 6:00 PM\"))", "6:00:00 PM")]
+    [InlineData("CStr(TimeValue([D]))", "6:00:00 AM")]
+    [InlineData("CStr(TimeSerial(6, 0, 0))", "6:00:00 AM")]
+    [InlineData("CStr(TimeSerial(0, 0, 0))", "12:00:00 AM")]
+    [InlineData("CStr(TimeSerial(6, -15, 0))", "5:45:00 AM")]
+    [InlineData("CStr(TimeSerial(0, 75, 0))", "1:15:00 AM")]
+    [InlineData("CStr(TimeSerial(25, 0, 0))", "12/31/1899 1:00:00 AM")]
+    [InlineData("CStr(TimeSerial(23, 59, 60))", "12/31/1899")]
+    [InlineData("CStr(TimeSerial(-1, 0, 0))", "1:00:00 AM")]
+    [InlineData("CStr(TimeSerial(-25, 0, 0))", "12/29/1899 1:00:00 AM")]
+    [InlineData("CStr(TimeSerial(6.5, 0, 0))", "6:00:00 AM")]
+    [InlineData("CStr(TimeSerial(7.5, 0, 0))", "8:00:00 AM")]
+    [InlineData("CStr(TimeSerial(0, 0, 2.5))", "12:00:02 AM")]
+    [InlineData("CStr(TimeSerial(\"6\", \"30\", 0))", "6:30:00 AM")]
+    [InlineData("CStr(TimeSerial(True, 0, 0))", "1:00:00 AM")]
+    public void TimeValueAndTimeSerial_AreOnDayZero(string expression, string expected)
+    {
+        object result = EvaluateDates(expression, typeof(string));
+
+        Assert.Equal(expected, result);
+    }
+
+    /// <summary>
+    /// A TimeSerial argument outside VBA's Integer range overflows, as in VBA.
+    /// </summary>
+    /// <param name="expression">The expression.</param>
+    [Theory]
+    [InlineData("TimeSerial(40000, 0, 0)")]
+    [InlineData("TimeSerial(0, -32769, 0)")]
+    public void TimeSerial_ArgumentOutsideInteger_Overflows(string expression)
+        => Assert.Throws<OverflowException>(() => EvaluateDates(expression, typeof(DateTime)));
+
+    /// <summary>
+    /// Time() is the current time on day 0, as VBA's Time is, so it has no date part as
+    /// text. It used to be today's date and time, the same as Now().
+    /// </summary>
+    [Fact]
+    public void Time_IsTheCurrentTimeOnDayZero()
+    {
+        DateTime before = DateTimeOffset.Now.DateTime;
+        DateTime time = Assert.IsType<DateTime>(EvaluateDates("Time()", typeof(DateTime)));
+        string text = Assert.IsType<string>(EvaluateDates("CStr(Time())", typeof(string)));
+        DateTime after = DateTimeOffset.Now.DateTime;
+
+        Assert.Equal(new DateTime(1899, 12, 30), time.Date);
+        if (before.Date == after.Date)
+        {
+            Assert.InRange(time.TimeOfDay, before.TimeOfDay, after.TimeOfDay);
+        }
+
+        Assert.DoesNotContain("/", text, StringComparison.Ordinal);
+    }
+
     private static object EvaluateDates(string expression, Type resultType)
         => EvaluateDeclared(
             expression,
