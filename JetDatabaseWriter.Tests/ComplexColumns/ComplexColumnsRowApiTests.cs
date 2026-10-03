@@ -13,6 +13,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
+using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
 
 /// <summary>
 /// Round-trip tests for the row-level complex-column APIs:
@@ -28,11 +29,15 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public void AttachmentWrapper_RoundTrips_Raw_For_Jpg()
     {
-        // Compressed-format extensions (jpg, zip, ...) skip deflate per spec §3.2.
+        // Formats Access stores raw (jpg, png, zip, ...) skip deflate per spec §3.2.
         byte[] payload = Encoding.UTF8.GetBytes("FAKE-JPEG-PAYLOAD");
         byte[] wrapped = AttachmentWrapper.Encode("jpg", payload);
 
-        Assert.Equal((byte)0x00, wrapped[0]); // typeFlag = 0 (raw)
+        // typeFlag 0, dataLen = the content length, then the content as is.
+        byte[] content = AccessContent("jpg", payload);
+        Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
+        Assert.Equal(content.Length, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4)));
+        Assert.Equal(content, wrapped[8..]);
 
         bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
         Assert.True(ok);
@@ -43,11 +48,20 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public void AttachmentWrapper_RoundTrips_Deflated_For_Txt()
     {
-        // Generic text extensions are deflate-compressed per spec §3.2.
+        // Every other extension is compressed, in Access's zlib format (§3.2).
         byte[] payload = Encoding.UTF8.GetBytes(new string('a', 256));
         byte[] wrapped = AttachmentWrapper.Encode("txt", payload);
 
-        Assert.Equal((byte)0x01, wrapped[0]); // typeFlag = 1 (deflate)
+        // typeFlag 1, dataLen = the uncompressed content length (20 + payload
+        // for "txt"), a 78 5E zlib header and the big-endian Adler-32 of the
+        // content. The deflate blocks themselves differ between zlib builds.
+        byte[] content = AccessContent("txt", payload);
+        Assert.Equal(1, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
+        Assert.Equal(20 + payload.Length, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4)));
+        Assert.Equal(content.Length, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4)));
+        Assert.Equal([0x78, 0x5E], wrapped[8..10]);
+        Assert.Equal(Adler32(content), BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4)));
+        Assert.Equal(content, InflateZlib(wrapped[8..]));
 
         bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
         Assert.True(ok);
@@ -56,8 +70,75 @@ public sealed class ComplexColumnsRowApiTests
     }
 
     [Fact]
-    public void AttachmentWrapper_TryDecode_AcceptsKnownRawDeflateSample()
+    public void AttachmentWrapper_Encode_EmptyExtension_WritesNulOnlyExtension()
     {
+        // Follows Jackcess: the extension is just its NUL, so the count is 1
+        // and the content header is 14 bytes. What Access writes here is unchecked.
+        byte[] payload = [1, 2, 3];
+        byte[] wrapped = AttachmentWrapper.Encode(string.Empty, payload);
+
+        byte[] content = InflateZlib(wrapped[8..]);
+        Assert.Equal(1, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
+        Assert.Equal(AccessContent(string.Empty, payload), content);
+        Assert.Equal(14, BinaryPrimitives.ReadInt32LittleEndian(content));
+        Assert.Equal(1, BinaryPrimitives.ReadInt32LittleEndian(content.AsSpan(8)));
+
+        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded));
+        Assert.Equal(string.Empty, ext);
+        Assert.Equal(payload, decoded);
+    }
+
+    [Fact]
+    public void AttachmentWrapper_Encode_UpperCaseExtension_LowercasesIt()
+    {
+        // Jackcess lowercases the extension before choosing raw storage and
+        // writing it into the content header.
+        byte[] payload = Encoding.UTF8.GetBytes("FAKE-JPEG-PAYLOAD");
+        byte[] wrapped = AttachmentWrapper.Encode("JPG", payload);
+
+        Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
+        Assert.Equal(AccessContent("jpg", payload), wrapped[8..]);
+        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out _));
+        Assert.Equal("jpg", ext);
+    }
+
+    [Theory]
+    [InlineData("jpg", 0)]
+    [InlineData("jpeg", 0)]
+    [InlineData("gif", 0)]
+    [InlineData("png", 0)]
+    [InlineData("zip", 0)]
+    [InlineData("cab", 0)]
+    [InlineData("docx", 0)]
+    [InlineData("xlsx", 0)]
+    [InlineData("xlsb", 0)]
+    [InlineData("pptx", 0)]
+    [InlineData("txt", 1)]
+    [InlineData("pdf", 1)]
+    [InlineData("bmp", 1)]
+    [InlineData("gz", 1)]
+    [InlineData("mp3", 1)]
+    [InlineData("7z", 1)]
+    [InlineData("rar", 1)]
+    [InlineData("mpg", 1)]
+    public void AttachmentWrapper_Encode_SkipList_MatchesAccess(string extension, int expectedTypeFlag)
+    {
+        // The formats Access stores raw (Jackcess 4.0.12's COMPRESSED_FORMATS);
+        // Access deflates everything else, even already-compressed formats.
+        byte[] payload = Encoding.UTF8.GetBytes("payload");
+        byte[] wrapped = AttachmentWrapper.Encode(extension, payload);
+
+        Assert.Equal(expectedTypeFlag, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
+        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded));
+        Assert.Equal(extension, ext);
+        Assert.Equal(payload, decoded);
+    }
+
+    [Fact]
+    public void AttachmentWrapper_TryDecode_LegacyWriterRawDeflate_StillDecodes()
+    {
+        // Earlier builds of this library wrote raw deflate with dataLen set to
+        // the compressed length and the extension length counted in bytes.
         byte[] wrapped =
         [
             0x01, 0x00, 0x00, 0x00,
@@ -70,7 +151,7 @@ public sealed class ComplexColumnsRowApiTests
         ];
 
         byte[] rawBody = wrapped.AsSpan(8, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4, 4))).ToArray();
-        Assert.Throws<InvalidDataException>(() => InflateWithZlib(rawBody));
+        Assert.Throws<InvalidDataException>(() => InflateZlib(rawBody));
 
         bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
 
@@ -82,16 +163,12 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public void AttachmentWrapper_TryDecode_AcceptsAccessZlibWrappedBody()
     {
-        // Access (and Jackcess) compress with a zlib header and store the
-        // uncompressed content length in dataLen, unlike Encode's raw deflate.
+        // Access (and Jackcess) compress with a zlib header, store the
+        // uncompressed content length in dataLen and count the extension in
+        // characters including its NUL (4 for "txt"), not in bytes.
         byte[] payload = Encoding.UTF8.GetBytes("zlib attachment payload");
-        byte[] ext = Encoding.Unicode.GetBytes("txt\0");
-        byte[] content = new byte[12 + ext.Length + payload.Length];
-        BinaryPrimitives.WriteInt32LittleEndian(content, 12 + ext.Length);
-        BinaryPrimitives.WriteInt32LittleEndian(content.AsSpan(4), 1);
-        BinaryPrimitives.WriteInt32LittleEndian(content.AsSpan(8), ext.Length);
-        ext.CopyTo(content, 12);
-        payload.CopyTo(content, 12 + ext.Length);
+        byte[] content = AccessContent("txt", payload);
+        Assert.Equal(4, BinaryPrimitives.ReadInt32LittleEndian(content.AsSpan(8)));
 
         byte[] body = DeflateWithZlib(content);
         byte[] wrapped = new byte[8 + body.Length];
@@ -495,15 +572,6 @@ public sealed class ComplexColumnsRowApiTests
             zlib.Write(bytes);
         }
 
-        return output.ToArray();
-    }
-
-    private static byte[] InflateWithZlib(byte[] bytes)
-    {
-        using var input = new MemoryStream(bytes);
-        using var zlib = new ZLibStream(input, CompressionMode.Decompress);
-        using var output = new MemoryStream();
-        zlib.CopyTo(output);
         return output.ToArray();
     }
 }

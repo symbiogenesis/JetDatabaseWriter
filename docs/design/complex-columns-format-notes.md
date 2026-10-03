@@ -135,39 +135,43 @@ Only meaningful on memo columns marked "Append Only" in Access. Lowest-priority 
 
 The reader decodes this in `AttachmentWrapper.TryDecode`, from the stored `FileData` bytes (the flat table's OLE column is read raw, without the OLE-package unwrap and file-signature sniffing that ordinary OLE columns get). The writer encodes it in `AttachmentWrapper.Encode`.
 
+**Verified against all 24 Access-authored attachments in the fixtures**: 2 `.txt` in `ComplexFields.accdb` `Documents.Attachments`, 3 `.txt` in each of `complexDataTestV2007.accdb` / `complexDataTestV2010.accdb` `Table1.attach-data`, and 16 `.jpg` in `NorthwindTraders.accdb` `ProductCategories.ProductCategoryImage`. The layout below is what all of them hold, and it matches Jackcess `AttachmentColumnInfoImpl.encodeData` / `decodeData`.
+
 ### 3.1 Wrapper layout
 
 ```text
-+0   uint32 LE   typeFlag       0x00 = raw, 0x01 = deflate-compressed
-+4   uint32 LE   dataLen        Access/Jackcess: uncompressed length of (header + payload). This writer: length of the stored body.
-+8   ----        contentStream  raw OR deflate-wrapped bytes follow
++0   uint32 LE   typeFlag       0x00 = stored raw, 0x01 = zlib-compressed
++4   uint32 LE   dataLen        length of the UNCOMPRESSED content stream (header + file), for both flags
++8   ----        body           the content stream, as is (typeFlag 0) or as a zlib stream (typeFlag 1)
 ```
 
-Inside `contentStream` (after deflate-decompression if applicable):
+The content stream (after inflating, for typeFlag 1):
 
 ```text
-+0   uint32 LE   headerLen      length of this header block, INCLUDING the 4 bytes for headerLen itself
-+4   uint32 LE   unknownFlag    Jackcess writes 1; meaning unknown
-+8   uint32 LE   extLen         byte length of the file-extension blob that follows
-+12  bytes       fileExtension  null-terminated, encoded with VERSION_12.CHARSET (UCS-2 little-endian, uncompressed). Includes the trailing NUL.
-+12+extLen bytes payload        the actual file bytes
++0   uint32 LE   headerLen      length of this header, INCLUDING the 4 bytes of headerLen itself: 12 + 2 * extChars
++4   uint32 LE   flag           always 1 (Jackcess CONTENT_HEADER_FLAG); meaning unknown
++8   uint32 LE   extChars       length of the extension in CHARACTERS, including its NUL ("txt" -> 4)
++12  bytes       fileExtension  UTF-16LE, NUL-terminated (2 * extChars bytes)
++headerLen bytes payload        the file bytes: dataLen - headerLen of them
 ```
 
-Total wrapper overhead with no compression: `8 + 12 + extLen` bytes.
+So a `.txt` file has `headerLen` 20 and `dataLen` = 20 + the file length. A compressed body is a full zlib stream: the header `78 5E` (deflate, 32 KB window, FLEVEL 1, the level Jackcess's `Deflater(3)` also announces), the deflate blocks, and the big-endian Adler-32 of the content stream. Jackcess writes an empty extension as just its NUL (`extChars` 1, `headerLen` 14); what Access writes there is unchecked.
+
+`AttachmentWrapper.Encode` writes exactly this, with the extension lowercased (as Jackcess does). It frames the zlib stream by hand (`Infrastructure/Adler32.cs`), because the netstandard2.1 build has no `ZLibStream`, and compresses with `DeflateStream` at `CompressionLevel.Optimal`. Its deflate blocks differ from Access's, which no .NET compressor reproduces (they also differ between the zlib builds of .NET 8 and .NET 10), so tests never pin compressed bytes. Re-encoding each Access attachment gives Access's wrapper byte for byte for the raw `.jpg` files, and the same typeFlag, `dataLen`, zlib header, Adler-32 and inflated content for the compressed `.txt` files (`ComplexColumnsAttachmentFormatTests.AccessAuthoredFileData_ReEncodesToSameWrapper`). `AddAttachment_WriterBytes_DecodeWithJackcessSemantics` decodes the writer's stored bytes the way Jackcess `decodeData` does (zlib, then exactly `dataLen - headerLen` file bytes), including a 20 KB value on a chained LVAL.
+
+`AttachmentWrapper.TryDecode` reads the extension from bytes `[12, headerLen)` up to its NUL and ignores `extChars`, as Jackcess does. It reads a typeFlag-1 body as zlib when it has a zlib header and inflates to `dataLen` bytes. Otherwise it inflates the whole body as raw deflate, which is what earlier builds of this library wrote (with `dataLen` = the compressed length and `extChars` counted in bytes), so their files stay readable.
 
 ### 3.2 When to compress
 
-Per Jackcess, deflate is **skipped** for already-compressed media:
+Access stores a small set of formats raw and deflates everything else, including formats that are compressed already, such as gz and mp3. The writer uses Jackcess 4.0.12's list, which its author took from Access ("Use the file formats which ms access stores uncompressed when writing an attachment ... and deflate everything else"):
 
 ```java
-private static final Set<String> COMPRESSED_FORMATS = new HashSet<String>(
-    Arrays.asList("jpg", "zip", "gz", "bz2", "z", "7z", "cab", "rar",
-                  "mp3", "mpg"));
+private static final Set<String> COMPRESSED_FORMATS = new HashSet<>(
+    Arrays.asList("jpg", "jpeg", "gif", "png", "zip", "cab", "docx",
+                  "xlsx", "xlsb", "pptx"));
 ```
 
-Match case-insensitively against `FileType` (which Jackcess lowercases on store). Jackcess uses `Deflater(3)` (level 3, raw deflate without zlib wrapper). HACKING.md notes "if a memo field is marked for compression, only at value which is at most 1024 characters when uncompressed can be compressed" — that's a memo-compression rule, not an attachment rule, so it does not apply here.
-
-> The compression flag is `0x01 = zlib-deflate`. Access-authored files (`ComplexFields.accdb`, Jackcess `complexDataTest*.accdb`) store a **zlib-wrapped** stream (`78 5E` header) whose `dataLen` is the uncompressed content length. `AttachmentWrapper.Encode` writes **raw deflate** with `dataLen` = compressed length. `AttachmentWrapper.TryDecode` accepts both: when the body starts with a valid zlib header it inflates after the 2-byte header, otherwise (or if that fails to parse) it inflates the body as raw deflate, and in both cases the compressed body runs to the end of the value.
+The match is case-insensitive. The fixtures confirm only `.jpg` (raw) and `.txt` (compressed); the rest of the list is Jackcess's observation, not Microsoft documentation. HACKING.md notes "if a memo field is marked for compression, only at value which is at most 1024 characters when uncompressed can be compressed" — that's a memo-compression rule, not an attachment rule, so it does not apply here.
 
 ## 4. Reader / writer phases
 
@@ -315,7 +319,7 @@ C10 caveats:
 General DAO validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md), and cross-feature coverage lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md). Same as the index doc, with one addition specific to attachments:
 
 - Round-trip through this library: read fixtures (`ComplexFields.accdb`) → re-emit → re-read → byte-compare attachment payloads (post-decode).
-- Cross-validate compression: a `.jpg` payload must be stored with `typeFlag=0x00` (raw); a `.txt` payload must be stored with `typeFlag=0x01` (deflate). Open in Access and **save the attachment back to disk via the GUI** — verify the saved file is byte-identical to the input.
+- Cross-validate compression: a `.jpg` payload must be stored with `typeFlag=0x00` (raw); a `.txt` payload must be stored with `typeFlag=0x01` (a zlib stream, §3.1). Open in Access and **save the attachment back to disk via the GUI** (or DAO `Field2.SaveToFile`) — verify the saved file is byte-identical to the input. Not yet done: Access is not installed where the tests run, so whether Access reads the writer's deflate blocks is unchecked; any valid zlib stream should inflate.
 - Test fixture: `JetDatabaseWriter.Tests/Databases/ComplexFields.accdb`. This is the existing read-side fixture; the writer tests should round-trip it.
 
 ## 6. References

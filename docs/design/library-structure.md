@@ -355,6 +355,7 @@ JetDatabaseWriter/
     ├── StreamReadExtensions.cs            (cross-target stream read helpers)
     ├── AsyncLazyInitializer.cs            (thread-safe async lazy initialization)
     ├── AsyncReentrantOperationGate.cs     (reentrant async operation serializer)
+    ├── Adler32.cs                         (zlib Adler-32 checksum for attachment zlib streams)
     └── Guard.cs                           (argument validation helpers)
 ```
 

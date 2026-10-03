@@ -1,7 +1,9 @@
 namespace JetDatabaseWriter.ComplexColumns.Models;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -11,56 +13,62 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Encodes / decodes the Access 2007+ Attachment <c>FileData</c> wrapper per
-/// <see href="docs/design/complex-columns-format-notes.md" /> §3. The encoder is the
-/// authoritative round-trip path used by the writer; the decoder is also used
-/// by the typed
+/// <see href="docs/design/complex-columns-format-notes.md" /> §3. The encoder
+/// writes what Access writes (checked against every Access-authored attachment
+/// in the test fixtures); the decoder reads that, and the raw-deflate form
+/// earlier builds of this library wrote. The decoder also serves the typed
 /// <see cref="IAccessReader.GetAttachmentsAsync(string, string, System.Threading.CancellationToken)"/>
-/// surface.
+/// surface and the row reads.
 /// </summary>
 internal static class AttachmentWrapper
 {
+    private const int WrapperHeaderSize = 8;
+    private const int ContentHeaderSize = 12;
+    private const uint ContentHeaderFlag = 1;
+
+    /// <summary>The zlib CMF byte Access writes: deflate with a 32 KB window.</summary>
+    private const byte ZlibCmf = 0x78;
+
     /// <summary>
-    /// Per Jackcess COMPRESSED_FORMATS: deflate is skipped for already-compressed media.
+    /// The zlib FLG byte Access writes: FLEVEL 1, the level Jackcess's
+    /// <c>Deflater(3)</c> also announces. Decoders ignore FLEVEL.
     /// </summary>
-    private static readonly HashSet<string> CompressedFormats = new(StringComparer.OrdinalIgnoreCase)
+    private const byte ZlibFlg = 0x5E;
+
+    /// <summary>
+    /// The formats Access stores raw (typeFlag 0). Access deflates everything
+    /// else, including formats that are compressed already, such as gz and mp3.
+    /// This is Jackcess 4.0.12's <c>COMPRESSED_FORMATS</c>, from its author's
+    /// observation of Access; the fixtures store jpg raw and txt compressed.
+    /// </summary>
+    private static readonly HashSet<string> RawFormats = new(StringComparer.OrdinalIgnoreCase)
     {
-        "jpg", "zip", "gz", "bz2", "z", "7z", "cab", "rar", "mp3", "mpg",
+        "jpg", "jpeg", "gif", "png", "zip", "cab", "docx", "xlsx", "xlsb", "pptx",
     };
 
     /// <summary>
-    /// Wraps <paramref name="payload"/> per spec §3.1. The 4-byte typeFlag is
-    /// <c>0x00</c> (raw) when <paramref name="fileExtension"/> is in the
-    /// COMPRESSED_FORMATS skip-list (or <see cref="ShouldCompress"/> overrides
-    /// to <see langword="false"/>); otherwise <c>0x01</c> (raw deflate).
+    /// Wraps <paramref name="payload"/> per spec §3.1 as Access does: typeFlag
+    /// <c>0</c> (stored raw) when the extension is one Access stores raw, else
+    /// <c>1</c> (a zlib stream); <c>dataLen</c> is the length of the uncompressed
+    /// content stream either way. The content header holds the lowercased
+    /// extension as NUL-terminated UTF-16LE, with its length counted in
+    /// characters including the NUL.
     /// </summary>
-    /// <param name="fileExtension">Lowercase extension without leading dot (e.g. <c>"pdf"</c>).</param>
+    /// <param name="fileExtension">The extension without its leading dot (e.g. <c>"pdf"</c>); it is stored lowercased.</param>
     /// <param name="payload">Raw uncompressed file bytes.</param>
     public static byte[] Encode(string fileExtension, byte[] payload)
     {
         Guard.NotNull(payload, nameof(payload));
 
-        fileExtension ??= string.Empty;
-        bool compress = ShouldCompress(fileExtension);
+        string extension = NormalizeExtension(fileExtension);
+        bool compress = ShouldCompress(extension);
+        byte[] content = BuildContent(extension, payload);
+        byte[] body = compress ? ZlibDeflate(content) : content;
 
-        // Build the contentStream: headerLen(4) + unknownFlag(4) + extLen(4) +
-        // extBytes(UCS-2 LE NUL-terminated) + payload
-        byte[] extBytes = EncodeExtension(fileExtension);
-        int headerLen = 12 + extBytes.Length;
-
-        byte[] contentStream = new byte[headerLen + payload.Length];
-        Wu32(contentStream, 0, headerLen);
-        Wu32(contentStream, 4, 1u); // unknownFlag (Jackcess writes 1)
-        Wu32(contentStream, 8, extBytes.Length);
-        Buffer.BlockCopy(extBytes, 0, contentStream, 12, extBytes.Length);
-        Buffer.BlockCopy(payload, 0, contentStream, headerLen, payload.Length);
-
-        byte[] body = compress ? RawDeflate(contentStream) : contentStream;
-        uint typeFlag = compress ? 1u : 0u;
-
-        byte[] wrapped = new byte[8 + body.Length];
-        Wu32(wrapped, 0, typeFlag);
-        Wu32(wrapped, 4, body.Length);
-        Buffer.BlockCopy(body, 0, wrapped, 8, body.Length);
+        byte[] wrapped = new byte[WrapperHeaderSize + body.Length];
+        Wu32(wrapped, 0, compress ? 1u : 0u);
+        Wu32(wrapped, 4, content.Length);
+        Buffer.BlockCopy(body, 0, wrapped, WrapperHeaderSize, body.Length);
         return wrapped;
     }
 
@@ -70,11 +78,14 @@ internal static class AttachmentWrapper
     /// unchanged when the wrapper signature is not recognised.
     /// </summary>
     /// <remarks>
-    /// A compressed body (typeFlag <c>1</c>) is either zlib-wrapped deflate
-    /// (Access and Jackcess; <c>dataLen</c> is then the uncompressed content
-    /// length) or raw deflate (this library's <see cref="Encode"/>;
-    /// <c>dataLen</c> is the compressed length). Both are accepted, and the
-    /// compressed body is taken to run to the end of the value.
+    /// A compressed body (typeFlag <c>1</c>) is read as a zlib stream whose
+    /// content is <c>dataLen</c> bytes, as Access, Jackcess and <see cref="Encode"/>
+    /// write it. When it is not one, the body is read as raw deflate running
+    /// to the end of the value, the form earlier builds of this library wrote
+    /// (with <c>dataLen</c> the compressed length). The extension is read from
+    /// the rest of the content header up to its NUL; the length field before it
+    /// is ignored, as Jackcess ignores it, because Access counts characters
+    /// and earlier builds of this library counted bytes.
     /// </remarks>
     /// <param name="wrapped">The wrapped.</param>
     /// <param name="fileExtension">The file extension.</param>
@@ -83,7 +94,7 @@ internal static class AttachmentWrapper
     {
         fileExtension = string.Empty;
         payload = wrapped ?? [];
-        if (wrapped == null || wrapped.Length < 8 + 12)
+        if (wrapped == null || wrapped.Length < WrapperHeaderSize + ContentHeaderSize)
         {
             return false;
         }
@@ -95,91 +106,115 @@ internal static class AttachmentWrapper
             return false;
         }
 
+        int bodyLength = wrapped.Length - WrapperHeaderSize;
         if (typeFlag == 0)
         {
-            return dataLen <= (uint)(wrapped.Length - 8)
-                && TryParseContent(wrapped.AsSpan(8, (int)dataLen).ToArray(), ref fileExtension, ref payload);
+            return dataLen <= (uint)bodyLength
+                && TryParseContent(wrapped.AsSpan(WrapperHeaderSize, (int)dataLen).ToArray(), ref fileExtension, ref payload);
         }
 
         // A zlib stream starts with CMF = 0x?8 (deflate) and a CMF/FLG pair
-        // divisible by 31. Try that reading first, then raw deflate.
-        int bodyLength = wrapped.Length - 8;
-        bool zlibHeader = (wrapped[8] & 0x0F) == 8 && ((wrapped[8] << 8) | wrapped[9]) % 31 == 0;
+        // divisible by 31; the deflate blocks after it end before the Adler-32.
+        bool zlibHeader = (wrapped[WrapperHeaderSize] & 0x0F) == 8
+            && ((wrapped[WrapperHeaderSize] << 8) | wrapped[WrapperHeaderSize + 1]) % 31 == 0;
         return (zlibHeader
-                && TryRawInflate(wrapped, 10, bodyLength - 2, out byte[] zlibContent)
+                && TryRawInflate(wrapped, WrapperHeaderSize + 2, bodyLength - 2, out byte[] zlibContent)
+                && zlibContent.Length == dataLen
                 && TryParseContent(zlibContent, ref fileExtension, ref payload))
-            || (TryRawInflate(wrapped, 8, bodyLength, out byte[] rawContent)
+            || (TryRawInflate(wrapped, WrapperHeaderSize, bodyLength, out byte[] rawContent)
                 && TryParseContent(rawContent, ref fileExtension, ref payload));
     }
 
     /// <summary>
-    /// Returns <see langword="true"/> when the extension is NOT in the
-    /// COMPRESSED_FORMATS skip-list (i.e. the payload should be deflate-compressed).
-    /// Empty extensions are compressed.
+    /// Returns <see langword="true"/> when Access deflates files with this
+    /// extension, i.e. it is not one Access stores raw. Case-insensitive; an
+    /// empty extension is compressed.
     /// </summary>
     /// <param name="fileExtension">The file extension.</param>
     public static bool ShouldCompress(string fileExtension)
-        => !CompressedFormats.Contains(fileExtension ?? string.Empty);
+        => !RawFormats.Contains(fileExtension ?? string.Empty);
 
-    private static byte[] EncodeExtension(string ext)
+    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Access and Jackcess store attachment extensions in lowercase.")]
+    private static string NormalizeExtension(string? fileExtension)
+        => string.IsNullOrEmpty(fileExtension) ? string.Empty : fileExtension.ToLowerInvariant();
+
+    /// <summary>
+    /// Builds the content stream: <c>headerLen</c>, the flag <c>1</c>, the
+    /// extension length in characters including its NUL, the extension as
+    /// NUL-terminated UTF-16LE, then the file bytes.
+    /// </summary>
+    /// <param name="extension">The extension, already lowercased.</param>
+    /// <param name="payload">The file bytes.</param>
+    private static byte[] BuildContent(string extension, byte[] payload)
     {
-        // UCS-2 LE, NUL-terminated. extLen counts the NUL.
-        if (string.IsNullOrEmpty(ext))
-        {
-            return [0x00, 0x00];
-        }
+        int extensionChars = extension.Length + 1;
+        int headerLen = ContentHeaderSize + (extensionChars * 2);
 
-        byte[] raw = Encoding.Unicode.GetBytes(ext);
-        byte[] withNul = new byte[raw.Length + 2];
-        Buffer.BlockCopy(raw, 0, withNul, 0, raw.Length);
-        return withNul;
+        byte[] content = new byte[headerLen + payload.Length];
+        Wu32(content, 0, headerLen);
+        Wu32(content, 4, ContentHeaderFlag);
+        Wu32(content, 8, extensionChars);
+        _ = Encoding.Unicode.GetBytes(extension, 0, extension.Length, content, ContentHeaderSize);
+        Buffer.BlockCopy(payload, 0, content, headerLen, payload.Length);
+        return content;
     }
 
-    private static string DecodeExtension(byte[] content, int offset, int length)
-    {
-        if (length <= 0 || offset + length > content.Length)
-        {
-            return string.Empty;
-        }
-
-        // Strip trailing NULs.
-        int effectiveLen = length;
-        while (effectiveLen >= 2 &&
-               content[offset + effectiveLen - 1] == 0 &&
-               content[offset + effectiveLen - 2] == 0)
-        {
-            effectiveLen -= 2;
-        }
-
-        return effectiveLen <= 0 ? string.Empty : Encoding.Unicode.GetString(content, offset, effectiveLen);
-    }
-
-    private static byte[] RawDeflate(byte[] data)
+    /// <summary>
+    /// Compresses <paramref name="content"/> as a zlib stream: Access's
+    /// <c>78 5E</c> header, the deflate blocks, and the big-endian Adler-32 of
+    /// the content. The deflate blocks differ from Access's, which no .NET
+    /// compressor reproduces; any zlib decoder reads both.
+    /// </summary>
+    /// <param name="content">The content stream.</param>
+    private static byte[] ZlibDeflate(byte[] content)
     {
         using var ms = new MemoryStream();
-        using (var deflate = new DeflateStream(ms, CompressionLevel.Fastest, leaveOpen: true))
+        ms.WriteByte(ZlibCmf);
+        ms.WriteByte(ZlibFlg);
+        using (var deflate = new DeflateStream(ms, CompressionLevel.Optimal, leaveOpen: true))
         {
-            deflate.Write(data, 0, data.Length);
+            deflate.Write(content, 0, content.Length);
         }
 
+        Span<byte> adler = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32BigEndian(adler, Adler32.Compute(content));
+        ms.Write(adler);
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Reads the UTF-16LE extension from <paramref name="length"/> bytes at
+    /// <paramref name="offset"/>, up to its NUL.
+    /// </summary>
+    /// <param name="content">The content stream.</param>
+    /// <param name="offset">Where the extension starts.</param>
+    /// <param name="length">The bytes the header leaves for it.</param>
+    private static string DecodeExtension(byte[] content, int offset, int length)
+    {
+        int chars = 0;
+        while (((chars + 1) * 2) <= length
+            && (content[offset + (chars * 2)] != 0 || content[offset + (chars * 2) + 1] != 0))
+        {
+            chars++;
+        }
+
+        return chars == 0 ? string.Empty : Encoding.Unicode.GetString(content, offset, chars * 2);
     }
 
     private static bool TryParseContent(byte[] content, ref string fileExtension, ref byte[] payload)
     {
-        if (content.Length < 12)
+        if (content.Length < ContentHeaderSize)
         {
             return false;
         }
 
         uint headerLen = Ru32(content, 0);
-        uint extLen = Ru32(content, 8);
-        if (headerLen < 12 || headerLen > (uint)content.Length || extLen > headerLen - 12)
+        if (headerLen < ContentHeaderSize || headerLen > (uint)content.Length)
         {
             return false;
         }
 
-        fileExtension = DecodeExtension(content, 12, (int)extLen);
+        fileExtension = DecodeExtension(content, ContentHeaderSize, (int)headerLen - ContentHeaderSize);
         payload = content.AsSpan((int)headerLen).ToArray();
         return true;
     }
