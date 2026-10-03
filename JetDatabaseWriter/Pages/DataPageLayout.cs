@@ -23,6 +23,54 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
 }
 
 /// <summary>
+/// Per-format layout of an LVAL page: a data page (type <c>0x01</c>) whose
+/// owner field at offset 4 holds the <c>"LVAL"</c> signature instead of a TDEF
+/// page number. The row count and row-offset table sit where
+/// <see cref="DataPage"/> puts them on any data page; the rest follows the
+/// pages Access writes. On Jet4/ACE a full chained row starts at offset 20,
+/// leaving 4 bytes of free space, and bytes 8-11 are unused (Access leaves
+/// them zero; the writer stores its LVAL token there). On Jet3, Access 97
+/// starts a full chained row at 12, right after the one-entry row-offset
+/// table, packs a single-page row or the last chunk at the end of the page,
+/// and stores no token anywhere, since offset 8 is the row count (measured on
+/// test2V1997.mdb pages 37-49 and nwind.mdb).
+/// </summary>
+/// <param name="DataPage">The data-page header layout (row count and row-offset table).</param>
+/// <param name="MinRowStart">The lowest row start of a one-row LVAL page; a row's payload capacity is the page size minus this.</param>
+/// <param name="WritesToken">Whether bytes 8-11 are free for the LVAL token (Jet4/ACE only).</param>
+/// <param name="PackRowsAtEnd">Whether every row is written at the end of its page, as Access 97 does, rather than at <paramref name="MinRowStart"/>.</param>
+internal readonly record struct LvalPageLayout(DataPageLayout DataPage, int MinRowStart, bool WritesToken, bool PackRowsAtEnd)
+{
+    /// <summary>Returns the LVAL page layout for <paramref name="format"/>.</summary>
+    /// <param name="format">The format.</param>
+    public static LvalPageLayout For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
+        ? new LvalPageLayout(DataPageLayout.For(format), MinRowStart: 20, WritesToken: true, PackRowsAtEnd: false)
+        : new LvalPageLayout(DataPageLayout.For(format), MinRowStart: 12, WritesToken: false, PackRowsAtEnd: true);
+
+    /// <summary>
+    /// Returns the largest payload one LVAL row holds on a page of
+    /// <paramref name="pageSize"/> bytes: 2036 on Jet3, 4076 on Jet4/ACE.
+    /// </summary>
+    /// <param name="pageSize">The page size in bytes.</param>
+    public int SinglePagePayloadCapacity(int pageSize) => pageSize - this.MinRowStart;
+
+    /// <summary>
+    /// Returns the payload bytes one chained LVAL row holds after its 4-byte
+    /// next-row pointer: 2032 on Jet3, Access 97's chunk size, and 4072 on Jet4/ACE.
+    /// </summary>
+    /// <param name="pageSize">The page size in bytes.</param>
+    public int ChainedPagePayloadCapacity(int pageSize) => this.SinglePagePayloadCapacity(pageSize) - 4;
+
+    /// <summary>
+    /// Returns the free-space field (offset 2) of a one-row LVAL page whose row
+    /// starts at <paramref name="rowStart"/>: the gap between the one-entry
+    /// row-offset table and the row.
+    /// </summary>
+    /// <param name="rowStart">The row start offset.</param>
+    public int FreeSpace(int rowStart) => rowStart - (this.DataPage.RowsStart + 2);
+}
+
+/// <summary>
 /// Per-format byte offsets within a TDEF page's table-definition block, plus
 /// the size of one real-index entry in the post-block skip region. Used by
 /// every TDEF parse / rewrite call site. Jet4/ACE inserts a 4-byte field at

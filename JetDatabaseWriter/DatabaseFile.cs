@@ -114,6 +114,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         //   Jet4 / ACE (Access 2000–2019): TDEF 8+55 = 63 bytes, column descriptor 25 bytes.
         //   Jet3        (Access 97):       TDEF 8+35 = 43 bytes, column descriptor 18 bytes.
         this.DataPage = DataPageLayout.For(this.Format);
+        this.LvalPage = LvalPageLayout.For(this.Format);
         this.TDef = TDefHeaderLayout.For(this.Format);
         this.ColumnDescriptor = ColumnDescriptorLayout.For(this.Format);
         this.RowFields = RowFieldSizes.For(this.Format);
@@ -132,6 +133,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>Gets per-format byte offsets within a data-page (page type 0x01) header — see <see cref="DataPageLayout"/>.</summary>
     internal DataPageLayout DataPage { get; }
+
+    /// <summary>Gets the per-format layout of an LVAL page — see <see cref="LvalPageLayout"/>.</summary>
+    internal LvalPageLayout LvalPage { get; }
 
     /// <summary>Gets per-format byte offsets within a TDEF block plus real-idx entry size — see <see cref="TDefHeaderLayout"/>.</summary>
     internal TDefHeaderLayout TDef { get; }

@@ -53,20 +53,14 @@ internal static class LongValueStore
 
     internal static int RowIndex(uint lvalDp) => (int)(lvalDp & 0xFF);
 
-    internal static int SinglePagePayloadCapacity(int pageSize)
-        => pageSize - Constants.LongValue.LvalRowStart;
-
-    internal static int ChainedPagePayloadCapacity(int pageSize)
-        => SinglePagePayloadCapacity(pageSize) - 4;
-
-    internal static byte[] BuildSinglePageBuffer(ReadOnlySpan<byte> payload, uint token, int pageSize, bool packRowsAtEnd)
+    internal static byte[] BuildSinglePageBuffer(ReadOnlySpan<byte> payload, uint token, int pageSize, LvalPageLayout layout, bool packRowsAtEnd)
     {
         byte[] page = ArrayPool<byte>.Shared.Rent(pageSize);
         Array.Clear(page, 0, pageSize);
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        int rowStart = packRowsAtEnd ? pageSize - payload.Length : Constants.LongValue.LvalRowStart;
-        WriteLvalPageHeader(page, token, rowStart);
+        int rowStart = packRowsAtEnd || layout.PackRowsAtEnd ? pageSize - payload.Length : layout.MinRowStart;
+        WriteLvalPageHeader(page, layout, token, rowStart);
         payload.CopyTo(page.AsSpan(rowStart, payload.Length));
         return page;
     }
@@ -78,14 +72,15 @@ internal static class LongValueStore
         uint nextDp,
         uint token,
         int pageSize,
+        LvalPageLayout layout,
         bool packRowsAtEnd)
     {
         byte[] page = ArrayPool<byte>.Shared.Rent(pageSize);
         Array.Clear(page, 0, pageSize);
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        int rowStart = packRowsAtEnd ? pageSize - (length + 4) : Constants.LongValue.LvalRowStart;
-        WriteLvalPageHeader(page, token, rowStart);
+        int rowStart = packRowsAtEnd || layout.PackRowsAtEnd ? pageSize - (length + 4) : layout.MinRowStart;
+        WriteLvalPageHeader(page, layout, token, rowStart);
         Wi32(page, rowStart, unchecked((int)nextDp));
         data.Slice(offset, length).CopyTo(page.AsSpan(rowStart + 4, length));
         return page;
@@ -242,16 +237,20 @@ internal static class LongValueStore
         }
     }
 
-    private static void WriteLvalPageHeader(byte[] page, uint token, int rowStart)
+    private static void WriteLvalPageHeader(byte[] page, LvalPageLayout layout, uint token, int rowStart)
     {
         page[4] = (byte)'L';
         page[5] = (byte)'V';
         page[6] = (byte)'A';
         page[7] = (byte)'L';
-        Wi32(page, 8, unchecked((int)token));
-        Wu16(page, 12, 1);
-        Wu16(page, 14, rowStart);
-        Wu16(page, 2, rowStart - 16);
+        if (layout.WritesToken)
+        {
+            Wi32(page, 8, unchecked((int)token));
+        }
+
+        Wu16(page, layout.DataPage.NumRows, 1);
+        Wu16(page, layout.DataPage.RowsStart, rowStart);
+        Wu16(page, 2, layout.FreeSpace(rowStart));
     }
 
     private struct SmallLvalDpSet

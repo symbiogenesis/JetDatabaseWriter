@@ -535,6 +535,32 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.Contains(linkedTables, table => string.Equals(table.Name, "LinkedCsv", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// The linked row's <c>Database</c> path is always written to an LVAL page,
+    /// so on Jet3 it reads back only when that page has the Jet3 data-page header.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Fact]
+    public async Task CreateLinkedTableAsync_Jet3_DatabasePathRoundTrips()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        const string sourcePath = @"C:\Data\source.mdb";
+        string frontEndPath = await this.CreateTempMdbDatabaseAsync("Jet3LinkedPath");
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            frontEndPath,
+            new AccessWriterOptions { UseLockFile = false },
+            ct))
+        {
+            await writer.CreateLinkedTableAsync("LinkedAccess", sourcePath, "Products", ct);
+        }
+
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        LinkedTableInfo linked = Assert.Single(await reader.ListLinkedTablesAsync(ct));
+        Assert.Equal("LinkedAccess", linked.Name);
+        Assert.Equal(sourcePath, linked.SourcePath);
+    }
+
     [Fact]
     public async Task InsertCatalogObjectAsync_DuplicateParentIdName_ThrowsBeforeSplice()
     {

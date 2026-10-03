@@ -7,6 +7,7 @@ using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using Xunit;
 
 /// <summary>
@@ -73,7 +74,7 @@ public sealed class LvalLengthMismatchTests
 
         // Access-style LVAL pages do not carry a separate single-page payload length,
         // so a corrupted oversized header is capped by the remaining page capacity.
-        const int singlePageCapacity = 4096 - Constants.LongValue.LvalRowStart;
+        int singlePageCapacity = LvalPageLayout.For(DatabaseFormat.AceAccdb).SinglePagePayloadCapacity(4096);
         Assert.True(result.Length <= singlePageCapacity, $"Expected ≤ {singlePageCapacity} bytes, got {result.Length}.");
         Assert.True(result.Length > 0, "Expected non-empty result.");
     }

@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Pages;
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -116,6 +117,35 @@ public sealed class EmittedPageInvariantTests
         }
 
         EmittedPageInvariantAssert.AllPagesAreWellFormed(stream.ToArray(), format);
+    }
+
+    [Fact]
+    public async Task SingleAndChainedLval_Jet3_EmitWellFormedPages()
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "LongValues",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Body", typeof(string)),
+                    new ColumnDefinition("Blob", typeof(byte[])),
+                ],
+                this.ct);
+
+            await writer.InsertRowsAsync(
+                "LongValues",
+                [
+                    [1, new string('m', 1500), DBNull.Value],
+                    [2, DBNull.Value, new byte[2036]],
+                    [3, DBNull.Value, new byte[9000]],
+                ],
+                this.ct);
+        }
+
+        EmittedPageInvariantAssert.AllPagesAreWellFormed(stream.ToArray(), DatabaseFormat.Jet3Mdb);
     }
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)

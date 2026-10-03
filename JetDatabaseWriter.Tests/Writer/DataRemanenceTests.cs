@@ -105,6 +105,7 @@ public sealed class DataRemanenceTests
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task UpdateAndDelete_LongOleValues_RetainOldLvalPages(DatabaseFormat format)
@@ -238,6 +239,7 @@ public sealed class DataRemanenceTests
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task DeleteRows_SecureEraseMode_ScrubsAndFreesLongOlePages(DatabaseFormat format)

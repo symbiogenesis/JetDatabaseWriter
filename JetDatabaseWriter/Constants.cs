@@ -967,10 +967,21 @@ internal static class Constants
         /// <summary>Size in bytes of an inline row LVAL header.</summary>
         public const int HeaderSize = 12;
 
-        /// <summary>Maximum MEMO payload size stored inline in the owning data row.</summary>
+        /// <summary>
+        /// Maximum MEMO payload size stored inline in the owning data row, on
+        /// every format. Access 97 keeps only values of 32 bytes or less inline
+        /// and moves larger ones to LVAL pages (measured on nwind.mdb and
+        /// queryTestV1997.mdb). The writer keeps the larger cap because it
+        /// writes one value per LVAL page, so a lower cap would spend a whole
+        /// page on every 33-byte value.
+        /// </summary>
         public const int MaxInlineMemoBytes = 1024;
 
-        /// <summary>Maximum OLE payload size stored inline in the owning data row.</summary>
+        /// <summary>
+        /// Maximum OLE payload size stored inline in the owning data row, on
+        /// every format. See <see cref="MaxInlineMemoBytes"/> for the smaller
+        /// threshold Access 97 uses.
+        /// </summary>
         public const int MaxInlineOleBytes = 256;
 
         /// <summary>
@@ -980,9 +991,6 @@ internal static class Constants
         /// of the chosen storage form (inline / single-page / chained).
         /// </summary>
         public const int MaxPayloadBytes = (1 << 24) - 1;
-
-        /// <summary>Minimum row-start offset after the 20-byte LVAL page header area.</summary>
-        public const int LvalRowStart = 20;
 
         /// <summary>Mask applied to the LVAL header bitmask byte to identify storage mode.</summary>
         public const byte StorageModeMask = 0xC0;

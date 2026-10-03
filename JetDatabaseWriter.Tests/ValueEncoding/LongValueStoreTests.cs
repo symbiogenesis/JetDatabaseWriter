@@ -1,9 +1,11 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
@@ -39,6 +41,103 @@ public sealed class LongValueStoreTests
         Assert.Equal(payload.Length, descriptor.Length);
         Assert.True(descriptor.IsInline);
         Assert.Equal(payload, wrapped.AsSpan(Constants.LongValue.HeaderSize, payload.Length).ToArray());
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, 2048, 12, false, true, 2036, 2032)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 4096, 20, true, false, 4076, 4072)]
+    [InlineData(DatabaseFormat.AceAccdb, 4096, 20, true, false, 4076, 4072)]
+    public void LvalPageLayout_For_GivesAccessHeaderAreas(
+        DatabaseFormat format,
+        int pageSize,
+        int minRowStart,
+        bool writesToken,
+        bool packRowsAtEnd,
+        int singlePageCapacity,
+        int chainedPageCapacity)
+    {
+        var layout = LvalPageLayout.For(format);
+
+        Assert.Equal(DataPageLayout.For(format), layout.DataPage);
+        Assert.Equal(minRowStart, layout.MinRowStart);
+        Assert.Equal(writesToken, layout.WritesToken);
+        Assert.Equal(packRowsAtEnd, layout.PackRowsAtEnd);
+        Assert.Equal(singlePageCapacity, layout.SinglePagePayloadCapacity(pageSize));
+        Assert.Equal(chainedPageCapacity, layout.ChainedPagePayloadCapacity(pageSize));
+        Assert.Equal(0, layout.FreeSpace(format == DatabaseFormat.Jet3Mdb ? 12 : 16));
+    }
+
+    [Fact]
+    public void BuildSinglePageBuffer_Jet4_KeepsExistingLayout()
+    {
+        const int pageSize = 4096;
+        byte[] payload = Payload(100);
+
+        byte[] page = LongValueStore.BuildSinglePageBuffer(payload, 0xDEADBEEF, pageSize, LvalPageLayout.For(DatabaseFormat.Jet4Mdb), packRowsAtEnd: false);
+        try
+        {
+            AssertLvalPageStart(page);
+            Assert.Equal(4, Ru16(page, 2));
+            Assert.Equal(0xDEADBEEF, unchecked((uint)Ri32(page, 8)));
+            Assert.Equal(1, Ru16(page, 12));
+            Assert.Equal(20, Ru16(page, 14));
+            Assert.Equal(payload, page.AsSpan(20, payload.Length).ToArray());
+            Assert.True(IsZero(page.AsSpan(16, 4)));
+            Assert.True(IsZero(page.AsSpan(20 + payload.Length, pageSize - 20 - payload.Length)));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(page);
+        }
+    }
+
+    [Fact]
+    public void BuildSinglePageBuffer_Jet3_WritesJet3HeaderPackedAtEnd()
+    {
+        const int pageSize = 2048;
+        byte[] payload = Payload(100);
+
+        byte[] page = LongValueStore.BuildSinglePageBuffer(payload, 0xDEADBEEF, pageSize, LvalPageLayout.For(DatabaseFormat.Jet3Mdb), packRowsAtEnd: false);
+        try
+        {
+            AssertLvalPageStart(page);
+            Assert.Equal(1936, Ru16(page, 2));
+            Assert.Equal(1, Ru16(page, 8));
+            Assert.Equal(1948, Ru16(page, 10));
+            Assert.True(IsZero(page.AsSpan(12, 1948 - 12)));
+            Assert.Equal(payload, page.AsSpan(1948, payload.Length).ToArray());
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(page);
+        }
+    }
+
+    [Theory]
+    [InlineData(2032, 12, 0)]
+    [InlineData(618, 1426, 1414)]
+    public void BuildChainedPageBuffer_Jet3_FullChunkStartsAfterOffsetTable(int chunkLength, int expectedRowStart, int expectedFreeSpace)
+    {
+        const int pageSize = 2048;
+        byte[] data = Payload(chunkLength + 10);
+        uint nextDp = LongValueStore.MakeRowPointer(37, rowIndex: 0);
+
+        byte[] page = LongValueStore.BuildChainedPageBuffer(data, 10, chunkLength, nextDp, 0xDEADBEEF, pageSize, LvalPageLayout.For(DatabaseFormat.Jet3Mdb), packRowsAtEnd: false);
+        try
+        {
+            AssertLvalPageStart(page);
+            Assert.Equal(expectedFreeSpace, Ru16(page, 2));
+            Assert.Equal(1, Ru16(page, 8));
+            Assert.Equal(expectedRowStart, Ru16(page, 10));
+            Assert.True(IsZero(page.AsSpan(12, expectedRowStart - 12)));
+            Assert.Equal(nextDp, unchecked((uint)Ri32(page, expectedRowStart)));
+            Assert.Equal(data.AsSpan(10, chunkLength).ToArray(), page.AsSpan(expectedRowStart + 4, chunkLength).ToArray());
+            Assert.Equal(pageSize, expectedRowStart + 4 + chunkLength);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(page);
+        }
     }
 
     [Fact]
@@ -112,6 +211,26 @@ public sealed class LongValueStoreTests
 
         Assert.Equal([7L, 8L], deallocatedPages);
     }
+
+    private static byte[] Payload(int length)
+    {
+        byte[] payload = new byte[length];
+        for (int i = 0; i < payload.Length; i++)
+        {
+            payload[i] = unchecked((byte)((i * 13) + 1));
+        }
+
+        return payload;
+    }
+
+    private static void AssertLvalPageStart(byte[] page)
+    {
+        Assert.Equal(Constants.PageTypes.Data, page[0]);
+        Assert.Equal(0x01, page[1]);
+        Assert.Equal("LVAL"u8.ToArray(), page.AsSpan(4, 4).ToArray());
+    }
+
+    private static bool IsZero(ReadOnlySpan<byte> bytes) => bytes.IndexOfAnyExcept((byte)0) < 0;
 
     private static LvalRowLocation CreateChainedRow(uint nextDp, byte[] payload, int pageSize)
     {
