@@ -612,7 +612,7 @@ await writer.InsertRowAsync("Scores", new RowValues { ["Score"] = 5 });        /
 await writer.InsertRowAsync("Scores", new RowValues { ["Id"] = null });        // Id 4, Score 0
 ```
 
-An AutoNumber column generates its next value for `null`, `DBNull.Value` and `DbDefault.Value` alike, and a calculated column is always computed. A POCO property whose value is `null` stores NULL; to take the default instead, leave the property off the type or mark it `[NotMapped]`. Updates never apply defaults, and `UpdateRowsAsync` rejects `DbDefault.Value`.
+An AutoNumber column generates its next value for `null`, `DBNull.Value` and `DbDefault.Value` alike, and a calculated column is computed when the insert leaves it out or passes any of the three; a non-null value you pass for a calculated column is stored as given. A POCO property whose value is `null` stores NULL; to take the default instead, leave the property off the type or mark it `[NotMapped]`. Updates never apply defaults, and `UpdateRowsAsync` rejects `DbDefault.Value`.
 
 ### Update & delete
 
