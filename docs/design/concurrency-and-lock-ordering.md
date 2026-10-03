@@ -168,6 +168,15 @@ to this hierarchy and cannot deadlock with one, because no reader lock is held
 while the OS reads, except `IoGate` on the seek-and-read path, which already
 serializes that path's reads. The writer opens an overlapped handle.
 
+When the read starts on a thread-pool thread with no synchronization context
+and the default task scheduler, a path-opened reader runs it on that thread
+instead of another pool thread (`DatabaseFile.ReadsInlineOnThreadPool`). On
+the seek-and-read path that thread holds `IoGate` across the blocking read,
+just as an offloaded read held it across the awaited one, so the hierarchy is
+unchanged. An inline read cannot be cancelled once started; the token is
+checked before it. Threads with a synchronization context, such as UI threads,
+never block on a page read.
+
 ### Disposal
 
 Reader — [`DisposeAsync`](../../JetDatabaseWriter/AccessReader.cs#L402):

@@ -174,6 +174,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
             reader.Database.EnableRandomAccessPageReadsIfSupported();
         }
 
+        // CreateStream opened a synchronous handle, so a page read that starts
+        // on a pool thread is cheaper done there than handed to another one.
+        reader.Database.ReadsInlineOnThreadPool = true;
         return reader;
     }
 

@@ -122,6 +122,8 @@ await using var reader = await AccessReader.OpenAsync("database.mdb", cancellati
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
 ```
 
+A reader opened from a path reads each page on the calling thread when that thread is a thread-pool thread with no synchronization context, which is where most `await` continuations run in console, ASP.NET Core and worker apps; that is several times faster than handing each read to another thread. Elsewhere, such as on a UI thread, page reads stay off the calling thread. Cancellation is checked before every page read, so a cancelled scan stops at its next page, but a page read that has started runs to completion.
+
 ### From a Stream
 
 Both `AccessReader` and `AccessWriter` accept any seekable `Stream` — useful for byte arrays, Azure Blob Storage, embedded resources, or HTTP downloads.

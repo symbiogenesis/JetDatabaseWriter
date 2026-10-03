@@ -122,6 +122,7 @@ git history) and are not reproduced here.
 | Attachment reads (same run) | `ComplexColumnReadBenchmarks`: 150 writer-authored 16 KB attachments took 14.7 ms through `GetAttachmentsAsync`, 18.0 ms through a `Rows()` scan and 21.0 ms through `Rows<T>()` plus `ComplexCellValue.ReadAttachments`. The 16 Access-authored Northwind category images took 8.4, 10.5 and 10.7 ms. | No change. Reading attachments through the parent row costs 23-43% more than reading the flat table directly. |
 | Public seeks (same run) | `PublicSeekBenchmarks` over the 10,000 orders: 1,000 primary-key lookups took 38.7 ms (15 MB) through `SeekRowsAsync` and 31.9 ms through `FromIndex(...).WhereEquals`, against 2.9 ms for one `Rows<T>()` scan that keeps the same 1,000 keys. A 250-row `WhereBetween` on the `OrderDate` index took 0.47 ms. The same 1,000 lookups as `Rows<T>(o => o.OrderId == key)` took 525 ms and 58 MB; each call compiles its predicate (`Expression.Compile`) and lists the table's indexes before it seeks. | A seek costs about 32-39 µs and 15 KB, so one full scan of this table beats about 75 single-key seeks. The inferred `Rows<T>(predicate)` seek costs about 0.5 ms more per call than an explicit one; profile its per-call setup before recommending it in loops. |
 | Page I/O handle (2026-10-03, Arm64, .NET 10.0.12, A/B of Release builds in interleaved processes on a shared machine) | Opening path-opened readers with a synchronous handle and no access hint, instead of an overlapped handle with the `RandomAccess` or `SequentialScan` hint, took a warm page read from 15-19 µs to 8-10 µs, warm MEMO scans from 97-124 ms to 67-76 ms and OLE scans from 42-58 ms to 36-46 ms, and the open and first scan of an uncached copy of the OLE table from 2.3-3.2 s to 0.18-0.66 s. | Keep `FileOptions.None` for path-opened readers in every mode; see "Page I/O handle" below. Re-measure on x64 and slower storage before changing it. |
+| Inline page reads (same day and method) | Reading pages on the calling pool thread instead of handing each read to another pool thread took a warm page read from 6-10 µs to 2.6-4.5 µs, warm MEMO scans from 76-90 ms to 43-58 ms and OLE scans from 40-43 ms to 20-30 ms, and was faster on the numeric table in every run. | Keep inline reads for path-opened readers on pool threads without a synchronization context; see "Inline reads on thread-pool threads". |
 
 ## Historical baseline
 
@@ -274,7 +275,9 @@ latency.
 The two page reads in flight can complete, and decrypt, on two threads at once.
 Jet3 XOR and Jet4 RC4 decryption keep no state between pages; the cached
 AES-ECB transforms in `PageDecryptionKeys` are built and used under a private
-lock (see `concurrency-and-lock-ordering.md`).
+lock (see `concurrency-and-lock-ordering.md`). When a path-opened reader's scan
+runs on a thread-pool thread, its prefetch completes inline instead; see
+"Inline reads on thread-pool threads" below.
 
 The same benchmark showed a separate cost: on the MEMO and OLE tables, `Auto`,
 whose path-opened readers use positionless `RandomAccess` page reads, was about
@@ -338,8 +341,8 @@ with no hint. Why `SequentialScan` was slow there is not understood.
 A/B of Release builds before and after the change (2026-10-03, Arm64, NVMe,
 .NET 10.0.12, the benchmark databases, path-opened readers with default
 options except where noted). Ranges are the medians of four interleaved
-processes on a machine shared with other builds, `Auto` and `Disabled`
-together unless split:
+processes on a machine shared with other builds, and for the uncached copies
+every run of three processes, `Auto` and `Disabled` together unless split:
 
 | Case | Overlapped handle with a hint | Synchronous handle, no hint |
 |---|---|---|
@@ -365,11 +368,54 @@ A caller that opens the `FileStream` itself for
 `AccessReader.OpenAsync(Stream)` gets the same benefit by opening it without
 `FileOptions.Asynchronous` and without an access hint.
 
+#### Inline reads on thread-pool threads
+
+A path-opened reader also reads a page on the calling thread when that thread
+is a thread-pool thread with no `SynchronizationContext` and the default
+`TaskScheduler` (`DatabaseFile.ReadsInlineOnThreadPool`). That is where most
+reads start: the library awaits with `ConfigureAwait(false)`, and console,
+ASP.NET Core and worker-service callers have no context. Handing a read that
+takes a few microseconds to another pool thread, and waiting for it, cost more
+than the read. A caller with a context, such as a UI thread, still has every
+read offloaded and never blocks on the disk. Readers opened on a caller's
+stream, and the writer, keep offloaded reads too, because their handles may be
+overlapped, where a blocking read measured slower.
+
+The trade-offs:
+
+- An inline read cannot be cancelled once it has started. The token is checked
+  before every page read, so a cancelled scan stops at its next page, but a
+  read that hangs on a network share holds its pool thread until the OS gives
+  up.
+- On such threads the read-ahead prefetch completes inline, before the current
+  page is yielded, so it no longer overlaps decode. The scans were faster
+  anyway, including the numeric table that read-ahead was built for.
+- The pool thread blocks for the read, the same thread time as the offloaded
+  read, which also blocked a pool thread.
+
+A/B of Release builds with offloaded reads and with inline reads, by the same
+method as above (medians of four interleaved processes, `Auto` and `Disabled`
+together):
+
+| Case | Offloaded reads | Inline on pool threads |
+|---|---|---|
+| The OLE scan's 2,021 page reads replayed through `DatabaseFile.ReadPageAsync`, no page cache | 6.1-9.8 µs per read | 2.6-4.5 µs |
+| Warm `Rows()` of the 2,000-row OLE table | 40-43 ms | 20-30 ms |
+| Warm `Rows()` of the 5,000-row MEMO table | 76-90 ms | 43-58 ms |
+| Warm `Rows()` of the 25,000-row numeric table | 12.9-21.8 ms | 9.1-18.4 ms, faster in every run |
+| Open and first `Rows()` of an uncached copy, OLE table (every run of three processes) | 0.18-1.1 s | 0.17-0.53 s |
+
+The overlapped handle with a hint, in the same runs: 48-94 ms on the OLE
+table, 121-280 ms on the MEMO table, 14-74 ms on the numeric table and
+2.2-27 s for the uncached OLE copy.
+
 Primary code path:
 
 - `AccessReader.CreateStream`
+- `AccessReader.OpenAsync(string, ...)`, which sets `ReadsInlineOnThreadPool`
 - `DatabaseFile.ReadPageAsync`
-- `DatabaseFile.ReadPageRandomAccessAsync`
+- `DatabaseFile.ReadPageRandomAccessAsync` and `ReadPageRandomAccess`
+- `DatabaseFile.ReadPageFromStream`
 
 ## When read performance still feels slow
 

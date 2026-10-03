@@ -1062,6 +1062,16 @@ internal sealed class TableReader(
     /// page the prefetch overlaps. Complex columns were not measured; their
     /// exclusion is kept from before.
     /// </para>
+    /// <para>
+    /// When the scan runs on a thread-pool thread, a path-opened reader reads
+    /// pages on that thread (<see cref="DatabaseFile.ReadsInlineOnThreadPool"/>),
+    /// so the prefetch completes before the current page is yielded and no
+    /// longer overlaps decode. That still measured faster in each of four
+    /// interleaved runs: a warm scan of the 25,000-row numeric table took
+    /// 9.5-9.9 ms with inline reads in three of them, against 12.9-13.8 ms with
+    /// every read, prefetch included, handed to another pool thread. Other
+    /// callers keep the overlap.
+    /// </para>
     /// </remarks>
     /// <param name="tableDef">The table definition.</param>
     /// <param name="pageNumbers">The list of page numbers for the table.</param>
