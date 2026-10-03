@@ -61,10 +61,9 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
         CatalogEntry? entry = userTables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
         if (entry != null)
         {
-            TableDef? td = await db.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-            if (td?.Columns.Count > 0)
+            TableDef? td = await this.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            if (td != null)
             {
-                await this.HydrateCalculatedResultTypesAsync(entry.TDefPage, td, cancellationToken).ConfigureAwait(false);
                 return new ResolvedTable(entry, td);
             }
         }
@@ -77,15 +76,34 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, RowDec
             cancellationToken).ConfigureAwait(false);
         if (sysPage > 0)
         {
-            TableDef? sysTd = await db.ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
-            if (sysTd?.Columns.Count > 0)
+            TableDef? sysTd = await this.ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
+            if (sysTd != null)
             {
-                await this.HydrateCalculatedResultTypesAsync(sysPage, sysTd, cancellationToken).ConfigureAwait(false);
                 return new ResolvedTable(new CatalogEntry(tableName, sysPage), sysTd);
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Reads the table definition rooted at <paramref name="tdefPage"/>, with
+    /// calculated columns' result types hydrated from the table's persisted
+    /// properties. Returns <see langword="null"/> when the page holds no table
+    /// definition with columns.
+    /// </summary>
+    /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        TableDef? td = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (td is not { Columns.Count: > 0 })
+        {
+            return null;
+        }
+
+        await this.HydrateCalculatedResultTypesAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
+        return td;
     }
 
     /// <summary>Loads the MSysObjects TableDef (page 2).</summary>

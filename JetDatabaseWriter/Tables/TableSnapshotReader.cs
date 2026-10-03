@@ -10,6 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -50,6 +51,26 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     }
 
     /// <summary>
+    /// Decodes every live row of the table rooted at <paramref name="tdefPage"/>,
+    /// each paired with the location it was decoded from, in the page and row
+    /// order of <see cref="DatabaseFile.ForEachLiveTableRowAsync"/>. Rows too
+    /// short or malformed to decode are left out, so a caller that mutates
+    /// <see cref="LocatedRow.Location"/> changes exactly the row it read.
+    /// Returns an empty list when the page holds no table definition.
+    /// </summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    internal async ValueTask<List<LocatedRow>> ReadRowsAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        db.ThrowIfDisposedOrCancelled(cancellationToken);
+
+        TableDef? tableDef = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        return tableDef is null
+            ? []
+            : await this.DecodeRowsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Reads every live row of <paramref name="tableName"/> (a user or system
     /// table) into a <see cref="DataTable"/>, for writer workflows that insert
     /// the rows again. Complex columns stay as their raw references, OLE cells
@@ -68,9 +89,9 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        List<object[]> snapshotRows = resolved is null
+        List<LocatedRow> snapshotRows = resolved is null
             ? []
-            : await this.ReadRowValuesAsync(resolved.Entry.TDefPage, resolved.Definition, cancellationToken).ConfigureAwait(false);
+            : await this.DecodeRowsAsync(resolved.Entry.TDefPage, resolved.Definition, cancellationToken).ConfigureAwait(false);
 
         DataTable? table = null;
         try
@@ -88,9 +109,9 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
             }
 
             table.BeginLoadData();
-            foreach (object[] values in snapshotRows)
+            foreach (LocatedRow row in snapshotRows)
             {
-                _ = table.Rows.Add(values);
+                _ = table.Rows.Add(row.Values);
             }
 
             table.EndLoadData();
@@ -144,16 +165,15 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     }
 
     /// <summary>
-    /// Decodes every live row on the data pages owned by <paramref name="tdefPage"/>,
-    /// in the page and row order of <see cref="DatabaseFile.ForEachLiveTableRowAsync"/>.
-    /// Rows too short or malformed to decode are skipped.
+    /// Decodes every live row on the data pages owned by <paramref name="tdefPage"/>
+    /// together with its location. Rows too short or malformed to decode are skipped.
     /// </summary>
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="tableDef">The table definition, with calculated-column result types hydrated.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<List<object[]>> ReadRowValuesAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
+    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
-        var result = new List<object[]>();
+        var result = new List<LocatedRow>();
 
         // Updates, cascades and schema rewrites insert these values again, so
         // OLE cells keep their stored bytes exactly and an unreadable MEMO /
@@ -184,7 +204,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
                     values[i] ??= DBNull.Value;
                 }
 
-                result.Add((object[])values);
+                result.Add(new LocatedRow(row.Location, (object[])values));
                 return true;
             },
             cancellationToken).ConfigureAwait(false);
