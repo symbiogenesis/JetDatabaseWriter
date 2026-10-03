@@ -41,7 +41,11 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
 
     private static ReadOnlyMemory<char> SecondPasswordMemory => SecondPassword.AsMemory();
 
+    private static ReadOnlyMemory<char> GoldenPasswordMemory => TestDatabases.EncryptedFixturePassword.AsMemory();
+
     private readonly List<string> tempFiles = [];
+
+    private readonly List<string> tempDirectories = [];
 
     public void Dispose()
     {
@@ -50,6 +54,18 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
             try
             {
                 File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // best-effort cleanup
+            }
+        }
+
+        foreach (string directory in this.tempDirectories)
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
             }
             catch (IOException)
             {
@@ -337,6 +353,101 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         Assert.False(EncryptionManager.HasHeaderPassword(decrypted, databaseFormat));
         Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(ms, ct));
         Assert.Equal(originalTables, await ListTablesAsync(ms, password: null));
+    }
+
+    // ───── Replacing the file ────────────────────────────────────────
+
+    /// <summary>
+    /// The path overloads write the re-encrypted file to a temp file beside
+    /// the database and swap it in with <see cref="File.Replace(string, string, string?)"/>.
+    /// A handle opened without <see cref="FileShare.Delete"/> blocks that,
+    /// and the old fallback deleted the database before moving the temp
+    /// file over it; here the delete failed too, so the call threw a bare
+    /// sharing violation and left the temp file behind.
+    /// </summary>
+    [Fact]
+    public async Task ChangePassword_WhenTargetHeldWithoutShareDelete_ThrowsAndLeavesOriginalAndNoTempFile()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to replace a file another handle holds without FileShare.Delete.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        byte[] original = await File.ReadAllBytesAsync(path, ct);
+
+        IOException ex;
+        await using (var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            ex = await Assert.ThrowsAsync<IOException>(async () =>
+                await AccessWriter.ChangePasswordAsync(path, GoldenPasswordMemory, SecondPasswordMemory, NoLockOptions, ct));
+        }
+
+        Assert.Contains(path, ex.Message, StringComparison.Ordinal);
+        Assert.Contains("FileShare.Delete", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(original, await File.ReadAllBytesAsync(path, ct));
+        Assert.Equal([path], Directory.GetFiles(Path.GetDirectoryName(path)!));
+        await AssertOpenableAsync(path, TestDatabases.EncryptedFixturePassword, ["T"]);
+    }
+
+    /// <summary>
+    /// An <see cref="AccessReader"/> opened by path shares the file with
+    /// <see cref="FileShare.ReadWrite"/> by default, without
+    /// <see cref="FileShare.Delete"/>. A password change under it must
+    /// either swap the file whole or refuse and leave it byte for byte as it
+    /// was; Windows refuses. No temp file stays behind either way, and the
+    /// change succeeds once the reader is closed.
+    /// </summary>
+    [Fact]
+    public async Task ChangePassword_WithOpenReader_LeavesOriginalIntact()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        byte[] original = await File.ReadAllBytesAsync(path, ct);
+
+        Exception? failure;
+        var readerOptions = new AccessReaderOptions { UseLockFile = false, Password = GoldenPasswordMemory };
+        await using (AccessReader reader = await AccessReader.OpenAsync(path, readerOptions, ct))
+        {
+            failure = await Record.ExceptionAsync(async () =>
+                await AccessWriter.ChangePasswordAsync(path, GoldenPasswordMemory, SecondPasswordMemory, NoLockOptions, ct));
+            Assert.Equal(["T"], await reader.ListTablesAsync(ct));
+        }
+
+        Assert.Equal([path], Directory.GetFiles(Path.GetDirectoryName(path)!));
+        if (failure is null)
+        {
+            await AssertWrongPasswordAsync(path, TestDatabases.EncryptedFixturePassword);
+            await AssertOpenableAsync(path, SecondPassword, ["T"]);
+            return;
+        }
+
+        Assert.IsType<IOException>(failure);
+        Assert.Equal(original, await File.ReadAllBytesAsync(path, ct));
+
+        await AccessWriter.ChangePasswordAsync(path, GoldenPasswordMemory, SecondPasswordMemory, NoLockOptions, ct);
+        Assert.Equal([path], Directory.GetFiles(Path.GetDirectoryName(path)!));
+        await AssertWrongPasswordAsync(path, TestDatabases.EncryptedFixturePassword);
+        await AssertOpenableAsync(path, SecondPassword, ["T"]);
+    }
+
+    /// <summary>
+    /// A successful password change leaves the database and nothing else in
+    /// its directory, whatever the format, including the CFB containers
+    /// whose length changes.
+    /// </summary>
+    /// <param name="fixture">The frozen encrypted fixture to start from.</param>
+    [Theory]
+    [InlineData(nameof(TestDatabases.EncryptedJet4Rc4))]
+    [InlineData(nameof(TestDatabases.EncryptedAccdbLegacyPassword))]
+    [InlineData(nameof(TestDatabases.EncryptedAccdbAgileCfb))]
+    public async Task ChangePassword_Success_LeavesNoTempFile(string fixture)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = this.CopyToNewDirectory((string)typeof(TestDatabases).GetField(fixture)!.GetValue(null)!);
+
+        await AccessWriter.ChangePasswordAsync(path, GoldenPasswordMemory, SecondPasswordMemory, NoLockOptions, ct);
+
+        Assert.Equal([path], Directory.GetFiles(Path.GetDirectoryName(path)!));
+        await AssertWrongPasswordAsync(path, TestDatabases.EncryptedFixturePassword);
+        await AssertOpenableAsync(path, SecondPassword, ["T"]);
     }
 
     // ───── Cross-format re-encryption ────────────────────────────────
@@ -723,6 +834,19 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         return await db.CopyToStreamAsync(
             source == "AdventureWorks" ? TestDatabases.AdventureWorks : TestDatabases.NorthwindTraders,
             cancellationToken);
+    }
+
+    /// <summary>Copies <paramref name="sourcePath"/> into a new, otherwise empty temp directory, so a test can see every file a call leaves there.</summary>
+    /// <param name="sourcePath">The file to copy.</param>
+    /// <returns>The copy's path.</returns>
+    private string CopyToNewDirectory(string sourcePath)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"jdwenc_{Guid.NewGuid():N}");
+        _ = Directory.CreateDirectory(directory);
+        this.tempDirectories.Add(directory);
+        string path = Path.Combine(directory, Path.GetFileName(sourcePath));
+        File.Copy(sourcePath, path);
+        return path;
     }
 
     private async Task<string> CloneAsync(string sourcePath, string ext)

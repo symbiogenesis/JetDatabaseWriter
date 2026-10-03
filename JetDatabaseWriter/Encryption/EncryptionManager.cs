@@ -944,34 +944,137 @@ internal static class EncryptionManager
         await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask ReplaceFileAtomicAsync(string path, byte[] contents, CancellationToken cancellationToken)
+    /// <summary>
+    /// <para>
+    /// Replaces the file at <paramref name="path"/> with
+    /// <paramref name="contents"/> atomically: the contents go to a temp file
+    /// beside it (<c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>), which is flushed to
+    /// disk and then renamed over the original by <see cref="ReplaceFileWithTemp"/>.
+    /// After a crash the file holds either its old or its new contents.
+    /// </para>
+    /// <para>
+    /// When the replace is refused, as it is on Windows while any handle
+    /// holds the file without <see cref="FileShare.Delete"/> (an open
+    /// <see cref="AccessReader"/> does by default), this throws and leaves
+    /// the original untouched. It never overwrites the original in place.
+    /// The temp file is deleted on every failure that leaves the original.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The file to replace.</param>
+    /// <param name="contents">Its new contents.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation; it is honoured until the temp file is written.</param>
+    /// <returns>A <see cref="ValueTask"/> that completes once the file is replaced.</returns>
+    /// <exception cref="IOException">Thrown when the temp file cannot be written or the replace is refused; the original is unchanged.</exception>
+    internal static async ValueTask ReplaceFileAtomicAsync(string path, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken)
     {
         string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
-        await using (FileStream fs = FileStreamFactory.Open(
-            tempPath,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            FileOptions.Asynchronous,
-            preallocationSize: contents.Length))
+        try
         {
-            await fs.WriteAsync(contents.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await using FileStream fs = FileStreamFactory.Open(
+                tempPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                FileOptions.Asynchronous,
+                preallocationSize: contents.Length);
+            await fs.WriteAsync(contents, cancellationToken).ConfigureAwait(false);
             await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+            // Without this, a power loss after the rename can leave the new
+            // name pointing at data that never reached the disk.
+#pragma warning disable CA1849 // FileStream has no asynchronous Flush(flushToDisk: true).
+            fs.Flush(flushToDisk: true);
+#pragma warning restore CA1849
+        }
+        catch
+        {
+            TryDeleteFile(tempPath);
+            throw;
+        }
+
+        ReplaceFileWithTemp(tempPath, path);
+    }
+
+    /// <summary>
+    /// <para>
+    /// Renames <paramref name="tempPath"/> over <paramref name="path"/> in
+    /// one step: <see cref="File.Replace(string, string, string?, bool)"/>,
+    /// which keeps the original's attributes and ACL, and if that is refused,
+    /// on .NET 6 and later (the net10.0 build), <c>File.Move</c> with
+    /// overwrite. The caller has flushed the temp file to disk; it must be in
+    /// the same directory.
+    /// </para>
+    /// <para>
+    /// It never deletes or overwrites <paramref name="path"/> first: that
+    /// would leave no good copy if it failed partway or the process died. When
+    /// both renames are refused it deletes the temp file and throws, and the
+    /// original is unchanged. netstandard2.1 has no overwriting move, so
+    /// there the refused <see cref="File.Replace(string, string, string?, bool)"/>
+    /// is final. The one exception is a replace that removed the original
+    /// but could not rename the temp file (Windows'
+    /// <c>ERROR_UNABLE_TO_MOVE_REPLACEMENT</c>): the temp file is then moved
+    /// to <paramref name="path"/>, or, if that fails too, kept and named in
+    /// the exception, since it holds the only copy.
+    /// </para>
+    /// </summary>
+    /// <param name="tempPath">The flushed temp file holding the new contents.</param>
+    /// <param name="path">The file to replace.</param>
+    /// <exception cref="IOException">Thrown when the file cannot be replaced.</exception>
+    internal static void ReplaceFileWithTemp(string tempPath, string path)
+    {
+        Exception replaceError;
+        try
+        {
+            File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            return;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            replaceError = ex;
         }
 
         try
         {
-            File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+#if NET6_0_OR_GREATER
+            File.Move(tempPath, path, overwrite: true);
+            return;
+#else
+            if (!File.Exists(path))
+            {
+                File.Move(tempPath, path);
+                return;
+            }
+#endif
         }
-        catch (PlatformNotSupportedException)
+        catch (Exception moveError) when (moveError is IOException or UnauthorizedAccessException)
+        {
+            // Report the replace's error, the first and usually the same refusal.
+        }
+
+        if (!File.Exists(path))
+        {
+            throw new IOException(
+                $"Could not replace '{path}': {replaceError.Message} The original file was removed, and its new contents are in '{tempPath}'.",
+                replaceError);
+        }
+
+        TryDeleteFile(tempPath);
+        throw new IOException(
+            $"Could not replace '{path}': {replaceError.Message} The file was left unchanged. " +
+            "It is replaced by renaming a temp file over it, which Windows refuses while any process holds the file open " +
+            "without FileShare.Delete; an open AccessReader holds it so by default. Close every handle on the file and try again.",
+            replaceError);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
         {
             File.Delete(path);
-            File.Move(tempPath, path);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            File.Delete(path);
-            File.Move(tempPath, path);
+            // Best effort: the temp file holds nothing the caller still needs.
         }
     }
 
