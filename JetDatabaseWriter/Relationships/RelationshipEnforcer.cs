@@ -327,10 +327,27 @@ internal sealed class RelationshipEnforcer(
         }
     }
 
+    /// <summary>
+    /// Cascades or refuses the primary-key changes an update of
+    /// <paramref name="primaryTable"/> makes. Each relationship is checked
+    /// against its own primary columns: one none of whose primary columns the
+    /// update assigns is skipped, and only the rows whose key in those columns
+    /// changes from a non-null value to another non-null value move their
+    /// dependent rows.
+    /// </summary>
+    /// <param name="primaryTable">The table being updated.</param>
+    /// <param name="primaryDef">The table's definition.</param>
+    /// <param name="assignedColumns">The ordinals of the columns the update assigns.</param>
+    /// <param name="rows">Each matching row before and after the update, in table-column order.</param>
+    /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="depth">The cascade depth.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">A changed key has dependent rows and the relationship does not cascade updates.</exception>
     public async ValueTask EnforceFkOnPrimaryUpdateAsync(
         string primaryTable,
         TableDef primaryDef,
-        IReadOnlyList<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)> changes,
+        ICollection<int> assignedColumns,
+        IReadOnlyList<(object[] OldRow, object[] NewRow)> rows,
         FkContext ctx,
         int depth,
         CancellationToken cancellationToken)
@@ -339,29 +356,19 @@ internal sealed class RelationshipEnforcer(
 
         foreach (FkRelationship rel in ctx.All)
         {
-            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            ResolvedTable childTable = await tableCatalog.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
-            CatalogEntry childEntry = childTable.Entry;
-            TableDef childDef = childTable.Definition;
-            if (!TryMapFkPairOrdinals(rel, primaryDef, childDef, out int[] primaryPkIdx, out int[] fkIdx))
+            if (!string.Equals(rel.PrimaryTable, primaryTable, StringComparison.OrdinalIgnoreCase)
+                || !TryMapColumns(rel.PrimaryColumns, primaryDef, out int[] primaryPkIdx)
+                || !Array.Exists(primaryPkIdx, assignedColumns.Contains))
             {
                 continue;
             }
 
             var movingChanges = new Dictionary<string, (object?[] OldPkSubset, object[] NewPkSubset)>(StringComparer.Ordinal);
-            foreach ((string? oldKey, object?[] oldFullRow, object[] newPkValues) in changes)
+            foreach ((object[] oldRow, object[] newRow) in rows)
             {
-                if (oldKey == null)
-                {
-                    continue;
-                }
-
-                string? newKey = RelationshipKeyBuilder.Build(newPkValues, primaryPkIdx);
-                if (newKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
+                string? oldKey = RelationshipKeyBuilder.Build(oldRow, primaryPkIdx);
+                string? newKey = RelationshipKeyBuilder.Build(newRow, primaryPkIdx);
+                if (oldKey == null || newKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
                 {
                     continue;
                 }
@@ -370,14 +377,22 @@ internal sealed class RelationshipEnforcer(
                 object?[] oldPkSubset = new object?[rel.PrimaryColumns.Count];
                 for (int index = 0; index < rel.PrimaryColumns.Count; index++)
                 {
-                    newPkSubset[index] = newPkValues[primaryPkIdx[index]];
-                    oldPkSubset[index] = oldFullRow[primaryPkIdx[index]];
+                    newPkSubset[index] = newRow[primaryPkIdx[index]];
+                    oldPkSubset[index] = oldRow[primaryPkIdx[index]];
                 }
 
                 movingChanges[oldKey] = (oldPkSubset, newPkSubset);
             }
 
             if (movingChanges.Count == 0)
+            {
+                continue;
+            }
+
+            ResolvedTable childTable = await tableCatalog.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            CatalogEntry childEntry = childTable.Entry;
+            TableDef childDef = childTable.Definition;
+            if (!TryMapColumns(rel.ForeignColumns, childDef, out int[] fkIdx))
             {
                 continue;
             }
