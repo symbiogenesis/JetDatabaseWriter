@@ -159,7 +159,7 @@ internal static class DaoBaselineProbe
 
         _ = sb.AppendLine();
 
-        await using (AccessReader basReader = await AccessReader.OpenAsync(baselinePath, ProbeReaderOptions))
+        await using (ProbeDatabase basReader = await ProbeDatabase.OpenAsync(baselinePath, ProbeReaderOptions))
         {
             BaselinePageCache baselinePages = await BaselinePageCache.LoadAsync(basReader);
             int pgSz = baselinePages.PageSize;
@@ -170,13 +170,13 @@ internal static class DaoBaselineProbe
 
             if (string.IsNullOrEmpty(writerErr))
             {
-                await using AccessReader r = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
+                await using ProbeDatabase r = await ProbeDatabase.OpenAsync(writerPath, ProbeReaderOptions);
                 writerSnap = await ReaderSnapshot.CaptureAsync(r, baselinePages, "writer", pagesDir, writePageBins);
             }
 
             if (daoCreateCode == 0)
             {
-                await using AccessReader r = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
+                await using ProbeDatabase r = await ProbeDatabase.OpenAsync(daoPath, ProbeReaderOptions);
                 daoSnap = await ReaderSnapshot.CaptureAsync(r, baselinePages, "dao", pagesDir, writePageBins);
             }
 
@@ -440,7 +440,7 @@ internal static class DaoBaselineProbe
 
     // ────────────────────────── Snapshot / per-file analysis ────────────────
 
-    private static async Task<bool> CanReadPagesDirectlyAsync(AccessReader reader)
+    private static async Task<bool> CanReadPagesDirectlyAsync(ProbeDatabase reader)
     {
         if (reader.DatabaseFormat == DatabaseFormat.Jet3Mdb)
         {
@@ -493,7 +493,7 @@ internal static class DaoBaselineProbe
 
     private sealed class BaselinePageCache
     {
-        public static async Task<BaselinePageCache> LoadAsync(AccessReader reader)
+        public static async Task<BaselinePageCache> LoadAsync(ProbeDatabase reader)
         {
             int pageSize = reader.PageSize;
             long pageCount = new FileInfo(reader.HostDatabasePath).Length / pageSize;
@@ -572,7 +572,7 @@ internal static class DaoBaselineProbe
         public required byte[] RtTdefBytes { get; init; }
 
         public static async Task<ReaderSnapshot> CaptureAsync(
-            AccessReader r,
+            ProbeDatabase r,
             BaselinePageCache baseline,
             string tag,
             string pagesDir,
@@ -1083,8 +1083,8 @@ internal static class DaoBaselineProbe
         // ── H26: per-table usage-map row 0 type byte == 0x01 (MAP_TYPE_REFERENCE)
         if (w.RtCustomers is { TdefPage: > 0 } wRt && d.RtCustomers is { TdefPage: > 0 } dRt)
         {
-            await using AccessReader wr = await AccessReader.OpenAsync(writerPath, ProbeReaderOptions);
-            await using AccessReader dr = await AccessReader.OpenAsync(daoPath, ProbeReaderOptions);
+            await using ProbeDatabase wr = await ProbeDatabase.OpenAsync(writerPath, ProbeReaderOptions);
+            await using ProbeDatabase dr = await ProbeDatabase.OpenAsync(daoPath, ProbeReaderOptions);
             (HypothesisRow? h26, HypothesisRow? h45) = await CheckUsageMapRowAsync(wr, dr, wt, dt, wRt.TdefPage, dRt.TdefPage);
             rows.Add(h26);
             rows.Add(h45);
@@ -1574,7 +1574,7 @@ internal static class DaoBaselineProbe
     }
 
     private static async Task<(HypothesisRow H26, HypothesisRow H45)> CheckUsageMapRowAsync(
-        AccessReader wr, AccessReader dr, byte[] wt, byte[] dt, long wTdefPage, long dTdefPage)
+        ProbeDatabase wr, ProbeDatabase dr, byte[] wt, byte[] dt, long wTdefPage, long dTdefPage)
     {
         // owned_pages slot at TDEF[0x37..0x3A]: byte[0]=row, bytes[1..3]=24-bit page LE.
         (int wRow, long wPage) = ReadUsageMapPointer(wt, 0x37);
@@ -1918,7 +1918,7 @@ internal static class DaoBaselineProbe
         return $"❌ exit={code} " + Md(Truncate(err));
     }
 
-    private static async Task<List<CatalogEntry>> ReadCatalogAsync(AccessReader r)
+    private static async Task<List<CatalogEntry>> ReadCatalogAsync(ProbeDatabase r)
     {
         Catalog.Models.TableDef msys = await r.GetMSysObjectsTableDefAsync(default)
             ?? throw new InvalidOperationException("MSysObjects TDEF missing");

@@ -541,10 +541,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectDup");
 
-        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
         await InsertCatalogObjectAsync(writer, -500, "LowLevelDuplicate", ct);
 
-        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer.Database, ct);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             InsertCatalogObjectAsync(writer, -501, "lowlevelduplicate", ct).AsTask());
@@ -559,8 +559,8 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectSplit");
 
-        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
-        int intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(writer, ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
+        int intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(writer.Database, ct);
 
         string lastName = string.Empty;
         for (int i = 0; i < 180; i++)
@@ -569,7 +569,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             await InsertCatalogObjectAsync(writer, -20_000 - i, lastName, ct);
         }
 
-        int intermediateRootsAfter = await CountMsysObjectsIntermediateRootsAsync(writer, ct);
+        int intermediateRootsAfter = await CountMsysObjectsIntermediateRootsAsync(writer.Database, ct);
         Assert.True(
             intermediateRootsAfter > intermediateRootsBefore,
             $"Expected catalog-only inserts to promote at least one MSysObjects index root to an intermediate page. Before={intermediateRootsBefore}, after={intermediateRootsAfter}.");
@@ -582,14 +582,18 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedSpliceFail");
 
-        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
-        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(frontEndPath, ct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct).AsTask());
-        Assert.Contains("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct).AsTask());
+            Assert.Contains("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
+        }
+
+        await using WriterHarness harness = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
         Assert.False(
-            await CatalogObjectExistsAsync(writer, "LinkedData", ct),
+            await CatalogObjectExistsAsync(harness, "LinkedData", ct),
             "The failed catalog splice should roll back the linked-table MSysObjects row.");
     }
 
@@ -599,13 +603,17 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogDeleteSpliceFail");
 
-        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
-        await writer.CreateTableAsync(
-            "Victim",
-            [new ColumnDefinition("Id", typeof(int))],
-            ct);
-        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
+        await using (AccessWriter setup = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await setup.CreateTableAsync(
+                "Victim",
+                [new ColumnDefinition("Id", typeof(int))],
+                ct);
+        }
 
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(frontEndPath, ct);
+
+        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.DropTableAsync("Victim", ct).AsTask());
         Assert.Contains("Could not maintain MSysObjects catalog indexes while dropping table 'Victim'", ex.Message, StringComparison.Ordinal);
@@ -644,7 +652,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     private static ValueTask<long[]> InsertCatalogObjectAsync(
-        AccessWriter writer,
+        WriterHarness writer,
         int objectId,
         string objectName,
         CancellationToken cancellationToken)
@@ -716,9 +724,9 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             (byte[])lvProp.Clone());
     }
 
-    private static async ValueTask<bool> CatalogObjectExistsAsync(AccessWriter writer, string objectName, CancellationToken cancellationToken)
+    private static async ValueTask<bool> CatalogObjectExistsAsync(WriterHarness writer, string objectName, CancellationToken cancellationToken)
     {
-        TableDef msys = await writer.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
+        TableDef msys = await writer.Database.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
         List<CatalogRow> rows = await writer.Services.CatalogRows.GetCatalogRowsAsync(msys, cancellationToken);
         return rows.Any(row => string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase));
     }
@@ -833,24 +841,24 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         return sequence.Length == 0;
     }
 
-    private static async ValueTask<int> CountMsysObjectsIntermediateRootsAsync(AccessWriter writer, CancellationToken cancellationToken)
+    private static async ValueTask<int> CountMsysObjectsIntermediateRootsAsync(DatabaseFile db, CancellationToken cancellationToken)
     {
-        byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
+        byte[] tdef = await db.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, writer.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
 
-            int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer.ColumnDescriptor.Size);
+            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk MSysObjects column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            IndexLayout layout = writer.IndexLayoutInfo;
+            IndexLayout layout = db.IndexLayoutInfo;
             int intermediateRoots = 0;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
@@ -861,7 +869,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                     continue;
                 }
 
-                byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);
+                byte[] root = await db.ReadPageAsync(firstDp, cancellationToken);
                 try
                 {
                     if (root[0] == Constants.IndexLeafPage.PageTypeIntermediate)
@@ -871,7 +879,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 }
                 finally
                 {
-                    AccessBase.ReturnPage(root);
+                    DatabaseFile.ReturnPage(root);
                 }
             }
 
@@ -879,50 +887,56 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
         finally
         {
-            AccessBase.ReturnPage(tdef);
+            DatabaseFile.ReturnPage(tdef);
         }
     }
 
-    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(AccessWriter writer, CancellationToken cancellationToken)
+    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(string dbPath, CancellationToken cancellationToken)
     {
-        byte[] tdef = await writer.ReadPageAsync(2, cancellationToken);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(dbPath, cancellationToken: cancellationToken);
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(harness.Database, cancellationToken);
+    }
+
+    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(DatabaseFile db, CancellationToken cancellationToken)
+    {
+        byte[] tdef = await db.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, writer.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected MSysObjects to declare at least one real index.");
 
-            int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer.ColumnDescriptor.Size);
+            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk MSysObjects column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            IndexLayout layout = writer.IndexLayoutInfo;
+            IndexLayout layout = db.IndexLayoutInfo;
             int physStart = layout.RealIdxPhysOffset(realIdxDescStart, 0);
             int firstDp = Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, "Expected MSysObjects first real-index root page to be allocated.");
 
-            byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);
+            byte[] root = await db.ReadPageAsync(firstDp, cancellationToken);
             try
             {
                 Assert.True(
                     root[0] is Constants.IndexLeafPage.PageTypeLeaf or Constants.IndexLeafPage.PageTypeIntermediate,
                     $"Expected MSysObjects index root page {firstDp} to be an index page, got 0x{root[0]:X2}.");
                 root[0] = 0x01;
-                await writer.WritePageAsync(firstDp, root, cancellationToken);
+                await db.WritePageAsync(firstDp, root, cancellationToken);
             }
             finally
             {
-                AccessBase.ReturnPage(root);
+                DatabaseFile.ReturnPage(root);
             }
         }
         finally
         {
-            AccessBase.ReturnPage(tdef);
+            DatabaseFile.ReturnPage(tdef);
         }
     }
 

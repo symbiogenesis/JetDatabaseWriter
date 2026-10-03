@@ -52,7 +52,7 @@ internal sealed class RowDecodePlan
     }
 
     internal static ColumnSlice ResolveColumnSliceForDirectDecode(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -219,7 +219,7 @@ internal sealed class RowDecodePlan
     }
 
     internal bool TryDecodeDirect<T>(
-        AccessReader source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -258,7 +258,7 @@ internal sealed class RowDecodePlan
     }
 
     private static bool TryDecodeInlineColumnValue(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int start,
         ColumnInfo column,
@@ -315,7 +315,7 @@ internal sealed class RowDecodePlan
     }
 
     internal async ValueTask<string[]?> TryDecodeStringRowAsync(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -350,7 +350,7 @@ internal sealed class RowDecodePlan
     }
 
     internal bool TryDecodeTypedIntoBuffer(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -380,7 +380,7 @@ internal sealed class RowDecodePlan
         return true;
     }
 
-    internal bool TryDecodePartialColumns(AccessBase source, byte[] page, int rowStart, int rowSize, object?[] result)
+    internal bool TryDecodePartialColumns(DatabaseFile source, byte[] page, int rowStart, int rowSize, object?[] result)
     {
         if (this.columnOrdinals == null || result.Length < this.columnOrdinals.Length)
         {
@@ -433,7 +433,7 @@ internal sealed class RowDecodePlan
     }
 
     internal bool TryParseLayoutForDirectDecode(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -441,7 +441,7 @@ internal sealed class RowDecodePlan
         => this.TryParseLayout(source, page, rowStart, rowSize, out layout);
 
     private bool TryParseLayout(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -464,7 +464,7 @@ internal sealed class RowDecodePlan
     }
 
     private async ValueTask<string> DecodeStringValueAsync(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         ColumnSlice slice,
@@ -487,7 +487,7 @@ internal sealed class RowDecodePlan
         };
 
     private async ValueTask<string> DecodeStringVariableValueAsync(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int start,
         int length,
@@ -558,7 +558,7 @@ internal sealed class RowDecodePlan
     }
 
     private async ValueTask<string> DecodeCalculatedStringVariableValueAsync(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int start,
         int length,
@@ -612,7 +612,7 @@ internal sealed class RowDecodePlan
     }
 
     private object? DecodeTypedValue(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int rowStart,
         ColumnSlice slice,
@@ -628,7 +628,7 @@ internal sealed class RowDecodePlan
         };
 
     private object? DecodeTypedVariableValue(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int start,
         int length,
@@ -696,7 +696,7 @@ internal sealed class RowDecodePlan
     }
 
     private object? DecodeCalculatedTypedVariableValue(
-        AccessBase source,
+        DatabaseFile source,
         byte[] page,
         int start,
         int length,

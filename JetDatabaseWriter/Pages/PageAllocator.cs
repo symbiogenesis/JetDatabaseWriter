@@ -7,7 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages.Models;
-using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -16,7 +16,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for freed pages.</param>
-internal sealed class PageAllocator(AccessBase db, AccessWriterOptions options)
+internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options)
 {
     private const int GlobalUsageMapPageNumber = 1;
 

@@ -788,19 +788,22 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string table = MakeTableName("NR");
 
-        await using AccessWriter writer = await OpenWriterAsync(temp);
-        await writer.CreateTableAsync(
-            table,
-            [new("Id", typeof(int)), new("Amount", typeof(decimal)) { NumericScale = 3 }],
-            TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(table, [1, 12.345m], TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [new("Id", typeof(int)), new("Amount", typeof(decimal)) { NumericScale = 3 }],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, 12.345m], TestContext.Current.CancellationToken);
+        }
 
-        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
+        CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         RowLocation loc = Assert.Single(locations);
 
-        object?[]? values = await writer.TryReadColumnValuesTypedAsync(loc, def, [0, 1], TestContext.Current.CancellationToken);
+        object?[]? values = await harness.Database.TryReadColumnValuesTypedAsync(loc, def, [0, 1], TestContext.Current.CancellationToken);
 
         Assert.NotNull(values);
         Assert.Equal(1, values[0]);
@@ -816,30 +819,33 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         var stamp = new DateTime(2026, 5, 27, 9, 30, 0, DateTimeKind.Unspecified);
         var rowGuid = Guid.NewGuid();
 
-        await using AccessWriter writer = await OpenWriterAsync(temp);
-        await writer.CreateTableAsync(
-            table,
-            [
-                new("Id", typeof(int)),
-                new("Flag", typeof(bool)),
-                new("Label", typeof(string), maxLength: 40),
-                new("Payload", typeof(byte[]), maxLength: 16),
-                new("Amount", typeof(decimal)) { NumericScale = 3 },
-                new("Stamp", typeof(DateTime)),
-                new("RowGuid", typeof(Guid)),
-            ],
-            TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(
-            table,
-            [42, true, "Alpha", payload, 12.345m, stamp, rowGuid],
-            TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Flag", typeof(bool)),
+                    new("Label", typeof(string), maxLength: 40),
+                    new("Payload", typeof(byte[]), maxLength: 16),
+                    new("Amount", typeof(decimal)) { NumericScale = 3 },
+                    new("Stamp", typeof(DateTime)),
+                    new("RowGuid", typeof(Guid)),
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(
+                table,
+                [42, true, "Alpha", payload, 12.345m, stamp, rowGuid],
+                TestContext.Current.CancellationToken);
+        }
 
-        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
+        CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         RowLocation location = Assert.Single(locations);
 
-        object?[]? values = await writer.TryReadColumnValuesTypedAsync(
+        object?[]? values = await harness.Database.TryReadColumnValuesTypedAsync(
             location,
             def,
             [0, 1, 2, 3, 4, 5, 6],
@@ -861,19 +867,22 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
         string table = MakeTableName("MF");
 
-        await using AccessWriter writer = await OpenWriterAsync(temp);
-        await writer.CreateTableAsync(
-            table,
-            [new("Id", typeof(int)), new("Notes", typeof(string))],
-            TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(table, [1, "memo payload"], TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [new("Id", typeof(int)), new("Notes", typeof(string))],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [1, "memo payload"], TestContext.Current.CancellationToken);
+        }
 
-        CatalogEntry entry = await writer.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await writer.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
-        List<RowLocation> locations = await writer.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
+        CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
+        TableDef def = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         RowLocation location = Assert.Single(locations);
 
-        object?[]? values = await writer.TryReadColumnValuesTypedAsync(
+        object?[]? values = await harness.Database.TryReadColumnValuesTypedAsync(
             location,
             def,
             [0, 1],
@@ -1149,11 +1158,16 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         {
             await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync(child, [new("Id", typeof(int)), new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+        }
 
-            long relationshipsTdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(
+        // Plant a relationship row with no referenced column directly through the
+        // system-table index maintainer; the public API refuses to write one.
+        await using (WriterHarness harness = await OpenWriterHarnessAsync(temp))
+        {
+            long relationshipsTdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
-            TableDef relationshipsDef = await writer.ReadRequiredTableDefAsync(
+            TableDef relationshipsDef = await harness.Database.ReadRequiredTableDefAsync(
                 relationshipsTdefPage,
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
@@ -1168,13 +1182,16 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             relationshipsDef.SetValueByName(malformedRow, "szReferencedObject", parent);
             relationshipsDef.SetValueByName(malformedRow, "szRelationship", "FK_MalformedMissingColumn");
 
-            await writer.Services.Indexes.InsertSystemRowAndMaintainAsync(
+            await harness.Services.Indexes.InsertSystemRowAndMaintainAsync(
                 relationshipsTdefPage,
                 relationshipsDef,
                 Constants.SystemTableNames.Relationships,
                 malformedRow,
                 cancellationToken: TestContext.Current.CancellationToken);
+        }
 
+        await using (AccessWriter writer = await OpenWriterAsync(temp))
+        {
             await writer.InsertRowAsync(child, [1, 999], TestContext.Current.CancellationToken);
         }
 
@@ -1191,6 +1208,12 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
     {
         stream.Position = 0;
         return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true);
+    }
+
+    private static ValueTask<WriterHarness> OpenWriterHarnessAsync(MemoryStream stream)
+    {
+        stream.Position = 0;
+        return WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)

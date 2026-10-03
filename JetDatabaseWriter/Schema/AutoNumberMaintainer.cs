@@ -17,7 +17,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="AccessWriter"/>.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
-internal sealed class AutoNumberMaintainer(AccessBase db)
+internal sealed class AutoNumberMaintainer(DatabaseFile db)
 {
     /// <summary>
     /// Scans <paramref name="rows"/> for the largest value written to any
@@ -80,7 +80,7 @@ internal sealed class AutoNumberMaintainer(AccessBase db)
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 

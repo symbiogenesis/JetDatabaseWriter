@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 internal static class RelationshipPageReader
 {
     public static async ValueTask<byte[]> ReadOwnedAsync(
-        AccessBase db,
+        DatabaseFile db,
         long pageNumber,
         CancellationToken cancellationToken)
     {
@@ -17,7 +17,7 @@ internal static class RelationshipPageReader
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 }

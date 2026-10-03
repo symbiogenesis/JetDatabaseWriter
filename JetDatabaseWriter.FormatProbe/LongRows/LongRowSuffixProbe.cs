@@ -251,7 +251,7 @@ internal static class LongRowSuffixProbe
         sb.AppendLine(CultureInfo.InvariantCulture, $"Lab database: `{labPath}`")
             .AppendLine();
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
             labPath,
             new AccessReaderOptions { UseLockFile = false },
             CancellationToken.None);
@@ -522,7 +522,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task AppendDaoLabPatternSummaryAsync(string labPath, StringBuilder sb, CancellationToken ct)
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
             labPath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
@@ -545,7 +545,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static async Task<SuffixPatternTable> BuildSuffixPatternTableAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         string tableName,
         int seedBase,
         CancellationToken ct)
@@ -5067,7 +5067,7 @@ internal static class LongRowSuffixProbe
 
         try
         {
-            await using AccessReader reader = await AccessReader.OpenAsync(
+            await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
                 fixturePath,
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
@@ -5172,7 +5172,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static async Task<CorpusIndexScanResult> CompareLongRowIndexAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         string tableName,
         IndexMetadata index,
         IndexColumnReference keyColumn,
@@ -5758,7 +5758,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task DumpV2010SuffixAnalysisAsync(string fixturePath, StringBuilder sb, CancellationToken ct)
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
@@ -5881,7 +5881,7 @@ internal static class LongRowSuffixProbe
 
     private static async Task DumpV2010CrcFullSweepAsync(string fixturePath, StringBuilder sb, CancellationToken ct)
     {
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
@@ -6346,7 +6346,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static async Task<List<IndexEntry>> CollectAllLeafKeysAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         IndexPageLayout layout,
         int pageSize,
         long firstPage,
@@ -6368,7 +6368,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static async Task<List<IndexEntry>> CollectAllLeafEntriesFromRootAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
@@ -6426,7 +6426,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static async Task<List<LeafEntryDetail>> CollectDetailedLeafEntriesFromRootAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
@@ -6561,7 +6561,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static async Task<Dictionary<long, PhysicalRowSnapshot>> BuildPhysicalRowSnapshotMapAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         string tableName,
         CancellationToken ct)
     {
@@ -6590,7 +6590,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static async Task<List<RowLocation>> CollectPhysicalRowLocationsAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         long tdefPage,
         CancellationToken ct)
     {
@@ -6630,7 +6630,7 @@ internal static class LongRowSuffixProbe
     private static long EncodeDataPointer(long page, byte row) => (page << 8) | row;
 
     private static async Task<List<RawLeafPageSummary>> CollectRawLeafPageSummariesAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,

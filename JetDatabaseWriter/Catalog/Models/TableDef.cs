@@ -59,7 +59,7 @@ internal sealed class TableDef
     /// Populates the per-table metadata caches (<see cref="ClrTypes"/>,
     /// <see cref="HasVarColumns"/>, <see cref="HasComplexColumns"/>). Must be
     /// invoked after <see cref="Columns"/> is finalised; called once by the
-    /// TableDef loader in <c>AccessBase.ReadTableDefAsync</c>.
+    /// TableDef loader in <see cref="DatabaseFile.ReadTableDefAsync"/>.
     /// </summary>
     public void InitializeColumnMetadata()
     {

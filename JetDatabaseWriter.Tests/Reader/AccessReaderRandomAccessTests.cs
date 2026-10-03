@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 public sealed class AccessReaderRandomAccessTests : IDisposable
@@ -24,7 +25,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             TestContext.Current.CancellationToken);
 
         Assert.Equal(PageReadOptimizationMode.Auto, reader.PageReadOptimizationMode);
-        Assert.True(reader.UsesRandomAccessPageReads);
+        Assert.True(FacadeInternals.Database(reader).UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 
@@ -68,7 +69,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             TestContext.Current.CancellationToken);
 
         Assert.Equal(PageReadOptimizationMode.Disabled, reader.PageReadOptimizationMode);
-        Assert.False(reader.UsesRandomAccessPageReads);
+        Assert.False(FacadeInternals.Database(reader).UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 
@@ -93,7 +94,7 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        Assert.False(reader.UsesRandomAccessPageReads);
+        Assert.False(FacadeInternals.Database(reader).UsesRandomAccessPageReads);
         await AssertReadableItemsTableAsync(reader);
     }
 

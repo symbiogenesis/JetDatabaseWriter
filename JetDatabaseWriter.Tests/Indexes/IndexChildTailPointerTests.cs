@@ -51,6 +51,7 @@ public sealed class IndexChildTailPointerTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -84,7 +85,7 @@ public sealed class IndexChildTailPointerTests
                 long current = index.FirstDp;
                 for (int depth = 0; depth < 32; depth++)
                 {
-                    byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+                    byte[] page = await pages.ReadPageCopyAsync(current, ct);
                     byte pageType = page[0];
 
                     if (pageType == Constants.IndexLeafPage.PageTypeLeaf)

@@ -43,6 +43,7 @@ internal static class TextIndexEncoderFixtureHarness
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -78,7 +79,7 @@ internal static class TextIndexEncoderFixtureHarness
                 }
 
                 List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
-                    reader, layout, pageSize, index.FirstDp, ct);
+                    pages, layout, pageSize, index.FirstDp, ct);
 
                 DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
                 var values = new List<string?>(dt.Rows.Count);
@@ -128,7 +129,7 @@ internal static class TextIndexEncoderFixtureHarness
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
-        AccessReader reader,
+        ReaderHarness pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
@@ -137,7 +138,7 @@ internal static class TextIndexEncoderFixtureHarness
         long current = rootPage;
         for (int depth = 0; depth < 32; depth++)
         {
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             byte pageType = page[0];
             if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -169,7 +170,7 @@ internal static class TextIndexEncoderFixtureHarness
                 throw new InvalidOperationException("Leaf chain exceeds visit guard — possible cycle.");
             }
 
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 throw new InvalidOperationException(

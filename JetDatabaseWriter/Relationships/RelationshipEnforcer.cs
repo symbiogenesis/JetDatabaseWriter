@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Indexes;
@@ -18,20 +19,22 @@ using JetDatabaseWriter.Tables;
 /// cascade-update and cascade-delete of dependent rows.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="tableCatalog">Resolves child tables by name.</param>
 /// <param name="tableRows">Deletes and rewrites cascaded child rows.</param>
 /// <param name="indexes">Rebuilds child-table indexes after cascades.</param>
 /// <param name="catalog">Loads the enforced relationships from <c>MSysRelationships</c>.</param>
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
 /// <param name="snapshots">Reads decoded parent and child rows when no seekable index exists.</param>
 internal sealed class RelationshipEnforcer(
-    AccessBase db,
+    DatabaseFile db,
+    TableCatalog tableCatalog,
     TableRowStore tableRows,
     IndexMaintainer indexes,
     RelationshipCatalogStore catalog,
     ComplexColumnManager complexColumns,
     TableSnapshotReader snapshots)
 {
-    private readonly RelationshipSeekPlanner seekPlanner = new(db);
+    private readonly RelationshipSeekPlanner seekPlanner = new(db, tableCatalog);
     private readonly RelationshipChildRowLocator childRowLocator = new(db);
 
     public static void AugmentParentSetsAfterInsert(string primaryTable, TableDef tableDef, object[] insertedValues, FkContext ctx)
@@ -231,7 +234,7 @@ internal sealed class RelationshipEnforcer(
                 continue;
             }
 
-            ResolvedTable childTable = await db.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            ResolvedTable childTable = await tableCatalog.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             CatalogEntry childEntry = childTable.Entry;
             TableDef childDef = childTable.Definition;
 
@@ -347,7 +350,7 @@ internal sealed class RelationshipEnforcer(
                 continue;
             }
 
-            ResolvedTable childTable = await db.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            ResolvedTable childTable = await tableCatalog.ResolveRequiredTableAsync(rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             CatalogEntry childEntry = childTable.Entry;
             TableDef childDef = childTable.Definition;
             if (!TryMapFkPairOrdinals(rel, primaryDef, childDef, out int[] primaryPkIdx, out int[] fkIdx))

@@ -6,14 +6,16 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 
 /// <summary>
 /// Reads LVAL (Long Value) pages from a JET database, resolving MEMO and
-/// OLE field chains. Extracted from <see cref="AccessReader"/>.
+/// OLE field chains.
 /// </summary>
-/// <param name="reader">The reader.</param>
-internal sealed class LongValueDecoder(AccessReader reader)
+/// <param name="db">The database page I/O and format context.</param>
+/// <param name="pages">The reader's page cache, which LVAL pages are read through.</param>
+internal sealed class LongValueDecoder(DatabaseFile db, ReaderPageCache pages)
 {
     internal ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
@@ -23,7 +25,7 @@ internal sealed class LongValueDecoder(AccessReader reader)
             return new ValueTask<LvalRowLocation>(new LvalRowLocation([], 0, 0, $"invalid page {lvalPage}"));
         }
 
-        if (reader.TryGetCachedPage(lvalPage, out byte[] page))
+        if (pages.TryGetCachedPage(lvalPage, out byte[] page))
         {
             return new ValueTask<LvalRowLocation>(this.LocateLvalRow(lvalPage, LongValueStore.RowIndex(lvalDp), page));
         }
@@ -33,18 +35,18 @@ internal sealed class LongValueDecoder(AccessReader reader)
 
     private async ValueTask<LvalRowLocation> LocateLvalRowSlowAsync(int lvalPage, int lvalRow, CancellationToken cancellationToken)
     {
-        byte[] page = await reader.ReadPageCachedAsync(lvalPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pages.ReadPageAsync(lvalPage, cancellationToken).ConfigureAwait(false);
         return this.LocateLvalRow(lvalPage, lvalRow, page);
     }
 
     private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
     {
-        RowBound[] liveRows = reader.GetLiveRowBoundsCached(lvalPage, page);
-        return LongValueStore.LocateRow(lvalPage, lvalRow, page, reader.DataPage, reader.PageSizeBytes, liveRows);
+        RowBound[] liveRows = pages.GetLiveRowBounds(lvalPage, page);
+        return LongValueStore.LocateRow(lvalPage, lvalRow, page, db.DataPage, db.PageSizeBytes, liveRows);
     }
 
     internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
-        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, reader.PageSizeBytes, this.LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
+        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, db.PageSizeBytes, this.LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
@@ -153,6 +155,6 @@ internal sealed class LongValueDecoder(AccessReader reader)
                 ?? ("data:application/octet-stream;base64," + Convert.ToBase64String(buffer, offset, length));
         }
 
-        return reader.DecodeTextForFormat(buffer, offset, length);
+        return db.DecodeTextForFormat(buffer, offset, length);
     }
 }

@@ -9,7 +9,8 @@ using System.Threading.Tasks;
 /// Nested calls on the same async flow are treated as part of the active root operation,
 /// while new top-level operations are rejected once disposal begins.
 /// </summary>
-internal sealed class AsyncReentrantOperationGate
+/// <param name="ownerType">The public type named by the <see cref="ObjectDisposedException"/> raised after disposal.</param>
+internal sealed class AsyncReentrantOperationGate(Type ownerType)
 {
     private const int StateOpen = 0;
     private const int StateDisposing = 1;
@@ -29,7 +30,7 @@ internal sealed class AsyncReentrantOperationGate
 
     public Task DisposeCompleted => this.disposeCompleted.Task;
 
-    public Lease Enter(object owner)
+    public Lease Enter()
     {
         int depth = this.operationDepth.Value;
         if (depth > 0)
@@ -40,7 +41,7 @@ internal sealed class AsyncReentrantOperationGate
 
         if (!this.TryEnterRootOperation())
         {
-            Guard.ThrowIfDisposed(disposed: true, owner);
+            Guard.ThrowIfDisposed(disposed: true, ownerType);
         }
 
         this.operationDepth.Value = 1;

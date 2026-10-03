@@ -152,7 +152,7 @@ internal static class FkDaoBaselineProbe
     {
         Console.WriteLine();
         Console.WriteLine($"== {label} ==");
-        await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false });
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(path, new AccessReaderOptions { UseLockFile = false });
         Dictionary<string, int> catalogIds = await DumpCatalogRowsAsync(reader);
         await DumpAcesAsync(reader, catalogIds);
         await DumpRelationshipsAsync(reader);
@@ -163,7 +163,7 @@ internal static class FkDaoBaselineProbe
         await DumpTDefAsync(reader, Child);
     }
 
-    private static async Task<Dictionary<string, int>> DumpCatalogRowsAsync(AccessReader reader)
+    private static async Task<Dictionary<string, int>> DumpCatalogRowsAsync(ProbeDatabase reader)
     {
         var ids = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysObjects");
@@ -196,7 +196,7 @@ internal static class FkDaoBaselineProbe
         return ids;
     }
 
-    private static async Task DumpAcesAsync(AccessReader reader, Dictionary<string, int> catalogIds)
+    private static async Task DumpAcesAsync(ProbeDatabase reader, Dictionary<string, int> catalogIds)
     {
         Console.WriteLine("MSysACEs:");
         if (catalogIds.Count == 0)
@@ -238,7 +238,7 @@ internal static class FkDaoBaselineProbe
         }
     }
 
-    private static async Task DumpRelationshipsAsync(AccessReader reader)
+    private static async Task DumpRelationshipsAsync(ProbeDatabase reader)
     {
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("MSysRelationships");
         if (columns.Count == 0)
@@ -265,7 +265,7 @@ internal static class FkDaoBaselineProbe
         }
     }
 
-    private static async Task DumpTDefAsync(AccessReader reader, string tableName)
+    private static async Task DumpTDefAsync(ProbeDatabase reader, string tableName)
     {
         long rowCount = await reader.GetRealRowCountAsync(tableName);
         Console.WriteLine(FormattableString.Invariant($"{tableName}: rows={rowCount}"));
@@ -339,7 +339,7 @@ internal static class FkDaoBaselineProbe
         }
     }
 
-    private static async Task<string> UsageMapRowSummaryAsync(AccessReader reader, int pageNumber, int rowIndex)
+    private static async Task<string> UsageMapRowSummaryAsync(ProbeDatabase reader, int pageNumber, int rowIndex)
     {
         if (pageNumber <= 0)
         {

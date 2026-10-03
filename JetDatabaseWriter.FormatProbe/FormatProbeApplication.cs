@@ -343,7 +343,7 @@ internal static class FormatProbeApplication
         string dbPath = Environment.GetEnvironmentVariable("DIAG_MEMO_PATH")
             ?? Path.Combine(Path.GetTempPath(), "JetDatabaseWriter.MemoDiag", "writer_memo.accdb");
         Console.WriteLine($"Reading {dbPath}");
-        await using AccessReader rdr = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false });
+        await using ProbeDatabase rdr = await ProbeDatabase.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false });
         string tableName = Environment.GetEnvironmentVariable("DIAG_MEMO_TABLE") ?? "MemoFidelity";
         System.Data.DataTable dt = await rdr.ReadDataTableAsync(tableName);
         Console.WriteLine($"Reader sees RowCount={dt.Rows.Count}");
@@ -491,7 +491,7 @@ internal static class FormatProbeApplication
     private static async Task WriteIndexAppendixAsync(string fixturePath, string outPath)
     {
         Console.WriteLine($"Probing {Path.GetFileName(fixturePath)} ...");
-        await using AccessReader reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
         List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(reader);
 
         var sb = new StringBuilder();
@@ -574,7 +574,7 @@ internal static class FormatProbeApplication
     private static async Task WriteComplexAppendixAsync(string fixturePath, string outPath)
     {
         Console.WriteLine($"Probing {Path.GetFileName(fixturePath)} ...");
-        await using AccessReader reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
         List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(reader);
 
         var sb = new StringBuilder();
@@ -853,7 +853,7 @@ internal static class FormatProbeApplication
         try
         {
             Console.WriteLine($"Probing {relPath} ...");
-            await using AccessReader reader = await AccessReader.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
+            await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(fixturePath, new AccessReaderOptions { UseLockFile = false });
             List<(long Id, string Name, int Type, long Flags, long TdefPage)> catalog = await ReadCatalogAsync(reader);
             bool hasIdx = catalog.Any(c => c.Name.Equals("MSysIndexes", StringComparison.OrdinalIgnoreCase));
             bool hasIdxCols = catalog.Any(c => c.Name.Equals("MSysIndexColumns", StringComparison.OrdinalIgnoreCase));
@@ -909,7 +909,7 @@ internal static class FormatProbeApplication
         }
     }
 
-    private static async Task<List<(long Id, string Name, int Type, long Flags, long TdefPage)>> ReadCatalogAsync(AccessReader reader)
+    private static async Task<List<(long Id, string Name, int Type, long Flags, long TdefPage)>> ReadCatalogAsync(ProbeDatabase reader)
     {
         TableDef msys = await reader.GetMSysObjectsTableDefAsync(default)
                    ?? throw new InvalidOperationException("MSysObjects TDEF not found.");
@@ -1003,7 +1003,7 @@ internal static class FormatProbeApplication
             }
 
             Console.WriteLine($"Probing Jet3 indexes in {rel} ...");
-            await using AccessReader reader = await AccessReader.OpenAsync(full, new AccessReaderOptions { UseLockFile = false });
+            await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(full, new AccessReaderOptions { UseLockFile = false });
             if (reader.DatabaseFormat != DatabaseFormat.Jet3Mdb)
             {
                 _ = sb.AppendLine(CultureInfo.InvariantCulture, $"## `{Md(rel)}` — _skipped (not Jet3, format = {reader.DatabaseFormat})_");
@@ -1081,7 +1081,7 @@ internal static class FormatProbeApplication
     /// <param name="sb">The StringBuilder to append output to.</param>
     /// <param name="td">The TDEF bytes.</param>
     /// <param name="numRealIdx">The number of real indexes.</param>
-    private static async Task EmitJet3LeafPagesAsync(AccessReader reader, StringBuilder sb, byte[] td, int numRealIdx)
+    private static async Task EmitJet3LeafPagesAsync(ProbeDatabase reader, StringBuilder sb, byte[] td, int numRealIdx)
     {
         if (numRealIdx == 0)
         {
@@ -1201,7 +1201,7 @@ internal static class FormatProbeApplication
         }
     }
 
-    private static async Task DescribeCandidateAsync(AccessReader reader, StringBuilder sb, string label, long? value, long pageCount)
+    private static async Task DescribeCandidateAsync(ProbeDatabase reader, StringBuilder sb, string label, long? value, long pageCount)
     {
         if (value is null)
         {
@@ -1230,7 +1230,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"| {label} | LE u32 | {v} | {verdict} |");
     }
 
-    private static async Task<long?> PickFirstResolvableAsync(AccessReader reader, IEnumerable<long?> candidates, long pageCount)
+    private static async Task<long?> PickFirstResolvableAsync(ProbeDatabase reader, IEnumerable<long?> candidates, long pageCount)
     {
         foreach (long? c in candidates)
         {
@@ -1264,7 +1264,7 @@ internal static class FormatProbeApplication
     private static bool IsValidPageNumber(long pageNumber, long pageCount) => pageNumber > 0 && pageNumber < pageCount;
 
     private static async Task EmitTDefAsync(
-        AccessReader reader,
+        ProbeDatabase reader,
         StringBuilder sb,
         string name,
         long page,

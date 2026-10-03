@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 public sealed class CatalogArtifactPlanTests
@@ -16,11 +17,14 @@ public sealed class CatalogArtifactPlanTests
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using var stream = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+        AccessWriter created = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.Jet4Mdb,
             leaveOpen: true,
-            cancellationToken: cancellationToken))
+            cancellationToken: cancellationToken);
+        await created.DisposeAsync();
+
+        await using (WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: cancellationToken))
         {
             var plan = new CatalogArtifactPlan(
                 [
@@ -64,18 +68,20 @@ public sealed class CatalogArtifactPlanTests
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         await using var stream = new MemoryStream();
-        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+        AccessWriter created = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
             leaveOpen: true,
             cancellationToken: cancellationToken);
+        await created.DisposeAsync();
 
+        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: cancellationToken);
         long templatePage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(
             Constants.ComplexTypeNames.Attachment,
             cancellationToken);
         Assert.True(templatePage > 0);
 
-        byte[] page = await writer.ReadPageAsync(templatePage, cancellationToken);
+        byte[] page = await writer.Database.ReadPageAsync(templatePage, cancellationToken);
         try
         {
             for (int pointerOffset = Constants.TableDefinition.OwnedPagesRowOffset;
@@ -87,7 +93,7 @@ public sealed class CatalogArtifactPlanTests
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 }

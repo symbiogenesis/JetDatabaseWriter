@@ -117,7 +117,7 @@ internal static class IndexCatalogReader
     /// <param name="db">Format context supplying the per-format TDEF, column-descriptor, and index layouts plus the column-name decoder.</param>
     /// <param name="td">The concatenated TDEF page-chain bytes.</param>
     /// <param name="columns">The table's parsed columns, used to resolve key-column names (honouring deleted-column gaps).</param>
-    public static List<IndexMetadata> ReadMetadata(AccessBase db, byte[] td, IReadOnlyList<ColumnInfo> columns)
+    public static List<IndexMetadata> ReadMetadata(DatabaseFile db, byte[] td, IReadOnlyList<ColumnInfo> columns)
     {
         int numCols = Ru16(td, db.TDef.NumCols);
         int numIdx = Ri32(td, db.TDef.NumCols + 2);
@@ -134,7 +134,7 @@ internal static class IndexCatalogReader
             numRealIdx = 0;
         }
 
-        // Section walk mirrors AccessBase.ReadTableDefAsync and FormatProbe.
+        // Section walk mirrors DatabaseFile.ReadTableDefAsync and FormatProbe.
         int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
 
         // Walk column-name length-prefix block to find where it ends.
@@ -251,7 +251,7 @@ internal static class IndexCatalogReader
     /// <param name="td">The concatenated TDEF page-chain bytes.</param>
     /// <param name="numCols">The number of columns.</param>
     /// <param name="numRealIdx">The number of real indexes.</param>
-    public static int LocateRealIdxDescStart(AccessBase db, byte[] td, int numCols, int numRealIdx)
+    public static int LocateRealIdxDescStart(DatabaseFile db, byte[] td, int numCols, int numRealIdx)
     {
         int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
         int pos = colStart + (numCols * db.ColumnDescriptor.Size);
@@ -275,7 +275,7 @@ internal static class IndexCatalogReader
     /// <param name="td">The concatenated TDEF page-chain bytes.</param>
     /// <param name="logIdxNamesStart">The logical-idx name section start.</param>
     /// <param name="numIdx">The number of logical indexes.</param>
-    public static List<string> ReadLogicalIdxNames(AccessBase db, byte[] td, int logIdxNamesStart, int numIdx)
+    public static List<string> ReadLogicalIdxNames(DatabaseFile db, byte[] td, int logIdxNamesStart, int numIdx)
     {
         var list = new List<string>(numIdx);
         int pos = logIdxNamesStart;

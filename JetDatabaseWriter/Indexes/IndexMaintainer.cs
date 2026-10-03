@@ -32,7 +32,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="dataPages">Owns usage-map rows and empty data pages.</param>
 /// <param name="snapshots">Reads decoded table rows for full index rebuilds.</param>
 internal sealed class IndexMaintainer(
-    AccessBase db,
+    DatabaseFile db,
     PageAllocator pageAllocator,
     TableRowStore tableRows,
     DataPageInserter dataPages,
@@ -264,7 +264,7 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 
@@ -285,7 +285,7 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            AccessBase.ReturnPage(pageBytes);
+            DatabaseFile.ReturnPage(pageBytes);
         }
     }
 
@@ -638,7 +638,7 @@ internal sealed class IndexMaintainer(
                     minimumPageNumber: 0,
                     strict: false,
                     db.ReadPageAsync,
-                    AccessBase.ReturnPage,
+                    DatabaseFile.ReturnPage,
                     pageNumbers,
                     cancellationToken).ConfigureAwait(false))
                 {
@@ -652,7 +652,7 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 
@@ -708,7 +708,7 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 
@@ -726,7 +726,7 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            AccessBase.ReturnPage(page);
+            DatabaseFile.ReturnPage(page);
         }
     }
 

@@ -101,6 +101,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -119,7 +120,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             Assert.Fail($"No non-FK index with first_dp on Table1 of '{fixturePath}'.");
         }
 
-        int leafEntryCount = await CountLeafEntriesAsync(reader, layout, pageSize, primary.FirstDp, ct);
+        int leafEntryCount = await CountLeafEntriesAsync(pages, layout, pageSize, primary.FirstDp, ct);
 
         // Allow slack only for IGNORE_NULLS indexes (which legitimately omit
         // null-keyed rows). Composite indexes in compIndexTest* fixtures
@@ -147,6 +148,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -177,7 +179,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 List<byte[]> keys;
                 try
                 {
-                    keys = await CollectAllLeafKeysAsync(reader, layout, pageSize, index.FirstDp, ct);
+                    keys = await CollectAllLeafKeysAsync(pages, layout, pageSize, index.FirstDp, ct);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
                 {
@@ -227,6 +229,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -260,7 +263,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 List<IndexEntry> entries;
                 try
                 {
-                    entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, index.FirstDp, ct);
+                    entries = await CollectAllLeafEntriesAsync(pages, layout, pageSize, index.FirstDp, ct);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
                 {
@@ -343,6 +346,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 temp,
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
+            await using ReaderHarness pages = await ReaderHarness.OpenAsync(temp, cancellationToken: ct);
 
             var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
             int pageSize = reader.PageSize;
@@ -356,13 +360,13 @@ public sealed class IndexBTreeStructuralFixtureTests
             // Walk down through any intermediate levels and confirm the tree
             // actually has at least one — otherwise this test isn't covering
             // what its name claims.
-            byte[] rootPage = await reader.GetRawPageBytesAsync(index.FirstDp, ct);
+            byte[] rootPage = await pages.ReadPageCopyAsync(index.FirstDp, ct);
             Assert.True(
                 rootPage[0] == Constants.IndexLeafPage.PageTypeIntermediate,
                 $"Expected root page 0x{index.FirstDp:X} to be intermediate (0x03) for a populated big-index B-tree; got 0x{rootPage[0]:X2}.");
 
             List<IndexEntry> leafEntries = await CollectAllLeafEntriesAsync(
-                reader, layout, pageSize, index.FirstDp, ct);
+                pages, layout, pageSize, index.FirstDp, ct);
 
             Assert.Equal(rowCount, leafEntries.Count);
 
@@ -388,29 +392,29 @@ public sealed class IndexBTreeStructuralFixtureTests
     }
 
     private static async Task<int> CountLeafEntriesAsync(
-        AccessReader reader,
+        ReaderHarness pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)
     {
-        List<IndexEntry> entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, rootPage, ct);
+        List<IndexEntry> entries = await CollectAllLeafEntriesAsync(pages, layout, pageSize, rootPage, ct);
         return entries.Count;
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
-        AccessReader reader,
+        ReaderHarness pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
         CancellationToken ct)
     {
-        List<IndexEntry> entries = await CollectAllLeafEntriesAsync(reader, layout, pageSize, rootPage, ct);
+        List<IndexEntry> entries = await CollectAllLeafEntriesAsync(pages, layout, pageSize, rootPage, ct);
         return entries.ConvertAll(e => e.Key);
     }
 
     private static async Task<List<IndexEntry>> CollectAllLeafEntriesAsync(
-        AccessReader reader,
+        ReaderHarness pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
@@ -419,7 +423,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         long current = rootPage;
         for (int depth = 0; depth < 32; depth++)
         {
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             byte pageType = page[0];
             if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -451,7 +455,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 throw new InvalidOperationException("Leaf chain exceeds visit guard — possible cycle.");
             }
 
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 throw new InvalidOperationException(

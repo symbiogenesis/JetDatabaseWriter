@@ -79,7 +79,7 @@ internal static class LongRowBisect
             return;
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(
+        await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);

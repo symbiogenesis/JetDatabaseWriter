@@ -11,6 +11,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -161,9 +162,10 @@ public sealed class ComplexColumnsWriterTests
         Assert.StartsWith("f_", attachment.FlatTableName, StringComparison.Ordinal);
         Assert.EndsWith("_Files", attachment.FlatTableName, StringComparison.Ordinal);
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await pages.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
-        TableDef? tableDef = await reader.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        TableDef? tableDef = await pages.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         Assert.NotNull(tableDef);
         ColumnInfo? files = tableDef.FindColumn("Files");
         Assert.NotNull(files);

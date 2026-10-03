@@ -108,10 +108,7 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
         output.WriteLine($"PageCacheSize: {reader.PageCacheSize}");
         output.WriteLine($"PageSize: {reader.PageSize}");
         output.WriteLine($"DiagnosticsEnabled: {reader.DiagnosticsEnabled}");
-        output.WriteLine($"HostDatabasePath: {reader.HostDatabasePath}");
-        output.WriteLine($"IoGate: {reader.IoGate}");
         output.WriteLine($"LastDiagnostics: {reader.LastDiagnostics}");
-        output.WriteLine($"LinkedSourceOpenOptions: {reader.LinkedSourceOpenOptions}");
     }
 
     private static async Task ReadDiscoveredTablesAsync(ITestOutputHelper output, AccessReader reader, FuzzRandom random, CancellationToken cancellationToken)

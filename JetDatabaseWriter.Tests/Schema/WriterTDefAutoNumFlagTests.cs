@@ -60,6 +60,7 @@ public sealed class WriterTDefAutoNumFlagTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -73,7 +74,7 @@ public sealed class WriterTDefAutoNumFlagTests
 
         foreach (string tableName in tables)
         {
-            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+            CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
 
             int tdefOff = (int)entry.TDefPage * pageSize;
@@ -186,9 +187,10 @@ public sealed class WriterTDefAutoNumFlagTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
         int tdefOff = (int)entry.TDefPage * pageSize;
         return fileBytes[tdefOff + TDefAutoNumFlagOffset];

@@ -40,7 +40,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
             cancellationToken: TestContext.Current.CancellationToken);
 
         List<Dictionary<string, byte[]>> rawRows = await ReadCalculatedPayloadRowsAsync(
-            reader,
+            TestDatabases.CalcFieldTestV2010,
             JackcessTableName,
             ["LastFirst", "LastFirstLen"],
             TestContext.Current.CancellationToken);
@@ -104,7 +104,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         Assert.Equal(expectedIIfBands.Length, table.Rows.Count);
 
         List<Dictionary<string, byte[]>> rawRows = await ReadCalculatedPayloadRowsAsync(
-            reader,
+            dbPath,
             DaoTableName,
             ["IIfBand", "IsHigh"],
             TestContext.Current.CancellationToken);
@@ -125,11 +125,12 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
     }
 
     private static async ValueTask<List<Dictionary<string, byte[]>>> ReadCalculatedPayloadRowsAsync(
-        AccessReader reader,
+        string dbPath,
         string tableName,
         IReadOnlyList<string> columnNames,
         CancellationToken cancellationToken)
     {
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(dbPath, cancellationToken: cancellationToken).ConfigureAwait(false);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         Assert.NotNull(entry);
 
@@ -146,19 +147,19 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         }
 
         var rows = new List<Dictionary<string, byte[]>>();
-        var dataPage = DataPageLayout.For(reader.DatabaseFormat);
-        var rowSizes = RowFieldSizes.For(reader.DatabaseFormat);
-        long pageCount = new FileInfo(reader.HostDatabasePath).Length / reader.PageSize;
+        var dataPage = DataPageLayout.For(reader.Database.Format);
+        var rowSizes = RowFieldSizes.For(reader.Database.Format);
+        long pageCount = reader.Database.PhysicalPageCount;
 
         for (long pageNumber = 1; pageNumber < pageCount; pageNumber++)
         {
-            byte[] page = await reader.GetRawPageBytesAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await reader.ReadPageCopyAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             if (page[0] != 0x01 || Ri32(page, dataPage.TDefOff) != entry.TDefPage)
             {
                 continue;
             }
 
-            foreach (RowBound rowBound in reader.EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in reader.Database.EnumerateLiveRowBounds(page))
             {
                 Assert.True(
                     TryParseRawRowLayout(page, rowBound.RowStart, rowBound.RowSize, tableDef.HasVarColumns, rowSizes, out RawRowLayout layout),

@@ -28,20 +28,23 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// The public facade owns the auto-commit scope around each workflow.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="tableCatalog">Resolves the primary and foreign tables by name.</param>
 /// <param name="indexes">Rebuilds FK index leaves after the per-TDEF entries change.</param>
 /// <param name="pageAllocator">Allocates FK leaf pages and grows or shrinks TDEF chains.</param>
 /// <param name="catalogArtifacts">Emits the relationship's <c>MSysObjects</c> row.</param>
 /// <param name="catalogRows">Locates the <c>MSysRelationships</c> table.</param>
 /// <param name="catalog">Reads and rewrites <c>MSysRelationships</c> rows.</param>
 internal sealed class RelationshipManager(
-    AccessBase db,
+    DatabaseFile db,
+    TableCatalog tableCatalog,
     IndexMaintainer indexes,
     PageAllocator pageAllocator,
     CatalogArtifactWriter catalogArtifacts,
     CatalogRowReader catalogRows,
     RelationshipCatalogStore catalog)
 {
-    private readonly AccessBase db = db;
+    private readonly DatabaseFile db = db;
+    private readonly TableCatalog tableCatalog = tableCatalog;
     private readonly IndexMaintainer indexes = indexes;
     private readonly PageAllocator pageAllocator = pageAllocator;
     private readonly CatalogArtifactWriter catalogArtifacts = catalogArtifacts;
@@ -85,8 +88,8 @@ internal sealed class RelationshipManager(
         cancellationToken.ThrowIfCancellationRequested();
 
         // Validate referenced user tables exist and load their definitions.
-        ResolvedTable primaryTable = await this.db.ResolveRequiredTableAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
-        ResolvedTable foreignTable = await this.db.ResolveRequiredTableAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        ResolvedTable primaryTable = await this.tableCatalog.ResolveRequiredTableAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        ResolvedTable foreignTable = await this.tableCatalog.ResolveRequiredTableAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
         CatalogEntry primaryEntry = primaryTable.Entry;
         CatalogEntry foreignEntry = foreignTable.Entry;
         TableDef primaryDef = primaryTable.Definition;
@@ -1207,7 +1210,7 @@ internal sealed class RelationshipManager(
             startPage,
             this.db.PageSizeBytes,
             this.db.ReadPageAsync,
-            AccessBase.ReturnPage,
+            DatabaseFile.ReturnPage,
             retainPageNumbers: true,
             cancellationToken);
 
@@ -1478,8 +1481,8 @@ internal sealed class RelationshipManager(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            CatalogEntry? pkEntry = await this.db.GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
-            CatalogEntry? fkEntry = await this.db.GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? pkEntry = await this.tableCatalog.GetCatalogEntryAsync(pair.Key.Pk, cancellationToken).ConfigureAwait(false);
+            CatalogEntry? fkEntry = await this.tableCatalog.GetCatalogEntryAsync(pair.Key.Fk, cancellationToken).ConfigureAwait(false);
             if (pkEntry == null || fkEntry == null)
             {
                 // Catalog row references a missing table — skip TDEF work.

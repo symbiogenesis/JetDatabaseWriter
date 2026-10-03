@@ -301,8 +301,9 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, this.ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: this.ct);
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("TestAces", this.ct);
+        CatalogEntry? entry = await pages.GetCatalogEntryAsync("TestAces", this.ct);
         Assert.NotNull(entry);
         int objectId = (int)entry.TDefPage;
 
@@ -346,8 +347,9 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, this.ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: this.ct);
 
-        CatalogEntry? entry = await reader.GetCatalogEntryAsync("TestSids", this.ct);
+        CatalogEntry? entry = await pages.GetCatalogEntryAsync("TestSids", this.ct);
         Assert.NotNull(entry);
         int objectId = (int)entry.TDefPage;
 
@@ -536,13 +538,14 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(
             ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, this.ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: this.ct);
 
         DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: this.ct);
 
         // Each of the 3 user tables should have ACE rows.
         foreach (string tableName in new[] { "T1", "T2", "T3" })
         {
-            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, this.ct);
+            CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, this.ct);
             Assert.NotNull(entry);
             int objectId = (int)entry.TDefPage;
 

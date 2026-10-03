@@ -20,7 +20,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueEncoding;
-using static JetDatabaseWriter.AccessBase;
+using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -34,6 +34,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// each call.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="catalog">Resolves table names and is invalidated after a rename.</param>
 /// <param name="tableRows">Copies rows into the rebuilt table.</param>
 /// <param name="indexMaintainer">Rebuilds forwarded indexes after a row copy.</param>
 /// <param name="pageAllocator">Frees reclaimed table pages.</param>
@@ -44,7 +45,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="constraints">Carries client-side column constraints across schema changes.</param>
 /// <param name="snapshots">Reads rows, index metadata, and persisted column properties before a rebuild.</param>
 internal sealed class TableSchemaEditor(
-    AccessBase db,
+    DatabaseFile db,
+    TableCatalog catalog,
     TableRowStore tableRows,
     IndexMaintainer indexMaintainer,
     PageAllocator pageAllocator,
@@ -77,7 +79,7 @@ internal sealed class TableSchemaEditor(
         // Unsupported Jet4 key types (OLE / Attachment / Multi-Value) are
         // rejected up-front below in ResolveIndexes.
 
-        if (await db.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
+        if (await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
         {
             throw new InvalidOperationException($"Table '{tableName}' already exists.");
         }
@@ -335,7 +337,7 @@ internal sealed class TableSchemaEditor(
         CancellationToken cancellationToken,
         Func<IReadOnlyList<IndexMetadata>, IReadOnlyList<ColumnDefinition>, List<IndexDefinition>>? projectIndexes = null)
     {
-        ResolvedTable table = await db.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
 
@@ -410,7 +412,7 @@ internal sealed class TableSchemaEditor(
         string tempName = $"~tmp_{Guid.NewGuid():N}"[..18];
         await this.CreateTableAsync(tempName, newDefs, projectedIndexes, cancellationToken).ConfigureAwait(false);
 
-        ResolvedTable tempTable = await db.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable tempTable = await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
         CatalogEntry tempEntry = tempTable.Entry;
         TableDef tempDef = tempTable.Definition;
 
@@ -756,7 +758,7 @@ internal sealed class TableSchemaEditor(
         }
 
         constraints.Unregister(tableName);
-        db.InvalidateCatalogCache();
+        catalog.Invalidate();
     }
 
     private ValueTask ReclaimDroppedTablePagesAsync(long tdefPage, CancellationToken cancellationToken)

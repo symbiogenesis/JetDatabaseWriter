@@ -23,13 +23,15 @@ using JetDatabaseWriter.ValueEncoding;
 /// row deletion.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="catalog">The cached user-table catalog, invalidated after every catalog mutation.</param>
 /// <param name="tableRows">Writes and tombstones catalog rows.</param>
 /// <param name="indexes">Keeps the catalog and <c>MSysACEs</c> indexes current.</param>
 /// <param name="longValueEncoder">Encodes linked-table memo fields as LVAL chains.</param>
 /// <param name="constraints">Follows table renames in the client-side constraint registry.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 internal sealed class CatalogWriter(
-    AccessBase db,
+    DatabaseFile db,
+    TableCatalog catalog,
     TableRowStore tableRows,
     IndexMaintainer indexes,
     LongValueEncoder longValueEncoder,
@@ -140,7 +142,7 @@ internal sealed class CatalogWriter(
                 useRestrictedOwnerAcm: true,
                 useRelationshipGroupAcm: artifact.AcePolicy == CatalogObjectAcePolicy.RelationshipObject,
                 cancellationToken).ConfigureAwait(false);
-            db.InvalidateCatalogCache();
+            catalog.Invalidate();
         }
 
         return objectId;
@@ -364,7 +366,7 @@ internal sealed class CatalogWriter(
             missingMessage: $"Catalog row for '{oldName}' was not found during rename.",
             cancellationToken).ConfigureAwait(false);
         constraints.Rename(oldName, newName);
-        db.InvalidateCatalogCache();
+        catalog.Invalidate();
     }
 
     internal async ValueTask<long> ReplaceUserTableCatalogEntryAsync(
@@ -395,7 +397,7 @@ internal sealed class CatalogWriter(
             lvProp,
             deleted.FirstCatalogFlags,
             cancellationToken).ConfigureAwait(false);
-        db.InvalidateCatalogCache();
+        catalog.Invalidate();
         return replacementTdefPage;
     }
 
@@ -472,7 +474,7 @@ internal sealed class CatalogWriter(
             operation,
             cancellationToken).ConfigureAwait(false);
 
-        db.InvalidateCatalogCache();
+        catalog.Invalidate();
         return new UserTableCatalogDeletionResult(deletedCatalogRows.Count, droppedTdefPages, firstTdefPage, firstCatalogFlags);
     }
 
@@ -503,7 +505,7 @@ internal sealed class CatalogWriter(
             return;
         }
 
-        if (db.DatabaseFormat != DatabaseFormat.Jet3Mdb)
+        if (db.Format != DatabaseFormat.Jet3Mdb)
         {
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
         }

@@ -56,6 +56,7 @@ public sealed class IndexLeafChainConsistencyTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
+        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
         var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
         int pageSize = reader.PageSize;
@@ -83,7 +84,7 @@ public sealed class IndexLeafChainConsistencyTests
                     continue;
                 }
 
-                long firstLeaf = await FindFirstLeafPageAsync(reader, layout, pageSize, index.FirstDp, ct);
+                long firstLeaf = await FindFirstLeafPageAsync(pages, layout, pageSize, index.FirstDp, ct);
                 if (firstLeaf <= 0)
                 {
                     continue;
@@ -101,12 +102,12 @@ public sealed class IndexLeafChainConsistencyTests
                         return;
                     }
 
-                    byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+                    byte[] page = await pages.ReadPageCopyAsync(current, ct);
                     (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
 
                     if (next != 0)
                     {
-                        byte[] nextPage = await reader.GetRawPageBytesAsync(next, ct);
+                        byte[] nextPage = await pages.ReadPageCopyAsync(next, ct);
                         (long prevOfNext, long _, long _) = IndexPageCodec.ReadSiblingPointers(layout, nextPage);
 
                         string msg = $"Broken doubly-linked chain in {tableName}.{index.Name}: page {current} -> next {next}, but next's prev = {prevOfNext} (expected {current}). Fixture: '{fixturePath}'";
@@ -129,7 +130,7 @@ public sealed class IndexLeafChainConsistencyTests
     }
 
     private static async Task<long> FindFirstLeafPageAsync(
-        AccessReader reader,
+        ReaderHarness pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,
@@ -138,7 +139,7 @@ public sealed class IndexLeafChainConsistencyTests
         long current = rootPage;
         for (int depth = 0; depth < 32; depth++)
         {
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
+            byte[] page = await pages.ReadPageCopyAsync(current, ct);
             byte pageType = page[0];
             if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
             {

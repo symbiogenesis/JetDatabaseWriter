@@ -10,6 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -393,8 +394,8 @@ public sealed class CreateDatabaseTests
         }
 
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        TableDef? msys = await reader.ReadTableDefAsync(2, TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
         Assert.Equal(FullCatalogColumnNames, msys.Columns.ConvertAll(c => c.Name));
@@ -415,8 +416,8 @@ public sealed class CreateDatabaseTests
         }
 
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        TableDef? msys = await reader.GetMSysObjectsTableDefAsync(TestContext.Current.CancellationToken);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        TableDef? msys = await reader.ReadTableDefAsync(2, TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);
         Assert.Equal(SlimCatalogColumnNames, msys.Columns.ConvertAll(c => c.Name));

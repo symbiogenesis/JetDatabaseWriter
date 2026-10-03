@@ -5,7 +5,6 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -22,7 +21,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private const string BetaRowsTable = "BetaRows";
     private const string PageCacheFieldName = "pageCache";
     private const string RowBoundsCacheFieldName = "rowBoundsCache";
-    private const string CatalogCacheFieldName = "catalogCache";
+    private const string CatalogCacheFieldName = "userTables";
     private const string OwnedDataPageIndexFieldName = "ownedDataPageIndex";
     private const string AsyncLazyValueFieldName = "value";
 
@@ -44,8 +43,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             TestContext.Current.CancellationToken);
 
         Assert.Equal(0, reader.PageCacheSize);
-        Assert.Null(ReadPrivateField(reader, PageCacheFieldName));
-        Assert.Null(ReadPrivateField(reader, RowBoundsCacheFieldName));
+        Assert.Null(ReadPrivateField(PageCacheOf(reader), PageCacheFieldName));
+        Assert.Null(ReadPrivateField(PageCacheOf(reader), RowBoundsCacheFieldName));
         Assert.NotEmpty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
     }
 
@@ -66,8 +65,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             leaveOpen: true,
             TestContext.Current.CancellationToken))
         {
-            Assert.NotNull(ReadPrivateField(cachedReader, PageCacheFieldName));
-            Assert.NotNull(ReadPrivateField(cachedReader, RowBoundsCacheFieldName));
+            Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), PageCacheFieldName));
+            Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), RowBoundsCacheFieldName));
         }
 
         await using var uncachedStream = new MemoryStream(bytes, writable: false);
@@ -78,8 +77,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             TestContext.Current.CancellationToken);
 
         Assert.Equal(256, uncachedReader.PageCacheSize);
-        Assert.Null(ReadPrivateField(uncachedReader, PageCacheFieldName));
-        Assert.Null(ReadPrivateField(uncachedReader, RowBoundsCacheFieldName));
+        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), PageCacheFieldName));
+        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), RowBoundsCacheFieldName));
         Assert.NotEmpty(await uncachedReader.ListTablesAsync(TestContext.Current.CancellationToken));
     }
 
@@ -108,8 +107,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, PageCacheFieldName);
-        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader, RowBoundsCacheFieldName);
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(PageCacheOf(reader), PageCacheFieldName);
+        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(PageCacheOf(reader), RowBoundsCacheFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.Equal(options.PageCacheSize, pageCache.Count);
         Assert.True(pageCache.Misses > pageCache.Count);
@@ -140,13 +139,13 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             options,
             leaveOpen: true,
             TestContext.Current.CancellationToken);
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, PageCacheFieldName);
-        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader, RowBoundsCacheFieldName);
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(PageCacheOf(reader), PageCacheFieldName);
+        LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(PageCacheOf(reader), RowBoundsCacheFieldName);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains(AlphaRowsTable, tables);
         Assert.Contains(BetaRowsTable, tables);
-        Assert.NotNull(ReadPrivateField(reader, CatalogCacheFieldName));
+        Assert.NotNull(ReadPrivateField(FacadeInternals.Services(reader).TableCatalog, CatalogCacheFieldName));
 
         long catalogMisses = pageCache.Misses;
         IReadOnlyList<string> repeatedTables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -191,7 +190,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        object? ownedDataPageIndex = ReadPrivateField(reader, OwnedDataPageIndexFieldName);
+        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader), OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
         Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));
@@ -223,7 +222,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
-        object? ownedDataPageIndex = ReadPrivateField(reader, OwnedDataPageIndexFieldName);
+        object? ownedDataPageIndex = ReadPrivateField(FacadeInternals.Database(reader), OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
         Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));
@@ -259,10 +258,10 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        Assert.NotNull(ReadPrivateField(cachedReader, PageCacheFieldName));
-        Assert.NotNull(ReadPrivateField(cachedReader, RowBoundsCacheFieldName));
-        Assert.Null(ReadPrivateField(uncachedReader, PageCacheFieldName));
-        Assert.Null(ReadPrivateField(uncachedReader, RowBoundsCacheFieldName));
+        Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), PageCacheFieldName));
+        Assert.NotNull(ReadPrivateField(PageCacheOf(cachedReader), RowBoundsCacheFieldName));
+        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), PageCacheFieldName));
+        Assert.Null(ReadPrivateField(PageCacheOf(uncachedReader), RowBoundsCacheFieldName));
 
         foreach (string tableName in (string[])[AlphaRowsTable, BetaRowsTable])
         {
@@ -273,7 +272,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     }
 
     [Fact]
-    public async Task ReadPageCachedAsync_WithActiveJournal_BypassesCachedPageBytes()
+    public async Task PageCacheRead_WithActiveJournal_BypassesCachedPageBytes()
     {
         await using MemoryStream stream = await CreateCacheExerciseDatabaseAsync(
             new List<(string Name, int RowCount, string Prefix)>
@@ -293,8 +292,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        byte[] cachedPage = await reader.ReadPageCachedAsync(0, TestContext.Current.CancellationToken);
-        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader, PageCacheFieldName);
+        byte[] cachedPage = await PageCacheOf(reader).ReadPageAsync(0, TestContext.Current.CancellationToken);
+        LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(PageCacheOf(reader), PageCacheFieldName);
         Assert.Equal(1, pageCache.Count);
 
         byte[] journaledPage = new byte[reader.PageSize];
@@ -303,9 +302,9 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
 
         var journal = new PageJournal(stream.Length, reader.PageSize, maxPages: 4);
         journal.Write(0, journaledPage);
-        reader.ActiveJournal = journal;
+        FacadeInternals.Database(reader).ActiveJournal = journal;
 
-        byte[] rereadPage = await reader.ReadPageCachedAsync(0, TestContext.Current.CancellationToken);
+        byte[] rereadPage = await PageCacheOf(reader).ReadPageAsync(0, TestContext.Current.CancellationToken);
         try
         {
             Assert.NotSame(cachedPage, rereadPage);
@@ -313,8 +312,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         }
         finally
         {
-            reader.ActiveJournal = null;
-            AccessBase.ReturnPage(rereadPage);
+            FacadeInternals.Database(reader).ActiveJournal = null;
+            DatabaseFile.ReturnPage(rereadPage);
         }
     }
 
@@ -507,24 +506,12 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private static int ReadUInt24(byte[] buffer, int offset)
         => buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
 
-    private static T ReadRequiredPrivateField<T>(AccessBase instance, string fieldName)
+    private static ReaderPageCache PageCacheOf(AccessReader reader) => FacadeInternals.Services(reader).PageCache;
+
+    private static T ReadRequiredPrivateField<T>(object instance, string fieldName)
         where T : class =>
         Assert.IsType<T>(ReadPrivateField(instance, fieldName));
 
-    private static object? ReadPrivateField(object instance, string fieldName)
-    {
-        Type? currentType = instance.GetType();
-        while (currentType is not null)
-        {
-            FieldInfo? field = currentType.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
-            if (field is not null)
-            {
-                return field.GetValue(instance);
-            }
-
-            currentType = currentType.BaseType;
-        }
-
-        throw new MissingFieldException(instance.GetType().FullName, fieldName);
-    }
+    private static object? ReadPrivateField(object instance, string fieldName) =>
+        FacadeInternals.ReadPrivateField(instance, fieldName);
 }

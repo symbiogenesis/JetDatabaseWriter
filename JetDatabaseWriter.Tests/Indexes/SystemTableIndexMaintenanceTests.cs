@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -16,10 +17,11 @@ public sealed class SystemTableIndexMaintenanceTests
     public async Task InsertSystemRowAndMaintainAsync_MSysACEs_UsesIncrementalMaintenance()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
+        await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-        TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
+        TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ObjectId", -70_001);
         tableDef.SetValueByName(row, "SID", Constants.Aces.UsersSid);
@@ -40,10 +42,11 @@ public sealed class SystemTableIndexMaintenanceTests
     public async Task InsertSystemRowAndMaintainAsync_MSysComplexColumns_UsesIncrementalMaintenance()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
+        await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, ct);
-        TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
+        TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ColumnName", "SyntheticComplexColumn");
         tableDef.SetValueByName(row, "ComplexID", 70_001);
@@ -65,11 +68,12 @@ public sealed class SystemTableIndexMaintenanceTests
     public async Task InsertSystemRowAndMaintainAsync_Throws_WhenSystemTableIncrementalMaintenanceBails()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
+        await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-        TableDef tableDef = await writer.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
-        await CorruptFirstIndexRootPageTypeAsync(writer, tdefPage, ct);
+        TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
+        await CorruptFirstIndexRootPageTypeAsync(writer.Database, tdefPage, ct);
 
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ObjectId", -70_101);
@@ -93,16 +97,23 @@ public sealed class SystemTableIndexMaintenanceTests
     public async Task DropTableAsync_Throws_WhenMsysAcesDeleteIncrementalMaintenanceBails()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using AccessWriter writer = await CreateFreshAceWriterAsync(ct);
+        await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
 
-        await writer.CreateTableAsync(
-            "Victim",
-            [new ColumnDefinition("Id", typeof(int))],
-            ct);
+        await using (AccessWriter setup = await AccessWriter.OpenAsync(stream, leaveOpen: true, cancellationToken: ct))
+        {
+            await setup.CreateTableAsync(
+                "Victim",
+                [new ColumnDefinition("Id", typeof(int))],
+                ct);
+        }
 
-        long acesTdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-        await CorruptFirstIndexRootPageTypeAsync(writer, acesTdefPage, ct);
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct))
+        {
+            long acesTdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
+            await CorruptFirstIndexRootPageTypeAsync(harness.Database, acesTdefPage, ct);
+        }
 
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             writer.DropTableAsync("Victim", ct).AsTask());
 
@@ -110,55 +121,57 @@ public sealed class SystemTableIndexMaintenanceTests
         Assert.Contains("full rebuild fallback is disabled", ex.Message, StringComparison.Ordinal);
     }
 
-    private static async ValueTask<AccessWriter> CreateFreshAceWriterAsync(CancellationToken cancellationToken)
+    private static async ValueTask<MemoryStream> CreateFreshAceDatabaseAsync(CancellationToken cancellationToken)
     {
         var stream = new MemoryStream();
-        return await AccessWriter.CreateDatabaseAsync(
+        AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
-            leaveOpen: false,
+            leaveOpen: true,
             cancellationToken: cancellationToken).ConfigureAwait(false);
+        await writer.DisposeAsync().ConfigureAwait(false);
+        return stream;
     }
 
-    private static async ValueTask CorruptFirstIndexRootPageTypeAsync(AccessWriter writer, long tdefPage, CancellationToken cancellationToken)
+    private static async ValueTask CorruptFirstIndexRootPageTypeAsync(DatabaseFile db, long tdefPage, CancellationToken cancellationToken)
     {
-        byte[] tdef = await writer.ReadPageAsync(tdefPage, cancellationToken);
+        byte[] tdef = await db.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, writer.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, writer.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
             Assert.True(numRealIdx > 0, $"Expected TDEF page {tdefPage} to declare at least one real index.");
 
-            int colStart = writer.TDef.BlockEnd + (numRealIdx * writer.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * writer.ColumnDescriptor.Size);
+            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = writer.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk TDEF page {tdefPage} column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            int physStart = writer.IndexLayoutInfo.RealIdxPhysOffset(realIdxDescStart, 0);
-            int firstDp = Ri32(tdef, writer.IndexLayoutInfo.FirstDpAbsoluteOffset(physStart));
+            int physStart = db.IndexLayoutInfo.RealIdxPhysOffset(realIdxDescStart, 0);
+            int firstDp = Ri32(tdef, db.IndexLayoutInfo.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, $"Expected TDEF page {tdefPage} first real-index root page to be allocated.");
 
-            byte[] root = await writer.ReadPageAsync(firstDp, cancellationToken);
+            byte[] root = await db.ReadPageAsync(firstDp, cancellationToken);
             try
             {
                 Assert.True(
                     root[0] is Constants.IndexLeafPage.PageTypeLeaf or Constants.IndexLeafPage.PageTypeIntermediate,
                     $"Expected index root page {firstDp} to be an index page, got 0x{root[0]:X2}.");
                 root[0] = 0x01;
-                await writer.WritePageAsync(firstDp, root, cancellationToken);
+                await db.WritePageAsync(firstDp, root, cancellationToken);
             }
             finally
             {
-                AccessBase.ReturnPage(root);
+                DatabaseFile.ReturnPage(root);
             }
         }
         finally
         {
-            AccessBase.ReturnPage(tdef);
+            DatabaseFile.ReturnPage(tdef);
         }
     }
 }

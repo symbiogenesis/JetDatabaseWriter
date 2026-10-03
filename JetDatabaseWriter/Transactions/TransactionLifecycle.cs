@@ -12,13 +12,13 @@ using JetDatabaseWriter.Pages;
 /// Manages the explicit page-buffered transaction lifecycle for an
 /// <see cref="AccessWriter"/>: begin, auto-commit wrapping, commit replay,
 /// rollback, and dispose-time teardown. Owns the active transaction; the
-/// page journal it attaches lives on <see cref="AccessBase.ActiveJournal"/>
+/// page journal it attaches lives on <see cref="DatabaseFile.ActiveJournal"/>
 /// because every page read and write consults it.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="options">The writer options; supplies the auto-commit switch and journal page budget.</param>
 /// <param name="byteRangeLock">The cooperative JET byte-range lock used for the commit-lock sentinel.</param>
-internal sealed class TransactionLifecycle(AccessBase db, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
+internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
 {
     /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
     internal JetTransaction? ActiveTransaction { get; private set; }
@@ -31,7 +31,7 @@ internal sealed class TransactionLifecycle(AccessBase db, AccessWriterOptions op
     /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
     internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
     {
-        Guard.ThrowIfDisposed(db.IsDisposed, db);
+        db.ThrowIfDisposed();
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -45,7 +45,7 @@ internal sealed class TransactionLifecycle(AccessBase db, AccessWriterOptions op
             }
 
             long baseLength = db.DatabaseLengthBytes;
-            var journal = new PageJournal(baseLength, db.PageSize, options.MaxTransactionPageBudget);
+            var journal = new PageJournal(baseLength, db.PageSizeBytes, options.MaxTransactionPageBudget);
             var tx = new JetTransaction(this, journal);
             db.ActiveJournal = journal;
             this.ActiveTransaction = tx;
@@ -157,7 +157,7 @@ internal sealed class TransactionLifecycle(AccessBase db, AccessWriterOptions op
     {
         Guard.NotNull(transaction, nameof(transaction));
 
-        Guard.ThrowIfDisposed(db.IsDisposed, db);
+        db.ThrowIfDisposed();
 
         PageJournal journal;
         await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -186,7 +186,7 @@ internal sealed class TransactionLifecycle(AccessBase db, AccessWriterOptions op
         }
 
         long? commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(
-            isAccdb: db.DatabaseFormat == Enums.DatabaseFormat.AceAccdb,
+            isAccdb: db.Format == Enums.DatabaseFormat.AceAccdb,
             cancellationToken).ConfigureAwait(false);
 
         try
@@ -285,7 +285,7 @@ internal sealed class TransactionLifecycle(AccessBase db, AccessWriterOptions op
         }
         finally
         {
-            AccessBase.ReturnPage(page0);
+            DatabaseFile.ReturnPage(page0);
         }
     }
 
