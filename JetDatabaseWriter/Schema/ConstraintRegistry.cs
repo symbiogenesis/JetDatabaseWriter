@@ -450,11 +450,13 @@ internal sealed class ConstraintRegistry(
     /// <see cref="ColumnDefinition.DefaultValue"/>. When no
     /// <see cref="ColumnDefinition.DefaultValueExpression"/> is set, the CLR default is
     /// persisted as a literal that later writers apply instead, so the declaring writer
-    /// applies what that literal denotes: a <see cref="double"/> or <see cref="float"/>
-    /// is read back from its literal as the column's type (<c>0.1f</c> on a Double column
-    /// is 0.1), and a <see cref="DateTime"/> is cut to the whole second, the resolution
-    /// of an Access date literal. Other values are stored as given; their literals are
-    /// exact.
+    /// applies what that literal denotes. A number of any CLR type is read back from its
+    /// literal as the column's type (<see cref="ColumnDefaultValue.TryReadBackNumber"/>),
+    /// so <c>0.1f</c> on a Double column is 0.1, and a number the column's type cannot
+    /// hold gives no default, as in a later writer; <c>CreateTableAsync</c> and
+    /// <c>AddColumnAsync</c> reject such a default before it gets here. A
+    /// <see cref="DateTime"/> is cut to the whole second, the resolution of an Access
+    /// date literal. Other values are stored as given.
     /// </summary>
     /// <param name="def">The column definition.</param>
     /// <returns>The default to apply, or <see langword="null"/> for none.</returns>
@@ -471,12 +473,9 @@ internal sealed class ConstraintRegistry(
             return value;
         }
 
-        if (value is double d ? double.IsFinite(d) : value is float f && float.IsFinite(f))
+        if (ColumnDefaultValue.TryReadBackNumber(value, def.ClrType, out object? number))
         {
-            var persisted = ColumnDefaultValue.Compile(JetExpressionConverter.ToJetExpression(value)!);
-            return persisted.TryEvaluate(def.ClrType, static () => throw new InvalidOperationException("A numeric literal needs no evaluation context."), out object parsed)
-                ? parsed
-                : value;
+            return number;
         }
 
         return value is DateTime dateTime
