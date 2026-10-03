@@ -290,7 +290,7 @@ At `6eab703`, none of the bugs from my earlier report was fixed. The five commit
   - Writing. `RowEncoder.SerializeRow` wrote the EOD and offsets through a checked one-byte cast, so every Jet3 row whose EOD or an offset reached 256 threw `OverflowException`. That covered a table of 200 Long columns, Text values adding up to about 250 bytes, and a `CreateTableAsync` with four or five CLR defaults, whose LvProp blob made the `MSysObjects` row too long. The encoder also sized the jump table as `length / 256`, which disagrees with Jet's rule at multiples of 256, and left its bytes zero. The changes:
     - `Jet3JumpTable.CountForLength` and `Write` produce the table Access writes, 0xFF dummies included, and `SerializeRow` writes the low bytes of the EOD and offsets. Fixed-only tables keep their EOD, jump table and `var_len` trailer, which readers skip. Jet4 and ACCDB rows are unchanged.
     - A Jet3 table of more than 255 columns, Access's field limit, is rejected with `JetLimitationException` by `CreateTableAsync` and `AddColumnAsync` before anything is written, and by the encoder. So is the one row shape no byte can encode: 255 variable columns with two dummy entries.
-    - The README gains a "Table width" limitation.
+    - The README gains a "Table and row size" limitation, which also covers the one-page row size below.
 
     `Jet3LongRowTests` runs every writer case with no transaction, with `UseTransactionalWrites` and in an explicit transaction:
     - Text rows from exactly 256 bytes to EOD 1,025 with an index, and an update that grows a row past 512 bytes; every stored trailer is checked against the Jackcess reference.
