@@ -35,6 +35,9 @@ guidance below to produce new evidence before changing the core reader.
 - Read-ahead eligibility benchmarks (long-value tables, small or disabled caches): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderReadAheadEligibilityBenchmarks.cs`
 - Long values longer than the page cache: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderLargeLongValueBenchmarks.cs`
 - Concurrent scans on one shared reader versus one reader per scan, plain and AES-encrypted: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderConcurrentScanBenchmarks.cs`
+- `Query<T>().Include(...)` over a related customer/order pair: `JetDatabaseWriter.Benchmarks/Queries/QueryIncludeBenchmarks.cs`
+- Attachment reads (`GetAttachmentsAsync`, `Rows()`, `Rows<T>()` with `ComplexCellValue.ReadAttachments`), writer-authored and Access-authored: `JetDatabaseWriter.Benchmarks/Reader/ComplexColumnReadBenchmarks.cs`
+- Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
 - Benchmark fixture sizes: `JetDatabaseWriter.Benchmarks/Infrastructure/SyntheticDatabases.cs`
 - Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
 - Shared page and row helpers: `JetDatabaseWriter/DatabaseFile.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
@@ -78,7 +81,17 @@ release-quality benchmark results justify reopening a specific area.
   values (about 490 pages each) are each longer than the default 256-page cache;
   every other long-value fixture fits in the cache, which is how the evicted-page
   bug (bug 1 in `docs/todo.md`) went unmeasured. The numeric database also has an
-  `AccdbAesCfbWrapped`-encrypted copy.
+  `AccdbAesCfbWrapped`-encrypted copy. The relational database has 1,000
+  `Customers` and 10,000 `Orders` (primary keys, a non-unique `OrderDate` index,
+  and the `FK_Orders_Customers` relationship), and the attachment database has
+  150 `Documents` rows with one 16 KB attachment each. Both are smaller than
+  planned because of a writer limit: a full index rebuild that spreads a table's
+  index pages over more than one inline usage-map bitmap throws
+  `NotSupportedException` ("REFERENCE usage maps for index pages are not yet
+  supported"). Creating the relationship over 20,000 orders that already have
+  two indexes hits it, and so does `AddAttachmentAsync`, which rebuilds the
+  hidden flat table's indexes on every call: on an 800-row table the 338th call
+  threw.
 - The `OpenAsync` floor is settled at roughly 1.1 ms / 41 KB. Do not spend
   optimization time on lazy catalog loading or catalog span rewrites without new
   measurements that contradict that floor.
@@ -104,6 +117,9 @@ git history) and are not reproduced here.
 | Read-ahead eligibility (2026-10-02, Arm64, .NET 10.0.12, in-process ShortRun, two interleaved before/after runs) | Warm `Auto` scans of the 25K-row numeric table: page cache disabled 9.9-10.3 ms before, 8.6-8.7 ms after read-ahead was allowed; 2-page cache 10.4-10.5 ms before, 8.7-8.9 ms after; 256-page cache unchanged at 8.8-9.0 ms. A 5,000-row MEMO table (62-73 ms) and a 2,000-row single-page OLE table (22.5-26 ms) moved by less than the run-to-run noise when read-ahead was allowed, at every cache size. | Allow read-ahead at any page-cache size, including none. Keep MEMO, OLE, complex and attachment tables sequential: the cache-ownership hazard behind that exclusion is gone, but it measured no gain. |
 | Long values longer than the cache (2026-10-03, Arm64, .NET 10.0.12, in-process ShortRun on a shared machine) | `AccessReaderLargeLongValueBenchmarks`: a warm `Rows()` scan of the 30 `LargeLongValues` rows took 45-54 ms and allocated 30 MB at page-cache sizes 0, 8 and 256, in both `Disabled` and `Auto`. `Rows<T>()` was within the noise of `Rows()`, and opening a fresh reader for the scan added 22-30 ms. Every case returned all 30 rows with every value at full length. | No change. Setup checks the row count and value lengths, so a return of the evicted-page bug shows as an NA row rather than a fast result. `Auto` and `Disabled` were within this run's noise of each other on these values. |
 | Concurrent scans (same run) | `AccessReaderConcurrentScanBenchmarks`: N simultaneous `Rows()` scans of the 25K-row numeric table. On one shared reader: 9.1 ms at N=1, 10.6 ms at 2, 12.8-13.2 ms at 4 and 24 ms at 8. One reader per scan: 9.3-12.4 ms, 13.2-13.6 ms, 24 ms and 42-45 ms, allocating up to 23% more. The AES-encrypted copy was within the noise of the plain file at every N. | A shared reader scales better on this shape: scans running in near lockstep hit pages another scan has just cached, while separate readers each read and decode every page. Neither the shared reader's I/O gate nor the AES transform lock showed as a bottleneck at up to 8 scans. |
+| Include (same run) | `QueryIncludeBenchmarks` over 1,000 customers and 10,000 orders: the collection include took 52.7 ms and 18 MB, the same include filtered, ordered and capped at five orders per customer 51.9 ms, and the reference include (each order's customer) 9.3 ms and 4 MB. | The collection include costs 5-6 times the reference include over the same rows; filtering per parent runs after the load, so it saves nothing. Profile the collection path before changing it. |
+| Attachment reads (same run) | `ComplexColumnReadBenchmarks`: 150 writer-authored 16 KB attachments took 14.7 ms through `GetAttachmentsAsync`, 18.0 ms through a `Rows()` scan and 21.0 ms through `Rows<T>()` plus `ComplexCellValue.ReadAttachments`. The 16 Access-authored Northwind category images took 8.4, 10.5 and 10.7 ms. | No change. Reading attachments through the parent row costs 23-43% more than reading the flat table directly. |
+| Public seeks (same run) | `PublicSeekBenchmarks` over the 10,000 orders: 1,000 primary-key lookups took 38.7 ms (15 MB) through `SeekRowsAsync` and 31.9 ms through `FromIndex(...).WhereEquals`, against 2.9 ms for one `Rows<T>()` scan that keeps the same 1,000 keys. A 250-row `WhereBetween` on the `OrderDate` index took 0.47 ms. The same 1,000 lookups as `Rows<T>(o => o.OrderId == key)` took 525 ms and 58 MB; each call compiles its predicate (`Expression.Compile`) and lists the table's indexes before it seeks. | A seek costs about 32-39 µs and 15 KB, so one full scan of this table beats about 75 single-key seeks. The inferred `Rows<T>(predicate)` seek costs about 0.5 ms more per call than an explicit one; profile its per-call setup before recommending it in loops. |
 
 ## Historical baseline
 
@@ -318,10 +334,15 @@ Use `GetRealRowCountAsync` for accurate row counts instead of
 pages and checks each row's layout, so it counts the same rows the reads
 return, but it skips full row decode and long-value resolution.
 
-Use `SeekRowsAsync` for exact indexed lookups instead of `Rows(...).Where(...)`
-when the predicate matches an available Jet4/ACE index. LINQ filters run after
-rows are decoded; index seek starts from the B-tree. Current seek support is
-exact-match only and returns full `object[]` rows.
+Use `SeekRowsAsync` or `FromIndex(...)` (`WhereEquals`, `WhereKeyPrefix`,
+`WhereBetween`, `WhereRange`) for indexed lookups instead of
+`Rows(...).Where(...)` when the predicate matches an available Jet4/ACE index.
+LINQ filters run after rows are decoded; an index seek starts from the B-tree.
+Each seek has a fixed cost, though: on the 10,000-row `PublicSeekBenchmarks`
+table, 1,000 single-key seeks took 32-39 ms while one full scan that kept the
+same keys took 2.9 ms. For more than a few dozen keys, scan once and filter
+against a `HashSet`. `Rows<T>(predicate)` infers the index but recompiles and
+replans on every call (about 0.5 ms each), so prefer the explicit APIs in loops.
 
 ### Treat MEMO/OLE as a two-phase read when possible
 
@@ -422,6 +443,9 @@ dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *Access
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderReadAheadEligibilityBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderLargeLongValueBenchmarks* --job short
 dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderConcurrentScanBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *QueryIncludeBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *ComplexColumnReadBenchmarks* --job short
+dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *PublicSeekBenchmarks* --job short
 ```
 
 Summary decisions from the refresh:
