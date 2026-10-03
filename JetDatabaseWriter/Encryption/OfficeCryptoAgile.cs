@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
 using JetDatabaseWriter.Encryption.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -1083,9 +1084,12 @@ internal static class OfficeCryptoAgile
             return;
         }
 
+        // Leave Access's unencrypted header: encoding key 0 and the
+        // empty-password pattern. The creation date and sort order after the
+        // password area stay as they were.
         byte[] headerPage = GetUnmaskedHeaderPage(database);
         Array.Clear(headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, 4);
-        Array.Clear(headerPage, 0x42, Math.Min(80, headerPage.Length - 0x42));
+        EncryptionManager.WriteEmptyHeaderPassword(headerPage, DatabaseFormat.AceAccdb);
 
         int clearLength = Math.Min(2 + encryptionInfoLength, headerPage.Length - Constants.AgileEncryption.FlatEncryptionInfoLengthOffset);
         if (clearLength > 0)

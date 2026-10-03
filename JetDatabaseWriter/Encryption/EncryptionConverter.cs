@@ -59,8 +59,9 @@ internal static class EncryptionConverter
 
     /// <summary>
     /// Reads <paramref name="source"/>, applies any active decryption, and
-    /// returns a fully-plaintext copy of the database (no encryption flags,
-    /// password area cleared, header magic restored). The returned byte
+    /// returns a fully-plaintext copy of the database (encoding key 0, the
+    /// empty-password pattern Access writes in the password area, header
+    /// magic restored). The returned byte
     /// array has the same length as the inner Jet/ACE database (which may
     /// differ from <paramref name="source"/>.Length when the source was an
     /// Agile CFB container).
@@ -378,10 +379,13 @@ internal static class EncryptionConverter
 
     /// <summary>
     /// Removes any encryption residue from a freshly-read header so the page
-    /// becomes a clean unencrypted JET / ACE header. Restores the magic bytes
-    /// for the legacy AES CFB-wrapped layout (which overlays bytes 0–7 with
-    /// CFB magic) and clears the encryption flag + password area for all flat
-    /// formats.
+    /// becomes the header Access writes for an unencrypted database. Restores
+    /// the magic bytes for the legacy AES CFB-wrapped layout (which overlays
+    /// bytes 0–7 with CFB magic). Then, in the masked header region, sets the
+    /// encoding key to 0 and writes the empty-password pattern over the
+    /// password area, which also covers the Jet4 / ACE flag byte at
+    /// <c>0x62</c>; on Jet3, whose password area ends at <c>0x55</c>, the
+    /// flag byte is cleared on its own.
     /// </summary>
     /// <param name="db">The database input.</param>
     /// <param name="fmt">The database format.</param>
@@ -404,24 +408,19 @@ internal static class EncryptionConverter
             db[7] = (byte)'n';
         }
 
-        // Clear the RC4 dbKey field (Jet4 only — ACE / legacy do not use it,
-        // but zeroing is harmless because the encryption flag is also cleared).
-        if (fmt == DatabaseFormat.Jet4Mdb)
-        {
-            db[0x3E] = 0;
-            db[0x3F] = 0;
-            db[0x40] = 0;
-            db[0x41] = 0;
-        }
-
-        // Clear the 40-byte encrypted password area (offset 0x42).
-        Array.Clear(db, 0x42, 40);
-
-        // Clear the encryption flag.
-        if (db.Length > 0x62)
+        // The encoding key, the password area and the flag byte all lie in
+        // the masked header region, so edit them unmasked. Writing raw zeros
+        // instead would leave an unmasked key of 0x4EBC8AFB, which Jackcess and
+        // mdbtools read as an encrypted file.
+        EncryptionManager.TransformHeaderMask(db);
+        Array.Clear(db, Constants.DatabaseHeader.EncodingKey, 4);
+        EncryptionManager.WriteEmptyHeaderPassword(db, fmt);
+        if (fmt == DatabaseFormat.Jet3Mdb)
         {
             db[0x62] = 0;
         }
+
+        EncryptionManager.TransformHeaderMask(db);
     }
 
     /// <summary>

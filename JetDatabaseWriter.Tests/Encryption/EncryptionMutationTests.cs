@@ -300,6 +300,45 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         await AssertOpenableAsync(path, password: null, originalTables);
     }
 
+    // ───── DecryptAsync restores Access's unencrypted header ─────────
+
+    /// <summary>
+    /// Decrypting must leave page 0 as Access writes an unencrypted header:
+    /// encoding key 0 and the empty-password pattern (the creation day
+    /// repeated) under the fixed header mask, with the creation date and
+    /// sort order kept. Here that is the source's own page 0.
+    /// </summary>
+    /// <param name="source">"AdventureWorks", "Northwind", "WriterJet4" or "WriterAce".</param>
+    /// <param name="format">The encryption to apply and remove.</param>
+    [Theory]
+    [InlineData("AdventureWorks", AccessEncryptionFormat.Jet4Rc4)]
+    [InlineData("WriterJet4", AccessEncryptionFormat.Jet4Rc4)]
+    [InlineData("Northwind", AccessEncryptionFormat.AccdbLegacyPassword)]
+    [InlineData("WriterAce", AccessEncryptionFormat.AccdbLegacyPassword)]
+    [InlineData("Northwind", AccessEncryptionFormat.AccdbAesCfbWrapped)]
+    [InlineData("Northwind", AccessEncryptionFormat.AccdbAgile)]
+    [InlineData("Northwind", AccessEncryptionFormat.AccdbAgileCfb)]
+    [InlineData("Northwind", AccessEncryptionFormat.AccdbStandard)]
+    public async Task DecryptAsync_RestoresAccessUnencryptedHeader(string source, AccessEncryptionFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await this.OpenSourceAsync(source, ct);
+        byte[] original = ms.ToArray();
+        DatabaseFormat databaseFormat = EncryptionConverter.DetectFormat(original);
+        IReadOnlyList<string> originalTables = await ListTablesAsync(ms, password: null);
+
+        ms.Position = 0;
+        await AccessWriter.EncryptAsync(ms, FirstPasswordMemory, format, ct);
+        ms.Position = 0;
+        await AccessWriter.DecryptAsync(ms, FirstPasswordMemory, ct);
+
+        byte[] decrypted = ms.ToArray();
+        Assert.Equal(original.AsSpan(0, Constants.PageSizes.Jet4).ToArray(), decrypted.AsSpan(0, Constants.PageSizes.Jet4).ToArray());
+        Assert.False(EncryptionManager.HasHeaderPassword(decrypted, databaseFormat));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(ms, ct));
+        Assert.Equal(originalTables, await ListTablesAsync(ms, password: null));
+    }
+
     // ───── Cross-format re-encryption ────────────────────────────────
 
     [Fact]
@@ -652,6 +691,38 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         };
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await AccessReader.OpenAsync(path, options, TestContext.Current.CancellationToken));
+    }
+
+    private static async Task<IReadOnlyList<string>> ListTablesAsync(MemoryStream stream, string? password)
+    {
+        stream.Position = 0;
+        var options = new AccessReaderOptions
+        {
+            UseLockFile = false,
+            Password = password.AsMemory(),
+        };
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, options, leaveOpen: true, TestContext.Current.CancellationToken);
+        return await reader.ListTablesAsync(TestContext.Current.CancellationToken);
+    }
+
+    private async Task<MemoryStream> OpenSourceAsync(string source, CancellationToken cancellationToken)
+    {
+        if (source is "WriterJet4" or "WriterAce")
+        {
+            var created = new MemoryStream();
+            DatabaseFormat format = source == "WriterJet4" ? DatabaseFormat.Jet4Mdb : DatabaseFormat.AceAccdb;
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(created, format, NoLockOptions, leaveOpen: true, cancellationToken))
+            {
+                await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], cancellationToken);
+                await writer.InsertRowAsync("T", [1], cancellationToken);
+            }
+
+            return created;
+        }
+
+        return await db.CopyToStreamAsync(
+            source == "AdventureWorks" ? TestDatabases.AdventureWorks : TestDatabases.NorthwindTraders,
+            cancellationToken);
     }
 
     private async Task<string> CloneAsync(string sourcePath, string ext)
