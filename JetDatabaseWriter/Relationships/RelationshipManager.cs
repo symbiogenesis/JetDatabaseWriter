@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Relationships;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -345,10 +344,10 @@ internal sealed class RelationshipManager(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
-        int sharedSlot = FindCoveringRealIdx(page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        int sharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, columnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
         List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, page, layout.LogIdxNamesStart, layout.NumIdx);
 
-        int logicalIdxNum = NextLogicalIdxNumber(page, in layout);
+        int logicalIdxNum = NextLogicalIdxNumber(this.db.IndexLayoutInfo, page, in layout);
         FkSidePlan plan = sharedSlot >= 0
             ? new FkSidePlan(sharedSlot, logicalIdxNum, false, 0)
             : new FkSidePlan(layout.NumRealIdx, logicalIdxNum, true, 0);
@@ -381,8 +380,8 @@ internal sealed class RelationshipManager(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
-        int pkSharedSlot = FindCoveringRealIdx(page, pkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
-        int fkSharedSlot = FindCoveringRealIdx(page, fkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        int pkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, pkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
+        int fkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, fkColumnNumbers, layout.RealIdxDescStart, layout.NumRealIdx);
         int nextRealIdxNum = layout.NumRealIdx;
 
         bool pkAllocates = pkSharedSlot < 0;
@@ -406,7 +405,7 @@ internal sealed class RelationshipManager(
             fkRealIdxNum = nextRealIdxNum;
         }
 
-        int pkLogicalIdxNum = NextLogicalIdxNumber(page, in layout);
+        int pkLogicalIdxNum = NextLogicalIdxNumber(this.db.IndexLayoutInfo, page, in layout);
         int fkLogicalIdxNum = pkLogicalIdxNum + 1;
         List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, page, layout.LogIdxNamesStart, layout.NumIdx);
 
@@ -417,10 +416,11 @@ internal sealed class RelationshipManager(
     }
 
     /// <summary>
-    /// Appends one FK logical-idx entry (and optionally a new real-idx
-    /// physical descriptor) to the TDEF chain at <paramref name="tdefPage"/>,
-    /// editing the stitched logical buffer and rewriting the chain, which
-    /// gains continuation pages when the addition needs them.
+    /// Adds one FK logical-idx entry and its name (and optionally appends a
+    /// new real-idx physical descriptor) to the TDEF chain at
+    /// <paramref name="tdefPage"/>, editing the stitched logical buffer and
+    /// rewriting the chain, which gains continuation pages when the addition
+    /// needs them.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="columnNumbers">The column numbers.</param>
@@ -454,6 +454,7 @@ internal sealed class RelationshipManager(
                 $"cannot mutate the TDEF at page {tdefPage} (malformed counts or not a TDEF).");
         }
 
+        IndexLayout lay = this.db.IndexLayoutInfo;
         int numCols = layout.NumCols;
         int numIdx = layout.NumIdx;
         int numRealIdx = layout.NumRealIdx;
@@ -465,12 +466,27 @@ internal sealed class RelationshipManager(
         int currentEnd = layout.CurrentEnd;
         int trailingLen = layout.TrailingLen;
 
-        byte[] nameBytes = Encoding.Unicode.GetBytes(indexName);
-        int nameRecordSize = 2 + nameBytes.Length;
+        // The new entry and its name go in at logical position `insertAt`;
+        // entries and names before it keep their offsets.
+        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, td, logIdxNamesStart, numIdx);
+        int insertAt = this.FkEntryInsertPosition(existingNames, indexName);
+        byte[] nameRecord = this.db.EncodeTDefNameRecord(indexName);
+        int namesBeforeLen = 0;
+        if (insertAt > 0)
+        {
+            if (!this.TryGetLogicalIdxNameRange(td, in layout, insertAt - 1, out int lastNameStart, out int lastNameLen))
+            {
+                throw new NotSupportedException(
+                    $"cannot mutate the TDEF at page {tdefPage} (its index names cannot be walked).");
+            }
 
+            namesBeforeLen = lastNameStart + lastNameLen - logIdxNamesStart;
+        }
+
+        int entrySize = lay.LogicalEntrySize;
         int deltaRealIdxSkip = sidePlan.AllocatesNewRealIdx ? this.db.TDef.RealIdxEntrySz : 0;
-        int deltaRealIdxPhys = sidePlan.AllocatesNewRealIdx ? Constants.TableDefinition.Jet4.RealIdx.PhysSize : 0;
-        int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize + nameRecordSize;
+        int deltaRealIdxPhys = sidePlan.AllocatesNewRealIdx ? lay.RealIdxPhysSize : 0;
+        int totalGrowth = deltaRealIdxSkip + deltaRealIdxPhys + entrySize + nameRecord.Length;
 
         // Build the rewritten page.
         byte[] newTd = new byte[LogicalTDefChain.GetLogicalCapacity(this.db.PageSizeBytes, currentEnd + totalGrowth)];
@@ -494,88 +510,67 @@ internal sealed class RelationshipManager(
 
         // Real-idx physical descriptors (existing slots).
         int newRealIdxDescStart = newColNamesStart + colNamesLen;
-        int oldRealIdxPhysLen = numRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize;
+        int oldRealIdxPhysLen = numRealIdx * lay.RealIdxPhysSize;
         Buffer.BlockCopy(td, realIdxDescStart, newTd, newRealIdxDescStart, oldRealIdxPhysLen);
 
         // Append a new real-idx physical descriptor when allocating a new slot.
+        // On Jet4/ACE it starts with the 0x00000783 leading magic, distinct
+        // from the format-wide 0x00000659 cookie; DAO validates it during
+        // CompactDatabase / OpenRecordset on tables with FK indexes. flags
+        // carries the 0x80 bit Access sets on every Jet4 index. used_pages
+        // starts at 0; MaintainIndexesAsync patches the DAO-shaped index
+        // usage-map pointer after rebuilding.
         if (sidePlan.AllocatesNewRealIdx)
         {
-            int phys = newRealIdxDescStart + oldRealIdxPhysLen;
-
-            // bytes 0..3   Jet4/ACE real-idx physical-descriptor leading magic
-            //              (0x00000783). Distinct from the format-wide TDEF
-            //              magic (0x00000659) used in column / logical-idx
-            //              descriptors — see Constants.TableDefinition.Jet4.RealIdx.LeadingMagic
-            //              and BuildTDefPagesWithIndexOffsets. DAO validates
-            //              this during CompactDatabase / OpenRecordset on
-            //              tables with FK indexes; leaving the wrong magic
-            //              here surfaces as AssertTdefMagicStampsAsync
-            //              ("real-idx[1] magic = 0x00000659, expected 0x00000783").
-            Wi32(newTd, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
-
-            // bytes 4..33  col_map: 10 × {col_num(2), col_order(1)}
-            for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
-            {
-                int so = phys + Constants.TableDefinition.Jet4.RealIdx.ColMapOffset
-                    + (slot * Constants.TableDefinition.ColMapSlotSize);
-                if (slot < columnNumbers.Length)
-                {
-                    Wu16(newTd, so, columnNumbers[slot]);
-                    newTd[so + 2] = Constants.TableDefinition.ColMapAscendingFlag;
-                }
-                else
-                {
-                    Wu16(newTd, so, Constants.TableDefinition.ColMapPaddingSlot);
-                    newTd[so + 2] = Constants.TableDefinition.ColMapDescendingFlag;
-                }
-            }
-
-            // bytes 34..37 used_pages = 0 initially; MaintainIndexesAsync
-            // patches the DAO-shaped index usage-map pointer after rebuilding.
-            // bytes 38..41 first_dp = sidePlan.NewLeafPageNumber
-            Wi32(newTd, phys + Constants.TableDefinition.Jet4.RealIdx.FirstDpOffset, checked((int)sidePlan.NewLeafPageNumber));
-
-            // bytes 42..45 unknown(4) = 0
-            // byte  46     flags: 0x80 (unknown-flag bit always set per Jackcess)
-            // bytes 47..51 unknown(5) = 0
-            newTd[phys + Constants.TableDefinition.Jet4.RealIdx.FlagsOffset] =
-                Constants.TableDefinition.UnknownIndexFlag;
+            lay.WriteRealIdxDescriptor(
+                newTd,
+                newRealIdxDescStart + oldRealIdxPhysLen,
+                columnNumbers,
+                Constants.TableDefinition.UnknownIndexFlag,
+                sidePlan.NewLeafPageNumber);
         }
 
-        // Logical-idx entries. DAO prepends relationship logical entries before
-        // the existing PrimaryKey entry; CompactDatabase preserves FK tables only
-        // when the entry/name ordering follows that shape.
+        // Logical-idx entries, with the new FK entry at `insertAt`. DAO
+        // prepends relationship logical entries before the existing
+        // PrimaryKey entry on Jet4/ACE; CompactDatabase preserves FK tables
+        // only when the entry/name ordering follows that shape. On Jet4/ACE
+        // the entry starts with the 0x00000659 cookie DAO checks during
+        // CompactDatabase.
         int newLogIdxStart = newRealIdxDescStart + oldRealIdxPhysLen + deltaRealIdxPhys;
-        int oldLogIdxLen = numIdx * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
-
-        // Write the new FK logical-idx entry first.
-        // bytes 0..3   Jet4/ACE format magic cookie (0x00000659). DAO checks
-        //              this during CompactDatabase.
-        // bytes 24..27 trailing(4) = 0
-        int newLogEntry = newLogIdxStart;
-        Wi32(newTd, newLogEntry, Constants.TableDefinition.Jet4.FormatMagic);
-        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset, sidePlan.LogicalIdxNum);
-        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset, sidePlan.RealIdxNum);
-        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblTypeOffset] = relTblTypeThisSide;
-        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelIdxNumOffset, relIdxNumOtherSide);
-        Wi32(newTd, newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset, checked((int)relTblPageOther));
-        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.CascadeUpsOffset] = cascadeUps;
-        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.CascadeDelsOffset] = cascadeDels;
-        newTd[newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset] = (byte)IndexKind.ForeignKey;
-
-        int existingLogIdxStart = newLogEntry + Constants.TableDefinition.Jet4.LogicalIdx.EntrySize;
-        Buffer.BlockCopy(td, logIdxStart, newTd, existingLogIdxStart, oldLogIdxLen);
+        int oldLogIdxLen = numIdx * entrySize;
+        int entriesBeforeLen = insertAt * entrySize;
+        Buffer.BlockCopy(td, logIdxStart, newTd, newLogIdxStart, entriesBeforeLen);
+        lay.WriteLogicalEntry(
+            newTd,
+            newLogIdxStart + entriesBeforeLen,
+            sidePlan.LogicalIdxNum,
+            sidePlan.RealIdxNum,
+            relTblTypeThisSide,
+            relIdxNumOtherSide,
+            relTblPageOther,
+            cascadeUps,
+            cascadeDels,
+            IndexKind.ForeignKey);
+        Buffer.BlockCopy(
+            td,
+            logIdxStart + entriesBeforeLen,
+            newTd,
+            newLogIdxStart + entriesBeforeLen + entrySize,
+            oldLogIdxLen - entriesBeforeLen);
 
         // Logical-idx names follow the same order as their entries.
-        int newNameOffset = existingLogIdxStart + oldLogIdxLen;
-        Wu16(newTd, newNameOffset, nameBytes.Length);
-        Buffer.BlockCopy(nameBytes, 0, newTd, newNameOffset + 2, nameBytes.Length);
-
-        int existingNamesOffset = newNameOffset + nameRecordSize;
-        Buffer.BlockCopy(td, logIdxNamesStart, newTd, existingNamesOffset, logIdxNamesLen);
+        int newNamesStart = newLogIdxStart + oldLogIdxLen + entrySize;
+        Buffer.BlockCopy(td, logIdxNamesStart, newTd, newNamesStart, namesBeforeLen);
+        Buffer.BlockCopy(nameRecord, 0, newTd, newNamesStart + namesBeforeLen, nameRecord.Length);
+        Buffer.BlockCopy(
+            td,
+            logIdxNamesStart + namesBeforeLen,
+            newTd,
+            newNamesStart + namesBeforeLen + nameRecord.Length,
+            logIdxNamesLen - namesBeforeLen);
 
         // Trailing variable-length-column block (Access-emitted TDEFs only).
-        int newTrailingStart = existingNamesOffset + logIdxNamesLen;
+        int newTrailingStart = newNamesStart + logIdxNamesLen + nameRecord.Length;
         if (trailingLen > 0)
         {
             Buffer.BlockCopy(td, trailingStart, newTd, newTrailingStart, trailingLen);
@@ -620,6 +615,37 @@ internal sealed class RelationshipManager(
         return pos - logIdxNamesStart;
     }
 
+    /// <summary>
+    /// Returns the logical position at which a new FK entry named
+    /// <paramref name="indexName"/> goes. On Jet4 / ACE it is 0: DAO prepends
+    /// relationship entries before the existing <c>PrimaryKey</c> entry, and
+    /// CompactDatabase preserves FK tables only when the entry and name order
+    /// follows that shape. On Jet3 it is before the first existing entry whose
+    /// name sorts after <paramref name="indexName"/>, ignoring case, as in the
+    /// TDEFs Access 97 wrote (<c>.rC</c>, <c>id</c>, <c>PrimaryKey</c>,
+    /// <c>Table2Table1</c>); the existing entries are not re-sorted.
+    /// </summary>
+    /// <param name="existingNames">The TDEF's logical-index names, in entry order.</param>
+    /// <param name="indexName">The new entry's name.</param>
+    /// <returns>The position, from 0 to <c>existingNames.Count</c>.</returns>
+    private int FkEntryInsertPosition(List<string> existingNames, string indexName)
+    {
+        if (this.db.Format != DatabaseFormat.Jet3Mdb)
+        {
+            return 0;
+        }
+
+        for (int i = 0; i < existingNames.Count; i++)
+        {
+            if (StringComparer.OrdinalIgnoreCase.Compare(existingNames[i], indexName) > 0)
+            {
+                return i;
+            }
+        }
+
+        return existingNames.Count;
+    }
+
     private static string MakeUniqueParentRelationshipLogicalName(IReadOnlyList<string> existing)
     {
         var taken = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
@@ -647,19 +673,19 @@ internal sealed class RelationshipManager(
     /// <summary>
     /// Real-idx sharing per §3.3: returns the existing real-idx slot whose col_map
     /// matches <paramref name="columnNumbers"/> exactly (in declaration
-    /// order); -1 when no covering real-idx exists. Jet4 col_map is fixed at
-    /// 10 slots × {col_num(2), col_order(1)}.
+    /// order); -1 when no covering real-idx exists. The col_map is fixed at
+    /// 10 slots × {col_num(2), col_order(1)} on every format.
     /// </summary>
+    /// <param name="lay">The format's TDEF index layout.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="columnNumbers">The column numbers.</param>
     /// <param name="realIdxDescStart">The real index desc start.</param>
     /// <param name="numRealIdx">The number of real index.</param>
-    private static int FindCoveringRealIdx(byte[] td, int[] columnNumbers, int realIdxDescStart, int numRealIdx)
+    private static int FindCoveringRealIdx(IndexLayout lay, byte[] td, int[] columnNumbers, int realIdxDescStart, int numRealIdx)
     {
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = realIdxDescStart + (ri * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
-            if (IndexHelpers.RealIdxColMapMatches(td, phys, columnNumbers))
+            if (IndexHelpers.RealIdxColMapMatches(lay, td, lay.RealIdxPhysOffset(realIdxDescStart, ri), columnNumbers))
             {
                 return ri;
             }
@@ -686,13 +712,12 @@ internal sealed class RelationshipManager(
         return true;
     }
 
-    private static int NextLogicalIdxNumber(byte[] td, in FkTDefLayout layout)
+    private static int NextLogicalIdxNumber(IndexLayout lay, byte[] td, in FkTDefLayout layout)
     {
         int max = -1;
         for (int li = 0; li < layout.NumIdx; li++)
         {
-            int entry = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            int indexNum = Ri32(td, entry + Constants.TableDefinition.Jet4.LogicalIdx.IndexNumOffset);
+            int indexNum = Ri32(td, lay.LogicalIdxFieldsOffset(layout.LogIdxStart, li) + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset);
             if (indexNum > max)
             {
                 max = indexNum;
@@ -866,7 +891,7 @@ internal sealed class RelationshipManager(
                 $"TDEF at page {targetTdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
-        int nextIndexNumber = NextLogicalIdxNumber(chain.Bytes, in layout);
+        int nextIndexNumber = NextLogicalIdxNumber(this.db.IndexLayoutInfo, chain.Bytes, in layout);
         for (int i = state.FkEntries.Count - 1; i >= 0; i--)
         {
             newIndexNumbers[state.FkEntries[i].IndexNumber] = nextIndexNumber++;
@@ -1435,7 +1460,7 @@ internal sealed class RelationshipManager(
 
         // Locate the matching logical-idx entry, then walk the names list to
         // the same index to find its variable-length name record.
-        int matchEntryIdx = FindFkLogicalIdxEntry(td, in layout, columnNumbers, otherTdefPage, out int releasedRealIdxNum);
+        int matchEntryIdx = FindFkLogicalIdxEntry(this.db.IndexLayoutInfo, td, in layout, columnNumbers, otherTdefPage, out int releasedRealIdxNum);
         if (matchEntryIdx < 0)
         {
             return -1;
@@ -1515,14 +1540,10 @@ internal sealed class RelationshipManager(
     /// </para>
     /// <para>
     /// Removes both the corresponding entry from the leading real-idx skip
-    /// block (<c>num_real_idx × _writer._tdef.RealIdxEntrySz</c> bytes immediately after
-    /// the Jet4 TDEF block) and the trailing 52-byte physical descriptor,
-    /// decrements <c>num_real_idx</c>, and updates <c>tdef_len</c>.
-    /// </para>
-    /// <para>
-    /// Jet4 / ACE only — Jet3 takes the same path because the FK logical-idx
-    /// entries are not emitted on Jet3 to begin with, so this is never called
-    /// against a Jet3 TDEF.
+    /// block (<c>num_real_idx × RealIdxEntrySz</c> bytes immediately after
+    /// the TDEF block: 12 bytes each on Jet4 / ACE, 8 on Jet3) and the
+    /// trailing physical descriptor (52 or 39 bytes), decrements
+    /// <c>num_real_idx</c>, and updates <c>tdef_len</c>.
     /// </para>
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
@@ -1540,12 +1561,12 @@ internal sealed class RelationshipManager(
 
         // Build the set of real-idx slots that are still referenced by some
         // logical-idx entry. A logical-idx points at one real-idx via
-        // index_num2 (offset +8 in the 28-byte Jet4 entry).
+        // index_num2.
+        IndexLayout lay = this.db.IndexLayoutInfo;
         bool[] referenced = new bool[layout.NumRealIdx];
         for (int li = 0; li < layout.NumIdx; li++)
         {
-            int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            int realIdxNum = Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
+            int realIdxNum = Ri32(td, lay.LogicalIdxFieldsOffset(layout.LogIdxStart, li) + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset);
             if (realIdxNum >= 0 && realIdxNum < layout.NumRealIdx)
             {
                 referenced[realIdxNum] = true;
@@ -1564,10 +1585,10 @@ internal sealed class RelationshipManager(
             return;
         }
 
-        // Step 1 — drop the trailing N entries (12 bytes each on Jet4) from
-        // the leading real-idx skip block. The skip block lives at
-        // [_writer._tdef.BlockEnd, _writer._tdef.BlockEnd + numRealIdx * _writer._tdef.RealIdxEntrySz). We
-        // collapse out the LAST N × _writer._tdef.RealIdxEntrySz bytes of that block by
+        // Step 1 — drop the trailing N entries (12 bytes each on Jet4, 8 on
+        // Jet3) from the leading real-idx skip block. The skip block lives at
+        // [TDef.BlockEnd, TDef.BlockEnd + numRealIdx * TDef.RealIdxEntrySz).
+        // We collapse out the LAST N × RealIdxEntrySz bytes of that block by
         // left-shifting everything that follows.
         int oldSkipEnd = this.db.TDef.BlockEnd + (layout.NumRealIdx * this.db.TDef.RealIdxEntrySz);
         int newSkipEnd = oldSkipEnd - (reclaim * this.db.TDef.RealIdxEntrySz);
@@ -1575,17 +1596,17 @@ internal sealed class RelationshipManager(
         int endAfterStep1 = layout.CurrentEnd - (reclaim * this.db.TDef.RealIdxEntrySz);
 
         // After step 1 the real-idx physical descriptor section starts at
-        // (realIdxDescStart - reclaim * _writer._tdef.RealIdxEntrySz). We need to drop the
-        // trailing N × 52 bytes of physical descriptors. Compute the new
-        // boundaries.
+        // (realIdxDescStart - reclaim * RealIdxEntrySz). We need to drop the
+        // trailing N physical descriptors (52 bytes each on Jet4/ACE, 39 on
+        // Jet3). Compute the new boundaries.
         int newRealIdxDescStart = layout.RealIdxDescStart - (reclaim * this.db.TDef.RealIdxEntrySz);
-        int newPhysEnd = newRealIdxDescStart + ((layout.NumRealIdx - reclaim) * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
-        int oldPhysEnd = newRealIdxDescStart + (layout.NumRealIdx * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
+        int newPhysEnd = lay.RealIdxPhysOffset(newRealIdxDescStart, layout.NumRealIdx - reclaim);
+        int oldPhysEnd = lay.RealIdxPhysOffset(newRealIdxDescStart, layout.NumRealIdx);
 
-        // Step 2 — drop the trailing N × 52-byte physical descriptors by
-        // left-shifting the logical-idx entries + names + variable-col block.
+        // Step 2 — drop the trailing N physical descriptors by left-shifting
+        // the logical-idx entries + names + variable-col block.
         Buffer.BlockCopy(td, oldPhysEnd, td, newPhysEnd, endAfterStep1 - oldPhysEnd);
-        int finalEnd = endAfterStep1 - (reclaim * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
+        int finalEnd = endAfterStep1 - (reclaim * lay.RealIdxPhysSize);
 
         // Zero the freed tail so the on-disk page matches the prior
         // fresh-buffer behavior (bytes past the new end are padding).
@@ -1628,7 +1649,7 @@ internal sealed class RelationshipManager(
             return false;
         }
 
-        int matchEntryIdx = FindFkLogicalIdxEntry(td, in layout, columnNumbers, otherTdefPage, out _);
+        int matchEntryIdx = FindFkLogicalIdxEntry(this.db.IndexLayoutInfo, td, in layout, columnNumbers, otherTdefPage, out _);
         if (matchEntryIdx < 0)
         {
             return false;
@@ -1644,9 +1665,8 @@ internal sealed class RelationshipManager(
             return false;
         }
 
-        byte[] newNameBytes = Encoding.Unicode.GetBytes(newName);
-        int newNameRecordSize = 2 + newNameBytes.Length;
-        int delta = newNameRecordSize - oldNameLen;
+        byte[] newNameRecord = this.db.EncodeTDefNameRecord(newName);
+        int delta = newNameRecord.Length - oldNameLen;
 
         int finalEnd = layout.CurrentEnd + delta;
         if (finalEnd < layout.TrailingStart)
@@ -1675,8 +1695,7 @@ internal sealed class RelationshipManager(
         }
 
         // Write the new length-prefixed name into the freed slot.
-        Wu16(td, oldNameStart, newNameBytes.Length);
-        Buffer.BlockCopy(newNameBytes, 0, td, oldNameStart + 2, newNameBytes.Length);
+        Buffer.BlockCopy(newNameRecord, 0, td, oldNameStart, newNameRecord.Length);
 
         // Update tdef_len.
         Wi32(td, 8, finalEnd - 8);
@@ -1711,7 +1730,7 @@ internal sealed class RelationshipManager(
             cancellationToken);
 
     /// <summary>
-    /// Parsed layout of a stitched Jet4/ACE TDEF, used by the FK
+    /// Parsed layout of a stitched TDEF of any format, used by the FK
     /// logical-idx mutation helpers (rename / remove / reclaim) to share the
     /// header validation and offset-computation boilerplate.
     /// </summary>
@@ -1738,7 +1757,7 @@ internal sealed class RelationshipManager(
         int TrailingLen);
 
     /// <summary>
-    /// Validates that <paramref name="td"/> is a stitched Jet4/ACE TDEF
+    /// Validates that <paramref name="td"/> is a stitched TDEF
     /// with sane counts and computes every offset required by the FK
     /// mutation helpers in one pass. Returns <see langword="false"/> when
     /// the buffer is not a TDEF, has out-of-range counts, or the column-name
@@ -1814,12 +1833,14 @@ internal sealed class RelationshipManager(
     /// Returns <c>-1</c> when no entry matches; on success
     /// <paramref name="realIdxNum"/> is the matched real-idx slot.
     /// </summary>
+    /// <param name="lay">The format's TDEF index layout.</param>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="layout">The layout.</param>
     /// <param name="columnNumbers">The column numbers.</param>
     /// <param name="otherTdefPage">The other TDEF page.</param>
     /// <param name="realIdxNum">The real index number of.</param>
     private static int FindFkLogicalIdxEntry(
+        IndexLayout lay,
         byte[] td,
         in FkTDefLayout layout,
         int[] columnNumbers,
@@ -1829,27 +1850,26 @@ internal sealed class RelationshipManager(
         realIdxNum = -1;
         for (int li = 0; li < layout.NumIdx; li++)
         {
-            int e = layout.LogIdxStart + (li * Constants.TableDefinition.Jet4.LogicalIdx.EntrySize);
-            byte indexType = td[e + Constants.TableDefinition.Jet4.LogicalIdx.IndexTypeOffset];
+            int f = lay.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
+            byte indexType = td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset];
             if (indexType != (byte)IndexKind.ForeignKey)
             {
                 continue;
             }
 
-            int relTblPage = Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.RelTblPageOffset);
+            int relTblPage = Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset);
             if (relTblPage != otherTdefPage)
             {
                 continue;
             }
 
-            int rin = Ri32(td, e + Constants.TableDefinition.Jet4.LogicalIdx.IndexNum2Offset);
+            int rin = Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNum2Offset);
             if (rin < 0 || rin >= layout.NumRealIdx)
             {
                 continue;
             }
 
-            int phys = layout.RealIdxDescStart + (rin * Constants.TableDefinition.Jet4.RealIdx.PhysSize);
-            if (!IndexHelpers.RealIdxColMapMatches(td, phys, columnNumbers))
+            if (!IndexHelpers.RealIdxColMapMatches(lay, td, lay.RealIdxPhysOffset(layout.RealIdxDescStart, rin), columnNumbers))
             {
                 continue;
             }
