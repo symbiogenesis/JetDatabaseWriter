@@ -49,7 +49,7 @@ There is **no** count field. Walk the payload until exhausted.
 
 ### 2.4 Property-block chunk (type `0x00`)
 
-One per target. The first property block in the blob describes the *table* itself; subsequent blocks describe individual columns. Block-to-target binding is by the embedded target name (column name, or table name for the table-level block).
+One per target. Each column with properties has a block named after the column. The *table* itself has a block with an **empty** target name and chunk type `0x00`, which can be anywhere in the blob: usually first in the Jet3 and Jet4 fixtures (but last of four in compIndexTestV2000's `Table1`), and usually last in the ACCDB fixtures (block #11 of 12 in NorthwindTraders.accdb's `OrderDetails`, but the third of 18 in calcFieldTestV2010's `Table1`). Block-to-target binding is by the embedded target name; the table-level block is never named after the table ([`ColumnPropertyBlock.FindTableTarget`](../../JetDatabaseWriter/Schema/Models/ColumnPropertyBlock.cs) finds the first empty-named block). Access-authored column blocks use chunk type `0x01`.
 
 Payload layout (`chunkLen − 6` bytes total):
 
@@ -142,3 +142,16 @@ Upstream check: mdbtools and Jackcess both parse/preserve generic property maps,
 A table's blob is the `LvProp` column of the `MSysObjects` row whose `Id` equals the table's TDEF page. The match is on the whole Id, never on its low 24 bits: Access gives forms, reports, modules and some queries Ids with the high bit set (`0x80000000 | n`), and the containers Ids of the form `0x0F0000nn`, and their low 24 bits can equal a table's TDEF page. In NorthwindTraders.accdb the module `modDAO` has Id `0x80000032` and the table `Companies` TDEF page `0x32`, and the module's row comes first in the catalog; eight Access-authored fixture tables collide this way (`LvPropReadTests`).
 
 The blob is the column's stored bytes, inline, on one LVAL row or in an LVAL chain, handed to the parser unchanged ([`ColumnPropertyReader`](../../JetDatabaseWriter/Catalog/ColumnPropertyReader.cs) reads it through a typed `MSysObjects` scan that decodes only `Id` and `LvProp`). Nothing may sniff its content as if it were an OLE object: a `KKD\0` blob holds code-page text, so a description that starts "BMI" or "%PDF" begins with a file signature.
+
+## 8. Through schema rewrites
+
+AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again. [`PersistedPropertyProjector`](../../JetDatabaseWriter/Schema/PersistedPropertyProjector.cs) builds the new blob from the stored one and changes only what the rewrite changes:
+
+- The table-level block keeps its position and every entry except `NameMap`, which is dropped.
+- A dropped column's block is removed, and a renamed column's block takes the new name, keeping its chunk type and entries.
+- A block that names no column is kept, unless a column of the rebuilt table takes its name.
+- A surviving column keeps every entry byte for byte, except a property the writer models (one [`JetExpressionConverter.ApplyColumn`](../../JetDatabaseWriter/Schema/JetExpressionConverter.cs) emits: `DefaultValue`, `ValidationRule`, `ValidationText`, `Description`, `Required`, `AllowZeroLength`, `Expression`, `ResultType`) whose value the rewrite changes, such as an expression that names a renamed column. That entry takes the new value in place, keeping its data type when both are text (Access stores `DefaultValue`, `ValidationRule` and `Expression` as Memo, `0x0C`) and its DDL flag.
+- An added column gets the entries `ApplyColumn` emits for its definition.
+- Unknown chunks are kept, after the property blocks.
+
+The projected blob is the same on both rewrite paths: the copy that is renamed into place and the copy transplanted onto the original TDEF page.
