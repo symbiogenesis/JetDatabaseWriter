@@ -75,13 +75,13 @@ it never touches the shared stream position). Callers must **not** already hold
 transaction commit path depends on this: it takes `IoGate` only to detach the
 journal, then **releases it before** the replay loop so each replayed
 `WritePageAsync` can re-acquire it. See
-[`CommitTransactionAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L185).
+[`CommitTransactionAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L199).
 
 ## Annotated call paths
 
 ### Writer auto-commit (`UseTransactionalWrites = true`)
 
-`InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L732)
+`InsertRowsAsync` → [`RunAutoCommitAsync`](../../JetDatabaseWriter/AccessWriter.cs#L776)
 → [`TransactionLifecycle.RunAutoCommitAsync`](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs#L95)
 → `BeginTransactionAsync` → *work* → `tx.CommitAsync`.
 
@@ -99,10 +99,11 @@ work phase (row encode, index maintenance, page allocation)
 CommitTransactionAsync
   ├─ IoGate ──▶ detach journal (ActiveJournal = ActiveTransaction = null) ──▶ release IoGate
   ├─ ByteRangeLock commit-lock sentinel  ◀── held across the entire replay
-  │     foreach buffered page (ascending page order):
+  │     last cancellation check (nothing written yet)
+  │     foreach buffered page (ascending page order), with CancellationToken.None:
   │         WritePageAsync
   │           └─ IoGate ──▶ ByteRangeLock per-page ──▶ seek/write/flush ──▶ release both
-  │     FlushDurableAsync
+  │     FlushDurableAsync (CancellationToken.None)
   └─ release commit-lock (finally)
 
 RollbackTransactionAsync  (auto-commit calls it when the work throws)
@@ -114,8 +115,12 @@ The commit-lock sentinel is "outer" only in the sense that it spans the replay
 window; it is acquired **after** `IoGate` has been released, so it never nests
 outside an already-held `IoGate`. Capturing and restoring the writer state is
 memory-only, so the leaf `insertPageHintLock` is the only lock taken inside
-`IoGate` there. A commit that fails restores the same state from its `catch`,
-after `IoGate` has been released.
+`IoGate` there. A commit that fails before its first page write restores the
+same state from its `catch`, after `IoGate` has been released, and marks the
+transaction rolled back. One that fails after replay has started only
+invalidates the catalog and forgets the insert hint, and leaves the transaction
+neither committed nor rolled back. The replay is not crash-atomic: there is no
+before-image or redo log, so the pages written before a failure stay written.
 
 ### Writer non-transactional (default `UseTransactionalWrites = false`)
 
@@ -157,7 +162,7 @@ operationGate.TryBeginDispose(out waitForOperations)
   └─ operationGate.CompleteDispose()
 ```
 
-Writer — [`DisposeAsync`](../../JetDatabaseWriter/AccessWriter.cs#L681) (no
+Writer — [`DisposeAsync`](../../JetDatabaseWriter/AccessWriter.cs#L695) (no
 operation gate; the writer is single-writer by construction):
 
 ```

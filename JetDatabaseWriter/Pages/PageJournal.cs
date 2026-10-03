@@ -8,12 +8,18 @@ using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
 /// In-memory journal of dirty pages produced inside an explicit
-/// <see cref="JetTransaction"/>. Page mutations are
-/// buffered (plaintext) instead of flushed to disk, then atomically replayed
-/// by <see cref="AccessWriter"/> at <c>CommitAsync</c>
-/// time (or discarded by <c>RollbackAsync</c> / dispose).
+/// <see cref="JetTransaction"/>. Each entry is the page's new contents (an
+/// after-image), buffered in plaintext instead of written to disk. At
+/// <c>CommitAsync</c> the entries are written over the file in place, page by
+/// page; <c>RollbackAsync</c> / dispose discards them.
 /// </summary>
 /// <remarks>
+/// <para>
+/// This is not a rollback or write-ahead log. No before-images are kept and
+/// nothing is written to a separate log first, so a commit interrupted by a
+/// crash or I/O error leaves the pages written so far in the file, and there
+/// is no recovery pass.
+/// </para>
 /// <para>
 /// The journal stores **plaintext** page bytes. Page-level encryption is applied
 /// at commit time by <c>DatabaseFile.PrepareEncryptedPageForWrite</c>
@@ -80,7 +86,7 @@ internal sealed class PageJournal
         {
             throw new JetLimitationException(string.Format(
                 CultureInfo.InvariantCulture,
-                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The transaction has been rolled back.",
+                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation that hit the limit may be partly applied to the journal; roll back the transaction.",
                 this.maxPages));
         }
 
@@ -106,7 +112,7 @@ internal sealed class PageJournal
         {
             throw new JetLimitationException(string.Format(
                 CultureInfo.InvariantCulture,
-                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The transaction has been rolled back.",
+                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation that hit the limit may be partly applied to the journal; roll back the transaction.",
                 this.maxPages));
         }
 

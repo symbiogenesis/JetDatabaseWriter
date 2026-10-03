@@ -147,8 +147,8 @@ internal sealed class JetByteRangeLock
     /// <summary>
     /// Acquires the JET commit-lock sentinel: a 1-byte exclusive lock at the
     /// fixed offset Microsoft Access / OLE DB JET / ACE all use to gate
-    /// schema-changing transaction commits. Held only across the
-    /// atomic-replay window inside
+    /// schema-changing transaction commits. Held only across the page-replay
+    /// window inside
     /// <see cref="TransactionLifecycle.CommitTransactionAsync"/>.
     /// </summary>
     /// <param name="isAccdb">True when the target database is ACE (.accdb), which uses sentinel offset <c>0xFFFFFFFC</c>; otherwise <c>0xFFFFFFFE</c> (Jet3/Jet4).</param>
