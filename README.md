@@ -146,6 +146,8 @@ byte[] modified = ms.ToArray();
 
 > The stream must be readable and seekable. For `AccessWriter`, it must also be writable.
 
+If you open a `FileStream` yourself for `AccessReader`, open it without `FileOptions.Asynchronous`. The reader reads every page through the stream, and on Windows an overlapped read costs several times a synchronous one even when the page is already in the OS cache. `AccessReader.OpenAsync(path)` opens its file that way.
+
 ---
 
 ## Reading Data
