@@ -136,3 +136,9 @@ Observed linked-table facts:
 - Linked-cache `GUID` properties appear as `dataType = 0x09` Binary with 16-byte GUID payloads, not `dataType = 0x0F`.
 
 Upstream check: mdbtools and Jackcess both parse/preserve generic property maps, but neither project appears to generate Type 4 ODBC linked-table schema-cache `LvProp`/`NameMap` payloads from a connection string and remote table name. This codebase now generates the property-block envelope and a best-effort ODBC `NameMap` from caller-supplied source columns; exact live-source DAO behavior remains DSN/source-dependent until more ODBC fixtures are available.
+
+## 7. Locating a table's blob
+
+A table's blob is the `LvProp` column of the `MSysObjects` row whose `Id` equals the table's TDEF page. The match is on the whole Id, never on its low 24 bits: Access gives forms, reports, modules and some queries Ids with the high bit set (`0x80000000 | n`), and the containers Ids of the form `0x0F0000nn`, and their low 24 bits can equal a table's TDEF page. In NorthwindTraders.accdb the module `modDAO` has Id `0x80000032` and the table `Companies` TDEF page `0x32`, and the module's row comes first in the catalog; eight Access-authored fixture tables collide this way (`LvPropReadTests`).
+
+The blob is the column's stored bytes, inline, on one LVAL row or in an LVAL chain, handed to the parser unchanged ([`ColumnPropertyReader`](../../JetDatabaseWriter/Catalog/ColumnPropertyReader.cs) reads it through a typed `MSysObjects` scan that decodes only `Id` and `LvProp`). Nothing may sniff its content as if it were an OLE object: a `KKD\0` blob holds code-page text, so a description that starts "BMI" or "%PDF" begins with a file signature.

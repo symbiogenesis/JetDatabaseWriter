@@ -169,8 +169,8 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     }
 
     /// <summary>
-    /// Reads and parses the <c>MSysObjects.LvProp</c> blob for the catalog row whose
-    /// <c>Id</c> low-24 bits equal <paramref name="tdefPage"/>. Returns
+    /// Reads and parses the stored <c>MSysObjects.LvProp</c> bytes of the catalog
+    /// row whose <c>Id</c> is exactly <paramref name="tdefPage"/>. Returns
     /// <see langword="null"/> when the catalog has no <c>LvProp</c> column or the row
     /// has no property blob.
     /// </summary>

@@ -108,11 +108,12 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, Catalo
         rows.EnumerateRowsForTdefAsync(2, msys, cancellationToken);
 
     /// <summary>
-    /// Reads and parses the <c>MSysObjects.LvProp</c> blob for the catalog row whose
-    /// <c>Id</c> column's low-24 bits match <paramref name="tdefPage"/>. Returns
+    /// Reads and parses the stored <c>MSysObjects.LvProp</c> bytes of the catalog
+    /// row whose <c>Id</c> is exactly <paramref name="tdefPage"/> (see
+    /// <see cref="ColumnPropertyReader.ReadLvPropForTableAsync"/>). Returns
     /// <see langword="null"/> when the catalog has no <c>LvProp</c> column (slim
     /// schemas written by older versions of this library), the row is missing, the
-    /// blob is empty, or the magic header is unrecognised.
+    /// blob is empty or cannot be read, or the magic header is unrecognised.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
