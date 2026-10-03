@@ -24,7 +24,7 @@ public sealed record ColumnDefinition
     }
 
     /// <summary>Gets the column name.</summary>
-    public string Name { get; }
+    public string Name { get; private init; }
 
     /// <summary>Gets the CLR type that this column stores.</summary>
     public Type ClrType { get; }
@@ -376,4 +376,14 @@ public sealed record ColumnDefinition
     /// written into the column descriptor's <c>col_type</c> byte.
     /// </summary>
     public byte CalculatedResultType { get; init; }
+
+    /// <summary>
+    /// Returns a copy of this definition with only <see cref="Name"/> changed.
+    /// Every other property, including the internal descriptor overrides, is
+    /// copied by the record's <c>with</c> expression, so a property added
+    /// later is carried through a column rename without further changes.
+    /// </summary>
+    /// <param name="name">The new column name.</param>
+    /// <returns>The renamed copy.</returns>
+    internal ColumnDefinition WithName(string name) => this with { Name = name };
 }

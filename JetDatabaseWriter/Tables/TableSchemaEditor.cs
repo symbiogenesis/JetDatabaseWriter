@@ -258,30 +258,13 @@ internal sealed class TableSchemaEditor(
                     throw new InvalidOperationException($"Column '{newColumnName}' already exists in table '{tableName}'.");
                 }
 
+                // Change only the name. The copy keeps the descriptor type
+                // override (Currency), precision and scale, the calculated
+                // expression and result type, Unicode compression, and the
+                // complex-column ComplexId that RewriteTableAsync uses to
+                // update MSysComplexColumns.ColumnName.
                 var next = new List<ColumnDefinition>(existing);
-                ColumnDefinition src = next[idx];
-                next[idx] = new ColumnDefinition(newColumnName, src.ClrType, src.MaxLength)
-                {
-                    IsNullable = src.IsNullable,
-                    DefaultValue = src.DefaultValue,
-                    IsAutoIncrement = src.IsAutoIncrement,
-                    IsHyperlink = src.IsHyperlink,
-                    IsDateTimeExtended = src.IsDateTimeExtended,
-                    ValidationRule = src.ValidationRule,
-                    DefaultValueExpression = src.DefaultValueExpression,
-                    ValidationRuleExpression = src.ValidationRuleExpression,
-                    ValidationText = src.ValidationText,
-                    Description = src.Description,
-
-                    // Forward complex-column flags so the rebuilt TDEF re-emits
-                    // a complex descriptor with the original ComplexId in the
-                    // misc slot. RewriteTableAsync uses the preserved ComplexId
-                    // to update MSysComplexColumns.ColumnName.
-                    IsAttachment = src.IsAttachment,
-                    IsMultiValue = src.IsMultiValue,
-                    MultiValueElementType = src.MultiValueElementType,
-                    ComplexId = src.ComplexId,
-                };
+                next[idx] = next[idx].WithName(newColumnName);
                 return next;
             },
             (oldRow, _) => oldRow,

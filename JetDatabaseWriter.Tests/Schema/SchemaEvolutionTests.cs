@@ -6,8 +6,11 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -201,6 +204,267 @@ public sealed class SchemaEvolutionTests
         Assert.Equal(12.3456m, rows.Rows[0]["Amount"]);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RenameColumnAsync_KeepsDecimalPrecisionAndScale(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Money";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Amt", typeof(decimal)) { NumericPrecision = 10, NumericScale = 2 },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(table, [1, 12.34m], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [2, 0.75m], TestContext.Current.CancellationToken);
+
+            await writer.RenameColumnAsync(table, "Amt", "Amount", TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        ColumnMetadata amount = Assert.Single(
+            await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken),
+            column => column.Name == "Amount");
+        Assert.Equal(10, amount.NumericPrecision);
+        Assert.Equal(2, amount.NumericScale);
+
+        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(12.34m, rows.Rows[0]["Amount"]);
+        Assert.Equal(0.75m, rows.Rows[1]["Amount"]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RenameColumnAsync_KeepsMoneyDescriptorType(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Ledger";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new ColumnDefinition("Amount", typeof(decimal)) { ColumnTypeOverride = ColumnType.MoneyType },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(table, [1, 12.3456m], TestContext.Current.CancellationToken);
+
+            await writer.RenameColumnAsync(table, "Amount", "Total", TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        ColumnMetadata total = Assert.Single(
+            await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken),
+            column => column.Name == "Total");
+        Assert.Equal("Currency", total.TypeName);
+
+        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(12.3456m, rows.Rows[0]["Total"]);
+    }
+
+    [Fact]
+    public async Task RenameColumnAsync_KeepsCalculatedColumn()
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        const string table = "Calc";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Score", typeof(int)),
+                    new("Label", typeof(string), maxLength: 40),
+                    new("Doubled", typeof(int)) { IsCalculated = true, CalculationExpression = "[Score] * 2" },
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(table, [21, "a", DBNull.Value], TestContext.Current.CancellationToken);
+
+            await writer.RenameColumnAsync(table, "Doubled", "Twice", TestContext.Current.CancellationToken);
+            await writer.RenameColumnAsync(table, "Label", "Caption", TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, [5, "b", DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        ColumnMetadata twice = Assert.Single(
+            await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken),
+            column => column.Name == "Twice");
+        Assert.True(twice.IsCalculated);
+        Assert.Equal("[Score] * 2", twice.CalculationExpression);
+        Assert.Equal((byte)ColumnType.LongIntegerType, twice.CalculatedResultType);
+
+        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(42, rows.Rows[0]["Twice"]);
+        Assert.Equal(10, rows.Rows[1]["Twice"]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RenameColumnAsync_KeepsUnicodeCompressionFlag(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Notes";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Plain", typeof(string), maxLength: 40) { IsCompressedUnicode = false },
+                    new("Packed", typeof(string), maxLength: 40),
+                ],
+                TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync(table, [1, "plain text", "packed text"], TestContext.Current.CancellationToken);
+
+            await writer.RenameColumnAsync(table, "Plain", "Plain2", TestContext.Current.CancellationToken);
+            await writer.RenameColumnAsync(table, "Packed", "Packed2", TestContext.Current.CancellationToken);
+        }
+
+        IReadOnlyList<ColumnInfo> columns = await ReadColumnDescriptorsAsync(stream, table);
+        Assert.False(Assert.Single(columns, column => column.Name == "Plain2").IsCompressedUnicode);
+        Assert.True(Assert.Single(columns, column => column.Name == "Packed2").IsCompressedUnicode);
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("plain text", rows.Rows[0]["Plain2"]);
+        Assert.Equal("packed text", rows.Rows[0]["Packed2"]);
+    }
+
+    /// <summary>
+    /// Renames every column of a table that uses each column property the
+    /// writer can author, then checks that each column's descriptor bytes,
+    /// reader metadata, and values match the original apart from the name.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RenameColumnAsync_ChangesOnlyTheColumnName(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Everything";
+
+        var columns = new List<ColumnDefinition>
+        {
+            new("Id", typeof(int)) { IsAutoIncrement = true },
+            new("Flag", typeof(bool)),
+            new("Tiny", typeof(byte)),
+            new("Small", typeof(short)),
+            new("Real", typeof(float)),
+            new("Ratio", typeof(double)),
+            new("When", typeof(DateTime)),
+            new("Price", typeof(decimal)) { ColumnTypeOverride = ColumnType.MoneyType },
+            new("Name", typeof(string), maxLength: 30) { IsNullable = false },
+            new("Memo", typeof(string)),
+            new("Link", typeof(string)) { IsHyperlink = true },
+            new("Bytes", typeof(byte[]), maxLength: 16),
+            new("Blob", typeof(byte[])),
+            new("Key", typeof(Guid)),
+        };
+
+        object[] row =
+        [
+            DBNull.Value,
+            true,
+            (byte)7,
+            (short)-3,
+            1.5f,
+            2.25,
+            new DateTime(2024, 5, 6, 7, 8, 9),
+            12.3456m,
+            "name",
+            new string('m', 40),
+            "site#http://example.com#",
+            new byte[] { 1, 2, 3 },
+            new byte[] { 9, 8, 7, 6 },
+            new Guid("6f9619ff-8b86-d011-b42d-00c04fc964ff"),
+        ];
+
+        // Jet3 is left without the persisted text properties: its row encoder
+        // cannot yet write the MSysObjects row once the LvProp blob pushes it
+        // past 255 bytes.
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            columns[8] = columns[8] with { Description = "the name", DefaultValueExpression = "\"x\"" };
+            columns.Add(new("Amount", typeof(decimal)) { NumericPrecision = 10, NumericScale = 2 });
+            columns.Add(new("Plain", typeof(string), maxLength: 20) { IsCompressedUnicode = false });
+            row = [.. row, 12.34m, "plain"];
+        }
+
+        if (format == DatabaseFormat.AceAccdb)
+        {
+            columns.Add(new("Big", typeof(long)));
+            columns.Add(new("Stamp", typeof(DateTime)) { IsDateTimeExtended = true });
+            columns.Add(new("Twice", typeof(int)) { IsCalculated = true, CalculationExpression = "[Small] * 2" });
+            row = [.. row, 1L << 40, new DateTime(2024, 5, 6, 7, 8, 9, 123), -6];
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(table, columns, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(table, row, TestContext.Current.CancellationToken);
+        }
+
+        IReadOnlyList<ColumnInfo> descriptorsBefore = await ReadColumnDescriptorsAsync(stream, table);
+        IReadOnlyList<ColumnMetadata> metadataBefore;
+        object?[] valuesBefore;
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            metadataBefore = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            valuesBefore = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows[0].ItemArray;
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            foreach (ColumnDefinition column in columns)
+            {
+                await writer.RenameColumnAsync(table, column.Name, column.Name + "2", TestContext.Current.CancellationToken);
+            }
+        }
+
+        IReadOnlyList<ColumnInfo> descriptorsAfter = await ReadColumnDescriptorsAsync(stream, table);
+        Assert.Equal(descriptorsBefore.Count, descriptorsAfter.Count);
+        for (int i = 0; i < descriptorsBefore.Count; i++)
+        {
+            ColumnInfo before = descriptorsBefore[i];
+            ColumnInfo after = descriptorsAfter[i];
+            Assert.Equal(before.Name + "2", after.Name);
+            Assert.Equal(
+                (before.Type, before.Size, before.Flags, before.ExtraFlags, before.Misc, before.NumericPrecision, before.NumericScale, before.CalculatedResultType),
+                (after.Type, after.Size, after.Flags, after.ExtraFlags, after.Misc, after.NumericPrecision, after.NumericScale, after.CalculatedResultType));
+        }
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            IReadOnlyList<ColumnMetadata> metadataAfter = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
+            Assert.Equal(metadataBefore.Count, metadataAfter.Count);
+            for (int i = 0; i < metadataBefore.Count; i++)
+            {
+                Assert.Equal(metadataBefore[i] with { Name = metadataBefore[i].Name + "2" }, metadataAfter[i]);
+            }
+
+            object?[] valuesAfter = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows[0].ItemArray;
+            Assert.Equal(valuesBefore, valuesAfter);
+        }
+    }
+
     [Fact]
     public async Task FreshlyCreatedTable_HasNoUserDefinedIndexEntries()
     {
@@ -251,6 +515,17 @@ public sealed class SchemaEvolutionTests
         }
 
         return false;
+    }
+
+    private static async ValueTask<IReadOnlyList<ColumnInfo>> ReadColumnDescriptorsAsync(MemoryStream stream, string tableName)
+    {
+        stream.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
+        Assert.NotNull(entry);
+        TableDef? definition = await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        Assert.NotNull(definition);
+        return definition.Columns;
     }
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
