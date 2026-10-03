@@ -36,13 +36,29 @@ internal static class Guard
 #endif
     }
 
+    /// <summary>
+    /// Throws an <see cref="ArgumentNullException"/> when <paramref name="value"/> is
+    /// <see langword="null"/> and an <see cref="ArgumentException"/> when it is empty. A
+    /// whitespace-only value passes. Forwards to <c>ArgumentException.ThrowIfNullOrEmpty</c>
+    /// on .NET 7+; the netstandard2.1 branch throws the same exception types.
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="paramName">The param name.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="value"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> is empty.</exception>
+    [SuppressMessage("Roslynator", "RCS1256:Invalid argument null check", Justification = "Guard helper accepts nullable values to establish the NotNull postcondition.")]
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void NotNullOrEmpty([NotNull] string? value, string paramName)
     {
 #if NETSTANDARD2_1
-        if (string.IsNullOrWhiteSpace(value))
+        if (value is null)
         {
-            throw new ArgumentException("Value cannot be null or empty", paramName);
+            throw new ArgumentNullException(paramName);
+        }
+
+        if (value.Length == 0)
+        {
+            throw new ArgumentException("The value cannot be an empty string.", paramName);
         }
 #else
         ArgumentException.ThrowIfNullOrEmpty(value, paramName);

@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!--
+      net8.0 runs the suite against the library's netstandard2.1 asset, the one .NET 8 and 9
+      consumers get; net10.0 runs it against the net10.0 asset.
+    -->
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
@@ -19,7 +23,24 @@
 
   <ItemGroup>
     <ProjectReference Include="..\JetDatabaseWriter\JetDatabaseWriter.csproj" />
+  </ItemGroup>
+
+  <!--
+    The scaffolding CLI targets net10.0 only (multi-targeting it would make
+    dotnet run ask which framework to start), so the tests that
+    call into it build for net10.0 only.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
     <ProjectReference Include="..\JetDatabaseWriter.Scaffold\JetDatabaseWriter.Scaffold.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0'">
+    <Compile Remove="Scaffold\EntityEmitterNavigationTests.cs" />
+    <Compile Remove="Scaffold\EntityEmitterTests.cs" />
+    <Compile Remove="Scaffold\NameCleanerTests.cs" />
+    <Compile Remove="Scaffold\NavigationResolverTests.cs" />
+    <Compile Remove="Scaffold\ScaffoldedEntityColumnMappingTests.cs" />
+    <Compile Remove="Scaffold\ScaffoldRunnerTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
