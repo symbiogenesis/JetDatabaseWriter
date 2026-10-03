@@ -184,17 +184,22 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
     }
 
     /// <summary>
-    /// Loads every complex column of <paramref name="tableName"/> into
+    /// Loads the complex columns of <paramref name="tableName"/> into
     /// <see cref="ComplexCellValue"/> cells: one cell per parent complex
-    /// reference, holding every attachment or value stored for it.
+    /// reference, holding every attachment or value stored for it. Only the
+    /// columns <paramref name="wantedColumns"/> selects are loaded, so a read
+    /// that maps a few columns never reads the flat tables or long values of
+    /// the complex columns it leaves out.
     /// </summary>
     /// <param name="tableName">The parent table name.</param>
     /// <param name="columns">The parent table's columns.</param>
+    /// <param name="wantedColumns">The columns to load, by column index, or <see langword="null"/> for every complex column.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>Cells by column index and complex reference, or <see langword="null"/> when no complex column has items.</returns>
+    /// <returns>Cells by column index and complex reference, or <see langword="null"/> when no loaded complex column has items.</returns>
     internal async ValueTask<Dictionary<int, Dictionary<int, byte[]>>?> BuildColumnDataAsync(
         string tableName,
         List<ColumnInfo> columns,
+        bool[]? wantedColumns,
         CancellationToken cancellationToken)
     {
         Dictionary<int, Dictionary<int, byte[]>>? result = null;
@@ -205,7 +210,8 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             cancellationToken.ThrowIfCancellationRequested();
 
             ColumnInfo col = columns[i];
-            if (col.Type is not ComplexType and not AttachmentType)
+            if (col.Type is not ComplexType and not AttachmentType
+                || (wantedColumns is not null && (i >= wantedColumns.Length || !wantedColumns[i])))
             {
                 continue;
             }

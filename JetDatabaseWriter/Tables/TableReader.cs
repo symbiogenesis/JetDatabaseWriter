@@ -283,7 +283,7 @@ internal sealed class TableReader(
         TableDef td = resolved.Definition;
         long rowCount = 0;
         Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
@@ -398,7 +398,7 @@ internal sealed class TableReader(
             }
 
             Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
-                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
                 : null;
             IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
@@ -578,7 +578,7 @@ internal sealed class TableReader(
             }
 
             Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
-                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
                 : null;
             IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
@@ -715,10 +715,9 @@ internal sealed class TableReader(
         // Try to compile a direct page → T decoder that skips the per-row
         // object?[] buffer and primitive boxing entirely. The builder returns
         // null when any bound column requires the slow path (Memo/Ole
-        // LVAL chain, Complex/Attachment, Hyperlink prop).
-        DirectRowDecoder<T>? directDecoder = td.HasComplexColumns
-            ? null
-            : DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
+        // LVAL chain, Complex/Attachment, Hyperlink prop); complex columns
+        // T does not bind are never read.
+        DirectRowDecoder<T>? directDecoder = DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
 
         if (directDecoder != null)
         {
@@ -729,12 +728,10 @@ internal sealed class TableReader(
 
         // Skip per-row decode of columns the mapper never reads. For wide
         // tables and narrow DTOs this can eliminate the bulk of the per-row
-        // decode + boxing cost. Tables with complex/attachment columns still
-        // decode every column. Complex resolution itself only needs each
-        // complex column's own reference, so this could be relaxed.
-        bool[]? wantedColumns = td.HasComplexColumns
-            ? null
-            : RowMapper<T>.GetBoundColumnMask(headers);
+        // decode + boxing cost. Complex resolution reads only each bound
+        // complex column's own reference slot, so the complex columns T does
+        // not bind are neither decoded nor loaded from their flat tables.
+        bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers);
 
         return this.EnumerateMappedRowsPooledAsync(tableName, entry, td, wantedColumns, factory, progress, cancellationToken);
     }
@@ -774,7 +771,7 @@ internal sealed class TableReader(
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
@@ -871,7 +868,7 @@ internal sealed class TableReader(
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
-            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, cancellationToken).ConfigureAwait(false)
+            ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
             : null;
         IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);

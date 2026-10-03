@@ -71,9 +71,10 @@ release-quality benchmark results justify reopening a specific area.
   for primitive projections. The compiled delegate still asks `RowDecodePlan`
   to parse row layout and resolve column slices, so direct and fallback decode
   paths share the same row-layout rules. It falls back to the typed crack path
-  for calculated columns, `Memo` / `Ole` LVAL columns, `Binary`, `Complex` /
-  `Attachment`, hyperlinks, type-mismatched targets, or tables with complex
-  columns. `Numeric` direct-decodes for decimal targets using `NumericScale`.
+  for bound calculated columns, `Memo` / `Ole` LVAL columns, `Binary`,
+  `Complex` / `Attachment`, hyperlinks and type-mismatched targets. Complex
+  columns the type does not bind do not stop it, and neither path reads their
+  flat tables. `Numeric` direct-decodes for decimal targets using `NumericScale`.
 - Synthetic benchmark databases are generated under `%TEMP%\JetBench\` by
   `SyntheticDatabases.cs`: `Numeric` has 25K rows / 9 columns, `TextHeavy` has
   25K rows / 6 columns, `Wide` has 10K rows / 40 columns, and `Memos` has 5K
@@ -443,7 +444,11 @@ best available path for wide tables when the caller does not need every column.
 The direct path applies when bound properties match the source CLR types and no
 bound column requires calculated-column, MEMO/OLE, Binary, Complex/Attachment,
 or Hyperlink handling. When the direct path cannot apply, the fallback still
-uses the projection-aware typed crack path for non-complex tables.
+uses the projection-aware typed crack path. On a table with Attachment or
+multi-value columns, both paths leave the complex columns the DTO does not bind
+alone: their flat tables and attachment data are neither loaded nor decoded, so
+a DTO of scalar columns reads only the table's own data pages. Index seeks and
+`Rows<T>(predicate)` read through an index do the same.
 
 ### Avoid `DataTable` in hot paths
 
