@@ -321,6 +321,23 @@ public sealed class IndexKeyEncoderTests
     [InlineData(NumericType)]
     public void UnsupportedColumnType_Throws(ColumnType columnType) => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
 
+    /// <summary>
+    /// Access indexes every complex column (unique, Required, named
+    /// <c>&lt;column&gt;_&lt;32 hex&gt;</c>) on the parent row's per-row
+    /// complex reference, encoded exactly like a Long Integer key.
+    /// </summary>
+    /// <param name="columnType">The complex column type.</param>
+    [Theory]
+    [InlineData(ComplexType)]
+    [InlineData(AttachmentType)]
+    public void EncodeEntry_ComplexReference_UsesLongIntegerLayout(ColumnType columnType)
+    {
+        Assert.Equal(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x01 }, IndexKeyEncoder.EncodeEntry(columnType, new ComplexIdRef(1), ascending: true));
+        Assert.Equal(new byte[] { 0x80, 0x7F, 0xFF, 0xFF, 0xFE }, IndexKeyEncoder.EncodeEntry(columnType, new ComplexIdRef(1), ascending: false));
+        Assert.Equal(IndexKeyEncoder.EncodeEntry(LongIntegerType, 1), IndexKeyEncoder.EncodeEntry(columnType, 1));
+        Assert.Equal(new byte[] { 0x00 }, IndexKeyEncoder.EncodeEntry(columnType, DBNull.Value));
+    }
+
     // ── General Legacy text encoding (full Jackcess port) ──
     //
     // Inline-byte values come from `IndexCodeTables/index_codes_genleg.txt`
