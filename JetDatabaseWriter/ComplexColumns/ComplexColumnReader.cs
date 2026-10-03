@@ -234,13 +234,16 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
         return flat == null ? [] : await this.ReadAttachmentsAsync(flat, column.ColumnName, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Reads every value in the flat table behind <paramref name="column"/>.</summary>
+    /// <summary>
+    /// Reads every value in the flat table behind <paramref name="column"/>,
+    /// with each version's timestamp for a version-history column.
+    /// </summary>
     /// <param name="column">The complex column.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<IReadOnlyList<MultiValueItem>> ReadMultiValueItemsAsync(ComplexColumnInfo column, CancellationToken cancellationToken)
     {
         FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
-        return flat == null ? [] : await this.ReadMultiValueItemsAsync(flat, column.ColumnName, cancellationToken).ConfigureAwait(false);
+        return flat == null ? [] : await this.ReadMultiValueItemsAsync(flat, column.ColumnName, column.Kind, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool ConceptualTableMatches(string tableIdStr, long targetTdefPage, string? tableName)
@@ -720,15 +723,21 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
                 kind = ClassifyFlatTable(flat.Definition, columnName);
             }
 
-            Dictionary<int, byte[]> cells = kind == ComplexColumnKind.Attachment
-                ? GroupCells(
+            Dictionary<int, byte[]> cells;
+            if (kind == ComplexColumnKind.Attachment)
+            {
+                cells = GroupCells(
                     await this.ReadAttachmentsAsync(flat, columnName, cancellationToken).ConfigureAwait(false),
                     static attachment => attachment.ConceptualTableId,
-                    ComplexCellValue.EncodeAttachments)
-                : GroupCells(
-                    await this.ReadMultiValueItemsAsync(flat, columnName, cancellationToken).ConfigureAwait(false),
-                    static item => item.ConceptualTableId,
-                    ComplexCellValue.EncodeMultiValueItems);
+                    ComplexCellValue.EncodeAttachments);
+            }
+            else
+            {
+                IReadOnlyList<MultiValueItem> items = await this.ReadMultiValueItemsAsync(flat, columnName, kind, cancellationToken).ConfigureAwait(false);
+                cells = kind == ComplexColumnKind.VersionHistory
+                    ? GroupCells(items, static item => item.ConceptualTableId, ComplexCellValue.EncodeVersionHistoryItems)
+                    : GroupCells(items, static item => item.ConceptualTableId, ComplexCellValue.EncodeMultiValueItems);
+            }
 
             return cells.Count > 0 ? cells : null;
         }
@@ -822,11 +831,45 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
         return result;
     }
 
-    private async ValueTask<IReadOnlyList<MultiValueItem>> ReadMultiValueItemsAsync(FlatTable flat, string columnName, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads every row of a multi-value or version-history flat table, in
+    /// flat-table order. For a version history, as in Jackcess
+    /// <c>VersionHistoryColumnInfoImpl</c>, the value is the first Memo column
+    /// that is neither the foreign key nor the AutoNumber key, and
+    /// <see cref="MultiValueItem.Modified"/> is the first Date/Time column
+    /// (<c>Modified_&lt;GUID&gt;</c>). Jackcess sorts versions newest first;
+    /// this keeps the stored order.
+    /// </summary>
+    /// <param name="flat">The flat table.</param>
+    /// <param name="columnName">The parent's complex column name.</param>
+    /// <param name="kind">The column's kind.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask<IReadOnlyList<MultiValueItem>> ReadMultiValueItemsAsync(FlatTable flat, string columnName, ComplexColumnKind kind, CancellationToken cancellationToken)
     {
         TableDef td = flat.Definition;
         int idxFk = FindForeignKeyIndex(td, columnName);
-        int idxValue = FindValueColumnIndex(td, idxFk);
+        int idxValue = -1;
+        int idxModified = -1;
+        if (kind == ComplexColumnKind.VersionHistory)
+        {
+            for (int i = 0; i < td.Columns.Count; i++)
+            {
+                ColumnInfo column = td.Columns[i];
+                if (idxValue < 0 && column.Type == MemoType && i != idxFk && (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0)
+                {
+                    idxValue = i;
+                }
+                else if (idxModified < 0 && column.Type == DateTimeType)
+                {
+                    idxModified = i;
+                }
+            }
+        }
+
+        if (idxValue < 0)
+        {
+            idxValue = FindValueColumnIndex(td, idxFk);
+        }
 
         var result = new List<MultiValueItem>();
         await foreach (object?[] row in rows.EnumerateRawOleTypedRowsForTdefAsync(flat.TDefPage, td, cancellationToken).ConfigureAwait(false))
@@ -835,6 +878,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             {
                 ConceptualTableId = ReadInt32OrZero(row, idxFk),
                 Value = idxValue >= 0 && row[idxValue] is not (null or DBNull) ? row[idxValue] : null,
+                Modified = idxModified >= 0 && row[idxModified] is DateTime modified ? modified : null,
             });
         }
 

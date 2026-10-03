@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -120,5 +121,46 @@ public sealed class ComplexColumnsVersionHistoryTests(DatabaseCache db) : IClass
 
         // The Jackcess complexDataTest fixture has version history rows.
         Assert.True(rowCount >= 1, $"Expected at least 1 row in version-history flat table '{vhCol.FlatTableName}'.");
+    }
+
+    /// <summary>
+    /// <see cref="IAccessReader.GetMultiValueItemsAsync"/> on a version-history
+    /// column returns each version's text with its <c>Modified_&lt;GUID&gt;</c>
+    /// timestamp, in flat-table order.
+    /// </summary>
+    /// <param name="path">Path to the file.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
+    public async Task GetMultiValueItems_VersionHistoryColumn_FillsModified(string path)
+    {
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+
+        IReadOnlyList<MultiValueItem> items = await reader.GetMultiValueItemsAsync(
+            "Table1",
+            "VersionHistory_F5F8918F-0A3F-4DA9-AE71-184EE5012880",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(5, items.Count);
+        Assert.All(items, item =>
+        {
+            Assert.IsType<string>(item.Value);
+            Assert.Equal(new System.DateTime(2011, 9, 12), Assert.NotNull(item.Modified).Date);
+        });
+    }
+
+    /// <summary>A multi-value column's items carry no timestamp.</summary>
+    /// <param name="path">Path to the file.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(TestDatabases.ComplexData), MemberType = typeof(TestDatabases))]
+    public async Task GetMultiValueItems_MultiValueColumn_LeavesModifiedNull(string path)
+    {
+        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
+
+        IReadOnlyList<MultiValueItem> items = await reader.GetMultiValueItemsAsync("Table1", "multi-value-data", TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(items);
+        Assert.All(items, item => Assert.Null(item.Modified));
     }
 }

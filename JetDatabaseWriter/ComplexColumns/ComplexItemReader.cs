@@ -40,7 +40,8 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Asyn
 
     /// <summary>
     /// Returns every value stored in the hidden flat child table backing the
-    /// Multi-value column <paramref name="columnName"/> on <paramref name="tableName"/>.
+    /// Multi-value column <paramref name="columnName"/> on <paramref name="tableName"/>,
+    /// or every version, with its timestamp, of a Version-history column.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Multi-value column name (case-insensitive).</param>

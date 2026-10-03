@@ -30,22 +30,26 @@ using JetDatabaseWriter.Interfaces;
 /// <para>
 /// Cell layout (little-endian; strings are length-prefixed UTF-8 as written by
 /// <see cref="BinaryWriter.Write(string)"/>):
-/// <c>"JCX"</c>, one kind byte (<c>'A'</c> attachments, <c>'M'</c> multi-value or
-/// version-history values), the <c>Int32</c> per-row complex reference, the
-/// <c>Int32</c> item count, then each item. An attachment item is FileName,
-/// FileType, a presence byte plus FileURL, a presence byte plus FileTimeStamp
-/// (<see cref="DateTime.ToBinary"/>), and the <c>Int32</c> length and bytes of
-/// the decoded (unwrapped and decompressed) file data. A multi-value item is a
-/// type tag followed by the value: 0 null, 1 Boolean, 2 Byte, 3 Int16, 4 Int32,
-/// 5 Int64, 6 Single, 7 Double, 8 Decimal, 9 Guid (16 bytes), 10 DateTime
+/// <c>"JCX"</c>, one kind byte (<c>'A'</c> attachments, <c>'M'</c> multi-value
+/// values, <c>'V'</c> version-history versions), the <c>Int32</c> per-row complex
+/// reference, the <c>Int32</c> item count, then each item. An attachment item is
+/// FileName, FileType, a presence byte plus FileURL, a presence byte plus
+/// FileTimeStamp (<see cref="DateTime.ToBinary"/>), and the <c>Int32</c> length
+/// and bytes of the decoded (unwrapped and decompressed) file data. A multi-value
+/// item is a type tag followed by the value: 0 null, 1 Boolean, 2 Byte, 3 Int16,
+/// 4 Int32, 5 Int64, 6 Single, 7 Double, 8 Decimal, 9 Guid (16 bytes), 10 DateTime
 /// (<see cref="DateTime.ToBinary"/>), 11 String, 12 byte[] (<c>Int32</c> length
-/// and bytes). Values of any other type are stored as their invariant-culture string.
+/// and bytes). Values of any other type are stored as their invariant-culture
+/// string. A version-history item is a multi-value item followed by a presence
+/// byte plus its <see cref="MultiValueItem.Modified"/> timestamp
+/// (<see cref="DateTime.ToBinary"/>).
 /// </para>
 /// </summary>
 public static class ComplexCellValue
 {
     private const byte AttachmentKind = (byte)'A';
     private const byte MultiValueKind = (byte)'M';
+    private const byte VersionHistoryKind = (byte)'V';
 
     private const byte NullTag = 0;
     private const byte BooleanTag = 1;
@@ -73,7 +77,7 @@ public static class ComplexCellValue
     /// <exception cref="FormatException"><paramref name="cell"/> is not an Attachment column cell.</exception>
     public static IReadOnlyList<AttachmentRecord> ReadAttachments(byte[] cell)
     {
-        using BinaryReader reader = OpenCell(cell, AttachmentKind, out int conceptualTableId, out int count);
+        using BinaryReader reader = OpenCell(cell, AttachmentKind, AttachmentKind, out _, out int conceptualTableId, out int count);
         try
         {
             var result = new List<AttachmentRecord>(count);
@@ -104,25 +108,28 @@ public static class ComplexCellValue
     }
 
     /// <summary>
-    /// Decodes a Multi-value (or Version-history) column cell into one
-    /// <see cref="MultiValueItem"/> per value stored for the parent row, in flat-table order.
+    /// Decodes a Multi-value or Version-history column cell into one
+    /// <see cref="MultiValueItem"/> per value stored for the parent row, in flat-table
+    /// order. Items of a Version-history cell also carry <see cref="MultiValueItem.Modified"/>.
     /// </summary>
-    /// <param name="cell">The <c>byte[]</c> value read from a Multi-value column.</param>
+    /// <param name="cell">The <c>byte[]</c> value read from a Multi-value or Version-history column.</param>
     /// <returns>The parent row's values.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="cell"/> is <see langword="null"/>.</exception>
-    /// <exception cref="FormatException"><paramref name="cell"/> is not a Multi-value column cell.</exception>
+    /// <exception cref="FormatException"><paramref name="cell"/> is not a Multi-value or Version-history column cell.</exception>
     public static IReadOnlyList<MultiValueItem> ReadMultiValueItems(byte[] cell)
     {
-        using BinaryReader reader = OpenCell(cell, MultiValueKind, out int conceptualTableId, out int count);
+        using BinaryReader reader = OpenCell(cell, MultiValueKind, VersionHistoryKind, out byte kind, out int conceptualTableId, out int count);
         try
         {
             var result = new List<MultiValueItem>(count);
             for (int i = 0; i < count; i++)
             {
+                object? value = ReadValue(reader);
                 result.Add(new MultiValueItem
                 {
                     ConceptualTableId = conceptualTableId,
-                    Value = ReadValue(reader),
+                    Value = value,
+                    Modified = kind == VersionHistoryKind && reader.ReadBoolean() ? DateTime.FromBinary(reader.ReadInt64()) : null,
                 });
             }
 
@@ -184,6 +191,32 @@ public static class ComplexCellValue
         return stream.ToArray();
     }
 
+    /// <summary>
+    /// Encodes the versions of one parent row's version-history column as a
+    /// cell value: each version's text and its <see cref="MultiValueItem.Modified"/>
+    /// timestamp.
+    /// </summary>
+    /// <param name="conceptualTableId">The parent row's complex reference.</param>
+    /// <param name="items">The parent row's versions.</param>
+    internal static byte[] EncodeVersionHistoryItems(int conceptualTableId, IReadOnlyList<MultiValueItem> items)
+    {
+        using var stream = new MemoryStream();
+        using (BinaryWriter writer = BeginCell(stream, VersionHistoryKind, conceptualTableId, items.Count))
+        {
+            foreach (MultiValueItem item in items)
+            {
+                WriteValue(writer, item.Value);
+                writer.Write(item.Modified.HasValue);
+                if (item.Modified.HasValue)
+                {
+                    writer.Write(item.Modified.Value.ToBinary());
+                }
+            }
+        }
+
+        return stream.ToArray();
+    }
+
     private static BinaryWriter BeginCell(MemoryStream stream, byte kind, int conceptualTableId, int count)
     {
         var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
@@ -194,7 +227,17 @@ public static class ComplexCellValue
         return writer;
     }
 
-    private static BinaryReader OpenCell(byte[] cell, byte expectedKind, out int conceptualTableId, out int count)
+    /// <summary>
+    /// Validates a cell's header and opens a reader positioned after its kind byte.
+    /// </summary>
+    /// <param name="cell">The cell.</param>
+    /// <param name="expectedKind">A kind byte the caller decodes.</param>
+    /// <param name="otherExpectedKind">Another kind byte the caller decodes, or <paramref name="expectedKind"/> again.</param>
+    /// <param name="kind">Receives the cell's kind byte.</param>
+    /// <param name="conceptualTableId">Receives the per-row complex reference.</param>
+    /// <param name="count">Receives the item count.</param>
+    /// <exception cref="FormatException"><paramref name="cell"/> is not a cell of either kind, or its item count is negative.</exception>
+    private static BinaryReader OpenCell(byte[] cell, byte expectedKind, byte otherExpectedKind, out byte kind, out int conceptualTableId, out int count)
     {
         Guard.NotNull(cell, nameof(cell));
 
@@ -208,9 +251,10 @@ public static class ComplexCellValue
             throw new FormatException("The value is not a complex column cell.");
         }
 
-        if (cell[3] != expectedKind)
+        kind = cell[3];
+        if (kind != expectedKind && kind != otherExpectedKind)
         {
-            string expected = expectedKind == AttachmentKind ? "an Attachment" : "a Multi-value";
+            string expected = expectedKind == AttachmentKind ? "an Attachment" : "a Multi-value or Version-history";
             throw new FormatException($"The complex column cell is not {expected} column cell.");
         }
 

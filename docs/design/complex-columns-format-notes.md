@@ -16,7 +16,7 @@ Access 2007 introduced three "complex column" kinds. All three are stored the sa
 |---|---|
 | Attachment | One row per attached file. Columns: `FileURL`, `FileName`, `FileType`, `FileFlags`, `FileTimeStamp`, `FileData`. |
 | Multi-value | One row per value. Columns: a single value column whose type matches the user-declared element type. |
-| Version history | One row per historical edit. Columns: `value` (memo), `version` (datetime). Only meaningful on memo columns flagged "Append Only" in Access. |
+| Version history | One row per historical edit. Columns: the version's text (a Memo column named after the append-only Memo column) and `Modified_<GUID>` (Date/Time). Only meaningful on memo columns flagged "Append Only" in Access. |
 
 The discrimination between attachment / multi-value / version-history is **not** done by the column-type byte. It is done by the linked flat table's schema and/or the value of `MSysComplexColumns.ComplexTypeObjectID` (which points at one of the `MSysComplexType_*` template tables — see [appendix](../format-probe/format-probe-appendix-complex.md)).
 
@@ -122,14 +122,16 @@ The shipped declaration surface is the `ColumnDefinition.IsMultiValue` init-only
 
 #### 2.4.3 Version history (`MSysComplexColumns.Type = 2`, on-disk `col_type = 0x12`)
 
+Verified against `complexDataTest*.accdb` `Table1.VersionHistory_F5F8918F-0A3F-4DA9-AE71-184EE5012880`, whose flat table holds five versions of the append-only Memo column, all modified on 2011-09-12:
+
 | Flat-table column | Jet type | Notes |
 |---|---|---|
-| (autonumber PK) | `LongInteger`, autoincrement | |
-| (FK) | `LongInteger` | |
-| `value` | `Memo` | Historical text snapshot. |
-| `version` | `DateTime` | When this snapshot was recorded. |
+| `_VersionHistory_<GUID>` (FK) | `LongInteger` | The parent row's per-row complex reference. |
+| `<memo column name>` | `Memo` | Historical text snapshot, named after the append-only Memo column. |
+| `Modified_<GUID>` | `DateTime` | When Access recorded this version. |
+| `<table>_VersionHistory_<GUID>` (PK) | `LongInteger`, autoincrement | |
 
-Only meaningful on memo columns marked "Append Only" in Access. Lowest-priority of the three to support — virtually no users opt into this.
+Only meaningful on memo columns marked "Append Only" in Access. The reader follows Jackcess `VersionHistoryColumnInfoImpl`: the version's text is the first Memo column that is neither the foreign key nor the AutoNumber key, and its timestamp is the first Date/Time column. `GetMultiValueItemsAsync` returns each version as a `MultiValueItem` with `Modified` set, and the row cell uses the `'V'` kind of `ComplexCellValue`, which carries the timestamps (`ComplexCellValue.ReadMultiValueItems` reads both `'M'` and `'V'` cells). Versions keep the flat table's order; Jackcess sorts them newest first. The writer cannot add versions: writes to an append-only Memo column in an Access table do not append a version-history row.
 
 ## 3. Attachment payload format
 
@@ -181,7 +183,7 @@ The reader (see §1) implements `Attachment` / `Complex` column-type recognition
 
 `ComplexColumnReader` classifies a column by its `MSysComplexType_*` template name (`ComplexTypeObjectID`). A column with no template (`ComplexTypeObjectID` 0, which files written by builds of this library before C10 hold) is classified from its flat table's schema instead (`ClassifyFlatTable`): a `FileData` column means an attachment; leaving out the foreign key and the AutoNumber key, one value column means multi-value, and a Memo plus a Date/Time column a version history. `GetComplexColumnsAsync`, the row cells and the type names all use that classification. `GetColumnMetadataAsync` reports each complex column's `TypeName`, keyed by `ComplexID` so a rename keeps it (`ReadColumnTypeNamesAsync`): `"Attachment"`, `"Version History"`, or `"Multi-value "` plus the display name of the flat table's value column type (`"Multi-value Text"` for `complexDataTest`'s `multi-value-data`, `"Multi-value Long Integer"` for a writer column of `int`), falling back to the type the template declares when the flat table cannot be read, and `"Complex"` when the column cannot be resolved at all. Before, every complex column that joined to `MSysComplexColumns` reported `"Attachment"`. `ComplexColumnsInfoTests` covers this.
 
-Row reads (`Rows`, `ReadTableAsync`, `Rows<T>`, index seeks and `Query<T>`) replace each complex column's 4-byte reference with a `ComplexCellValue` cell (`byte[]`, since complex columns report `ClrType = byte[]`). `ComplexColumnReader.BuildColumnDataAsync` reads each flat table once per scan, groups its rows by the FK back-reference, and encodes one cell per parent reference holding **every** attachment (decoded payload, file name, type, URL, timestamp) or every multi-value / version-history value. A row whose reference has no flat rows reads as `DBNull`. `ComplexCellValue.ReadAttachments` / `ReadMultiValueItems` decode a cell into the same records `GetAttachmentsAsync` / `GetMultiValueItemsAsync` return, because both paths share `ComplexColumnReader`'s flat-table decode. `RowsAsStrings` and `ReadTableAsStringsAsync` return the same cell as a `data:application/octet-stream;base64,` URI, or an empty string. A version-history cell carries only the history text, like `GetMultiValueItemsAsync`; the `Modified` timestamp column is not included.
+Row reads (`Rows`, `ReadTableAsync`, `Rows<T>`, index seeks and `Query<T>`) replace each complex column's 4-byte reference with a `ComplexCellValue` cell (`byte[]`, since complex columns report `ClrType = byte[]`). `ComplexColumnReader.BuildColumnDataAsync` reads each flat table once per scan, groups its rows by the FK back-reference, and encodes one cell per parent reference holding **every** attachment (decoded payload, file name, type, URL, timestamp) or every multi-value / version-history value. A row whose reference has no flat rows reads as `DBNull`. `ComplexCellValue.ReadAttachments` / `ReadMultiValueItems` decode a cell into the same records `GetAttachmentsAsync` / `GetMultiValueItemsAsync` return, because both paths share `ComplexColumnReader`'s flat-table decode. `RowsAsStrings` and `ReadTableAsStringsAsync` return the same cell as a `data:application/octet-stream;base64,` URI, or an empty string. A version-history cell (kind `'V'`) carries each version's text and its `Modified_<GUID>` timestamp, as `GetMultiValueItemsAsync` returns them in `MultiValueItem.Modified` (§2.4.3).
 
 ### 4.2 Writer
 
