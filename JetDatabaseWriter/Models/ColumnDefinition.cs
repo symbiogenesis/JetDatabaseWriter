@@ -13,7 +13,7 @@ public sealed record ColumnDefinition
     /// <summary>
     /// Initializes a new instance of the <see cref="ColumnDefinition"/> class.
     /// </summary>
-    /// <param name="name">Column name.</param>
+    /// <param name="name">Column name. <c>CreateTableAsync</c> and <c>AddColumnAsync</c> require the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
     /// <param name="clrType">The CLR type for this column (e.g., typeof(string), typeof(int)).</param>
     /// <param name="maxLength">Maximum length for variable-length types (e.g., string). Ignored for fixed-length types.</param>
     public ColumnDefinition(string name, Type clrType, int maxLength = 0)

@@ -36,11 +36,11 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously creates a new table with the specified columns.
     /// Throws if a table with the same name already exists.
     /// </summary>
-    /// <param name="tableName">Name of the table to create.</param>
-    /// <param name="columns">Column definitions for the new table.</param>
+    /// <param name="tableName">Name of the table to create. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
+    /// <param name="columns">Column definitions for the new table. Each column name follows the same rules, and no two may be equal ignoring case.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="tableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>), or, with <see cref="ArgumentException.ParamName"/> <c>columns</c>, when a calculated column's expression is not valid Access expression syntax (for example Excel's postfix <c>%</c>) or a column declares a default it cannot have, such as a <see cref="ColumnDefinition.DefaultValue"/> or <see cref="ColumnDefinition.DefaultValueExpression"/> on an AutoNumber, calculated, Attachment or multi-value column (see <see cref="ColumnDefinition.DefaultValue"/>); <see cref="ArgumentOutOfRangeException"/> when the <see cref="ColumnDefinition.NumericPrecision"/> of a decimal column, or of a multi-value column's decimal items, is not 1-28 or its <see cref="ColumnDefinition.NumericScale"/> is above it.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="tableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules; or, with <see cref="ArgumentException.ParamName"/> <c>columns</c>, when a column is <see langword="null"/>, has no name, has a name that breaks the rules or that another column has ignoring case, has a calculated expression that is not valid Access expression syntax (for example Excel's postfix <c>%</c>), or declares a default it cannot have, such as a <see cref="ColumnDefinition.DefaultValue"/> or <see cref="ColumnDefinition.DefaultValueExpression"/> on an AutoNumber, calculated, Attachment or multi-value column (see <see cref="ColumnDefinition.DefaultValue"/>); <see cref="ArgumentOutOfRangeException"/> when the <see cref="ColumnDefinition.NumericPrecision"/> of a decimal column, or of a multi-value column's decimal items, is not 1-28 or its <see cref="ColumnDefinition.NumericScale"/> is above it. The names are checked first.</exception>
     /// <exception cref="NotSupportedException">Thrown when the format cannot hold a column: a calculated, Large Number, Date/Time Extended, Attachment or multi-value column on a Jet3 or Jet4 <c>.mdb</c>, a calculated column that is also AutoNumber, Attachment, multi-value or Hyperlink, or a decimal column on a Jet3 <c>.mdb</c>, which is created as Currency, whose <see cref="ColumnDefinition.NumericScale"/> is above 4 or whose <see cref="ColumnDefinition.NumericPrecision"/> leaves more than 15 digits before the decimal point (see <see cref="ColumnDefinition.NumericPrecision"/>). These checks run before the calculated expressions are parsed.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a table named <paramref name="tableName"/> already exists. Every argument check above runs first.</exception>
     /// <exception cref="Exceptions.JetLimitationException">Thrown, before anything is written, when a Jet3 (Access 97) table would have more than 255 columns.</exception>
@@ -51,18 +51,18 @@ public interface IAccessSchema : IAccessBase
     /// single-column, non-unique, ascending logical indexes. Throws if a table with the
     /// same name already exists.
     /// </summary>
-    /// <param name="tableName">Name of the table to create.</param>
-    /// <param name="columns">Column definitions for the new table.</param>
+    /// <param name="tableName">Name of the table to create. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
+    /// <param name="columns">Column definitions for the new table. Each column name follows the same rules, and no two may be equal ignoring case.</param>
     /// <param name="indexes">
     /// Logical-index schema entries to write into the new table's TDEF page chain.
     /// See <see cref="IndexDefinition"/> for the enforced constraints (single
     /// column, non-unique, ascending, Jet4/ACE only). Index leaves are emitted at
     /// table-creation time and maintained by supported writer insert / update /
-    /// delete paths.
+    /// delete paths. Each index name follows the same naming rules.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="tableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>), or, with <see cref="ArgumentException.ParamName"/> <c>columns</c>, when a calculated column's expression is not valid Access expression syntax (for example Excel's postfix <c>%</c>) or a column declares a default it cannot have, such as a <see cref="ColumnDefinition.DefaultValue"/> or <see cref="ColumnDefinition.DefaultValueExpression"/> on an AutoNumber, calculated, Attachment or multi-value column (see <see cref="ColumnDefinition.DefaultValue"/>); <see cref="ArgumentOutOfRangeException"/> when the <see cref="ColumnDefinition.NumericPrecision"/> of a decimal column, or of a multi-value column's decimal items, is not 1-28 or its <see cref="ColumnDefinition.NumericScale"/> is above it.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="tableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules; with <see cref="ArgumentException.ParamName"/> <c>indexes</c>, when an index is <see langword="null"/>, has no name or has a name that breaks the rules; or, with <see cref="ArgumentException.ParamName"/> <c>columns</c>, when a column is <see langword="null"/>, has no name, has a name that breaks the rules or that another column has ignoring case, has a calculated expression that is not valid Access expression syntax (for example Excel's postfix <c>%</c>), or declares a default it cannot have, such as a <see cref="ColumnDefinition.DefaultValue"/> or <see cref="ColumnDefinition.DefaultValueExpression"/> on an AutoNumber, calculated, Attachment or multi-value column (see <see cref="ColumnDefinition.DefaultValue"/>); <see cref="ArgumentOutOfRangeException"/> when the <see cref="ColumnDefinition.NumericPrecision"/> of a decimal column, or of a multi-value column's decimal items, is not 1-28 or its <see cref="ColumnDefinition.NumericScale"/> is above it. The names are checked first.</exception>
     /// <exception cref="NotSupportedException">Thrown when the format cannot hold a column: a calculated, Large Number, Date/Time Extended, Attachment or multi-value column on a Jet3 or Jet4 <c>.mdb</c>, a calculated column that is also AutoNumber, Attachment, multi-value or Hyperlink, or a decimal column on a Jet3 <c>.mdb</c>, which is created as Currency, whose <see cref="ColumnDefinition.NumericScale"/> is above 4 or whose <see cref="ColumnDefinition.NumericPrecision"/> leaves more than 15 digits before the decimal point (see <see cref="ColumnDefinition.NumericPrecision"/>). These checks run before the calculated expressions are parsed.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a table named <paramref name="tableName"/> already exists. Every argument check above runs first.</exception>
     /// <exception cref="Exceptions.JetLimitationException">Thrown, before anything is written, when a Jet3 (Access 97) table would have more than 255 columns.</exception>
@@ -88,11 +88,11 @@ public interface IAccessSchema : IAccessBase
     /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
-    /// <param name="column">The new column definition. Its name must not already exist on the table.</param>
+    /// <param name="column">The new column definition. Its name must not already exist on the table, and must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="NotSupportedException">Thrown, before the table is read, when the format cannot hold <paramref name="column"/>: a calculated, Large Number, Date/Time Extended, Attachment or multi-value column on a Jet3 or Jet4 <c>.mdb</c>, a calculated column that is also AutoNumber, Attachment, multi-value or Hyperlink, or a decimal column on a Jet3 <c>.mdb</c>, which is created as Currency, whose <see cref="ColumnDefinition.NumericScale"/> is above 4 or whose <see cref="ColumnDefinition.NumericPrecision"/> leaves more than 15 digits before the decimal point (see <see cref="ColumnDefinition.NumericPrecision"/>).</exception>
-    /// <exception cref="ArgumentException">Thrown, with <see cref="ArgumentException.ParamName"/> <c>column</c> and before the table is read, when a calculated column's expression is not valid Access expression syntax (for example Excel's postfix <c>%</c>) or the column declares a default it cannot have, such as a <see cref="ColumnDefinition.DefaultValue"/> or <see cref="ColumnDefinition.DefaultValueExpression"/> on an AutoNumber, calculated, Attachment or multi-value column (see <see cref="ColumnDefinition.DefaultValue"/>); <see cref="ArgumentOutOfRangeException"/> when the <see cref="ColumnDefinition.NumericPrecision"/> of a decimal column, or of a multi-value column's decimal items, is not 1-28 or its <see cref="ColumnDefinition.NumericScale"/> is above it.</exception>
+    /// <exception cref="ArgumentException">Thrown, with <see cref="ArgumentException.ParamName"/> <c>column</c> and before the table is read, when the column has no name or a name that breaks the naming rules (checked first), when a calculated column's expression is not valid Access expression syntax (for example Excel's postfix <c>%</c>), or when the column declares a default it cannot have, such as a <see cref="ColumnDefinition.DefaultValue"/> or <see cref="ColumnDefinition.DefaultValueExpression"/> on an AutoNumber, calculated, Attachment or multi-value column (see <see cref="ColumnDefinition.DefaultValue"/>); <see cref="ArgumentOutOfRangeException"/> when the <see cref="ColumnDefinition.NumericPrecision"/> of a decimal column, or of a multi-value column's decimal items, is not 1-28 or its <see cref="ColumnDefinition.NumericScale"/> is above it.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value whose stored data cannot be read; copying the row would lose that value.</exception>
     /// <exception cref="Exceptions.JetLimitationException">Thrown, before the table changes, when a Jet3 (Access 97) table would have more than 255 columns.</exception>
     public ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default);
@@ -128,10 +128,10 @@ public interface IAccessSchema : IAccessBase
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="oldColumnName">The current column name (case-insensitive).</param>
-    /// <param name="newColumnName">The new column name. Must not already exist on the table.</param>
+    /// <param name="newColumnName">The new column name. Must not already exist on the table, and must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The current name is only looked up, so a column whose name breaks the rules can be renamed to one that follows them.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="ArgumentException">Thrown, before the table changes, when an expression names the column and <paramref name="newColumnName"/> contains <c>]</c>, which a <c>[field]</c> reference cannot hold, or when the new name would push such an expression past the expression engine's length limit.</exception>
+    /// <exception cref="ArgumentException">Thrown, before the table is read, when <paramref name="newColumnName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules, or, before the table changes, when the new name would push an expression that names the column past the expression engine's length limit.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value whose stored data cannot be read; copying the row would lose that value.</exception>
     public ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
 
@@ -141,11 +141,12 @@ public interface IAccessSchema : IAccessBase
     /// locally; readers follow <paramref name="sourceDatabasePath"/> /
     /// <paramref name="foreignTableName"/> to retrieve data on demand.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="sourceDatabasePath">Path to the source Access database file (.mdb / .accdb).</param>
     /// <param name="foreignTableName">The name of the table in the source database.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -154,12 +155,13 @@ public interface IAccessSchema : IAccessBase
     /// locally; managed readers parse supported delimited text sources on demand
     /// through the linked-source path policy and expose fields as strings.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>
     /// <param name="foreignFileName">The filename of the text/CSV source, e.g. <c>"data.csv"</c>.</param>
     /// <param name="connectString">The text-driver connect string, e.g. <c>"Text;HDR=YES;FMT=Delimited"</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -174,11 +176,12 @@ public interface IAccessSchema : IAccessBase
     /// Access ODBC link format and is expected to begin with the literal prefix
     /// <c>"ODBC;"</c>.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="connectionString">ODBC connection string (e.g. <c>"ODBC;DSN=Sales;UID=app;..."</c> or <c>"ODBC;DRIVER={SQL Server};SERVER=...;..."</c>). The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
     /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -186,12 +189,13 @@ public interface IAccessSchema : IAccessBase
     /// generates a cached-schema <c>MSysObjects.LvProp</c> property block from
     /// the supplied remote column definitions.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
     /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
     /// <param name="sourceColumns">Column definitions for the remote source table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedOdbcTableAsync(
         string linkedTableName,
         string connectionString,
@@ -206,12 +210,13 @@ public interface IAccessSchema : IAccessBase
     /// schema; the writer validates that it is a non-empty <c>MR2\0</c> / <c>KKD\0</c>
     /// property block and stores it verbatim.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
     /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
     /// <param name="cachedSchemaLvProp">Access/DAO-authored cached linked-schema payload for <c>MSysObjects.LvProp</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedOdbcTableAsync(
         string linkedTableName,
         string connectionString,
@@ -228,7 +233,9 @@ public interface IAccessSchema : IAccessBase
     /// </summary>
     /// <param name="relationship">The relationship to create. Both referenced tables and
     /// every named column must already exist; <see cref="RelationshipDefinition.Name"/>
-    /// must not duplicate any existing relationship.</param>
+    /// must not duplicate any existing relationship, and must follow the Access naming
+    /// rules: 1 to 64 characters, not only white space, no leading space, and none of
+    /// <c>. ! ` [ ]</c> or a control character.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="NotSupportedException">
@@ -242,7 +249,10 @@ public interface IAccessSchema : IAccessBase
     /// same name already exists in the database.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// Thrown when a referenced column does not exist on its table.
+    /// Thrown when a referenced column does not exist on its table, or, before anything
+    /// is read and with <see cref="ArgumentException.ParamName"/> <c>relationship.Name</c>,
+    /// when the name is empty (<see cref="ArgumentNullException"/> when it is
+    /// <see langword="null"/>) or breaks the naming rules.
     /// </exception>
     public ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default);
 
@@ -286,7 +296,9 @@ public interface IAccessSchema : IAccessBase
     /// </summary>
     /// <param name="oldName">Case-insensitive existing relationship name.</param>
     /// <param name="newName">New relationship name. Must not match any existing
-    /// relationship (case-insensitive).</param>
+    /// relationship (case-insensitive), and must follow the Access naming rules: 1 to 64
+    /// characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c>
+    /// or a control character.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="NotSupportedException">
@@ -297,7 +309,9 @@ public interface IAccessSchema : IAccessBase
     /// or when a relationship named <paramref name="newName"/> already exists.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// Thrown when <paramref name="newName"/> is null or empty.
+    /// Thrown, before anything is read, when <paramref name="oldName"/> or
+    /// <paramref name="newName"/> is empty (<see cref="ArgumentNullException"/> when it is
+    /// <see langword="null"/>), or when <paramref name="newName"/> breaks the naming rules.
     /// </exception>
     public ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default);
 }

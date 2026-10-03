@@ -291,8 +291,14 @@ public sealed class RenameColumnExpressionTests
         Assert.Equal("[Rate]%", Expression(await reader.GetColumnMetadataAsync("CalcLegacyPercent", Ct), "C"));
     }
 
+    /// <summary>
+    /// A <c>[field]</c> reference cannot hold <c>]</c>, so an expression could
+    /// not name the renamed column. The Access naming rules exclude <c>]</c>,
+    /// so the rename is refused before the table is read.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task RenameColumn_ToNameWithClosingBracket_WhenReferenced_ThrowsAndLeavesTableUnchanged()
+    public async Task RenameColumn_ToNameWithClosingBracket_ThrowsAndLeavesTableUnchanged()
     {
         await using MemoryStream ms = await CreatePriceTableAsync();
 
@@ -302,8 +308,8 @@ public sealed class RenameColumnExpressionTests
                 await writer.RenameColumnAsync("T", "Price", "Pr]ice", Ct));
 
             Assert.Equal("newColumnName", exception.ParamName);
-            Assert.Contains("'Total'", exception.Message, StringComparison.Ordinal);
-            Assert.Contains("[Price]*[Qty]", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("'Pr]ice'", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("it contains ']'", exception.Message, StringComparison.Ordinal);
 
             await writer.InsertRowAsync("T", [2, 3d, 2, null, null, null, null], Ct);
         }

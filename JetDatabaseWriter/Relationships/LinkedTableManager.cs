@@ -365,7 +365,7 @@ internal static class LinkedTableManager
         string foreignTableName,
         CancellationToken cancellationToken)
     {
-        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
+        AccessObjectName.ThrowIfInvalid(linkedTableName, nameof(linkedTableName), "table");
         Guard.NotNullOrEmpty(sourceDatabasePath, nameof(sourceDatabasePath));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
@@ -407,7 +407,7 @@ internal static class LinkedTableManager
         IReadOnlyList<ColumnDefinition>? sourceColumns,
         CancellationToken cancellationToken)
     {
-        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
+        AccessObjectName.ThrowIfInvalid(linkedTableName, nameof(linkedTableName), "table");
         Guard.NotNullOrEmpty(connectionString, nameof(connectionString));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
         db.ThrowIfDisposedOrCancelled(cancellationToken);
@@ -457,7 +457,7 @@ internal static class LinkedTableManager
         string connectString,
         CancellationToken cancellationToken)
     {
-        Guard.NotNullOrEmpty(linkedTableName, nameof(linkedTableName));
+        AccessObjectName.ThrowIfInvalid(linkedTableName, nameof(linkedTableName), "table");
         Guard.NotNullOrEmpty(sourceDirectoryPath, nameof(sourceDirectoryPath));
         Guard.NotNullOrEmpty(foreignFileName, nameof(foreignFileName));
         Guard.NotNullOrEmpty(connectString, nameof(connectString));

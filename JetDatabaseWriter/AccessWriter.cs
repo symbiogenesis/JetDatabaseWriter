@@ -513,11 +513,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// a table in another Access database. No row data is stored locally; readers follow
     /// the entry to <paramref name="sourceDatabasePath"/> on demand.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="sourceDatabasePath">Path to the source Access database file (.mdb / .accdb).</param>
     /// <param name="foreignTableName">The name of the table in the source database.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
         => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTableAsync(this.Database, this.services.CatalogArtifacts, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
 
@@ -530,11 +531,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// overload for generated column-level metadata, or the <c>cachedSchemaLvProp</c>
     /// overload when byte-for-byte Access/DAO-authored metadata is required.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
     /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedOdbcTableAsync(string linkedTableName, string connectionString, string foreignTableName, CancellationToken cancellationToken = default)
         => this.CreateLinkedOdbcTableCoreAsync(linkedTableName, connectionString, foreignTableName, cachedSchemaLvProp: null, sourceColumns: null, cancellationToken);
 
@@ -543,12 +545,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// generates a cached-schema <c>MSysObjects.LvProp</c> property block from
     /// the supplied remote column definitions.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
     /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
     /// <param name="sourceColumns">Column definitions for the remote source table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedOdbcTableAsync(
         string linkedTableName,
         string connectionString,
@@ -564,12 +567,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// schema; the writer validates that it is a non-empty <c>MR2\0</c> / <c>KKD\0</c>
     /// property block and stores it verbatim.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
     /// <param name="foreignTableName">The name of the table at the ODBC source.</param>
     /// <param name="cachedSchemaLvProp">Access/DAO-authored cached linked-schema payload for <c>MSysObjects.LvProp</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedOdbcTableAsync(
         string linkedTableName,
         string connectionString,
@@ -589,12 +593,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// readers parse supported delimited text sources on demand through the
     /// linked-source path policy and expose fields as strings.
     /// </summary>
-    /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
+    /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>
     /// <param name="foreignFileName">The filename of the text/CSV source (e.g. <c>"data.csv"</c>).</param>
     /// <param name="connectString">The text-driver connect string (e.g. <c>"Text;HDR=YES;FMT=Delimited"</c>).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default)
         => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTextTableAsync(this.Database, this.services.CatalogArtifacts, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
 
