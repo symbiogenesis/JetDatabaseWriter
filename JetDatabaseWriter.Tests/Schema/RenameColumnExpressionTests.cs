@@ -138,7 +138,7 @@ public sealed class RenameColumnExpressionTests
                     new("Note", typeof(string), maxLength: 20) { DefaultValueExpression = "[Code] & \"-n\"" },
                 ],
                 Ct);
-            await writer.InsertRowAsync("R", [1, "ABC", null], Ct);
+            await writer.InsertRowAsync("R", [1, "ABC", DbDefault.Value], Ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
@@ -146,17 +146,17 @@ public sealed class RenameColumnExpressionTests
             await RunAsync(writer, mode, async () =>
             {
                 await writer.RenameColumnAsync("R", "Code", "Sku", Ct);
-                ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("R", [2, "ABCD", null], Ct));
+                ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("R", [2, "ABCD", DbDefault.Value], Ct));
                 Assert.Contains("3 chars", rejected.Message, StringComparison.Ordinal);
-                await writer.InsertRowAsync("R", [3, "XYZ", null], Ct);
+                await writer.InsertRowAsync("R", [3, "XYZ", DbDefault.Value], Ct);
             });
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("R", [4, "WXYZ", null], Ct));
+            ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("R", [4, "WXYZ", DbDefault.Value], Ct));
             Assert.Contains("Len([Sku]) = 3", rejected.Message, StringComparison.Ordinal);
-            await writer.InsertRowAsync("R", [5, "UVW", null], Ct);
+            await writer.InsertRowAsync("R", [5, "UVW", DbDefault.Value], Ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms);
@@ -435,9 +435,9 @@ public sealed class RenameColumnExpressionTests
                     new("Note", typeof(string), maxLength: 20) { DefaultValueExpression = "\"[Code]\" & 'Code'" },
                 ],
                 Ct);
-            await writer.InsertRowAsync("D", [1, "ABC", null], Ct);
+            await writer.InsertRowAsync("D", [1, "ABC", DbDefault.Value], Ct);
             await writer.DropColumnAsync("D", "Code", Ct);
-            await writer.InsertRowAsync("D", [2, null], Ct);
+            await writer.InsertRowAsync("D", [2, DbDefault.Value], Ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms);
