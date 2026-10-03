@@ -45,10 +45,18 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// rows in an earlier session are not reused. Optional; when not supplied
 /// only the table's rows are consulted.
 /// </param>
+/// <param name="readComplexReferenceHighWater">
+/// Delegate that returns the largest per-row complex reference a table (by
+/// name, with its definition) has used: its TDEF complex AutoNumber and the
+/// references its rows and flat tables hold. The first reference a writer
+/// session assigns to the table follows it. Optional; when not supplied the
+/// session starts from 1.
+/// </param>
 internal sealed class ConstraintRegistry(
     Func<string, CancellationToken, ValueTask<DataTable>> readTableSnapshot,
     Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null,
-    Func<string, CancellationToken, ValueTask<long>>? readAutoNumberHighWater = null)
+    Func<string, CancellationToken, ValueTask<long>>? readAutoNumberHighWater = null,
+    Func<string, TableDef, CancellationToken, ValueTask<long>>? readComplexReferenceHighWater = null)
 {
     private readonly Dictionary<string, List<ColumnConstraint>> constraints =
         new(StringComparer.OrdinalIgnoreCase);
@@ -134,9 +142,9 @@ internal sealed class ConstraintRegistry(
 
     /// <summary>
     /// Captures the registry's contents: every table's constraint list and each
-    /// AutoNumber constraint's counter. A transaction takes one when it begins,
-    /// because its DDL re-registers, unregisters and renames entries and its
-    /// inserts advance counters, and none of that is in the journal it discards.
+    /// AutoNumber and complex-reference counter. A transaction takes one when it
+    /// begins, because its DDL re-registers, unregisters and renames entries and
+    /// its inserts advance counters, and none of that is in the journal it discards.
     /// </summary>
     /// <returns>A snapshot to pass to <see cref="Restore"/>.</returns>
     internal ConstraintRegistrySnapshot CaptureSnapshot()
@@ -148,7 +156,7 @@ internal sealed class ConstraintRegistry(
             tables.Add(entry.Key, [.. entry.Value]);
             foreach (ColumnConstraint constraint in entry.Value)
             {
-                if (constraint.IsAutoIncrement)
+                if (constraint.IsAutoIncrement || constraint.IsComplexReference)
                 {
                     autoCounters.Add((constraint, constraint.NextAutoValue));
                 }
@@ -206,6 +214,7 @@ internal sealed class ConstraintRegistry(
 
         List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints = null;
         CalculatedExpressionEvaluationContext? defaultContext = null;
+        int? rowReference = null;
         try
         {
             for (int i = 0; i < list.Count; i++)
@@ -217,6 +226,25 @@ internal sealed class ConstraintRegistry(
                 if (c.IsCalculated)
                 {
                     values[i] = value ?? DBNull.Value;
+                    continue;
+                }
+
+                if (c.IsComplexReference)
+                {
+                    // Access gives every row one per-row complex reference,
+                    // shared by all its complex columns, when the row is
+                    // inserted. A reference the caller supplies is kept, and
+                    // the counter moves past it.
+                    if (isNull)
+                    {
+                        rowReference ??= await this.NextComplexReferenceAsync(tableName, tableDef, list, 1, checkpoints ??= [], cancellationToken).ConfigureAwait(false);
+                        values[i] = new ComplexIdRef(rowReference.Value);
+                    }
+                    else if (TryGetComplexReference(value!, out long supplied))
+                    {
+                        await this.KeepComplexCounterAboveAsync(tableName, tableDef, list, supplied, checkpoints ??= [], cancellationToken).ConfigureAwait(false);
+                    }
+
                     continue;
                 }
 
@@ -343,6 +371,28 @@ internal sealed class ConstraintRegistry(
         CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned);
     }
 
+    /// <summary>
+    /// Allocates <paramref name="count"/> consecutive per-row complex
+    /// references for <paramref name="tableName"/> and returns the first. They
+    /// come from the same session counter inserts use, seeded from the table's
+    /// TDEF complex AutoNumber and the references it holds, so a reference
+    /// handed out here is never assigned to an inserted row too. The caller
+    /// raises the TDEF counter when it stores them. Used for a row whose slot
+    /// is still null when an item is added to it, and by schema rewrites for
+    /// rows that need a reference in a new or null complex column; the table
+    /// may have no complex column yet.
+    /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table's current definition.</param>
+    /// <param name="count">How many references to allocate.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">The table would use a reference above <see cref="int.MaxValue"/>.</exception>
+    internal async ValueTask<int> AllocateComplexReferencesAsync(string tableName, TableDef tableDef, int count, CancellationToken cancellationToken)
+    {
+        List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        return await this.NextComplexReferenceAsync(tableName, tableDef, list, count, checkpoints: null, cancellationToken).ConfigureAwait(false);
+    }
+
     private static ColumnConstraint ToConstraint(ColumnDefinition def) => new()
     {
         Name = def.Name,
@@ -357,7 +407,33 @@ internal sealed class ConstraintRegistry(
         IsCalculated = def.IsCalculated,
         CalculationExpression = def.CalculationExpression,
         CalculatedResultType = JetTypeInfo.TypeCodeFromDefinition(def),
+        IsComplexReference = def.IsAttachment || def.IsMultiValue,
     };
+
+    private static bool TryGetComplexReference(object value, out long reference)
+    {
+        switch (value)
+        {
+            case ComplexIdRef complexRef:
+                reference = complexRef.Id;
+                return true;
+            case int i:
+                reference = i;
+                return true;
+            case long l:
+                reference = l;
+                return true;
+            case short s:
+                reference = s;
+                return true;
+            case byte b:
+                reference = b;
+                return true;
+            default:
+                reference = 0;
+                return false;
+        }
+    }
 
     private static string? NullIfBlank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text;
 
@@ -566,6 +642,7 @@ internal sealed class ConstraintRegistry(
                 IsCalculated = col.IsCalculated,
                 CalculationExpression = calculationExpression,
                 CalculatedResultType = calculatedResultType,
+                IsComplexReference = isComplex,
             };
 
             list.Add(c);
@@ -628,4 +705,80 @@ internal sealed class ConstraintRegistry(
         c.NextAutoValue = assigned + 1;
         return assigned;
     }
+
+    /// <summary>
+    /// Hands out <paramref name="count"/> consecutive per-row complex
+    /// references and returns the first. The table's first complex constraint
+    /// holds the session counter (seeded on first use from
+    /// <c>readComplexReferenceHighWater</c>); a table with no complex column
+    /// yet (a schema rewrite adding its first one) allocates straight from the
+    /// seed, which its re-registration after the rewrite reads again.
+    /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="list">The table's constraints.</param>
+    /// <param name="count">How many references to hand out.</param>
+    /// <param name="checkpoints">Receives the counter's previous value, so a rejected insert can rewind it; <see langword="null"/> when the caller does not rewind.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">The table would use a reference above <see cref="int.MaxValue"/>.</exception>
+    private async ValueTask<int> NextComplexReferenceAsync(
+        string tableName,
+        TableDef tableDef,
+        List<ColumnConstraint> list,
+        int count,
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints,
+        CancellationToken cancellationToken)
+    {
+        ColumnConstraint? holder = list.Count == tableDef.Columns.Count ? list.Find(c => c.IsComplexReference) : null;
+        long first = holder?.NextAutoValue ?? (await this.ReadComplexSeedAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false) + 1);
+        if (first + count - 1 > int.MaxValue)
+        {
+            throw new InvalidOperationException($"Table '{tableName}' has used every complex column reference up to {int.MaxValue}.");
+        }
+
+        if (holder is not null)
+        {
+            checkpoints?.Add((holder, holder.NextAutoValue));
+            holder.NextAutoValue = first + count;
+        }
+
+        return (int)first;
+    }
+
+    /// <summary>
+    /// Moves the table's complex-reference counter past a reference the caller
+    /// supplied, so a later row is not given the same one.
+    /// </summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="list">The table's constraints.</param>
+    /// <param name="supplied">The supplied reference.</param>
+    /// <param name="checkpoints">Receives the counter's previous value.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask KeepComplexCounterAboveAsync(
+        string tableName,
+        TableDef tableDef,
+        List<ColumnConstraint> list,
+        long supplied,
+        List<(ColumnConstraint Constraint, long? PreviousValue)> checkpoints,
+        CancellationToken cancellationToken)
+    {
+        ColumnConstraint? holder = list.Find(c => c.IsComplexReference);
+        if (holder is null)
+        {
+            return;
+        }
+
+        long next = holder.NextAutoValue ?? (await this.ReadComplexSeedAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false) + 1);
+        if (supplied >= next || holder.NextAutoValue is null)
+        {
+            checkpoints.Add((holder, holder.NextAutoValue));
+            holder.NextAutoValue = Math.Max(next, supplied + 1);
+        }
+    }
+
+    private ValueTask<long> ReadComplexSeedAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken) =>
+        readComplexReferenceHighWater is null
+            ? new ValueTask<long>(0L)
+            : readComplexReferenceHighWater(tableName, tableDef, cancellationToken);
 }

@@ -299,6 +299,7 @@ JetDatabaseWriter/
 │   ├── ComplexColumnReader.cs             (complex-column metadata, subtypes, flat-table decode, and the row-read cells)
 │   ├── ComplexItemReader.cs               (attachment and multi-value item reads from the hidden flat tables)
 │   ├── ComplexColumnManager.cs            (write/scaffold/cascade complex column data)
+│   ├── ComplexReferenceSeedReader.cs      (flat-table lookup, per-row complex slots, and the seed for new per-row references)
 │   └── Models/
 │       ├── AttachmentWrapper.cs
 │       └── ComplexColumnAllocation.cs
@@ -435,7 +436,8 @@ AccessWriter → WriterServices
   RelationshipManager → TableCatalog, IndexMaintainer, PageAllocator, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
   RelationshipEnforcer → TableCatalog, TableRowStore, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader
   ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
-                        AutoNumberMaintainer
+                        AutoNumberMaintainer, ComplexReferenceSeedReader
+  ComplexReferenceSeedReader → CatalogRowReader, AutoNumberMaintainer
   CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogWriter, ConstraintRegistry
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
   IndexMaintainer     → PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader

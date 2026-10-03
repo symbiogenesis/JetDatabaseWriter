@@ -430,6 +430,8 @@ internal sealed class TableSchemaEditor(
             projectedRows.Add(projected);
         }
 
+        await this.AssignMissingComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
+
         // Identify complex columns being dropped or renamed by this rewrite
         // BEFORE the cascade-skipping drop runs. Surviving complex columns (matched by
         // ComplexId between the existing and projected schemas) are preserved as-is —
@@ -567,6 +569,57 @@ internal sealed class TableSchemaEditor(
         await relationships.CompleteRewriteAsync(relationshipState, finalTdefPage, fkIndexNumbers, mapColumnName, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Gives every projected row a per-row complex reference in each complex
+    /// column, as an insert does: a complex column the rewrite adds, or a slot
+    /// an earlier build left null, gets a fresh reference shared by the row's
+    /// null complex slots. The references come from the table's complex
+    /// counter, and the TDEF complex AutoNumber the rewrite carries to the
+    /// rebuilt table covers them.
+    /// </summary>
+    /// <param name="tableName">The table being rewritten.</param>
+    /// <param name="tableDef">Its current definition.</param>
+    /// <param name="newDefs">The projected column list.</param>
+    /// <param name="rows">The projected rows, aligned with <paramref name="newDefs"/>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask AssignMissingComplexReferencesAsync(
+        string tableName,
+        TableDef tableDef,
+        List<ColumnDefinition> newDefs,
+        List<object[]> rows,
+        CancellationToken cancellationToken)
+    {
+        List<int> complexColumns = [];
+        for (int i = 0; i < newDefs.Count; i++)
+        {
+            if (newDefs[i].IsAttachment || newDefs[i].IsMultiValue)
+            {
+                complexColumns.Add(i);
+            }
+        }
+
+        List<object[]> needing = complexColumns.Count == 0
+            ? []
+            : rows.FindAll(row => complexColumns.Exists(i => row[i] is null or DBNull));
+        if (needing.Count == 0)
+        {
+            return;
+        }
+
+        int first = await constraints.AllocateComplexReferencesAsync(tableName, tableDef, needing.Count, cancellationToken).ConfigureAwait(false);
+        for (int k = 0; k < needing.Count; k++)
+        {
+            var reference = new ComplexIdRef(first + k);
+            foreach (int i in complexColumns)
+            {
+                if (needing[k][i] is null or DBNull)
+                {
+                    needing[k][i] = reference;
+                }
+            }
+        }
+    }
+
     private async ValueTask TransplantTempTableToOriginalAsync(
         string tableName,
         long originalTdefPage,
@@ -680,9 +733,9 @@ internal sealed class TableSchemaEditor(
                 // → ColumnDefinition.ComplexId → re-emitted into the rebuilt TDEF's
                 // misc slot), and the existing hidden flat child table + MSysComplexColumns
                 // row are kept attached because the rewrite path skips the cascade-on-drop
-                // step. Per-row complex slot is null on the rebuilt parent (same as fresh
-                // Insert), and the reader re-joins via the parent's auto-number primary
-                // key against the flat table's `_<columnName>` FK back-reference.
+                // step. Each row's per-row complex reference is copied to the rebuilt
+                // parent row, so the flat table's `_<columnName>` FK back-reference
+                // still joins to it.
                 return new ColumnDefinition(column.Name, typeof(byte[]))
                 {
                     IsAttachment = true,

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.ComplexColumns;
 using Xunit;
 
 /// <summary>
@@ -287,6 +288,40 @@ public sealed class TransactionRollbackStateTests
         Assert.Equal(
             ["1|a", "2|b"],
             table.Rows.Cast<DataRow>().Select(r => $"{r["Id"]}|{r["Name"]}").Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Inserts assign each row a per-row complex reference from the table's
+    /// complex AutoNumber, which the registry caches for the session. A
+    /// rolled-back insert discards the TDEF counter it raised, so the
+    /// registry's counter must rewind with it and hand the references out
+    /// again. ACCDB only: Jet3 and Jet4 cannot declare complex columns.
+    /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Fact]
+    public async Task ComplexReference_AfterRolledBackInsert_IsReused()
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(stream, DatabaseFormat.AceAccdb))
+        {
+            await writer.CreateTableAsync(
+                "Docs",
+                [new("Id", typeof(int)), new("Files", typeof(byte[])) { IsAttachment = true }],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Docs", [1, DBNull.Value], TestContext.Current.CancellationToken);
+
+            JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            _ = await writer.InsertRowsAsync("Docs", [[2, DBNull.Value], [3, DBNull.Value]], TestContext.Current.CancellationToken);
+            await tx.RollbackAsync(TestContext.Current.CancellationToken);
+
+            await writer.InsertRowAsync("Docs", [4, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        ComplexColumnTestSupport.RawTable docs = await ComplexColumnTestSupport.ReadRawTableAsync(stream, "Docs");
+        Assert.Equal(
+            ["1|1", "4|2"],
+            docs.Rows.Select(r => $"{r[0]}|{ComplexColumnTestSupport.Slot(docs, r, "Files")}").Order(StringComparer.Ordinal));
+        Assert.Equal(2, docs.ComplexAutoNumber);
     }
 
     /// <summary>
