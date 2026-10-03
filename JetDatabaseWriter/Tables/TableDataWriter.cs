@@ -314,44 +314,9 @@ internal sealed class TableDataWriter(
 
             await enforcer.EnforceFkOnForeignUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
 
-            // PK-side: cascade or reject only when this update touches a referenced PK.
-            var changes = new List<(string? OldKey, object?[] OldFullRow, object[] NewPkValues)>(pendingUpdates.Count);
-            foreach (FkRelationship rel in rels)
-            {
-                if (!string.Equals(rel.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                int[] pkIdx = new int[rel.PrimaryColumns.Count];
-                bool touchesPrimaryKey = false;
-                for (int i = 0; i < rel.PrimaryColumns.Count; i++)
-                {
-                    int columnIndex = tableDef.FindColumnIndex(rel.PrimaryColumns[i]);
-                    if (columnIndex < 0)
-                    {
-                        touchesPrimaryKey = false;
-                        break;
-                    }
-
-                    pkIdx[i] = columnIndex;
-                    touchesPrimaryKey |= updateIndexes.ContainsKey(columnIndex);
-                }
-
-                if (!touchesPrimaryKey)
-                {
-                    continue;
-                }
-
-                changes.Clear();
-                foreach ((_, object[] oldRow, object[] newRow) in pendingUpdates)
-                {
-                    string? oldKey = RelationshipKeyBuilder.Build(oldRow, pkIdx);
-                    changes.Add((oldKey, oldRow, newRow));
-                }
-
-                await enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, changes, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
-            }
+            // PK-side: cascade or reject only the relationships whose
+            // referenced key this update changes.
+            await enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, depth: 0, cancellationToken).ConfigureAwait(false);
         }
 
         // Pre-write unique-index enforcement: after FK checks succeed,

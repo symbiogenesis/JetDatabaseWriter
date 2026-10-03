@@ -114,6 +114,41 @@ public sealed class ForeignKeyUpdateScopeTests(DatabaseCache db) : IClassFixture
     }
 
     /// <summary>
+    /// When <c>P</c> is the primary table of two relationships, on different
+    /// columns, an update that changes <c>P.Id</c> checks only the relationship
+    /// on <c>Id</c>: the children of <c>P.Name</c>, which the update leaves
+    /// alone, neither block it nor change.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the update.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_PrimaryKeyOfOneRelationship_DoesNotCheckAnotherOnUnchangedColumn(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await this.CreateDatabaseAsync(format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync(
+                "D",
+                [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("PName", typeof(string), maxLength: 20)],
+                Ct);
+            await writer.InsertRowAsync("P", [2, "two"], Ct);
+            await writer.InsertRowAsync("D", [1, "two"], Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_D_P", "P", "Name", "D", "PName"), Ct);
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 2), new RowValues { ["Id"] = 5 }, Ct)));
+        }
+
+        Assert.Equal(["1|one", "5|two"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["1|two"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "D"));
+    }
+
+    /// <summary>
     /// An update of a column outside every relationship of an Access-authored
     /// child table succeeds and changes every row: OrderDetails in
     /// NorthwindTraders.accdb (three enforced relationships, on ACCDB) and
