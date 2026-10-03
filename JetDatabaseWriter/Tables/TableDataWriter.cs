@@ -245,6 +245,18 @@ internal sealed class TableDataWriter(
                     nameof(updatedValues));
             }
 
+            // A complex column's slot holds the row's per-row complex
+            // reference, which joins it to its items in every complex column.
+            // An update cannot assign it: clearing or changing it would orphan
+            // the row's items or join the row to another row's.
+            ColumnInfo column = tableDef.Columns[columnIndex];
+            if (column.Type is ColumnType.AttachmentType or ColumnType.ComplexType)
+            {
+                throw new ArgumentException(
+                    $"Column '{column.Name}' on table '{tableName}' is an Attachment or multi-value column, which an update cannot assign; the row keeps its items. Add items with AddAttachmentAsync or AddMultiValueItemAsync.",
+                    nameof(updatedValues));
+            }
+
             updateIndexes[columnIndex] = kvp.Value ?? DBNull.Value;
         }
 
