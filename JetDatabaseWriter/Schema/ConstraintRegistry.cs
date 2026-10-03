@@ -116,6 +116,54 @@ internal sealed class ConstraintRegistry(
     public bool TryGet(string tableName, [NotNullWhen(true)] out List<ColumnConstraint>? constraints) => this.constraints.TryGetValue(tableName, out constraints);
 
     /// <summary>
+    /// Captures the registry's contents: every table's constraint list and each
+    /// AutoNumber constraint's counter. A transaction takes one when it begins,
+    /// because its DDL re-registers, unregisters and renames entries and its
+    /// inserts advance counters, and none of that is in the journal it discards.
+    /// </summary>
+    /// <returns>A snapshot to pass to <see cref="Restore"/>.</returns>
+    internal ConstraintRegistrySnapshot CaptureSnapshot()
+    {
+        var tables = new Dictionary<string, List<ColumnConstraint>>(this.constraints.Count, StringComparer.OrdinalIgnoreCase);
+        var autoCounters = new List<(ColumnConstraint Constraint, long? NextAutoValue)>();
+        foreach (KeyValuePair<string, List<ColumnConstraint>> entry in this.constraints)
+        {
+            tables.Add(entry.Key, [.. entry.Value]);
+            foreach (ColumnConstraint constraint in entry.Value)
+            {
+                if (constraint.IsAutoIncrement)
+                {
+                    autoCounters.Add((constraint, constraint.NextAutoValue));
+                }
+            }
+        }
+
+        return new ConstraintRegistrySnapshot(tables, autoCounters);
+    }
+
+    /// <summary>
+    /// Puts the registry back to <paramref name="snapshot"/>. Tables registered
+    /// since are forgotten, tables unregistered or renamed since get their
+    /// original constraint lists back under their original names (including
+    /// in-code <c>DefaultValue</c> and <c>ValidationRule</c>, which exist only
+    /// here), and AutoNumber counters rewind.
+    /// </summary>
+    /// <param name="snapshot">A snapshot from <see cref="CaptureSnapshot"/>.</param>
+    internal void Restore(ConstraintRegistrySnapshot snapshot)
+    {
+        this.constraints.Clear();
+        foreach (KeyValuePair<string, List<ColumnConstraint>> entry in snapshot.Tables)
+        {
+            this.constraints.Add(entry.Key, [.. entry.Value]);
+        }
+
+        foreach ((ColumnConstraint constraint, long? nextAutoValue) in snapshot.AutoCounters)
+        {
+            constraint.NextAutoValue = nextAutoValue;
+        }
+    }
+
+    /// <summary>
     /// Applies registered column constraints to <paramref name="values"/> and
     /// returns a list of auto-increment counter checkpoints captured for the
     /// row. Callers should pass the returned list to

@@ -5,8 +5,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Manages the explicit page-buffered transaction lifecycle for an
@@ -15,11 +19,33 @@ using JetDatabaseWriter.Pages;
 /// page journal it attaches lives on <see cref="DatabaseFile.ActiveJournal"/>
 /// because every page read and write consults it.
 /// </summary>
+/// <remarks>
+/// The journal holds only page images. The writer also caches state in
+/// memory that a transaction can change: the user-table catalog, the
+/// insert-page hint and writable owned-map set, and the constraint registry.
+/// A rollback restores or invalidates each of them, so the writer behaves as
+/// if the transaction had never run.
+/// </remarks>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="options">The writer options; supplies the auto-commit switch and journal page budget.</param>
 /// <param name="byteRangeLock">The cooperative JET byte-range lock used for the commit-lock sentinel.</param>
-internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
+/// <param name="catalog">The writer's cached user-table catalog, invalidated on rollback.</param>
+/// <param name="dataPages">Owns the insert-page hint and writable owned-map set, restored on rollback.</param>
+/// <param name="constraints">The writer's constraint registry, restored on rollback.</param>
+internal sealed class TransactionLifecycle(
+    DatabaseFile db,
+    AccessWriterOptions options,
+    JetByteRangeLock byteRangeLock,
+    TableCatalog catalog,
+    DataPageInserter dataPages,
+    ConstraintRegistry constraints)
 {
+    /// <summary>
+    /// The writer's in-memory state when <see cref="ActiveTransaction"/> began,
+    /// put back if it rolls back. Set and cleared together with it.
+    /// </summary>
+    private WriterState? stateAtBegin;
+
     /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
     internal JetTransaction? ActiveTransaction { get; private set; }
 
@@ -47,6 +73,7 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
             long baseLength = db.DatabaseLengthBytes;
             var journal = new PageJournal(baseLength, db.PageSizeBytes, options.MaxTransactionPageBudget);
             var tx = new JetTransaction(this, journal);
+            this.stateAtBegin = new WriterState(dataPages.CaptureState(), constraints.CaptureSnapshot());
             db.ActiveJournal = journal;
             this.ActiveTransaction = tx;
             return tx;
@@ -148,6 +175,8 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
     /// journal from the writer and replays each buffered page (in ascending
     /// page-number order) through the normal page-write pipeline so that
     /// per-page encryption and cooperative byte-range locks are honoured.
+    /// A failure, including a commit-lock timeout, marks the transaction
+    /// rolled back and restores the writer's state as for a rollback.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -160,6 +189,7 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
         db.ThrowIfDisposed();
 
         PageJournal journal;
+        WriterState? state;
         await db.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -174,23 +204,26 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
             }
 
             journal = transaction.Journal;
+            state = this.stateAtBegin;
 
             // Detach the journal first so the page-write loop below routes
             // straight to disk.
             db.ActiveJournal = null;
             this.ActiveTransaction = null;
+            this.stateAtBegin = null;
         }
         finally
         {
             _ = db.IoGate.Release();
         }
 
-        long? commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(
-            isAccdb: db.Format == Enums.DatabaseFormat.AceAccdb,
-            cancellationToken).ConfigureAwait(false);
-
+        long? commitLockOffset = null;
         try
         {
+            commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(
+                isAccdb: db.Format == Enums.DatabaseFormat.AceAccdb,
+                cancellationToken).ConfigureAwait(false);
+
             foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -203,6 +236,7 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
         catch
         {
             transaction.MarkRolledBack();
+            this.RestoreWriterState(state);
             throw;
         }
         finally
@@ -213,7 +247,9 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
 
     /// <summary>
     /// Rolls back the supplied <paramref name="transaction"/>: discards the
-    /// in-memory journal without touching the database file.
+    /// in-memory journal without touching the database file, and puts the
+    /// writer's cached catalog, insert hint, owned-map set and constraint
+    /// registry back to their state when the transaction began.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -239,6 +275,8 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
 
             db.ActiveJournal = null;
             this.ActiveTransaction = null;
+            this.RestoreWriterState(this.stateAtBegin);
+            this.stateAtBegin = null;
             transaction.MarkRolledBack();
         }
         finally
@@ -267,6 +305,7 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
         {
             db.ActiveJournal = null;
             this.ActiveTransaction = null;
+            this.stateAtBegin = null;
         }
     }
 
@@ -276,4 +315,28 @@ internal sealed class TransactionLifecycle(DatabaseFile db, AccessWriterOptions 
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
         => await db.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>
+    /// Returns the writer's in-memory state to <paramref name="state"/> after
+    /// a transaction's journal was discarded. The catalog is re-scanned on next
+    /// use rather than restored, because the transaction may have created,
+    /// dropped or renamed tables.
+    /// </summary>
+    /// <param name="state">The state captured when the transaction began.</param>
+    private void RestoreWriterState(WriterState? state)
+    {
+        catalog.Invalidate();
+        if (state is null)
+        {
+            return;
+        }
+
+        dataPages.RestoreState(state.DataPages);
+        constraints.Restore(state.Constraints);
+    }
+
+    /// <summary>The writer's in-memory state that a transaction can change.</summary>
+    /// <param name="DataPages">The insert-page hint and writable owned-map set.</param>
+    /// <param name="Constraints">The constraint registry's contents.</param>
+    private sealed record WriterState(DataPageInserterState DataPages, ConstraintRegistrySnapshot Constraints);
 }
