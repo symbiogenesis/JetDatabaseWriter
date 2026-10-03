@@ -12,7 +12,8 @@ internal sealed class TableDef
     public List<ColumnInfo> Columns { get; set; } = [];
 
     /// <summary>
-    /// Gets or sets num_rows from TDEF page offset 16.
+    /// Gets or sets num_rows from the TDEF header at
+    /// <see cref="Pages.TDefHeaderLayout.NumRows"/> (offset 16 on Jet4/ACE, 12 on Jet3).
     /// </summary>
     public long RowCount { get; set; }
 

@@ -84,8 +84,8 @@ public sealed class CatalogArtifactPlanTests
         byte[] page = await writer.Database.ReadPageAsync(templatePage, cancellationToken);
         try
         {
-            for (int pointerOffset = Constants.TableDefinition.OwnedPagesRowOffset;
-                pointerOffset <= Constants.TableDefinition.FreePagesPageOffset + 2;
+            for (int pointerOffset = writer.Database.TDef.UsedPages;
+                pointerOffset <= writer.Database.TDef.FreePagesPage + 2;
                 pointerOffset++)
             {
                 Assert.Equal(0, page[pointerOffset]);

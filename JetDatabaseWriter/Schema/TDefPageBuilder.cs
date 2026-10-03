@@ -161,10 +161,10 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
 
         page[0] = Constants.PageTypes.TableDefinition;
         page[1] = 0x01;
-        page[db.TDef.NumCols - 5] = 0x4E;
-        Wu16(page, db.TDef.NumCols - 4, numCols);
+        page[db.TDef.TableType] = Constants.TableDefinition.UserTableType;
+        Wu16(page, db.TDef.MaxCols, numCols);
         Wu16(page, db.TDef.NumCols, numCols);
-        Wi32(page, db.TDef.NumCols + 2, numIdx);
+        Wi32(page, db.TDef.NumIdx, numIdx);
         Wi32(page, db.TDef.NumRealIdx, numRealIdx);
 
         int numVarCols = 0;
@@ -278,7 +278,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
             namePos += nameBytes.Length;
         }
 
-        Wu16(page, db.TDef.NumCols - 2, numVarCols);
+        Wu16(page, db.TDef.NumVarCols, numVarCols);
 
         int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : [];
         int[] usedPagesOffsets = numIdx > 0 ? new int[numIdx] : [];
@@ -502,9 +502,9 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
 
         try
         {
-            uint current = Ru32(page, Constants.TableDefinition.RowCountOffset);
+            uint current = Ru32(page, db.TDef.NumRows);
             updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
-            Wi32(page, Constants.TableDefinition.RowCountOffset, unchecked((int)(uint)updated));
+            Wi32(page, db.TDef.NumRows, unchecked((int)(uint)updated));
 
             // Mirror the change into the per-real-idx `num_idx_rows` counter
             // (offset +4 of each 12-byte/8-byte slot in the leading real-idx
@@ -706,15 +706,8 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
     private static void BuildMSysObjectsTDef(byte[] db, int offset, DatabaseFormat format, bool fullCatalogSchema)
     {
         bool isJet3 = format == DatabaseFormat.Jet3Mdb;
-        int tdNumCols = isJet3 ? 25 : 45;
-        int tdBlockEnd = isJet3 ? 43 : 63;
-        int colDescSz = isJet3 ? 18 : 25;
-        const int colTypeOff = 0;
-        int colNumOff = isJet3 ? 1 : 5;
-        int colVarOff = isJet3 ? 3 : 7;
-        int colFlagsOff = isJet3 ? 13 : 15;
-        int colFixedOff = isJet3 ? 14 : 21;
-        int colSzOff = isJet3 ? 16 : 23;
+        var tdef = TDefHeaderLayout.For(format);
+        var descriptor = ColumnDescriptorLayout.For(format);
         int textColSize = isJet3 ? 255 : 510;
 
         BootstrapColumnDescriptor[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
@@ -732,27 +725,27 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
         db[offset] = 0x02;
         db[offset + 1] = 0x01;
         Wi32(db, offset + 4, 0);
-        db[offset + tdNumCols - 5] = 0x53;
-        Wu16(db, offset + tdNumCols - 4, numCols);
-        Wu16(db, offset + tdNumCols - 2, numVarCols);
-        Wu16(db, offset + tdNumCols, numCols);
+        db[offset + tdef.TableType] = Constants.TableDefinition.SystemTableType;
+        Wu16(db, offset + tdef.MaxCols, numCols);
+        Wu16(db, offset + tdef.NumVarCols, numVarCols);
+        Wu16(db, offset + tdef.NumCols, numCols);
 
-        int colStart = offset + tdBlockEnd;
-        int namePos = colStart + (numCols * colDescSz);
+        int colStart = offset + tdef.BlockEnd;
+        int namePos = colStart + (numCols * descriptor.Size);
 
         for (int i = 0; i < numCols; i++)
         {
             BootstrapColumnDescriptor col = columns[i];
-            int o = colStart + (i * colDescSz);
+            int o = colStart + (i * descriptor.Size);
 
-            db[o + colTypeOff] = (byte)col.Type;
+            db[o + descriptor.TypeOff] = (byte)col.Type;
             if (!isJet3)
             {
                 Wi32(db, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
             }
 
-            Wu16(db, o + colNumOff, col.ColNum);
-            Wu16(db, o + colVarOff, col.VarIdx);
+            Wu16(db, o + descriptor.NumOff, col.ColNum);
+            Wu16(db, o + descriptor.VarOff, col.VarIdx);
 
             if (!isJet3)
             {
@@ -761,9 +754,9 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
                 Wu16(db, o + 9, col.ColNum);
             }
 
-            db[o + colFlagsOff] = col.Flags;
-            Wu16(db, o + colFixedOff, col.FixedOff);
-            Wu16(db, o + colSzOff, col.Size);
+            db[o + descriptor.FlagsOff] = col.Flags;
+            Wu16(db, o + descriptor.FixedOff, col.FixedOff);
+            Wu16(db, o + descriptor.SzOff, col.Size);
 
             byte[] nameBytes = isJet3 ? Encoding.ASCII.GetBytes(col.Name) : Encoding.Unicode.GetBytes(col.Name);
             if (isJet3)

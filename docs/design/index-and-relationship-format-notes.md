@@ -312,7 +312,7 @@ Public surface added on `IAccessWriter` / `AccessWriter`:
 
 What the writer emits into the new TDEF page (Jet4/ACE):
 
-- `num_idx` (4 bytes at `_tdNumCols + 2`) = `indexes.Count`.
+- `num_idx` (4 bytes at `TDefHeaderLayout.NumIdx`: 47 on Jet4/ACE, 27 on Jet3) = `indexes.Count`.
 - `num_real_idx` (4 bytes at `_tdNumRealIdx`) = `indexes.Count` — W1 issues **one real-idx per logical-idx**, no sharing (§3.3 sharing is a W9-era optimization).
 - Leading real-idx entry block (`numRealIdx × 12` bytes Jet4) — left zeroed; mdbtools labels every field there `unknown`.
 - Per index, the 52-byte real-idx physical descriptor (§3.1) with:

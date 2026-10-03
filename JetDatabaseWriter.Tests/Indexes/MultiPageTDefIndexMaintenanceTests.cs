@@ -572,9 +572,9 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
                 int numCols = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.TDef.NumCols));
                 int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(db.TDef.NumRealIdx));
                 int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, numRealIdx);
-                int usageMapPage = td[Constants.TableDefinition.OwnedPagesPageOffset]
-                    | (td[Constants.TableDefinition.OwnedPagesPageOffset + 1] << 8)
-                    | (td[Constants.TableDefinition.OwnedPagesPageOffset + 2] << 16);
+                int usageMapPage = td[db.TDef.UsedPagesPage]
+                    | (td[db.TDef.UsedPagesPage + 1] << 8)
+                    | (td[db.TDef.UsedPagesPage + 2] << 16);
                 foreach (int realIdxNum in indexes.Select(i => i.RealIndexNumber).Distinct())
                 {
                     Assert.True(db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot));

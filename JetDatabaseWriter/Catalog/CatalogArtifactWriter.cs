@@ -111,7 +111,7 @@ internal sealed class CatalogArtifactWriter(
             throw new InvalidDataException("Fresh MSysObjects bootstrap unexpectedly produced a multi-page TDEF.");
         }
 
-        tdefPages[0][db.TDef.NumCols - 5] = 0x53;
+        tdefPages[0][db.TDef.TableType] = Constants.TableDefinition.SystemTableType;
         var layout = IndexPageLayout.ForFormat(db.Format);
         long[] leafPageNumbers = new long[resolvedIndexes.Count];
         for (int i = 0; i < resolvedIndexes.Count; i++)
@@ -138,7 +138,7 @@ internal sealed class CatalogArtifactWriter(
             tdefPageBuilder.WriteLogicalUsedPagesPointer(tdefPages, usedPagesLogicalOffsets[i], i + 2, usageMapPageNumber);
         }
 
-        DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
+        DataPageInserter.PatchUsageMapPointers(tdefPages[0], db.TDef, checked((int)usageMapPageNumber));
         DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
         await db.WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
         dataPages.RegisterOwnedMapWritableTdef(2);
@@ -237,7 +237,7 @@ internal sealed class CatalogArtifactWriter(
 
         if (tableArtifact.MarkSystemTableTdef && IsSystemCatalogFlags(tableArtifact.CatalogFlags))
         {
-            tdefPages[0][db.TDef.NumCols - 5] = 0x53;
+            tdefPages[0][db.TDef.TableType] = Constants.TableDefinition.SystemTableType;
         }
 
         // Reserve all TDEF pages first (sequential page numbers). The first
@@ -324,9 +324,9 @@ internal sealed class CatalogArtifactWriter(
             }
 
             // PatchUsageMapPointers / PatchAutoNumFlag write only into the
-            // TDEF header (offsets 0x18, 0x37..0x3F), which always live on
+            // TDEF header (offset 0x18 and the used_pages / free_pages pointers), which always live on
             // the first physical page.
-            DataPageInserter.PatchUsageMapPointers(tdefPages[0], checked((int)usageMapPageNumber));
+            DataPageInserter.PatchUsageMapPointers(tdefPages[0], db.TDef, checked((int)usageMapPageNumber));
             DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
             dataPages.RegisterOwnedMapWritableTdef(tdefPageNumber);
             tdefDirty = true;

@@ -22,7 +22,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db)
     /// <summary>
     /// Scans <paramref name="rows"/> for the largest value written to any
     /// AutoNumber column and, when it exceeds the TDEF's cached counter, rewrites
-    /// the high-water value at <see cref="Constants.TableDefinition.AutoNumberOffset"/>.
+    /// the high-water value at the format's <see cref="Pages.TDefHeaderLayout.AutoNumber"/> offset.
     /// No-ops when the batch is empty, declares no AutoNumber column, or wrote no
     /// value larger than the current counter.
     /// </summary>
@@ -68,14 +68,14 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db)
         byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            uint current = Ru32(page, Constants.TableDefinition.AutoNumberOffset);
+            uint current = Ru32(page, db.TDef.AutoNumber);
             uint next = highWater >= uint.MaxValue ? uint.MaxValue : (uint)highWater;
             if (next <= current)
             {
                 return;
             }
 
-            Wi32(page, Constants.TableDefinition.AutoNumberOffset, unchecked((int)next));
+            Wi32(page, db.TDef.AutoNumber, unchecked((int)next));
             await db.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
         finally

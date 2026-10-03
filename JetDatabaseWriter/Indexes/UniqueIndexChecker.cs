@@ -45,7 +45,7 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
             ?? throw new InvalidDataException($"The table definition of '{tableName}' at page {tdefPage} could not be read.");
 
         int numCols = Ru16(tdefBuffer, db.TDef.NumCols);
-        int numIdx = Ri32(tdefBuffer, db.TDef.NumCols + 2);
+        int numIdx = Ri32(tdefBuffer, db.TDef.NumIdx);
         int numRealIdx = Ri32(tdefBuffer, db.TDef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0)
         {

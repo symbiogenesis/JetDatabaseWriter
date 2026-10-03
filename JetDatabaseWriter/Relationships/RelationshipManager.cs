@@ -580,7 +580,7 @@ internal sealed class RelationshipManager(
         }
 
         // Update header counts.
-        Wi32(newTd, this.db.TDef.NumCols + 2, numIdx + 1);
+        Wi32(newTd, this.db.TDef.NumIdx, numIdx + 1);
         if (sidePlan.AllocatesNewRealIdx)
         {
             Wi32(newTd, this.db.TDef.NumRealIdx, numRealIdx + 1);
@@ -1011,7 +1011,7 @@ internal sealed class RelationshipManager(
         Array.Clear(td, finalEnd, layout.CurrentEnd - finalEnd);
 
         // Update header counts.
-        Wi32(td, this.db.TDef.NumCols + 2, layout.NumIdx - 1);
+        Wi32(td, this.db.TDef.NumIdx, layout.NumIdx - 1);
         Wi32(td, 8, finalEnd - 8);
 
         await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
@@ -1273,7 +1273,7 @@ internal sealed class RelationshipManager(
         }
 
         int numCols = Ru16(td, this.db.TDef.NumCols);
-        int numIdx = Ri32(td, this.db.TDef.NumCols + 2);
+        int numIdx = Ri32(td, this.db.TDef.NumIdx);
         int numRealIdx = Ri32(td, this.db.TDef.NumRealIdx);
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns
             || numIdx < 0 || numIdx > Constants.TableDefinition.MaxIndexes

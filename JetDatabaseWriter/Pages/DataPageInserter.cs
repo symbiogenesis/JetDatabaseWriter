@@ -33,10 +33,10 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
     private long cachedInsertTDefPage = -1;
     private long cachedInsertPageNumber = -1;
 
-    internal static void PatchUsageMapPointers(byte[] tdefPage, int usageMapPageNumber)
+    internal static void PatchUsageMapPointers(byte[] tdefPage, TDefHeaderLayout layout, int usageMapPageNumber)
     {
-        UsageMap.WritePointer(tdefPage, Constants.TableDefinition.OwnedPagesRowOffset, rowIndex: 0, usageMapPageNumber);
-        UsageMap.WritePointer(tdefPage, Constants.TableDefinition.FreePagesRowOffset, rowIndex: 1, usageMapPageNumber);
+        UsageMap.WritePointer(tdefPage, layout.UsedPages, rowIndex: 0, usageMapPageNumber);
+        UsageMap.WritePointer(tdefPage, layout.FreePages, rowIndex: 1, usageMapPageNumber);
     }
 
     internal static void PatchAutoNumFlag(byte[] tdefPage, TableDef tableDef)
@@ -241,7 +241,7 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
 
     /// <summary>
     /// Sets the owned-pages usage-map bit for <paramref name="dataPageNumber"/> in the
-    /// per-table usage map referenced by the TDEF at offset 0x37 (1 byte row + 3 byte page).
+    /// per-table usage map referenced by the TDEF's <see cref="TDefHeaderLayout.UsedPages"/> pointer (1 byte row + 3 byte page).
     /// The map row is the INLINE form (type byte 0x00): startPage at bytes 1..4 (int32 LE),
     /// then a 64-byte bitmap covering 512 consecutive pages from startPage. On first use
     /// the startPage remains zero for low page numbers and is otherwise initialized to
@@ -257,14 +257,10 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
         byte[] tdef = await db.ReadPageAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            int ownedRow = tdef[Constants.TableDefinition.OwnedPagesRowOffset];
-            int ownedPage = tdef[Constants.TableDefinition.OwnedPagesPageOffset]
-                | (tdef[Constants.TableDefinition.OwnedPagesPageOffset + 1] << 8)
-                | (tdef[Constants.TableDefinition.OwnedPagesPageOffset + 2] << 16);
-            int freeRow = tdef[Constants.TableDefinition.FreePagesRowOffset];
-            int freePage = tdef[Constants.TableDefinition.FreePagesPageOffset]
-                | (tdef[Constants.TableDefinition.FreePagesPageOffset + 1] << 8)
-                | (tdef[Constants.TableDefinition.FreePagesPageOffset + 2] << 16);
+            int ownedRow = tdef[db.TDef.UsedPages];
+            int ownedPage = UsageMap.ReadUInt24(tdef, db.TDef.UsedPagesPage);
+            int freeRow = tdef[db.TDef.FreePages];
+            int freePage = UsageMap.ReadUInt24(tdef, db.TDef.FreePagesPage);
             if (ownedPage == 0)
             {
                 return;
