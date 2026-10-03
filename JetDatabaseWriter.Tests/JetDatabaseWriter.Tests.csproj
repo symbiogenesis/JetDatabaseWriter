@@ -36,10 +36,12 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' != 'net10.0'">
+    <Compile Remove="Scaffold\EntityEmitterIdentifierTests.cs" />
     <Compile Remove="Scaffold\EntityEmitterNavigationTests.cs" />
     <Compile Remove="Scaffold\EntityEmitterTests.cs" />
     <Compile Remove="Scaffold\NameCleanerTests.cs" />
     <Compile Remove="Scaffold\NavigationResolverTests.cs" />
+    <Compile Remove="Scaffold\ScaffoldCompilation.cs" />
     <Compile Remove="Scaffold\ScaffoldedEntityColumnMappingTests.cs" />
     <Compile Remove="Scaffold\ScaffoldRunnerTests.cs" />
   </ItemGroup>
