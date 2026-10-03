@@ -29,6 +29,7 @@ public sealed class DaoStorageMaintenanceTests
     private const int AdvancedIndexRows = 192;
     private const int IndexRows = 800;
     private const int Jet3IndexRows = 260;
+    private const int Jet3LongFixedColumns = 200;
     private const int MarkerLength = 16;
     private static readonly TimeSpan CompactTimeout = TimeSpan.FromMinutes(3);
 
@@ -262,6 +263,136 @@ public sealed class DaoStorageMaintenanceTests
         Assert.Contains(indexes, index => index.Kind == IndexKind.PrimaryKey && HasSingleColumn(index, "Id"));
         Assert.Contains(indexes, index => index.Kind == IndexKind.Normal && index.Name == "IX_Code" && HasSingleColumn(index, "Code"));
         Assert.Contains(indexes, index => index.Kind == IndexKind.Normal && index.Name == "IX_Score" && HasSingleColumn(index, "Score"));
+    }
+
+    /// <summary>
+    /// Writer-created Jet3 rows longer than 255 bytes, with jump tables at
+    /// every boundary case (exactly 256 bytes, a dummy entry, an offset at
+    /// 256, a 512-byte row, EOD 1025) and 831-byte rows of a 200-Long table,
+    /// on an Access 97 host. DAO must read every value before the compact,
+    /// and the compacted copy must read back the same values. This is the
+    /// only Access check of real jump-table entries; no Access-authored
+    /// fixture has one.
+    /// </summary>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    public async Task Jet3LongRows_SurviveCompactAndRepair()
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty(
+            compactTimeout: CompactTimeout,
+            databaseExtension: ".mdb");
+
+        await CopyDatabaseAsync(TestDatabases.IndexTestV1997, session.SourcePath, TestContext.Current.CancellationToken);
+
+        AccessRoundTripEnvironment.CompactResult jet3OpenProbe = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            "Write-Output 'JET3_OPEN_OK'",
+            CompactTimeout);
+        if (IsDaoPreviousVersionFailure(jet3OpenProbe))
+        {
+            Assert.Skip("Installed DAO/Access cannot open Access 97 Jet3 .mdb files; Jet3 DAO CompactDatabase coverage is unavailable on this host.");
+        }
+
+        AssertDaoSuccess(jet3OpenProbe, "DAO Jet3 fixture open probe");
+
+        const string textTable = "SM_Jet3LongText";
+        const string longTable = "SM_Jet3LongFixed";
+        object[][] textRows = BuildJet3LongTextRows();
+        object[][] longRows = [.. Enumerable.Range(1, 5).Select(BuildJet3LongFixedRow)];
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            session.SourcePath,
+            new AccessWriterOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                textTable,
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, IsNullable = false },
+                    new ColumnDefinition("T1", typeof(string), maxLength: 255),
+                    new ColumnDefinition("T2", typeof(string), maxLength: 255),
+                    new ColumnDefinition("T3", typeof(string), maxLength: 255),
+                    new ColumnDefinition("T4", typeof(string), maxLength: 255),
+                ],
+                [new IndexDefinition("IX_T2", "T2")],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(textTable, textRows, TestContext.Current.CancellationToken);
+
+            await writer.CreateTableAsync(
+                longTable,
+                [.. Enumerable.Range(0, Jet3LongFixedColumns).Select(i => new ColumnDefinition($"C{i:D3}", typeof(int)))],
+                [new IndexDefinition("UX_C000", "C000") { IsUnique = true }],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(longTable, longRows, TestContext.Current.CancellationToken);
+        }
+
+        // DAO prints each text row as Id|T1|T2|T3|T4 (NULL for a null value)
+        // and each Long row's first, middle and last values.
+        const string preCompactScript =
+            """
+            $rs = $db.OpenRecordset('SELECT * FROM [SM_Jet3LongText] ORDER BY [Id]', 4)
+            try {
+                while (-not $rs.EOF) {
+                    $parts = @([string]$rs.Fields('Id').Value)
+                    foreach ($name in 'T1', 'T2', 'T3', 'T4') {
+                        $value = $rs.Fields($name).Value
+                        if ($null -eq $value -or $value -is [System.DBNull]) { $parts += 'NULL' } else { $parts += [string]$value }
+                    }
+                    Write-Output ('TEXTROW=' + ($parts -join '|'))
+                    $rs.MoveNext()
+                }
+            } finally {
+                $rs.Close()
+            }
+            $rs = $db.OpenRecordset('SELECT [C000], [C100], [C199] FROM [SM_Jet3LongFixed] ORDER BY [C000]', 4)
+            try {
+                while (-not $rs.EOF) {
+                    Write-Output ("LONGROW=$($rs.Fields('C000').Value),$($rs.Fields('C100').Value),$($rs.Fields('C199').Value)")
+                    $rs.MoveNext()
+                }
+            } finally {
+                $rs.Close()
+            }
+            """;
+
+        AccessRoundTripEnvironment.CompactResult preCompactDao = session.RunDaoDatabaseScriptThenCompact(
+            preCompactScript,
+            CompactTimeout);
+        AssertDaoSuccess(preCompactDao, "DAO pre-compact OpenRecordset and CompactDatabase of Jet3 long rows");
+        foreach (object[] row in textRows)
+        {
+            string line = "TEXTROW=" + string.Join("|", row.Select(value => value is DBNull ? "NULL" : Convert.ToString(value, CultureInfo.InvariantCulture)));
+            Assert.Contains(line, preCompactDao.StdOut, StringComparison.Ordinal);
+        }
+
+        foreach (object[] row in longRows)
+        {
+            Assert.Contains(string.Create(CultureInfo.InvariantCulture, $"LONGROW={row[0]},{row[100]},{row[199]}"), preCompactDao.StdOut, StringComparison.Ordinal);
+        }
+
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            session.CompactedPath,
+            new AccessReaderOptions { UseLockFile = false },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        DataTable text = await reader.ReadDataTableAsync(textTable, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(textRows.Length, text.Rows.Count);
+        foreach (object[] expected in textRows)
+        {
+            DataRow actual = text.AsEnumerable().Single(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == (int)expected[0]);
+            Assert.Equal<object?>(expected, actual.ItemArray);
+        }
+
+        DataTable fixedRows = await reader.ReadDataTableAsync(longTable, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(longRows.Length, fixedRows.Rows.Count);
+        foreach (object[] expected in longRows)
+        {
+            DataRow actual = fixedRows.AsEnumerable().Single(row => Convert.ToInt32(row["C000"], CultureInfo.InvariantCulture) == (int)expected[0]);
+            Assert.Equal<object?>(expected, actual.ItemArray);
+        }
     }
 
     [Fact(
@@ -786,6 +917,53 @@ public sealed class DaoStorageMaintenanceTests
 
         return rows;
     }
+
+    /// <summary>
+    /// Id plus four Text(255) values (0 is null) at each Jet3 jump-table
+    /// boundary that <see cref="Writer.Jet3LongRowTests"/> checks byte by byte.
+    /// </summary>
+    /// <returns>The rows.</returns>
+    private static object[][] BuildJet3LongTextRows()
+    {
+        int[][] lengths =
+        [
+            [244, 0, 0, 0],
+            [250, 0, 0, 0],
+            [251, 0, 0, 0],
+            [251, 1, 0, 0],
+            [200, 200, 0, 0],
+            [100, 255, 0, 0],
+            [255, 244, 0, 0],
+            [255, 245, 0, 0],
+            [255, 251, 0, 0],
+            [255, 252, 0, 0],
+            [255, 255, 2, 0],
+            [255, 255, 255, 255],
+            [0, 0, 0, 255],
+        ];
+
+        object[][] rows = new object[lengths.Length][];
+        for (int rowOrdinal = 0; rowOrdinal < rows.Length; rowOrdinal++)
+        {
+            rows[rowOrdinal] = [rowOrdinal + 1, .. lengths[rowOrdinal].Select((length, column) => length == 0 ? DBNull.Value : (object)BuildJet3LongText((char)('a' + column), length))];
+        }
+
+        return rows;
+    }
+
+    private static string BuildJet3LongText(char first, int length)
+    {
+        char[] text = new char[length];
+        for (int i = 0; i < length; i++)
+        {
+            text[i] = (char)(first + (i % 10));
+        }
+
+        return new string(text);
+    }
+
+    private static object[] BuildJet3LongFixedRow(int key) =>
+        [key, .. Enumerable.Range(1, Jet3LongFixedColumns - 1).Select(i => (object)((key * 1000) + i))];
 
     private static object[][] BuildAdvancedIndexRows()
     {
