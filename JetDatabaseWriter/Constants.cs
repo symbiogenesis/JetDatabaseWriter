@@ -613,12 +613,10 @@ internal static class Constants
     }
 
     /// <summary>
-    /// Magic-byte signatures used to identify wrapped file payloads stored inside
-    /// JET OLE columns. Access embeds files in an OLE container header
-    /// (~78 bytes) before the actual file bytes, so the scanner probes a sliding
-    /// window over the first 512 bytes rather than checking only offset 0.
-    /// Patterns are ordered longest-first so the most-specific match wins when
-    /// two signatures share a common prefix.
+    /// Magic-byte signatures that identify a file format. <c>OleObjectValue.DetectMediaType</c>
+    /// matches them only at the first byte of the bytes it is given: an OLE value's
+    /// stored bytes when a string read renders them as a data URI, and the content
+    /// <c>OleObjectValue</c> unwraps. Nothing scans past the first byte for them.
     /// </summary>
     public static class OleMagicBytes
     {
