@@ -1,9 +1,6 @@
----
-description: "Glossary of acronyms, constants, and unusual Access/JET terms used throughout this codebase. Reference when encountering unfamiliar terms in source, docs, or comments."
-applyTo: "**"
----
-
 # Glossary
+
+Acronyms, constants and unusual Access/JET terms used throughout this codebase, its docs and its comments.
 
 ## Database Engine & File Format
 

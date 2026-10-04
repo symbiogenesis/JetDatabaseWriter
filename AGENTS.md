@@ -1,0 +1,142 @@
+# AGENTS.md
+
+Instructions for coding agents working in this repository. They apply to every session and every subagent; the people who work here follow them too.
+
+Reference material, read when a task needs it:
+
+- [docs/glossary.md](docs/glossary.md): Access/JET acronyms, constants and on-disk terms used in the code, docs and comments.
+- [docs/design/](docs/design/): format notes for pages, rows, indexes, relationships, long values, complex columns, encryption and calculated columns.
+- [docs/todo.md](docs/todo.md): all open work, and the wave-2 plan.
+- [PUBLISH.md](PUBLISH.md): how a release is cut and published.
+
+## The project
+
+JetDatabaseWriter reads and writes Microsoft Access databases in pure .NET: Jet3 (Access 97) and Jet4 `.mdb` files, and ACE `.accdb` files. The solution file is `JetDatabaseWriter.slnx`, and `global.json` pins the .NET 10 SDK.
+
+| Project | Targets | Role |
+|---|---|---|
+| `JetDatabaseWriter` | netstandard2.1, net10.0 | The library and NuGet package |
+| `JetDatabaseWriter.Tests` | net10.0, net8.0 | xUnit v3 on Microsoft Testing Platform. The net8.0 leg loads the library's netstandard2.1 build |
+| `JetDatabaseWriter.TestSupport` | net10.0, net8.0 | Non-packable helpers that the tests and FormatProbe share |
+| `JetDatabaseWriter.Benchmarks` | net10.0 | BenchmarkDotNet |
+| `JetDatabaseWriter.FormatProbe` | net10.0 | Diagnostics against real Access files |
+| `JetDatabaseWriter.Scaffold` | net10.0 | Entity scaffolding tool |
+
+Version 4.0.0 has never been released. The tags v1.0.0 to v2.2.0 are upstream history and must never be pushed, and MinVer takes the version from `v`-prefixed tags. Break APIs freely: add no compatibility shims, `[Obsolete]` wrappers, flags kept only for old behaviour, migration notes, or "breaking change" callouts in the README.
+
+When a design decision is left to you, choose what Microsoft Access does, then the safest option, and state the choice briefly.
+
+## Build
+
+- `dotnet build JetDatabaseWriter.slnx -c Release` must report 0 warnings and 0 errors. `Directory.Build.props` turns on `TreatWarningsAsErrors`, `AnalysisLevel` latest-all, `EnforceCodeStyleInBuild`, XML documentation and nullable reference types for every project. CI builds the whole solution in Release, so an analyzer finding in test code fails it too.
+- `JetDatabaseWriter.Tests` turns off `RunAnalyzersDuringBuild`, `EnforceCodeStyleInBuild` and `GenerateDocumentationFile` in non-Release builds, for speed; keep Release strict. Its `NoWarn` holds only `CA1707` and `SA1615`, and nothing else may be added. Fix any other finding in test code. Where a rule works against what a test checks, suppress it at the site with `#pragma warning disable <id> // <reason>`, for example CA1812 on a POCO that only reflection, `Rows<T>` or an expression tree creates.
+- `JetDatabaseWriter.FormatProbe` does not turn off its analyzers.
+- CI restores with `--locked-mode`. After changing a package reference or a target framework, restore once without it and commit the updated `packages.lock.json` files.
+
+## Gating a commit on CI
+
+Gate every commit that can change the build or the tests on GitHub CI, not with local builds and test runs. A commit that touches only docs or scripts outside the build needs no gate. Several agents often share one machine, and long local runs slow everyone down and stall agents. A local run is fine for debugging one test; report gate results from CI.
+
+`ci.yml` runs on a push only for `main`; for any other commit it needs a pull request or a `workflow_dispatch`. `scripts/ci-gate.ps1` handles that:
+
+```
+pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha <commit> -Branch ci/<name>
+```
+
+It pushes the commit to the temporary branch `ci/<name>` on `origin`, starts `ci.yml` on it, and waits at most 480 seconds per call, so a call stays under a 10-minute tool timeout. Never move the call to the background to wait on it.
+
+- Exit code 2: the run is still going. Call again with the same arguments; it never pushes or dispatches twice for the same commit on the same branch.
+- Exit code 0: the run passed.
+- Exit code 1: the run failed. The output lists every step result, the build summary, both test summaries, and the failing tests with their messages.
+
+The script's other switches:
+
+- `-RerunFailed` re-runs the failed jobs of the last run on that branch.
+- `-RunId <id>` reports on an existing run.
+- `-Branch ci/<name> -Delete` deletes the branch.
+
+Use one `ci/*` branch per commit you gate, such as `ci/<topic>-<n>`, and delete the branches when you are done. A run takes about 8 minutes on windows-latest. The script uses the GitHub CLI (`gh`) when it is installed and logged in. `gh run view <id> --log-failed` shows a failed run's logs.
+
+A timing-sensitive test can fail on CI and pass on a re-run. `LinkedTextTableTests.LinkedTextTable_CsvFile_CancellationDuringLongQuotedRecord_ThrowsOperationCanceled` on net8.0 is a known case. Re-run the failed jobs once before you call a failure real.
+
+## Tests
+
+Expected results on both legs:
+
+- Nothing fails.
+- Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is installed neither on CI nor on the development machines, so they always skip.
+- 3 explicit-only fuzz tests are not run.
+
+The Microsoft Testing Platform summary counts both groups as skipped: 32 + 3 = 35 in October 2026. Any other skip is a regression.
+
+For a quick local loop, build in Release and run the test executable directly. `JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -longRunning 300` runs one leg in about 1.5 minutes; add `-method "<Namespace.Class.Method>"` to run one test.
+
+xUnit v3 on Microsoft Testing Platform:
+
+- Use xUnit v3 (`xunit.v3`, stable 3.x), not the 4.x prerelease line. Test projects are executables: keep `<OutputType>Exe</OutputType>`.
+- Use `using Xunit;`. Do not add `Xunit.Abstractions`, `xunit.runner.visualstudio`, `xunit.abstractions` or `xunit.assert`.
+- The base command is `dotnet test --project JetDatabaseWriter.Tests`. Pass Microsoft Testing Platform options straight to `dotnet test`, with no `--` separator. Do not use VSTest filters (`--filter "FullyQualifiedName~..."`) or `--nologo`; use `--verbosity quiet` for quieter output.
+  - One target framework: `-f net10.0`.
+  - One method: `--filter-method "<Namespace.Class.Method>"`.
+  - One class: `--filter-class "<Namespace.Class>"`.
+  - One namespace: `--filter-namespace "<Namespace>"`.
+  - Exclusions: `--filter-not-class`, `--filter-not-method` and `--filter-not-namespace`.
+  - Traits: `--filter-trait Category=Fuzz` and `--filter-not-trait Category=Fuzz`.
+  - Several values go after one switch, separated by spaces (`--filter-class Foo Bar`).
+  - Other switches: `--list-tests`, `--stop-on-fail on`, and `-?`.
+- Fuzz harnesses are `[Fact(Explicit = true)]` with `[Trait("Category", "Fuzz")]`. Run them only on purpose: `dotnet test --project JetDatabaseWriter.Tests --filter-trait Category=Fuzz --explicit only`.
+- Test code must compile on both legs. Polyfills for newer BCL types go in `JetDatabaseWriter.Tests/Polyfills`, and `LibraryTarget.IsNetStandard` tells a test which library build it loaded. The scaffolding tests build for net10.0 only.
+- Helpers that the tests and FormatProbe share go in `JetDatabaseWriter.TestSupport`, never in the library. Run child processes through `PowerShellProcessRunner`, not by reading a redirected stream to its end before `WaitForExit`, which ignores the timeout.
+- Writing tests:
+  - Prefer primary constructors for fixtures and output, for example `public class MyTests(DatabaseCache db, ITestOutputHelper output) : IClassFixture<DatabaseCache>`.
+  - Test methods may return `Task` or `ValueTask`.
+  - Use `[Collection(DisableParallelization = true)]` to run a class serially.
+  - `[InlineData]` is type-checked strictly; `TheoryData<T>`, `MemberData` and `ClassData` still work.
+- Write the test first, and for a bug write a failing test first.
+
+## Benchmarks
+
+- BenchmarkDotNet warms up by default; do not add a separate warmup run.
+- Keep the default adaptive job for release-quality numbers. Use `--job short` only for a focused refresh. Narrow a run with `--filter` (plus `dotnet run --no-restore`) instead of lowering iteration or warmup counts.
+- BenchmarkDotNet already switches Windows to the High performance power plan during runs; add no boilerplate for it.
+- `[IterationSetup]` suits destructive writer benchmarks that need a fresh database per operation, but it forces `InvocationCount=1` and `UnrollFactor=1`. Copy from an unmeasured baseline fixture instead of rebuilding the schema in each benchmark.
+- A `Mean` or `Allocated` of `NA`, or a "Benchmarks with issues" section in `BenchmarkDotNet.Artifacts/results/*-report-github.md`, means the benchmark is broken; fix it before tuning anything. `--job dry` reports `Error = NA` from its single measurement, which is expected.
+- Compare against the branch point, measured in the same session.
+
+## Code
+
+- netstandard2.1 compatibility:
+  - Guard `System.Threading.Lock` with `#if NET9_0_OR_GREATER`.
+  - Guard `RandomAccess` and one-shot crypto APIs with `#if NET6_0_OR_GREATER`.
+  - Use `IncrementalHash`, `RandomNumberGenerator.Create()` and `Flush(bool)`.
+  - Do not use `Activator`.
+- Checked arithmetic is on everywhere (`CheckForOverflowUnderflow`). A narrowing cast whose source can exceed the target range, such as `(ushort)uintValue` or `(byte)(a + b)`, throws `OverflowException`. In hash, CRC, XOR and shift code, use `unchecked { ... }` or mask explicitly (`value & 0xFFFFu`). Keep file offsets in `long` and narrow with an explicit `checked((int)...)`.
+- `BannedSymbols.txt` (rule RS0030) bans blocking and sync-over-async APIs: `Thread.Sleep`, `Thread.Join`, `Task.Wait`, `Task.WaitAll`, `Task.WaitAny` and `Task<T>.Result`. It also bans `Environment.FailFast`. Await instead.
+- InferSharp/Pulse can miss `await using` disposal, or ownership that flows through helper coordinators. For analyzer-facing fixes, prefer direct `try`/`finally` disposal and methods that own their resources.
+- Match the surrounding code: its comment density, naming and idioms.
+
+## Files and tooling
+
+- Line endings: `.gitattributes` sets `* text=auto eol=crlf`, so working-tree files are CRLF, UTF-8 without a BOM. Some file-writing tools emit LF. Normalize a file you create or fully rewrite before you commit it or apply scripted multi-line edits to it, for example with ``[regex]::Replace($text, "(?<!\r)\n", "`r`n")``.
+- Do not use Python for anything in this repository: implementation, diagnostics, inspection or throwaway helpers. Use PowerShell 7, .NET tooling and `rg`.
+- In bulk PowerShell rewrites, write with `[System.IO.File]::WriteAllText(...)`. `Set-Content` after `Get-Content -Raw` adds a blank line at the end of the file.
+- Repository scripts live in `scripts/`.
+
+## Git
+
+- Several agents often work in this repository at the same time, in the main checkout and in their own worktrees.
+  - Work on a branch in your own worktree.
+  - Never modify, remove or prune another worktree, branch or stash. The stash stack is shared, so never use a bare `git stash` or `git stash pop`.
+  - Land work by fast-forwarding `main` to the reviewed branch.
+- Commit titles follow Conventional Commits: `feat:`, `fix:`, `refactor:`, `perf:`, `test:`, `docs:`, `build:`, `ci:`, with `!` for a breaking change.
+- Commit locally. Do not push `main` or tags unless the user asks. The `ci/*` branches that `scripts/ci-gate.ps1` pushes are the exception; delete them when you are done.
+
+## docs/todo.md
+
+`docs/todo.md` lists open work only. When a fix lands, the fixing commit, in the same pass:
+
+- deletes the item and every reference to it;
+- adds any new follow-ups as self-contained items (cause, repro, plan label);
+- updates the design docs the fix invalidates.
+
+Never add "Fixed" entries, test counts, history, or a narrative of what changed: the commit messages record fixes. Facts worth keeping belong in the README or `docs/design/`.
