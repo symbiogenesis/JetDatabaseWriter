@@ -152,8 +152,11 @@ internal sealed class ColumnPropertyBlock
     /// <summary>
     /// Returns the table-level target: the first target with an empty name, or
     /// <see langword="null"/> when there is none. Access writes it as a
-    /// property block of chunk type <c>0x00</c>, first in Jet3 and Jet4 blobs and
-    /// usually last in ACCDB blobs. It is never matched by the table's name.
+    /// property block of chunk type <c>0x00</c> that can sit anywhere in the
+    /// blob: usually first in Jet3 and Jet4 blobs and usually last in ACCDB
+    /// blobs, but last of four in compIndexTestV2000's <c>Table1</c> and third of
+    /// eighteen in calcFieldTestV2010's <c>Table1</c>. Never assume a position.
+    /// It is never matched by the table's name.
     /// </summary>
     public ColumnPropertyTarget? FindTableTarget()
     {
