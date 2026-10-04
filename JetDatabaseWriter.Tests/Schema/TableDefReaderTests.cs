@@ -26,7 +26,8 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// fails here even though the facade's own reads, which go through the same
 /// parser, would change with it. It also agrees with the public column
 /// metadata, and it reads the whole chain of a TDEF that spans several pages,
-/// inside a transaction too.
+/// inside a transaction too. A caching instance, the reader's, reads each
+/// chain once, and the writer's file refuses one.
 /// </summary>
 public sealed class TableDefReaderTests
 {
@@ -75,7 +76,7 @@ public sealed class TableDefReaderTests
     {
         var options = new AccessReaderOptions(password) { UseLockFile = false };
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(FixturePath(fixture), options, Ct);
-        var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults: false);
 
         var text = new StringBuilder();
         IReadOnlyList<string> tables = await harness.Services.Schema.ListTablesAsync(Ct);
@@ -101,7 +102,7 @@ public sealed class TableDefReaderTests
     {
         var options = new AccessReaderOptions(password) { UseLockFile = false };
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(FixturePath(fixture), options, Ct);
-        var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults: false);
 
         IReadOnlyList<string> tables = await harness.Services.Schema.ListTablesAsync(Ct);
         Assert.NotEmpty(tables);
@@ -133,18 +134,105 @@ public sealed class TableDefReaderTests
         }
     }
 
-    [Fact]
-    public async Task ReadTableDef_NotATdefPage_ReturnsNullAndRequiredThrows()
+    /// <summary>
+    /// Page 1, the global usage map, is a data page, not a TDEF root, so
+    /// every read of it returns <see langword="null"/> or throws. A caching
+    /// instance remembers no answer for it: each read reads the page again,
+    /// as an instance that does not cache does.
+    /// </summary>
+    /// <param name="cacheResults">Whether the instance memoizes TDEF bytes, as the reader's does.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadTableDef_NotATdefPage_ReturnsNullAndRequiredThrows(bool cacheResults)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(TestDatabases.NorthwindTraders, cancellationToken: Ct);
-        var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile);
+        await using var file = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, Ct));
+        await using var counting = new CountingStream(file);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults);
+        int pageSize = harness.Database.PageSizeBytes;
 
-        // Page 1 is the global usage map, a data page.
-        Assert.Null(await tableDefs.ReadTableDefAsync(1, Ct));
+        for (int read = 0; read < 2; read++)
+        {
+            counting.Reset();
+            Assert.Null(await tableDefs.ReadTableDefAsync(1, Ct));
+            Assert.Equal(1L, Assert.Single(counting.PagesRead(pageSize)));
+        }
+
+        counting.Reset();
         Assert.Null(await tableDefs.ReadTDefBytesAsync(1, Ct));
+        Assert.Equal(1L, Assert.Single(counting.PagesRead(pageSize)));
         InvalidDataException ex = await Assert.ThrowsAsync<InvalidDataException>(async () => await tableDefs.ReadRequiredTableDefAsync(1, "Missing", Ct));
         Assert.Contains("'Missing'", ex.Message, StringComparison.Ordinal);
         _ = await Assert.ThrowsAsync<InvalidDataException>(async () => await tableDefs.ReadTDefChainAsync(1, Ct));
+    }
+
+    /// <summary>
+    /// A caching instance reads a table's TDEF chain, every page of it, once:
+    /// the next <see cref="TableDefReader.ReadTableDefAsync"/> reads nothing
+    /// and parses a new <see cref="TableDef"/> from the same bytes, because
+    /// callers change the one they get (the reader sets calculated columns'
+    /// result types on it). <see cref="TableDefReader.ReadTDefBytesAsync"/>
+    /// reads nothing either and returns a new copy of the same bytes each
+    /// time, because its callers may change them; the chain that the writer's
+    /// in-place write-backs patch is always read.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ReadTableDef_Caching_ReadsTheChainOnceAndParsesANewTableDef(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateWideTableAsync(format);
+        await using var counting = new CountingStream(stream);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults: true);
+        int pageSize = harness.Database.PageSizeBytes;
+        CatalogEntry? entry = await harness.GetCatalogEntryAsync(WideTable, Ct);
+        Assert.NotNull(entry);
+
+        counting.Reset();
+        TableDef first = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, WideTable, Ct);
+        long chainBytes = counting.BytesRead;
+        int chainPages = counting.PagesRead(pageSize).Count;
+        Assert.True(chainPages >= 2, $"The {format} TDEF spans {chainPages} page(s).");
+
+        counting.Reset();
+        TableDef second = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, WideTable, Ct);
+        Assert.True(counting.BytesRead == 0, $"The second read read pages {string.Join(", ", counting.PagesRead(pageSize).Order())}.");
+        Assert.NotSame(first, second);
+        Assert.NotSame(first.Columns, second.Columns);
+        Assert.Equal(first.Columns.Select(c => (c.Name, c.Type, c.ColNum)), second.Columns.Select(c => (c.Name, c.Type, c.ColNum)));
+
+        counting.Reset();
+        byte[]? bytes = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct);
+        Assert.NotNull(bytes);
+        Array.Fill(bytes, (byte)0xEE);
+        byte[]? again = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct);
+        Assert.NotNull(again);
+        Assert.NotSame(bytes, again);
+        Assert.True(counting.BytesRead == 0, $"The memoized TDEF bytes read pages {string.Join(", ", counting.PagesRead(pageSize).Order())}.");
+
+        LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(entry.TDefPage, Ct);
+        Assert.Equal(chainBytes, counting.BytesRead);
+        Assert.Equal(chain.Bytes, again);
+    }
+
+    [Fact]
+    public async Task CachingOverPager_IsRejected()
+    {
+        await using MemoryStream stream = await CreateWideTableAsync(DatabaseFormat.AceAccdb);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => new TableDefReader(writer.Database.Pages, writer.Database.Profile, cacheResults: true));
+        Assert.Equal("cacheResults", ex.ParamName);
+
+        using var uncached = new TableDefReader(writer.Database.Pages, writer.Database.Profile, cacheResults: false);
+        CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);
+        Assert.NotNull(entry);
+        Assert.NotNull(await uncached.ReadTableDefAsync(entry.TDefPage, Ct));
     }
 
     /// <summary>
@@ -172,7 +260,7 @@ public sealed class TableDefReaderTests
         await using MemoryStream stream = await CreateWideTableAsync(format);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
-        var tableDefs = new TableDefReader(db.Pages, db.Profile);
+        using var tableDefs = new TableDefReader(db.Pages, db.Profile, cacheResults: false);
         int pageSize = db.PageSizeBytes;
 
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);

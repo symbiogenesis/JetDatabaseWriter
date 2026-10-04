@@ -55,8 +55,10 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <see langword="true"/> for the writer: the file gets a <see cref="Pager"/>,
     /// which can write and journal pages. <see langword="false"/> for a reader:
     /// the file gets a read-only <see cref="PageFile"/>, its write members
-    /// throw, and each table's owned data pages are memoized, which is only
-    /// safe because nothing writes through it.
+    /// throw, and each table's TDEF bytes and owned data pages are memoized
+    /// until it is disposed. Nothing writes through it, and the reader assumes
+    /// that no other process changes the file while it is open: a change made
+    /// after a table was read is not seen.
     /// </param>
     internal DatabaseFile(
         Stream stream,
@@ -86,7 +88,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.Pages = writable
             ? new Pager(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType)
             : new PageFile(stream, this.Profile.PageSize, pageKeys, leaveOpen, ownerType);
-        this.TableDefs = new TableDefReader(this.Pages, this.Profile);
+        this.TableDefs = new TableDefReader(this.Pages, this.Profile, cacheResults: !writable);
         this.OwnedPages = new OwnedDataPages(this.Pages, this.Profile, cacheResults: !writable);
     }
 
@@ -106,9 +108,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>
     /// Gets the file's table-definition reader, which reads TDEF chains
-    /// through <see cref="Pages"/>. The TDEF members below forward to it; the
-    /// in-place TDEF write-backs stay here until the writer gets its own
-    /// TDEF writer.
+    /// through <see cref="Pages"/> and memoizes their bytes only on a
+    /// read-only file. The TDEF members below forward to it; the in-place
+    /// TDEF write-backs stay here until the writer gets its own TDEF writer.
     /// </summary>
     internal TableDefReader TableDefs { get; }
 
@@ -273,8 +275,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>
     /// Disposes the page file (marking it disposed, then the stream unless the
-    /// caller kept it, then the I/O gate and the page cipher), then the
-    /// owned-page caches.
+    /// caller kept it, then the I/O gate and the page cipher), then the TDEF
+    /// and owned-page caches.
     /// </summary>
     /// <returns>A task that completes when the file is disposed.</returns>
     public async ValueTask DisposeAsync()
@@ -290,6 +292,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         }
         finally
         {
+            this.TableDefs.Dispose();
             this.OwnedPages.Dispose();
         }
     }
@@ -302,6 +305,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     internal void DisposeManagedResources()
     {
         this.Pages.DisposeManagedResources();
+        this.TableDefs.Dispose();
         this.OwnedPages.Dispose();
     }
 

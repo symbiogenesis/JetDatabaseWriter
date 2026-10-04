@@ -2,7 +2,7 @@
 
 Status: active reference
 Date: 2026-06-16
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 This note is the single, canonical description of the synchronization model used
 by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
@@ -21,7 +21,7 @@ recorded in [Why these are not consolidated](#why-these-are-not-consolidated).
 
 ## The primitives
 
-The library has **nine** distinct coordination mechanisms. Seven are in-process;
+The library has **ten** distinct coordination mechanisms. Eight are in-process;
 two are cross-process / cross-opener (advisory). Each has a single, distinct
 responsibility — the apparent overlap noted in the audit is superficial (see the
 closing section).
@@ -37,10 +37,12 @@ closing section).
 | 7 | `AsyncReentrantOperationGate.stateLock` | `Lock` / `object` | [AsyncReentrantOperationGate.cs](../../JetDatabaseWriter/Infrastructure/AsyncReentrantOperationGate.cs) | Internal to #1 | The gate's own drain bookkeeping |
 | 8 | `aesGate` | `Lock` / `object` | [PageDecryptionKeys.cs](../../JetDatabaseWriter/Encryption/Models/PageDecryptionKeys.cs) | One open database file | The cached AES-ECB page transforms: their lazy build and every page encrypt or decrypt |
 | 9 | `ownedDataPageIndex` gate | `SemaphoreSlim(1,1)` inside `AsyncLazyInitializer` | [AsyncLazyInitializer.cs](../../JetDatabaseWriter/Infrastructure/AsyncLazyInitializer.cs), built in [OwnedDataPages.cs](../../JetDatabaseWriter/Pages/OwnedDataPages.cs) (`BuildOwnedDataPageIndexAsync`) | One open database file (reader only) | The one-time whole-file pass that maps every data page to its table, run for the first table whose owned-pages usage map fails validation |
+| 10 | `tdefBytesCacheLock` | `Lock` / `object` | [TableDefReader.cs](../../JetDatabaseWriter/Schema/TableDefReader.cs) | One open database file (reader only) | The `tdefBytesByPage` dictionary only |
 
 > Note: #4 and #7 are both plain `lock` objects guarding unrelated in-memory
 > state (the writer's insert-page hint and the reader gate's drain bookkeeping).
-> They never interact. #8 exists because pages are decrypted after `IoGate` is
+> They never interact, and neither do #5 and #10, the reader's two memo locks.
+> #8 exists because pages are decrypted after `IoGate` is
 > released (and the `RandomAccess` read path never takes it), so table-scan
 > read-ahead or two operations on one reader can decrypt pages on two threads
 > at once, and an `ICryptoTransform` is not safe to share between threads.
@@ -63,6 +65,7 @@ order. Never acquire one earlier in this list while holding one later in it.
 — leaf locks (never held across an await, never nested under each other) —
    insertPageHintLock             (insert-page cache; pure memory)
    ownedDataPagesCacheLock        (owned-page dictionary; pure memory)
+   tdefBytesCacheLock             (TDEF-bytes dictionary; pure memory)
    aesGate                        (AES page transform; CPU only; reads take it after IoGate,
                                    writes inside it)
 
@@ -115,7 +118,8 @@ work phase (row encode, index maintenance, page allocation)
      attached journal and buffers into it while holding only IoGate for the
      buffer swap.
   └─ insertPageHintLock may be taken briefly (leaf, memory only). The writer's file never
-     caches owned pages, so the writer never takes ownedDataPagesCacheLock.
+     caches owned pages or TDEF bytes, so the writer never takes ownedDataPagesCacheLock
+     or tdefBytesCacheLock.
 
 CommitTransactionAsync
   ├─ JournalGate lease (IoGate) ──▶ gate.Detach(); ActiveTransaction = null ──▶ dispose the lease
@@ -169,6 +173,8 @@ operationGate lease  (reentrant: nested reader calls on the same async flow join
   └─ table-scan read-ahead: the next data page's read runs alongside the
      caller's decode of the current page, so two page reads can be in flight
   └─ owned-page cache build: ownedDataPagesCacheLock (leaf, memory only)
+  └─ TDEF-bytes memo: tdefBytesCacheLock (leaf, memory only; the chain is read
+     before the lock is taken)
   └─ owned-page index build (the first table whose usage map fails validation):
        ownedDataPageIndex gate ──▶ ReadPageAsync for every page from 3 to the end of file
        (each takes IoGate on the seek-and-read path) ──▶ release the gate
@@ -210,7 +216,8 @@ operationGate.TryBeginDispose(out waitForOperations)
         ├─ await waitForOperations   (in-flight reader operations drain)
         ├─ DisposeReaderResourcesAsync → services.Dispose (page and catalog caches)
         │                                 → DatabaseFile.DisposeAsync (PageFile: stream, IoGate,
-        │                                   page cipher; then OwnedDataPages' caches)
+        │                                   page cipher; then the TableDefReader and
+        │                                   OwnedDataPages caches)
         └─ release .ldb / .laccdb slot  (always last)
   └─ operationGate.CompleteDispose()
 ```
@@ -237,6 +244,7 @@ lockFileCoordinator.DisposeAfterAsync(
 | `ByteRangeLock` per-page | No | OS advisory byte-range lock; re-locking the same range blocks |
 | `insertPageHintLock` | No | Plain `lock`; leaf only |
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
+| `tdefBytesCacheLock` | No | Plain `lock`; leaf only |
 | `aesGate` | No | Plain `lock`; leaf only |
 
 ## Writer-owned caches and the exclusive-writer assumption
@@ -264,6 +272,28 @@ relationships it already read and does not see the change. Every
 `RelationshipCatalogStore`, which drops the relationship cache; a new path that
 writes those rows some other way must call `RelationshipCatalogStore.Invalidate`.
 
+## Reader-owned caches and the unchanging-file assumption
+
+The reader keeps what it reads from the file in memory until it is disposed,
+on the assumption that the file does not change while it is open:
+
+| Cache | Owner | Dropped when |
+|-------|-------|--------------|
+| Pages and their row directories, up to `PageCacheSize` pages | `ReaderPageCache` | The least recently used page first, when the cache is full; every page at dispose. |
+| User-table list | `TableCatalog` | Dispose. |
+| Linked-table list | `LinkedTableReader` | Dispose. |
+| Each table's TDEF bytes | `TableDefReader` | Dispose. |
+| Each table's owned data pages, and the whole-file owner index | `OwnedDataPages` | Dispose. |
+
+Nothing writes through the reader, so its own work never makes them stale.
+`AccessReaderOptions.FileShare` defaults to `ReadWrite`, so Access or another
+process may have the file open for writing at the same time, but the reader
+cannot tell when that process changes the file: for a table it has read, it
+keeps the columns, row count, indexes and owned pages it read first, and a read
+may combine pages cached before a change with pages read after it. The reader
+has to be reopened to see such changes. A new memo in the reader keeps to the
+same assumption.
+
 ## Rules for new code
 
 1. Acquire primitives in the documented order. If you need two, the one higher
@@ -271,8 +301,8 @@ writes those rows some other way must call `RelationshipCatalogStore.Invalidate`
 2. Never hold `IoGate`, or a `Pager.JournalGate` lease, when calling
    `ReadPageAsync` / `WritePageAsync` / `AppendPageAsync` — they take the gate
    themselves on their gated paths.
-3. Keep `insertPageHintLock`, `ownedDataPagesCacheLock` and `aesGate` as leaf locks: pure
-   in-memory work, no `await` and no other lock acquired while held.
+3. Keep `insertPageHintLock`, `ownedDataPagesCacheLock`, `tdefBytesCacheLock` and `aesGate`
+   as leaf locks: pure in-memory work, no `await` and no other lock acquired while held.
 4. Per-page byte-range locks go **inside** `IoGate`, never the reverse.
 5. The cross-process locks (`LockFileCoordinator` slot, `ByteRangeLock`
    commit-lock) are lifetime- or transaction-scoped, not per-page; do not fold

@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Schema;
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -17,32 +18,86 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="TableDef"/>. It reads through an <see cref="IPageSource"/>, so
 /// over the writer's <see cref="Pager"/> it sees a transaction's pending TDEF
 /// pages, and it never writes; the in-place TDEF write-backs stay with the
-/// writer.
+/// writer. The read-only reader memoizes each table's logical TDEF bytes, so
+/// a repeated <see cref="ReadTableDefAsync"/> or <see cref="ReadTDefBytesAsync"/>
+/// reads no page; it still parses a new <see cref="TableDef"/> from them, and
+/// hands out a new copy of them, on every call, because callers change what
+/// they get. The writer, whose pages change, never caches, and the
+/// constructor refuses a caching instance over a <see cref="Pager"/>.
 /// </summary>
-/// <param name="pages">The page source the chain is read from.</param>
-/// <param name="format">The file's format profile.</param>
-internal sealed class TableDefReader(IPageSource pages, JetFormat format)
+internal sealed class TableDefReader : IDisposable
 {
+    private readonly IPageSource pages;
+    private readonly JetFormat format;
+    private readonly bool cacheResults;
+#if NET9_0_OR_GREATER
+    private readonly Lock tdefBytesCacheLock = new();
+#else
+    private readonly object tdefBytesCacheLock = new();
+#endif
+    private readonly Dictionary<long, byte[]> tdefBytesByPage = [];
+
     /// <summary>
-    /// Concatenates the TDEF page chain starting at <paramref name="startPage"/>
-    /// into a single byte array. Pages after the first have their 8-byte
-    /// TDEF header stripped before appending. Returns <see langword="null"/>
-    /// when the page is not a valid TDEF root.
+    /// Initializes a new instance of the <see cref="TableDefReader"/> class.
+    /// </summary>
+    /// <param name="pages">The page source the chain is read from.</param>
+    /// <param name="format">The file's format profile.</param>
+    /// <param name="cacheResults">
+    /// <see langword="true"/> to memoize each table's logical TDEF bytes for
+    /// <see cref="ReadTableDefAsync"/> and <see cref="ReadTDefBytesAsync"/>;
+    /// only safe when nothing writes through <paramref name="pages"/> (the
+    /// reader).
+    /// </param>
+    /// <exception cref="ArgumentException"><paramref name="cacheResults"/> is <see langword="true"/> and <paramref name="pages"/> is the writer's <see cref="Pager"/>.</exception>
+    internal TableDefReader(IPageSource pages, JetFormat format, bool cacheResults)
+    {
+        if (cacheResults && pages is Pager)
+        {
+            throw new ArgumentException(
+                "Table definitions cannot be cached over the writer's file: its pages change.",
+                nameof(cacheResults));
+        }
+
+        this.pages = pages;
+        this.format = format;
+        this.cacheResults = cacheResults;
+    }
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        lock (this.tdefBytesCacheLock)
+        {
+            this.tdefBytesByPage.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Returns the TDEF page chain starting at <paramref name="startPage"/> as
+    /// a single byte array. Pages after the first have their 8-byte TDEF
+    /// header stripped before appending. Returns <see langword="null"/> when
+    /// the page is not a valid TDEF root. The array is new on every call, so
+    /// the caller may change it: a caching instance reads the chain once and
+    /// returns a copy of the memoized bytes.
     /// </summary>
     /// <param name="startPage">The start page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The logical TDEF bytes, or <see langword="null"/>.</returns>
     internal async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
     {
-        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
-            startPage,
-            format.PageSize,
-            pages.ReadPageAsync,
-            PageBuffers.Return,
-            retainPageNumbers: false,
-            cancellationToken).ConfigureAwait(false);
+        if (!this.cacheResults)
+        {
+            return await this.ReadChainBytesAsync(startPage, cancellationToken).ConfigureAwait(false);
+        }
 
-        return chain?.Bytes;
+        byte[]? bytes = await this.ReadTableDefBytesAsync(startPage, cancellationToken).ConfigureAwait(false);
+        if (bytes is null)
+        {
+            return null;
+        }
+
+        // The memoized bytes are shared, so the caller gets its own copy.
+        return bytes.AsSpan().ToArray();
     }
 
     /// <summary>
@@ -50,7 +105,8 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
     /// logical buffer that remembers its physical pages, so fields patched at
     /// logical offsets can be written back in place
     /// (<see cref="LogicalTDefChain.WriteInPlaceAsync"/>). Throws when the
-    /// page is not a TDEF root.
+    /// page is not a TDEF root. Always reads the chain, even on a caching
+    /// instance: only the writer's in-place write-backs use it.
     /// </summary>
     /// <param name="startPage">The first TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -59,8 +115,8 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
     internal async ValueTask<LogicalTDefChain> ReadTDefChainAsync(long startPage, CancellationToken cancellationToken = default)
         => await LogicalTDefChain.ReadAsync(
             startPage,
-            format.PageSize,
-            pages.ReadPageAsync,
+            this.format.PageSize,
+            this.pages.ReadPageAsync,
             PageBuffers.Return,
             retainPageNumbers: true,
             cancellationToken).ConfigureAwait(false)
@@ -71,22 +127,24 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
     /// its columns (descriptors and names, sorted by column number), its row
     /// count and whether column numbers have gaps left by deleted columns.
     /// Returns <see langword="null"/> when the chain is not a TDEF, is too
-    /// short, or declares more columns than a table can have.
+    /// short, or declares more columns than a table can have. A caching
+    /// instance reads each chain once and parses a new <see cref="TableDef"/>
+    /// from the same bytes on every call.
     /// </summary>
     /// <param name="tdefPage">The first TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The table definition, or <see langword="null"/>.</returns>
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
-        byte[]? td = await this.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[]? td = await this.ReadTableDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
-        if (td == null || td.Length < format.TDef.BlockEnd)
+        if (td == null || td.Length < this.format.TDef.BlockEnd)
         {
             return null;
         }
 
-        int numCols = Ru16(td, format.TDef.NumCols);
-        int numRealIdx = Ri32(td, format.TDef.NumRealIdx);
+        int numCols = Ru16(td, this.format.TDef.NumCols);
+        int numRealIdx = Ri32(td, this.format.TDef.NumRealIdx);
 
         // Safety: corrupt or unusual TDEFs can report absurd index counts
         if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
@@ -100,8 +158,8 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
         }
 
         // Column descriptors follow immediately after block + first real-idx entries
-        int colStart = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * format.ColumnDescriptor.Size);
+        int colStart = this.format.TDef.BlockEnd + (numRealIdx * this.format.TDef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * this.format.ColumnDescriptor.Size);
 
         if (namePos > td.Length)
         {
@@ -111,13 +169,13 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
         var descriptors = new List<ParsedColumnDescriptor>(numCols);
         for (int i = 0; i < numCols; i++)
         {
-            int o = colStart + (i * format.ColumnDescriptor.Size);
-            if (o + format.ColumnDescriptor.Size > td.Length)
+            int o = colStart + (i * this.format.ColumnDescriptor.Size);
+            if (o + this.format.ColumnDescriptor.Size > td.Length)
             {
                 break;
             }
 
-            var type = (ColumnType)td[o + format.ColumnDescriptor.TypeOff];
+            var type = (ColumnType)td[o + this.format.ColumnDescriptor.TypeOff];
 
             // Extra flags byte at descriptor offset 16 (Jet4/ACE only — the
             // Jet3 18-byte descriptor has no such slot). Carries the Access
@@ -125,24 +183,24 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
             // = 0xC0). Read unconditionally for Jet4/ACE so calc columns
             // round-trip through the schema-rewrite path; harmless for cols
             // Access wrote with the slot at zero.
-            byte extraFlags = !format.IsJet3 && o + 16 < td.Length ? td[o + 16] : (byte)0;
-            int misc = Ri32(td, o + format.ColumnDescriptor.MiscOff);
+            byte extraFlags = !this.format.IsJet3 && o + 16 < td.Length ? td[o + 16] : (byte)0;
+            int misc = Ri32(td, o + this.format.ColumnDescriptor.MiscOff);
 
             // For Numeric the misc 4-byte slot reuses bytes 11/12
             // (descriptor-relative) to carry the declared precision and
             // scale Access shows in Design View. Same byte positions as
             // the Jackcess `FixedPointColumnDescriptor` parser. Other
             // column types leave these at 0.
-            byte numericPrecision = type == NumericType ? td[o + format.ColumnDescriptor.MiscOff] : (byte)0;
-            byte numericScale = type == NumericType ? td[o + format.ColumnDescriptor.MiscOff + 1] : (byte)0;
+            byte numericPrecision = type == NumericType ? td[o + this.format.ColumnDescriptor.MiscOff] : (byte)0;
+            byte numericScale = type == NumericType ? td[o + this.format.ColumnDescriptor.MiscOff + 1] : (byte)0;
 
             descriptors.Add(new ParsedColumnDescriptor(
                 type,
-                Ru16(td, o + format.ColumnDescriptor.NumOff),
-                Ru16(td, o + format.ColumnDescriptor.VarOff),
-                Ru16(td, o + format.ColumnDescriptor.FixedOff),
-                Ru16(td, o + format.ColumnDescriptor.SzOff),
-                td[o + format.ColumnDescriptor.FlagsOff],
+                Ru16(td, o + this.format.ColumnDescriptor.NumOff),
+                Ru16(td, o + this.format.ColumnDescriptor.VarOff),
+                Ru16(td, o + this.format.ColumnDescriptor.FixedOff),
+                Ru16(td, o + this.format.ColumnDescriptor.SzOff),
+                td[o + this.format.ColumnDescriptor.FlagsOff],
                 extraFlags,
                 misc,
                 numericPrecision,
@@ -158,7 +216,7 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
             string name = string.Empty;
             if (readNames)
             {
-                int nameLen = format.ReadColumnName(td, ref namePos, out string parsedName);
+                int nameLen = this.format.ReadColumnName(td, ref namePos, out string parsedName);
                 if (nameLen >= 0)
                 {
                     name = parsedName;
@@ -182,7 +240,7 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
         var tableDef = new TableDef
         {
             Columns = cols,
-            RowCount = Ru32(td, format.TDef.NumRows),
+            RowCount = Ru32(td, this.format.TDef.NumRows),
             HasDeletedColumns = hasDeletedColumns,
         };
         tableDef.InitializeColumnMetadata();
@@ -201,6 +259,73 @@ internal sealed class TableDefReader(IPageSource pages, JetFormat format)
     internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
+
+    /// <summary>
+    /// Returns the logical TDEF bytes that <see cref="ReadTableDefAsync"/>
+    /// parses and a caching <see cref="ReadTDefBytesAsync"/> copies: the
+    /// memoized bytes when this instance caches and has read the chain before,
+    /// and otherwise the chain read by <see cref="ReadChainBytesAsync"/>,
+    /// memoized when this instance caches and the chain is a TDEF. The bytes
+    /// may be shared, so they are only read, never changed.
+    /// </summary>
+    /// <param name="tdefPage">The first TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The logical TDEF bytes, or <see langword="null"/>.</returns>
+    private async ValueTask<byte[]?> ReadTableDefBytesAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (this.cacheResults && this.TryGetCachedTDefBytes(tdefPage, out byte[] cachedBytes))
+        {
+            return cachedBytes;
+        }
+
+        byte[]? bytes = await this.ReadChainBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (this.cacheResults && bytes is not null)
+        {
+            this.CacheTDefBytes(tdefPage, bytes);
+        }
+
+        return bytes;
+    }
+
+    /// <summary>
+    /// Reads the TDEF page chain starting at <paramref name="startPage"/> into
+    /// a new logical byte array, or returns <see langword="null"/> when the
+    /// page is not a valid TDEF root.
+    /// </summary>
+    /// <param name="startPage">The first TDEF page.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The logical TDEF bytes, or <see langword="null"/>.</returns>
+    private async ValueTask<byte[]?> ReadChainBytesAsync(long startPage, CancellationToken cancellationToken)
+    {
+        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
+            startPage,
+            this.format.PageSize,
+            this.pages.ReadPageAsync,
+            PageBuffers.Return,
+            retainPageNumbers: false,
+            cancellationToken).ConfigureAwait(false);
+
+        return chain?.Bytes;
+    }
+
+    private bool TryGetCachedTDefBytes(long tdefPage, out byte[] bytes)
+    {
+        lock (this.tdefBytesCacheLock)
+        {
+            bool found = this.tdefBytesByPage.TryGetValue(tdefPage, out byte[]? cachedBytes);
+            bytes = cachedBytes ?? [];
+            return found;
+        }
+    }
+
+    private void CacheTDefBytes(long tdefPage, byte[] bytes)
+    {
+        lock (this.tdefBytesCacheLock)
+        {
+            this.tdefBytesByPage[tdefPage] = bytes;
+        }
+    }
 
     /// <summary>One column descriptor as stored, before its name is read.</summary>
     /// <param name="Type">The column type.</param>

@@ -3,7 +3,7 @@
 Status: closed; retained as archived baseline and caller guidance
 Date: 2026-05-20
 Closed: 2026-05-31
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 This note is closed. It records the read-performance baseline for
 `AccessReader`, the caller guidance that falls out of the measurements, and the
@@ -419,6 +419,23 @@ The overlapped handle with a hint, in the same runs: 48-94 ms on the OLE
 table, 121-280 ms on the MEMO table, 14-74 ms on the numeric table and
 2.2-27 s for the uncached OLE copy.
 
+A warm table read reads nothing outside the page cache, so it does not matter
+where it starts. The reader keeps each table's TDEF bytes after the first read
+(`TableDefReader`, which still parses a new `TableDef` from them on every call
+and also serves index listings and seeks from them) and its owned pages when
+its usage map validates (`OwnedDataPages`), and the page cache holds its data
+and index pages. So `Rows()` on such a table without long-value, complex or
+calculated columns returns the first row on the caller's thread without a
+read, and a repeated index listing or seek reads nothing either.
+
+A read that cannot run inline is handed to the pool, and the caller waits to
+be woken. One such read per call is enough for a warm `FirstRow` benchmark,
+whose BenchmarkDotNet main thread is not a pool thread, to measure the
+hand-off and the wake rather than the read. With one raw TDEF read per
+`Rows()` call, the numeric table's warm first row measured 6, 23-29 and
+31-40 µs per call on three runners, and the 40-column table's 29-60 µs, in
+every read mode.
+
 Primary code path:
 
 - `AccessReader.CreateStream`
@@ -426,6 +443,7 @@ Primary code path:
 - `PageFile.ReadPageAsync`
 - `PageFile.ReadPageRandomAccessAsync` and `ReadPageRandomAccess`
 - `PageFile.ReadPageFromStream`
+- `TableDefReader.ReadTableDefAsync` and `OwnedDataPages.GetOwnedDataPagesAsync`, which keep a warm read off the file
 
 ## When read performance still feels slow
 
