@@ -228,7 +228,9 @@ public sealed class PersistedPropertyProjectorTests
     /// <summary>
     /// Access writes the table-level target as an empty-named property block of
     /// chunk type 0x00 wherever it puts it: 12th of 12 in NorthwindTraders'
-    /// OrderDetails, first in Jackcess's testV1997 Table1.
+    /// OrderDetails, first in Jackcess's testV1997 Table1, but last of four in
+    /// the Jet4 compIndexTestV2000 Table1 and third of 18 in calcFieldTestV2010's
+    /// Table1. No position can be assumed.
     /// </summary>
     /// <param name="fixture">The fixture path.</param>
     /// <param name="table">The table.</param>
@@ -238,9 +240,17 @@ public sealed class PersistedPropertyProjectorTests
     [Theory]
     [InlineData("NorthwindTraders", "OrderDetails", 11, "SubdatasheetName")]
     [InlineData("TestV1997", "Table1", 0, "Orientation")]
+    [InlineData("CompIndexTestV2000", "Table1", 3, "Orientation")]
+    [InlineData("CalcFieldTestV2010", "Table1", 2, "Orientation")]
     public async Task FindTableTarget_AccessAuthored_ReturnsEmptyNamedBlockWhereverItIs(string fixture, string table, int index, string property)
     {
-        string path = fixture == "NorthwindTraders" ? TestDatabases.NorthwindTraders : TestDatabases.TestV1997;
+        string path = fixture switch
+        {
+            "NorthwindTraders" => TestDatabases.NorthwindTraders,
+            "TestV1997" => TestDatabases.TestV1997,
+            "CompIndexTestV2000" => TestDatabases.CompIndexTestV2000,
+            _ => TestDatabases.CalcFieldTestV2010,
+        };
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(table, Ct));
         ColumnPropertyBlock block = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Catalog.ReadLvPropForTableAsync(entry.TDefPage, Ct));

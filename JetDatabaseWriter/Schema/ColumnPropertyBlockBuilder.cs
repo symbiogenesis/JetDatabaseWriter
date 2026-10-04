@@ -103,8 +103,10 @@ internal sealed class ColumnPropertyBlockBuilder
 
     /// <summary>
     /// Returns the table-level target (the first one with an empty name), or adds
-    /// one at index 0 as Access's Jet3 and Jet4 blobs have it: an empty name and
-    /// chunk type <c>0x00</c>.
+    /// one with an empty name and chunk type <c>0x00</c> at index 0. Access puts
+    /// the table's block at no fixed position (see
+    /// <see cref="ColumnPropertyBlock.FindTableTarget"/>), so readers find it by
+    /// its empty name; index 0 is only where this builder adds a new one.
     /// </summary>
     public ColumnPropertyTargetBuilder GetOrAddTableTarget()
     {
