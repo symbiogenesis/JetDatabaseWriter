@@ -522,6 +522,68 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
     }
 
     /// <summary>
+    /// Through a cascading self-relationship on the two-column key
+    /// (<c>A</c>, <c>B</c>), one update moves rows (1, 1) and (1, 2) to
+    /// <c>A</c> 5. Row (1, 2), whose foreign key names (1, 1), is a dependent
+    /// row of the key the other moved row gives up, so it takes that row's new
+    /// key (5, 1) in its own rewrite; row (2, 1), which the update does not
+    /// match, follows to (5, 1) as a stored dependent row. The table keeps
+    /// three live rows, a row count of three and indexes that name every row.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the update.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_SelfReferencingRowNamingAnotherMovedRow_TakesThatRowsNewKey(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await this.CreateCompositeTreeAsync(format, cascadeUpdates: true);
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(2, await writer.UpdateRowsAsync("Tree", RowCriteria.Where("A", 1), new RowValues { ["A"] = 5 }, Ct)));
+        }
+
+        Assert.Equal(["2|1|5|1", "5|1||", "5|2|5|1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "Tree"));
+        long[] rowCounts = await ReadRowCountsAsync(ms, "Tree");
+        Assert.Equal([3L], rowCounts);
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "Tree");
+    }
+
+    /// <summary>
+    /// Without cascading updates, the same update is refused. Row (1, 2),
+    /// which the update moves and whose foreign key names the key row (1, 1)
+    /// gives up, counts among the dependent rows with row (2, 1), which the
+    /// update does not match, and no row changes.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the update.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_SelfReferencingRowNamingAnotherMovedRowWithoutCascade_IsCounted(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await this.CreateCompositeTreeAsync(format, cascadeUpdates: false);
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.UpdateRowsAsync("Tree", RowCriteria.Where("A", 1), new RowValues { ["A"] = 5 }, Ct));
+                Assert.Equal(
+                    "UPDATE on 'Tree' violates foreign-key constraint 'FK_Tree_Self': 2 dependent row(s) in 'Tree' reference the old key(s) and cascade-update is not enabled.",
+                    ex.Message);
+            });
+        }
+
+        Assert.Equal(["1|1||", "1|2|1|1", "2|1|1|1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "Tree"));
+        long[] rowCounts = await ReadRowCountsAsync(ms, "Tree");
+        Assert.Equal([3L], rowCounts);
+    }
+
+    /// <summary>
     /// Makes the MEMO that starts with <see cref="UnreadableMemoMarker"/>
     /// unreadable by changing the page-type byte of its LVAL page.
     /// </summary>
@@ -591,6 +653,39 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
             Assert.Equal(3, await writer.InsertRowsAsync("Tree", [[1, 1], [2, 1], [3, null]], Ct));
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_Tree_Self", "Tree", "Id", "Tree", "ParentId") { CascadeUpdates = cascadeUpdates },
+                Ct);
+        }
+
+        ms.Position = 0;
+        return ms;
+    }
+
+    /// <summary>
+    /// Returns <c>Tree</c> (<c>A</c> and <c>B</c> the primary key, <c>PA</c>,
+    /// <c>PB</c>) with rows [1, 1, null, null], [1, 2, 1, 1] and [2, 1, 1, 1],
+    /// related to itself by <c>FK_Tree_Self</c> from (<c>PA</c>, <c>PB</c>) to
+    /// (<c>A</c>, <c>B</c>).
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="cascadeUpdates">Whether the relationship cascades updates.</param>
+    /// <returns>The database, positioned at 0.</returns>
+    private async Task<MemoryStream> CreateCompositeTreeAsync(DatabaseFormat format, bool cascadeUpdates)
+    {
+        MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync(
+                "Tree",
+                [
+                    new ColumnDefinition("A", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("B", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("PA", typeof(int)),
+                    new ColumnDefinition("PB", typeof(int)),
+                ],
+                Ct);
+            Assert.Equal(3, await writer.InsertRowsAsync("Tree", [[1, 1, null, null], [1, 2, 1, 1], [2, 1, 1, 1]], Ct));
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Tree_Self", "Tree", ["A", "B"], "Tree", ["PA", "PB"]) { CascadeUpdates = cascadeUpdates },
                 Ct);
         }
 
