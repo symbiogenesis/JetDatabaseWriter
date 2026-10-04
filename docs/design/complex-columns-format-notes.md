@@ -276,7 +276,7 @@ How surviving complex columns ride through `RewriteTableAsync`:
 Surgical post-rewrite cleanup runs from the rewrite path itself:
 
 - **`DropSingleComplexChildAsync(columnName, complexId)`** — invoked once per dropped complex column (matched by ComplexId between `existingDefs` and `newDefs`). Deletes the matching `MSysComplexColumns` row (matched by ColumnName + ComplexID), adjusts the `MSysComplexColumns` TDEF row count, and drops the hidden flat-table catalog row in `MSysObjects`. Idempotent; tolerates missing rows.
-- **`RenameComplexColumnArtifactsAsync(oldName, newName, complexId)`** — invoked once per renamed complex column (matched by ComplexId match + name mismatch between `existingDefs` and `newDefs`). Mark-deletes the matching `MSysComplexColumns` row, then re-inserts it (`updateTDefRowCount: false`) with `ColumnName` rewritten to the new name. The hidden flat-table's catalog name (`f_<hex>_<oldName>`) is left unchanged — readers resolve the flat name via `FlatTableID` → `MSysObjects.Name`, and the cosmetic suffix carries no semantic meaning.
+- **`RenameComplexColumnArtifactsAsync(oldName, newName, complexId)`** — invoked once per renamed complex column (matched by ComplexId, with names in `existingDefs` and `newDefs` that differ ordinally, so a case-only rename counts). Mark-deletes the matching `MSysComplexColumns` row, then re-inserts it (`updateTDefRowCount: false`) with `ColumnName` rewritten to the new name. The hidden flat-table's catalog name (`f_<hex>_<oldName>`) is left unchanged — readers resolve the flat name via `FlatTableID` → `MSysObjects.Name`, and the cosmetic suffix carries no semantic meaning.
 
 C9 caveats:
 

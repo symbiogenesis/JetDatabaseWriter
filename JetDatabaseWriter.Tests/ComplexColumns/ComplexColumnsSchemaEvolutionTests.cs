@@ -225,6 +225,44 @@ public sealed class ComplexColumnsSchemaEvolutionTests
     }
 
     [Fact]
+    public async Task RenameColumnAsync_TheAttachmentColumnItself_CaseOnly_UpdatesMSysComplexColumnsRow()
+    {
+        MemoryStream ms = await CreateDbWithAttachmentAndOneFileAsync();
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            ms,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.RenameColumnAsync("Documents", "Files", "FILES", TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync(
+                "Documents",
+                "FILES",
+                new Dictionary<string, object?> { ["Id"] = 1 },
+                new AttachmentInput("more.txt", Encoding.UTF8.GetBytes("ho")),
+                TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken);
+        Assert.Equal(["Id", "FILES"], meta.Select(m => m.Name));
+
+        ComplexColumnInfo only = Assert.Single(await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken));
+        Assert.Equal("FILES", only.ColumnName);
+
+        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(
+            cx.Rows.Cast<DataRow>(),
+            r => string.Equals(Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture), "Files", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("FILES", row["ColumnName"]);
+
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Documents", "FILES", TestContext.Current.CancellationToken);
+        Assert.Equal(["more.txt", "notes.txt"], attachments.Select(a => a.FileName).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task DropColumnAsync_TheMultiValueColumnItself_RemovesMSysComplexColumnsRow()
     {
         var ms = new MemoryStream();

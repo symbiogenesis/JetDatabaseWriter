@@ -126,6 +126,48 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RenameColumn_CaseOnlyOfKeyColumns_UpdatesRelationshipCatalog(DatabaseFormat format)
+    {
+        MemoryStream stream = await this.CreateDatabaseAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await CreateParentAndChildAsync(writer);
+            await writer.RenameColumnAsync(Child, "ParentId", "PARENTID", TestContext.Current.CancellationToken);
+            await writer.RenameColumnAsync(Parent, "Id", "ID", TestContext.Current.CancellationToken);
+        }
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            RelationshipMetadata relationship = Assert.Single(
+                await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken),
+                r => r.Name == RelationshipName);
+            Assert.Equal("ID", Assert.Single(relationship.PrimaryColumns));
+            Assert.Equal("PARENTID", Assert.Single(relationship.ForeignColumns));
+        }
+
+        await AssertRelationshipLinkedAsync(stream, Parent, "ID", Child, "PARENTID");
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await writer.InsertRowAsync(
+                    Child,
+                    RowValues.Create().Set("Id", 20).Set("PARENTID", 99),
+                    TestContext.Current.CancellationToken));
+
+            Assert.Equal(1, await writer.DeleteRowsAsync(Parent, "ID", 1, TestContext.Current.CancellationToken));
+        }
+
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            DataTable children = await reader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(12, (int)Assert.Single(children.AsEnumerable())["Id"]);
+        }
+    }
+
+    [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, true)]
     [InlineData(DatabaseFormat.AceAccdb, false)]

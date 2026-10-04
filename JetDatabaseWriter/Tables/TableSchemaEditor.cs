@@ -328,7 +328,7 @@ internal sealed class TableSchemaEditor(
             cancellationToken);
     }
 
-    internal ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken)
+    internal async ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(oldColumnName, nameof(oldColumnName));
@@ -336,7 +336,27 @@ internal sealed class TableSchemaEditor(
         AccessObjectName.ThrowIfNotStorable(db, newColumnName, nameof(newColumnName), "column");
         db.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        return this.RewriteTableAsync(
+        // A rename to the name the column already has, spelled as stored,
+        // changes nothing, so the table is not rewritten once the table and
+        // the column are known to exist. Any other spelling of the same name
+        // is a case-only rename, which Access is believed to allow (not
+        // checked), and goes through the rewrite like any rename.
+        if (string.Equals(oldColumnName, newColumnName, StringComparison.OrdinalIgnoreCase))
+        {
+            ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            int current = table.Definition.FindColumnIndex(oldColumnName);
+            if (current < 0)
+            {
+                throw new ArgumentException($"Column '{oldColumnName}' was not found in table '{tableName}'.", nameof(oldColumnName));
+            }
+
+            if (string.Equals(table.Definition.Columns[current].Name, newColumnName, StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+
+        await this.RewriteTableAsync(
             tableName,
             (existing, _) =>
             {
@@ -346,9 +366,14 @@ internal sealed class TableSchemaEditor(
                     throw new ArgumentException($"Column '{oldColumnName}' was not found in table '{tableName}'.", nameof(oldColumnName));
                 }
 
-                if (existing.Exists(c => string.Equals(c.Name, newColumnName, StringComparison.OrdinalIgnoreCase)))
+                // Access compares column names ignoring case. The renamed
+                // column is left out, so a rename may change only the case.
+                for (int i = 0; i < existing.Count; i++)
                 {
-                    throw new InvalidOperationException($"Column '{newColumnName}' already exists in table '{tableName}'.");
+                    if (i != idx && string.Equals(existing[i].Name, newColumnName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException($"Column '{newColumnName}' already exists in table '{tableName}'.");
+                    }
                 }
 
                 // Change only the name. The copy keeps the descriptor type
@@ -362,7 +387,7 @@ internal sealed class TableSchemaEditor(
             },
             (oldRow, _) => oldRow,
             name => string.Equals(name, oldColumnName, StringComparison.OrdinalIgnoreCase) ? newColumnName : name,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -860,8 +885,9 @@ internal sealed class TableSchemaEditor(
             {
                 droppedComplex.Add((c.Name, c.ComplexId));
             }
-            else if (!string.Equals(survivor.Name, c.Name, StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(survivor.Name, c.Name, StringComparison.Ordinal))
             {
+                // Ordinal, so a case-only rename also rewrites ColumnName.
                 renamedComplex.Add((c.Name, survivor.Name, c.ComplexId));
             }
         }

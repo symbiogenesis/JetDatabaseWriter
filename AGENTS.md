@@ -68,7 +68,7 @@ Expected results on both legs:
 - Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is installed neither on CI nor on the development machines, so they always skip.
 - 3 explicit-only fuzz tests are not run.
 
-The Microsoft Testing Platform summary counts both groups as skipped: 32 + 3 = 35 in October 2026. Any other skip is a regression.
+The Microsoft Testing Platform summary counts both groups as skipped: 34 + 3 = 37 in October 2026. Any other skip is a regression.
 
 For a quick local loop, build in Release and run the test executable directly. `JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -longRunning 300` runs one leg in about 1.5 minutes; add `-method "<Namespace.Class.Method>"` to run one test.
 

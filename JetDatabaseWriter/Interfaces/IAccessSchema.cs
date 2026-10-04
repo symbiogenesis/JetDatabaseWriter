@@ -147,13 +147,18 @@ public interface IAccessSchema : IAccessBase
     /// yet, before or after the rename. The rest of each expression, including text inside
     /// string literals, is kept as it was. The table-level <c>Filter</c>, <c>OrderBy</c> and
     /// <c>ValidationRule</c> are not rewritten, so one that names the column keeps the old name.
+    /// A rename may change only the letter case of the name, and is then handled like any other
+    /// rename. A rename to the name the column already has, spelled as stored, changes nothing
+    /// and does not rewrite the table. Both follow what Microsoft Access is believed to do,
+    /// which has not been checked against Access.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="oldColumnName">The current column name (case-insensitive).</param>
-    /// <param name="newColumnName">The new column name. Must not already exist on the table, and must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The current name is only looked up, so a column whose name breaks the rules can be renamed to one that follows them.</param>
+    /// <param name="newColumnName">The new column name. Must not be the name of another column of the table, compared ignoring case, and must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The current name is only looked up, so a column whose name breaks the rules can be renamed to one that follows them.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown, before the table is read, when <paramref name="newColumnName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules, or, before the table changes, when the new name would push an expression that names the column past the expression engine's length limit.</exception>
+    /// <exception cref="InvalidOperationException">Thrown, before the table changes, when the table does not exist or another column of the table has the new name, compared ignoring case.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before the table changes, when a row holds a MEMO or OLE value whose stored data cannot be read; copying the row would lose that value.</exception>
     public ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default);
 
