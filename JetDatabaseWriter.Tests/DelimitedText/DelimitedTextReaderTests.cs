@@ -523,16 +523,16 @@ public sealed class DelimitedTextReaderTests
     {
         public int CharsRead { get; private set; }
 
-        public override Task<int> ReadAsync(char[] buffer, int index, int count)
+        public override async Task<int> ReadAsync(char[] buffer, int index, int count)
         {
-            int read = this.Read(buffer, index, count);
+            int read = await base.ReadAsync(buffer.AsMemory(index, count), TestContext.Current.CancellationToken);
             this.CharsRead += read;
             if (this.CharsRead >= cancelAt)
             {
-                cancellation.Cancel();
+                await cancellation.CancelAsync();
             }
 
-            return Task.FromResult(read);
+            return read;
         }
     }
 }
