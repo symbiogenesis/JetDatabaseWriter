@@ -13,9 +13,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Finds the data pages a table owns and visits their live rows. A table's
 /// owned pages come from its owned-pages usage map when that map validates
 /// against the TDEF's row count, and otherwise from a whole-file pass that
-/// maps every data page to its owner. The read-only reader memoizes both; the
-/// writer, whose pages change, never caches, and the constructor refuses a
-/// caching instance over a <see cref="Pager"/>. Row visits follow overflow
+/// maps every data page to its owner. The read-only reader memoizes the
+/// whole-file pass and each table's owned pages, whichever of the two gave
+/// them, so it reads and validates a table's map once, even a map it rejects;
+/// the writer, whose pages change, never caches, and the constructor refuses
+/// a caching instance over a <see cref="Pager"/>. Row visits follow overflow
 /// pointers to the moved row bytes.
 /// </summary>
 internal sealed class OwnedDataPages : IDisposable
@@ -84,7 +86,8 @@ internal sealed class OwnedDataPages : IDisposable
     /// <summary>
     /// Returns the data pages the table rooted at <paramref name="tdefPage"/>
     /// owns, in ascending order: from its owned-pages usage map when the map
-    /// validates, and otherwise from the whole-file owner index.
+    /// validates, and otherwise from the whole-file owner index. A caching
+    /// instance remembers the answer either way.
     /// </summary>
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -116,9 +119,17 @@ internal sealed class OwnedDataPages : IDisposable
         Dictionary<long, long[]> pageIndex = canUseCache
             ? await this.ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false)
             : await this.BuildOwnedDataPageIndexAsync(cancellationToken).ConfigureAwait(false);
-        return pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
+        long[] indexedPages = pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
             ? pageNumbers
             : [];
+        if (canUseCache)
+        {
+            // The map was rejected: remember the index's answer too, so the
+            // next call does not read and validate the map again.
+            this.CacheOwnedDataPages(tdefPage, indexedPages);
+        }
+
+        return indexedPages;
     }
 
     /// <summary>

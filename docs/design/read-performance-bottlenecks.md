@@ -249,6 +249,13 @@ The full-file fallback uses uncached page reads and returns pooled pages
 immediately, so its classification pass does not churn the normal reader LRU
 before the actual table scan.
 
+The reader memoizes each table's owned pages whichever source gave them, so
+it reads and validates a table's map once even when it rejects the map.
+Validating a map again means reading the TDEF page, the map and every page the
+map lists before the index's answer is taken: for the 25,000-row text table,
+whose writer-built map lists 512 pages, that costs 0.92-1.33 ms and 181 KB per
+warm `FirstRow` call.
+
 Primary code path:
 
 - `OwnedDataPages.GetOwnedDataPagesAsync`
@@ -422,11 +429,11 @@ table, 121-280 ms on the MEMO table, 14-74 ms on the numeric table and
 A warm table read reads nothing outside the page cache, so it does not matter
 where it starts. The reader keeps each table's TDEF bytes after the first read
 (`TableDefReader`, which still parses a new `TableDef` from them on every call
-and also serves index listings and seeks from them) and its owned pages when
-its usage map validates (`OwnedDataPages`), and the page cache holds its data
-and index pages. So `Rows()` on such a table without long-value, complex or
-calculated columns returns the first row on the caller's thread without a
-read, and a repeated index listing or seek reads nothing either.
+and also serves index listings and seeks from them) and its owned pages, even
+when it rejects the table's usage map (`OwnedDataPages`), and the page cache
+holds its data and index pages. So `Rows()` on a table without long-value,
+complex or calculated columns returns the first row on the caller's thread
+without a read, and a repeated index listing or seek reads nothing either.
 
 A read that cannot run inline is handed to the pool, and the caller waits to
 be woken. One such read per call is enough for a warm `FirstRow` benchmark,

@@ -1,12 +1,14 @@
 namespace JetDatabaseWriter.Tests.Reader;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -14,13 +16,15 @@ using Xunit;
 
 /// <summary>
 /// A reader that has read a table keeps what it learned about it: the table's
-/// TDEF bytes, its owned data pages and, in the page cache, its data and index
-/// pages. Reading the table's first row again, as the warm <c>FirstRow</c>
-/// benchmark does, then reads nothing from the file, so the call completes on
-/// the caller's thread even where every page read is handed to the thread
-/// pool: on a thread with a synchronization context, or on a thread that is
-/// not a pool thread, such as the one BenchmarkDotNet blocks on. Listing the
-/// table's indexes and seeking through one again read nothing either.
+/// TDEF bytes, its owned data pages, also when its usage map is rejected and
+/// the whole-file owner index answered, and, in the page cache, its data and
+/// index pages. Reading the table's first row again, as the warm
+/// <c>FirstRow</c> benchmark does, then reads nothing from the file, so the
+/// call completes on the caller's thread even where every page read is handed
+/// to the thread pool: on a thread with a synchronization context, or on a
+/// thread that is not a pool thread, such as the one BenchmarkDotNet blocks
+/// on. Listing the table's indexes and seeking through one again read nothing
+/// either.
 /// </summary>
 public sealed class WarmTableReadTests : IDisposable
 {
@@ -33,26 +37,49 @@ public sealed class WarmTableReadTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static TheoryData<PageReadOptimizationMode> Modes =>
-    [
-        PageReadOptimizationMode.Auto,
-        PageReadOptimizationMode.Disabled,
-        PageReadOptimizationMode.Enabled,
-    ];
+    /// <summary>
+    /// Returns each read mode, with the table's owned-pages usage map valid
+    /// and rejected (its TDEF declares more rows than the mapped pages hold,
+    /// as when a writer-built map leaves out pages).
+    /// </summary>
+    /// <returns>The read modes, each with and without a rejected map.</returns>
+    public static TheoryData<PageReadOptimizationMode, bool> Cases()
+    {
+        var data = new TheoryData<PageReadOptimizationMode, bool>();
+        foreach (PageReadOptimizationMode mode in (PageReadOptimizationMode[])[PageReadOptimizationMode.Auto, PageReadOptimizationMode.Disabled, PageReadOptimizationMode.Enabled])
+        {
+            data.Add(mode, false);
+            data.Add(mode, true);
+        }
+
+        return data;
+    }
 
     /// <summary>
     /// After a full scan, reading the table's first row again reads no byte
-    /// of the file in any read mode, read-ahead included.
+    /// of the file in any read mode, read-ahead included, whether its usage
+    /// map validated or was rejected.
     /// </summary>
     /// <param name="mode">The page-read optimization mode.</param>
+    /// <param name="rejectUsageMap">Whether the table's usage map is rejected.</param>
     [Theory]
-    [MemberData(nameof(Modes))]
-    public async Task Rows_WarmFirstRow_ReadsNothing(PageReadOptimizationMode mode)
+    [MemberData(nameof(Cases))]
+    public async Task Rows_WarmFirstRow_ReadsNothing(PageReadOptimizationMode mode, bool rejectUsageMap)
     {
-        await using var backing = new MemoryStream(await CreateDatabaseAsync(), writable: false);
+        await using var backing = new MemoryStream(await CreateDatabaseAsync(rejectUsageMap), writable: false);
         await using var counting = new CountingStream(backing);
         await using AccessReader reader = await AccessReader.OpenAsync(counting, Options(mode), leaveOpen: true, Ct);
         Assert.Equal(RowCount, await CountRowsAsync(reader));
+
+        if (rejectUsageMap)
+        {
+            // The rejected map sent the scan to the whole-file owned-page
+            // pass, which reads every page from 3 on.
+            int pageCount = checked((int)(backing.Length / reader.PageSize));
+            Assert.True(
+                counting.PagesRead(reader.PageSize).IsSupersetOf(Enumerable.Range(3, pageCount - 3).Select(page => (long)page)),
+                "The cold scan did not take the whole-file owned-page pass, so the usage map was not rejected.");
+        }
 
         counting.Reset();
         Assert.Equal(1, await ReadFirstIdAsync(reader));
@@ -69,13 +96,14 @@ public sealed class WarmTableReadTests : IDisposable
     /// when it returns.
     /// </summary>
     /// <param name="mode">The page-read optimization mode.</param>
+    /// <param name="rejectUsageMap">Whether the table's usage map is rejected.</param>
     [Theory]
-    [MemberData(nameof(Modes))]
-    public async Task Rows_WarmFirstRowOnThreadWithSynchronizationContext_CompletesSynchronously(PageReadOptimizationMode mode)
+    [MemberData(nameof(Cases))]
+    public async Task Rows_WarmFirstRowOnThreadWithSynchronizationContext_CompletesSynchronously(PageReadOptimizationMode mode, bool rejectUsageMap)
     {
         string path = Path.Combine(Path.GetTempPath(), $"WarmTableRead_{Guid.NewGuid():N}.accdb");
         this.paths.Add(path);
-        await File.WriteAllBytesAsync(path, await CreateDatabaseAsync(), Ct);
+        await File.WriteAllBytesAsync(path, await CreateDatabaseAsync(rejectUsageMap), Ct);
         await using AccessReader reader = await AccessReader.OpenAsync(path, Options(mode), Ct);
         Assert.Equal(RowCount, await CountRowsAsync(reader));
 
@@ -97,7 +125,7 @@ public sealed class WarmTableReadTests : IDisposable
     [Fact]
     public async Task ListIndexesAndSeekRows_Warm_ReadNothing()
     {
-        await using var backing = new MemoryStream(await CreateDatabaseAsync(), writable: false);
+        await using var backing = new MemoryStream(await CreateDatabaseAsync(rejectUsageMap: false), writable: false);
         await using var counting = new CountingStream(backing);
         await using AccessReader reader = await AccessReader.OpenAsync(counting, Options(PageReadOptimizationMode.Auto), leaveOpen: true, Ct);
         Assert.Contains(await reader.ListIndexesAsync(TableName, Ct), index => string.Equals(index.Name, IndexName, StringComparison.Ordinal));
@@ -201,10 +229,12 @@ public sealed class WarmTableReadTests : IDisposable
     /// <see cref="RowCount"/> rows of an Id, indexed by <see cref="IndexName"/>,
     /// and a 188-character Text value: more than three data pages, so a
     /// path-opened reader's <c>Auto</c> scans and every <c>Enabled</c> scan
-    /// read ahead.
+    /// read ahead. To have the reader reject the table's owned-pages usage
+    /// map, the TDEF's row count is raised past the rows the mapped pages hold.
     /// </summary>
+    /// <param name="rejectUsageMap">Whether the reader rejects the table's usage map.</param>
     /// <returns>The database bytes.</returns>
-    private static async Task<byte[]> CreateDatabaseAsync()
+    private static async Task<byte[]> CreateDatabaseAsync(bool rejectUsageMap)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -225,6 +255,15 @@ public sealed class WarmTableReadTests : IDisposable
                 Ct);
         }
 
-        return stream.ToArray();
+        byte[] bytes = stream.ToArray();
+        if (rejectUsageMap)
+        {
+            await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+            CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(TableName, Ct));
+            int numRows = checked((int)(entry.TDefPage * harness.Database.PageSizeBytes)) + harness.Database.TDef.NumRows;
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(numRows), RowCount + 1_000);
+        }
+
+        return bytes;
     }
 }

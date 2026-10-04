@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Pages;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -17,7 +18,8 @@ using Xunit;
 /// <summary>
 /// Pins the owned-page and row-directory seams split out of
 /// <see cref="DatabaseFile"/>: <see cref="OwnedDataPages"/> finds the same
-/// pages with and without its caches and refuses to cache over the writer's
+/// pages with and without its caches, reads a rejected usage map once when it
+/// caches, and refuses to cache over the writer's
 /// file, the two row-directory parsers of <see cref="DataPageRows"/> agree on
 /// every data page of the Access-authored fixtures, and the writer's owned
 /// pages include the pages a transaction appended.
@@ -78,6 +80,62 @@ public sealed class OwnedDataPagesTests
 
             Assert.Equal(await CountRowsAsync(db.OwnedPages, entry.TDefPage), await CountRowsAsync(uncached, entry.TDefPage));
         }
+    }
+
+    /// <summary>
+    /// A caching instance remembers a table's owned pages when its usage map
+    /// is rejected too, so it reads the TDEF, the map and the pages the map
+    /// lists once; an instance that does not cache, as the writer's does not,
+    /// reads and validates the map, and then takes the whole-file pass, on
+    /// every call.
+    /// </summary>
+    [Fact]
+    public async Task GetOwnedDataPages_RejectedUsageMap_IsValidatedOnceWhenCaching()
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
+        long tdefPage;
+        int numRowsOffset;
+        await using (WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        {
+            Assert.Equal(60, await writer.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct));
+            CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
+            Assert.NotNull(entry);
+            tdefPage = entry.TDefPage;
+            numRowsOffset = checked((int)(tdefPage * writer.Database.PageSizeBytes)) + writer.Database.TDef.NumRows;
+        }
+
+        // Declare more rows than the mapped pages hold, so the map is rejected.
+        byte[] bytes = stream.ToArray();
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(numRowsOffset), 1_000);
+
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
+        DatabaseFile db = harness.Database;
+        using var cached = new OwnedDataPages(db.Pages, db.Profile, cacheResults: true);
+        using var uncached = new OwnedDataPages(db.Pages, db.Profile, cacheResults: false);
+
+        // The first call reads the TDEF page, the map and the pages it lists,
+        // and the rejected map sends it on to the whole-file pass, which reads
+        // every page from 3 on.
+        counting.Reset();
+        IReadOnlyList<long> owned = await cached.GetOwnedDataPagesAsync(tdefPage, Ct);
+        long firstCallBytes = counting.BytesRead;
+        Assert.NotEmpty(owned);
+        int pageCount = bytes.Length / db.PageSizeBytes;
+        Assert.True(
+            counting.PagesRead(db.PageSizeBytes).IsSupersetOf(Enumerable.Range(3, pageCount - 3).Select(page => (long)page)),
+            "The first call did not take the whole-file owned-page pass, so the usage map was not rejected.");
+
+        counting.Reset();
+        Assert.Equal(owned, await cached.GetOwnedDataPagesAsync(tdefPage, Ct));
+        Assert.True(counting.BytesRead == 0, $"The second call read pages {string.Join(", ", counting.PagesRead(db.PageSizeBytes).Order())}.");
+
+        // An instance that does not cache reads the TDEF page, the map and the
+        // pages it lists again before the whole-file pass: as many bytes as the
+        // caching instance's first call.
+        Assert.Equal(owned, await uncached.GetOwnedDataPagesAsync(tdefPage, Ct));
+        Assert.Equal(firstCallBytes, counting.BytesRead);
     }
 
     [Theory]
