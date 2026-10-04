@@ -34,7 +34,7 @@ jobs:
     steps:
       # MinVer computes the package version from the tags, so fetch the full history.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -42,7 +42,7 @@ jobs:
       # installed only for its runtime, which runs the net8.0 test leg; that leg loads
       # the library's netstandard2.1 build.
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
           dotnet-version: 8.0.x
@@ -69,7 +69,7 @@ jobs:
       # publish.yml pushes this artifact, so a release publishes the exact package
       # these tests ran against instead of rebuilding it.
       - name: Upload package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nupkg
           path: artifacts/nupkg/*.nupkg
