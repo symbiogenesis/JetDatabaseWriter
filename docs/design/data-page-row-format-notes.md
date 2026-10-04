@@ -56,6 +56,16 @@ values, and ends with a trailer (forward order):
 every read path (typed, string and direct decoders, catalog scans, the
 writer's snapshots and long-value walks).
 
+The fixed area holds each fixed column at its descriptor's `offset_F`.
+Access reserves every fixed column's slot, even when the last fixed columns
+are Null: every Jet3 fixture does, and Jackcess notes that Access expects it.
+`RowEncoder.SerializeRow` ends the fixed area after the last fixed column that
+holds a value (or the slot of a Null Attachment or Complex column), so a
+writer row whose last fixed columns are Null is shorter than Access's. This
+library's reader, Jackcess and mdbtools accept both, because a Null fixed
+column is read from the null mask; whether Access accepts the shorter form is
+unchecked.
+
 A row never spans pages, so it is at most the page size less the data-page
 header and one row-offset slot: 2,036 bytes on Jet3 and 4,080 on Jet4/ACE
 (`DataPageLayout.MaxRowLength`). MEMO values over 1,024 bytes and OLE
