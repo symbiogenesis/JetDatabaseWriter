@@ -712,6 +712,7 @@ internal sealed class TableSchemaEditor(
     /// <exception cref="InvalidOperationException">Thrown when the projection leaves no columns, or drops a relationship key column or a column another column's expression names.</exception>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name would push an expression that names it past the expression limits.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
+    /// <exception cref="JetLimitationException">Thrown, before anything is written, when an index of the table names a column the table does not have, or the index section of its table definition cannot be parsed or runs past the end of it (<see cref="IndexMaintainer.ThrowIfIndexesUnmaintainableAsync"/>).</exception>
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -796,6 +797,11 @@ internal sealed class TableSchemaEditor(
         RelationshipRewriteState relationshipState =
             await relationships.CaptureForRewriteAsync(tableName, entry.TDefPage, tableDef, cancellationToken).ConfigureAwait(false);
         RelationshipManager.EnsureKeyColumnsSurvive(relationshipState, mapColumnName);
+
+        // Refuse, before anything is written, a table with an index the writer
+        // cannot maintain: the projection below could only drop such an index,
+        // or never see it, so the rewrite would lose it without a word.
+        await indexMaintainer.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
 
         // Snapshot existing rows AND existing indexes BEFORE we mutate the catalog,
         // so the snapshot reader sees the original schema and we can forward

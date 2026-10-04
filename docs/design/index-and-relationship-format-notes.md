@@ -600,8 +600,21 @@ New writer-side helper, now owned by `IndexMaintainer`: `TryMaintainIndexesIncre
   writes `first_dp` / `used_pages` patches back to whichever physical page
   holds them (`DatabaseFile.WriteTDefChainInPlaceAsync`,
   `WriteTDefInt32Async`). A TDEF whose index section still cannot be parsed
-  makes `MaintainIndexesAsync` and the unique pre-check throw
-  `JetLimitationException` instead of skipping the indexes.
+  or runs past the end of the chain as read, or an index that names a column
+  the table does not have, makes every insert, update, delete and schema
+  rewrite of that table throw `JetLimitationException` before it changes
+  anything: they first call `IndexMaintainer.ThrowIfIndexesUnmaintainableAsync`,
+  which runs the same resolver as `MaintainIndexesAsync` and names the table
+  and, when its name can be read, the index. Wide tables written by builds
+  before 4.0.0 can have either: their stray `used_pages` byte puts a phantom
+  column in a `col_map`, or, on a continuation page's type byte, ends the
+  chain at the page before, cutting off the index descriptors, entries and
+  names past it. The indexes are never skipped. Three writes that reach such a table do
+  not call the check yet, and change the file before the rebuild throws: a
+  cascade from a related table (`RelationshipEnforcer`),
+  `CreateRelationshipAsync` (both tables), and the complex reference that
+  `AddAttachmentAsync` / `AddMultiValueItemAsync` allocates for a row whose
+  complex slot is null, when a complex column is indexed.
 - Any key column is `Numeric` AND the column was written by a pre-W23 build (descriptor `NumericPrecision == 0`) — fall back to the W13 snapshot-driven canonical-scale pre-pass. W23+ NUMERIC columns engage the fast path using the declared scale.
 - The index root is not a single leaf (`IndexPageCodec.IsSingleRootLeaf` returns false).
 - The encoder rejects any value (text outside General Legacy, etc.).

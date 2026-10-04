@@ -207,10 +207,11 @@ internal sealed class IndexMaintainer(
         => UsageMap.WritePointer(tdefBuffer, usedPagesOffset, rowIndex, usageMapPage);
 
     /// <summary>
-    /// Builds the exception the bulk path throws when it cannot maintain a
-    /// table's indexes. Index maintenance is never skipped silently: a table
-    /// whose indexes cannot be rebuilt fails the mutation instead of leaving
-    /// stale B-trees behind.
+    /// Builds the exception the write preflight and the bulk path throw when a
+    /// table's indexes cannot be maintained. Index maintenance is never
+    /// skipped silently: a table whose indexes cannot be rebuilt refuses the
+    /// mutation instead of leaving stale B-trees behind, before it changes
+    /// anything when the preflight runs first.
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="reason">Why the indexes cannot be maintained.</param>
@@ -366,6 +367,118 @@ internal sealed class IndexMaintainer(
     }
 
     /// <summary>
+    /// The one check of whether a table's indexes can be maintained, shared by
+    /// the write preflight (<see cref="ThrowIfIndexesUnmaintainableAsync"/>)
+    /// and the bulk rebuild (<see cref="RebuildIndexesAsync"/>), so both
+    /// refuse the same tables with the same message. Reads the whole TDEF
+    /// chain, checks that every real-index descriptor, logical index entry and
+    /// logical index name lies within it, decodes the index catalog with its
+    /// logical index names, and resolves every real index's key columns
+    /// against <paramref name="tableDef"/>.
+    /// </summary>
+    /// <param name="tdefPage">The table's first TDEF page.</param>
+    /// <param name="tableDef">The table's definition.</param>
+    /// <param name="tableName">The table name, for the message.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>
+    /// The TDEF preamble, and the resolved catalog, in which every real index
+    /// has its key columns; the catalog is <see langword="null"/> when the
+    /// table definition declares no index.
+    /// </returns>
+    /// <exception cref="JetLimitationException">The index section cannot be parsed or runs past the end of the table definition, or an index names a column the table does not have.</exception>
+    private async ValueTask<(TdefPreamble Preamble, IndexCatalogReader.ResolvedIndexCatalog? Catalog)> ResolveMaintainableIndexesAsync(
+        long tdefPage,
+        TableDef tableDef,
+        string tableName,
+        CancellationToken cancellationToken)
+    {
+        (TdefPreambleStatus status, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (status == TdefPreambleStatus.Empty)
+        {
+            return (preamble, null);
+        }
+
+        if (status != TdefPreambleStatus.Ok)
+        {
+            string reason = status == TdefPreambleStatus.TooMany
+                ? $"its table definition declares {preamble.NumIdx} logical and {preamble.NumRealIdx} real indexes"
+                : "the column-name section of its table definition could not be walked";
+            throw CreateUnmaintainableIndexesException(tableName, reason);
+        }
+
+        IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(preamble.RealIdxDescStart, preamble.NumRealIdx, preamble.NumIdx);
+        List<string> logicalIndexNames = IndexCatalogReader.ReadLogicalIdxNames(db, preamble.Buffer, anchors.LogIdxNamesStart, preamble.NumIdx);
+        this.ThrowIfIndexSectionCutShort(tableName, preamble, anchors, logicalIndexNames.Count);
+        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
+            preamble.Buffer,
+            db.IndexLayoutInfo,
+            anchors,
+            tableDef.Columns,
+            logicalIndexNames);
+
+        // Key columns are resolved by col_num, so deleted-column gaps are
+        // fine. An index naming a column the table does not have cannot be
+        // rebuilt, and is refused rather than left stale or skipped.
+        for (int realIdxNum = 0; realIdxNum < preamble.NumRealIdx; realIdxNum++)
+        {
+            if (catalog.RealIdxByNum.ContainsKey(realIdxNum) && !catalog.TryGetKeyColumnInfos(realIdxNum, out _))
+            {
+                throw CreateUnmaintainableIndexesException(
+                    tableName,
+                    $"index '{catalog.Catalog.GetNameOrFallback(realIdxNum)}' names a column the table does not have");
+            }
+        }
+
+        return (preamble, catalog);
+    }
+
+    /// <summary>
+    /// Refuses a table whose index section runs past the end of its table
+    /// definition as read. The chain read stops at a page whose type byte is
+    /// not a TDEF page's, as when the stray <c>used_pages</c> byte of a build
+    /// before 4.0.0 landed on a continuation page's header, and the catalog
+    /// decode stops at the first descriptor or entry it cannot read, so the
+    /// indexes past that point would be neither checked nor maintained, and
+    /// a schema rewrite would not carry them over.
+    /// </summary>
+    /// <param name="tableName">The table name, for the message.</param>
+    /// <param name="preamble">The TDEF preamble, with the chain as read.</param>
+    /// <param name="anchors">The index section's anchors.</param>
+    /// <param name="logicalIndexNameCount">How many logical index names could be read.</param>
+    /// <exception cref="JetLimitationException">A real-index descriptor, a logical index entry or a logical index name lies past the end of the table definition.</exception>
+    private void ThrowIfIndexSectionCutShort(string tableName, TdefPreamble preamble, IndexSectionAnchors anchors, int logicalIndexNameCount)
+    {
+        IndexLayout layout = db.IndexLayoutInfo;
+        int length = preamble.Buffer.Length;
+        for (int realIdxNum = 0; realIdxNum < preamble.NumRealIdx; realIdxNum++)
+        {
+            if (!layout.TryGetRealIdxPhysOffset(anchors.RealIdxDescStart, realIdxNum, length, out _))
+            {
+                throw CreateUnmaintainableIndexesException(
+                    tableName,
+                    $"its table definition ends before the descriptor of real index {realIdxNum}");
+            }
+        }
+
+        for (int logicalIdxNum = 0; logicalIdxNum < preamble.NumIdx; logicalIdxNum++)
+        {
+            if (!layout.TryGetLogicalIdxFieldsOffset(anchors.LogIdxStart, logicalIdxNum, length, out _))
+            {
+                throw CreateUnmaintainableIndexesException(
+                    tableName,
+                    $"its table definition ends before the entry of logical index {logicalIdxNum}");
+            }
+        }
+
+        if (logicalIndexNameCount < preamble.NumIdx)
+        {
+            throw CreateUnmaintainableIndexesException(
+                tableName,
+                $"its table definition ends before the name of logical index {logicalIndexNameCount}");
+        }
+    }
+
+    /// <summary>
     /// rebuild every index B-tree on <paramref name="tableName"/> from the
     /// current row data. Called at the end of each public mutation method that
     /// touches table rows so that indexes stay live instead of going stale until
@@ -429,37 +542,23 @@ internal sealed class IndexMaintainer(
         // Read the whole TDEF chain. Wide schemas (>32 col / >16 idx on Jet3,
         // ≫50 col on Jet4 / ACE) span several pages, and their real-idx
         // descriptors (with the first_dp / used_pages fields patched below)
-        // sit on a continuation page.
-        (TdefPreambleStatus status, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (status == TdefPreambleStatus.Empty)
+        // sit on a continuation page. The resolver throws, before any tree is
+        // written, when an index cannot be rebuilt, exactly as the write
+        // preflight (ThrowIfIndexesUnmaintainableAsync) does.
+        (TdefPreamble preamble, IndexCatalogReader.ResolvedIndexCatalog? catalog) =
+            await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (catalog is null)
         {
             return;
         }
 
-        if (status != TdefPreambleStatus.Ok)
-        {
-            string reason = status == TdefPreambleStatus.TooMany
-                ? $"its table definition declares {preamble.NumIdx} logical and {preamble.NumRealIdx} real indexes"
-                : "the column-name section of its table definition could not be walked";
-            throw CreateUnmaintainableIndexesException(tableName, reason);
-        }
-
         byte[] tdefBuffer = preamble.Buffer;
-        int numCols = preamble.NumCols;
-        int numIdx = preamble.NumIdx;
         int numRealIdx = preamble.NumRealIdx;
-        int realIdxDescStart = preamble.RealIdxDescStart;
 
         var leafLayout = IndexPageLayout.ForFormat(db.Format);
 
-        // Decode the index catalog: every populated real-idx slot (with
-        // IsUnique already promoted for any slot backing a PK logical-idx),
-        // along with the snapshot-index map and pre-resolved key columns.
-        IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
-            tdefBuffer,
-            db.IndexLayoutInfo,
-            db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
-            tableDef.Columns);
+        // Every populated real-idx slot, with IsUnique already promoted for
+        // any slot backing a PK logical-idx, and its key columns resolved.
         Dictionary<int, RealIdxEntry> realIdxByNum = catalog.RealIdxByNum;
 
         if (realIdxByNum.Count == 0)
@@ -509,14 +608,9 @@ internal sealed class IndexMaintainer(
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // Key columns are resolved by col_num, so deleted-column gaps are
-                // fine; an index naming a column the table does not have cannot
-                // be rebuilt, and is reported rather than left stale.
-                if (!catalog.TryGetKeyColumnInfos(rieKey, out List<KeyColumnInfo>? keyColInfos))
-                {
-                    throw CreateUnmaintainableIndexesException(
-                        tableName,
-                        $"real index {rieKey} names a column the table does not have");
-                }
+                // fine; the resolver has already refused an index naming a
+                // column the table does not have.
+                List<KeyColumnInfo> keyColInfos = catalog.KeyColumnInfosByRealIdx[rieKey];
 
                 List<IndexEntry> entries = new(rows.Count);
                 object?[] cells = new object?[keyColInfos.Count];
@@ -630,6 +724,34 @@ internal sealed class IndexMaintainer(
             await this.DeallocateReplacedIndexPagesAsync(tdefPage, oldIndexPageGroups, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// Checks, before a write changes anything, that every index of the table
+    /// can be maintained: the index section of its table definition can be
+    /// parsed and lies wholly within the TDEF chain, and every real index
+    /// names only columns the table has. The wide tables of builds before
+    /// 4.0.0 fail it: a stray <c>used_pages</c> byte in a <c>col_map</c>
+    /// names a missing column, and one on a continuation page's type byte
+    /// cuts the chain short. Either would make the index rebuild throw, or
+    /// skip the indexes it cannot read, after the write had already changed
+    /// rows. Insert, update and delete in <see cref="TableDataWriter"/> and
+    /// the schema rewrite in <see cref="TableSchemaEditor"/> call this first,
+    /// so each of those writes to such a table is refused and leaves the file
+    /// byte for byte unchanged. Writes that reach the table another way do
+    /// not call it yet and still change the file before the rebuild throws:
+    /// a cascade from a related table, <c>CreateRelationshipAsync</c>, and a
+    /// complex item added to a row whose complex slot is null. It runs the
+    /// same resolver as <see cref="RebuildIndexesAsync"/>, which throws the
+    /// same exception.
+    /// </summary>
+    /// <param name="tdefPage">The table's first TDEF page.</param>
+    /// <param name="tableDef">The table's definition.</param>
+    /// <param name="tableName">The table name, for the message.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that completes when the check has passed.</returns>
+    /// <exception cref="JetLimitationException">The index section cannot be parsed or runs past the end of the table definition, or an index names a column the table does not have; the message names the table, and the index when its name can be read.</exception>
+    internal async ValueTask ThrowIfIndexesUnmaintainableAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
+        => _ = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
 
     private static long[][] CreateEmptyPageGroups(int numRealIdx)
     {
