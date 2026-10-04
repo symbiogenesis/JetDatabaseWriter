@@ -13,6 +13,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
+using JetDatabaseWriter.ValueEncoding.Models;
 using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -64,12 +65,13 @@ internal sealed class TableRowStore(
         // this guard keeps a placeholder from ever reaching the page.
         UnreadableLongValue.ThrowIfAny(values, tableName: null);
 
-        // A MEMO or OLE value over its inline cap goes to LVAL pages. They are
-        // written only after the row has been encoded and measured with a
-        // placeholder header for each such value, so a value the encoder
-        // rejects, or a row too long for a page, throws before anything is
-        // written. The real headers have the same size, so the row serialized
-        // again with them has the measured length.
+        // A MEMO or OLE value over its inline cap goes to LVAL pages, and so
+        // do the largest of the others while the row is too long for a page.
+        // They are written only after the row has been encoded and measured
+        // with a placeholder header for each such value, so a value the
+        // encoder rejects, or a row too long for a page, throws before
+        // anything is written. The real headers have the same size, so the
+        // row serialized again with them has the measured length.
         (object[] prepared, byte[] rowBytes) = this.EncodeRow(tableDef, values);
         if (await longValueEncoder.WriteLongValuesAsync(prepared, cancellationToken).ConfigureAwait(false))
         {
@@ -103,11 +105,16 @@ internal sealed class TableRowStore(
     /// I/O and no change to any state: each MEMO or OLE value over its inline
     /// cap becomes a pending long value with a zeroed 12-byte placeholder
     /// header (<see cref="LongValueEncoder.PrepareLongValues"/>), and the row
-    /// is serialized with those placeholders (<see cref="RowEncoder.SerializeRow"/>).
-    /// A value the encoder refuses, or a row longer than one data page, throws
-    /// here with the exception the insert would throw, so a caller that
-    /// rewrites a row by deleting it and inserting the new version calls this
-    /// for every new version before its first delete.
+    /// is serialized with those placeholders (<see cref="RowEncoder.TrySerializeRow"/>).
+    /// While the row is longer than one data page, the largest MEMO or
+    /// byte-array OLE value left in it, the first of equal ones in column
+    /// order, becomes a pending long value too (Microsoft Access also moves
+    /// long values out of a full row; which ones it picks is unchecked). An
+    /// OLE value given as a string stays in the row. A value the encoder
+    /// refuses, or a row still too long once no such value is left in it,
+    /// throws here with the exception the insert would throw, so a caller
+    /// that rewrites a row by deleting it and inserting the new version calls
+    /// this for every new version before its first delete.
     /// </summary>
     /// <param name="tableDef">The row's table.</param>
     /// <param name="values">The row, one value per column; it is not changed.</param>
@@ -117,15 +124,49 @@ internal sealed class TableRowStore(
     /// length is final.
     /// </returns>
     /// <exception cref="JetLimitationException">
-    /// The row is longer than one data page, or a value is past what its column
-    /// stores, such as a Decimal value past its precision or a long value past
-    /// the LVAL length limit.
+    /// The row is longer than one data page with every MEMO and byte-array
+    /// OLE value it holds moved out, or a value is past what its column
+    /// stores, such as a Decimal value past its precision or a long value
+    /// past the LVAL length limit.
     /// </exception>
     /// <exception cref="OverflowException">A value does not fit its column's type, such as a Currency value past ±922,337,203,685,477.5807.</exception>
     internal (object[] Values, byte[] RowBytes) EncodeRow(TableDef tableDef, object[] values)
     {
         object[] prepared = longValueEncoder.PrepareLongValues(tableDef, values);
-        return (prepared, rowEncoder.SerializeRow(tableDef, prepared));
+        if (rowEncoder.TrySerializeRow(tableDef, prepared, out int rowLength) is { } rowBytes)
+        {
+            return (prepared, rowBytes);
+        }
+
+        // Moving a value leaves its 12-byte header in place of its inline
+        // form, so the row shrinks by the payload's length (a Jet3 jump table
+        // only shrinks with the row). Values are moved until their payloads
+        // cover the excess and the row is measured again; each pass moves at
+        // least one value, so the loop ends.
+        List<(int Column, byte[] Payload)> inline = longValueEncoder.CollectInlineLongValues(tableDef, prepared);
+        int next = 0;
+        while (next < inline.Count)
+        {
+            if (ReferenceEquals(prepared, values))
+            {
+                prepared = (object[])values.Clone();
+            }
+
+            int excess = rowLength - rowEncoder.MaxRowLength;
+            while (excess > 0 && next < inline.Count)
+            {
+                (int column, byte[] payload) = inline[next++];
+                prepared[column] = new PreEncodedLongValue(new byte[Constants.LongValue.HeaderSize], payload);
+                excess -= payload.Length;
+            }
+
+            if (rowEncoder.TrySerializeRow(tableDef, prepared, out rowLength) is { } fitted)
+            {
+                return (prepared, fitted);
+            }
+        }
+
+        throw rowEncoder.CreateRowTooLongException(rowLength);
     }
 
     /// <summary>

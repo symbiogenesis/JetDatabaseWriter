@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.ValueEncoding;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -49,10 +50,11 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
     /// MEMO / OLE value whose payload exceeds the inline cap is replaced with a
     /// pending <see cref="PreEncodedLongValue"/> that holds the payload and a
     /// zeroed 12-byte header. The caller can then serialize the row, which
-    /// checks its values and its size, before any page is written, and calls
-    /// <see cref="WriteLongValuesAsync"/> once the row is known to fit. Returns
-    /// the same array reference when no value leaves the row and a clone
-    /// otherwise, so the caller's original <c>values</c> stays untouched.
+    /// checks its values and its size, before any page is written, move more
+    /// values out of a row still too long (<see cref="CollectInlineLongValues"/>),
+    /// and call <see cref="WriteLongValuesAsync"/> once the row is known to
+    /// fit. Returns the same array reference when no value leaves the row and
+    /// a clone otherwise, so the caller's original <c>values</c> stays untouched.
     /// </summary>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
@@ -63,57 +65,8 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
         object[]? result = null;
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
-            ColumnInfo col = tableDef.Columns[i];
-
-            // A calculated column stores its cached value by its result type,
-            // so a Memo result in a Text descriptor is a long value too.
-            ColumnType valueType = ResolveValueType(col);
-            if (col.IsFixed || (valueType != OleType && valueType != MemoType))
-            {
-                continue;
-            }
-
-            object value = values[i];
-            if (value is null or DBNull or PreEncodedLongValue)
-            {
-                continue;
-            }
-
-            byte[]? data;
-            int inlineCap;
-            if (valueType == OleType)
-            {
-                data = value as byte[];
-                if (data == null)
-                {
-                    continue;
-                }
-
-                if (col.IsCalculated)
-                {
-                    data = CalculatedColumnUtil.Wrap(data);
-                }
-
-                inlineCap = Constants.LongValue.MaxInlineOleBytes;
-            }
-            else
-            {
-                string? text = value as string ?? Convert.ToString(value, CultureInfo.InvariantCulture);
-                if (string.IsNullOrEmpty(text))
-                {
-                    continue;
-                }
-
-                data = db.EncodeTextForFormat(text, col.IsCompressedUnicode);
-                if (col.IsCalculated)
-                {
-                    data = CalculatedColumnUtil.Wrap(data);
-                }
-
-                inlineCap = Constants.LongValue.MaxInlineMemoBytes;
-            }
-
-            if (data.Length <= inlineCap)
+            if (!this.TryGetLongValuePayload(tableDef.Columns[i], values[i], out byte[]? data, out int inlineCap)
+                || data.Length <= inlineCap)
             {
                 continue;
             }
@@ -124,6 +77,93 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
         }
 
         return result ?? values;
+    }
+
+    /// <summary>
+    /// Returns the MEMO / OLE values of <paramref name="values"/> that are
+    /// still stored in the row, each with the payload it would store on LVAL
+    /// pages, in the order a row too long for a data page moves them there:
+    /// the largest payload first, and of equal ones the first in column order.
+    /// Moving a value takes its payload out of the row and leaves a 12-byte
+    /// header, as long as the value's inline form. Writes nothing.
+    /// </summary>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="values">The values <see cref="PrepareLongValues"/> returned.</param>
+    /// <returns>Each inline long value's column index and payload, largest payload first.</returns>
+    internal List<(int Column, byte[] Payload)> CollectInlineLongValues(TableDef tableDef, object[] values)
+    {
+        var inline = new List<(int Column, byte[] Payload)>();
+        for (int i = 0; i < tableDef.Columns.Count; i++)
+        {
+            if (this.TryGetLongValuePayload(tableDef.Columns[i], values[i], out byte[]? data, out _) && data.Length > 0)
+            {
+                inline.Add((i, data));
+            }
+        }
+
+        inline.Sort(static (a, b) =>
+        {
+            int bySize = b.Payload.Length.CompareTo(a.Payload.Length);
+            return bySize != 0 ? bySize : a.Column.CompareTo(b.Column);
+        });
+        return inline;
+    }
+
+    /// <summary>
+    /// Returns the payload <paramref name="value"/> stores in a MEMO / OLE
+    /// column, inline or on LVAL pages, and the column's inline cap: the text
+    /// in its stored encoding (compressed Unicode where the column asks for
+    /// it) or the bytes, wrapped for a calculated column, whose cached value
+    /// is a long value when its result type is Memo or OLE.
+    /// </summary>
+    /// <param name="col">The column.</param>
+    /// <param name="value">The column's value.</param>
+    /// <param name="data">The payload.</param>
+    /// <param name="inlineCap">The largest payload the row holds inline.</param>
+    /// <returns>
+    /// <see langword="false"/> for a column that holds no long value, and for
+    /// a Null, empty or already encoded value or an OLE value that is not a
+    /// byte array, which this pass leaves to the row encoder.
+    /// </returns>
+    private bool TryGetLongValuePayload(ColumnInfo col, object? value, [NotNullWhen(true)] out byte[]? data, out int inlineCap)
+    {
+        data = null;
+        inlineCap = 0;
+
+        // A calculated column stores its cached value by its result type,
+        // so a Memo result in a Text descriptor is a long value too.
+        ColumnType valueType = ResolveValueType(col);
+        if (col.IsFixed || (valueType != OleType && valueType != MemoType) || value is null or DBNull or PreEncodedLongValue)
+        {
+            return false;
+        }
+
+        if (valueType == OleType)
+        {
+            if (value is not byte[] bytes)
+            {
+                return false;
+            }
+
+            data = col.IsCalculated ? CalculatedColumnUtil.Wrap(bytes) : bytes;
+            inlineCap = Constants.LongValue.MaxInlineOleBytes;
+            return true;
+        }
+
+        string? text = value as string ?? Convert.ToString(value, CultureInfo.InvariantCulture);
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        data = db.EncodeTextForFormat(text, col.IsCompressedUnicode);
+        if (col.IsCalculated)
+        {
+            data = CalculatedColumnUtil.Wrap(data);
+        }
+
+        inlineCap = Constants.LongValue.MaxInlineMemoBytes;
+        return true;
     }
 
     /// <summary>

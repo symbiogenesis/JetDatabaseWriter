@@ -282,6 +282,36 @@ internal sealed class RowEncoder(DatabaseFile db)
         return valueType == TextType ? Constants.CalculatedColumn.MaxTextResultBytes : column.Size;
     }
 
+    /// <summary>Gets the longest row one data page holds (<see cref="DataPageLayout.MaxRowLength"/>).</summary>
+    internal int MaxRowLength => db.DataPage.MaxRowLength(db.PageSizeBytes);
+
+    /// <summary>
+    /// Creates the exception for a row of <paramref name="rowLength"/> bytes,
+    /// longer than <see cref="MaxRowLength"/>.
+    /// </summary>
+    /// <param name="rowLength">The row's length in bytes.</param>
+    /// <returns>The exception.</returns>
+    internal JetLimitationException CreateRowTooLongException(int rowLength) => new(
+        $"The row is {rowLength} bytes, which exceeds the {this.MaxRowLength}-byte maximum of one data page. MEMO values and byte-array OLE values move to long-value pages first; store fewer or shorter values in the row's other columns, or give its OLE values as byte arrays.");
+
+    /// <summary>
+    /// Serializes a typed value array into the binary row format understood
+    /// by the JET engine (null mask, fixed area, variable-length trailers),
+    /// as <see cref="TrySerializeRow"/> does, and throws for a row longer
+    /// than one data page.
+    /// </summary>
+    /// <param name="tableDef">The table def.</param>
+    /// <param name="values">The values.</param>
+    /// <returns>The row's bytes.</returns>
+    /// <exception cref="JetLimitationException">
+    /// The row is longer than one data page holds
+    /// (<see cref="DataPageLayout.MaxRowLength"/>), or a Jet3 row would
+    /// have more than 255 columns or variable columns, or 255 variable columns
+    /// with an EOD the jump table cannot encode.
+    /// </exception>
+    internal byte[] SerializeRow(TableDef tableDef, object[] values)
+        => this.TrySerializeRow(tableDef, values, out int rowLength) ?? throw this.CreateRowTooLongException(rowLength);
+
     /// <summary>
     /// Serializes a typed value array into the binary row format understood
     /// by the JET engine (null mask, fixed area, variable-length trailers).
@@ -292,13 +322,13 @@ internal sealed class RowEncoder(DatabaseFile db)
     /// </summary>
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
+    /// <param name="rowLength">The row's length in bytes, whether or not it fits a data page.</param>
+    /// <returns>The row's bytes, or <see langword="null"/> when the row is longer than one data page holds (<see cref="MaxRowLength"/>).</returns>
     /// <exception cref="JetLimitationException">
-    /// The row is longer than one data page holds
-    /// (<see cref="DataPageLayout.MaxRowLength"/>), or a Jet3 row would
-    /// have more than 255 columns or variable columns, or 255 variable columns
-    /// with an EOD the jump table cannot encode.
+    /// A Jet3 row would have more than 255 columns or variable columns, or 255
+    /// variable columns with an EOD the jump table cannot encode.
     /// </exception>
-    internal byte[] SerializeRow(TableDef tableDef, object[] values)
+    internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength)
     {
         int numCols = 0;
         int maxFixedEnd = 0;
@@ -404,19 +434,22 @@ internal sealed class RowEncoder(DatabaseFile db)
 
         int baseRowLength = db.RowFields.NumCols + fixedAreaSize + varPayloadSize + db.RowFields.Eod + (varLen * db.RowFields.VarEntry) + db.RowFields.VarLen + nullMaskLen;
         int jumpSize = jet3 ? Jet3JumpTable.CountForLength(baseRowLength) : 0;
-        int rowLength = baseRowLength + jumpSize;
+        rowLength = baseRowLength + jumpSize;
 
         // A row never spans pages. TableRowStore.EncodeRow serializes the row,
         // with a placeholder header for each value bound for LVAL pages, before
         // an insert writes any LVAL or data page and before an update deletes
         // the first row it or its cascades rewrite (TableDataWriter.
         // UpdateRowsAsync, RelationshipEnforcer.PlanCascadeUpdatesAsync), so
-        // this throw leaves the file unchanged.
-        int maxRowLength = db.DataPage.MaxRowLength(db.PageSizeBytes);
-        if (rowLength > maxRowLength)
+        // a row too long leaves the file unchanged.
+        if (rowLength > this.MaxRowLength)
         {
-            throw new JetLimitationException(
-                $"The row is {rowLength} bytes, which exceeds the {maxRowLength}-byte maximum of one data page. Store fewer or shorter inline values; MEMO values over {Constants.LongValue.MaxInlineMemoBytes} bytes and OLE values over {Constants.LongValue.MaxInlineOleBytes} bytes are stored outside the row.");
+            if (maxFixedEnd > 0)
+            {
+                ArrayPool<byte>.Shared.Return(fixedArea);
+            }
+
+            return null;
         }
 
         byte[] row = new byte[rowLength];

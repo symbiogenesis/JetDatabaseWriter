@@ -22,7 +22,9 @@ using Xunit;
 /// index-seek path and on the snapshot path. Jet3 always takes the snapshot
 /// path; Jet4 and ACCDB seek the child's foreign-key index, and take the
 /// snapshot path when the seek cannot decode a child row (one with a MEMO
-/// value). The update's own new rows are encoded once the plan has written
+/// value). A child row of inline MEMO values that the new key grows past a
+/// page has the largest of them moved to LVAL pages instead, as an insert
+/// does. The update's own new rows are encoded once the plan has written
 /// any self-relationship's cascaded key into them and before any cascade is
 /// applied, so each is measured as it will be written, and a parent row that
 /// cannot be encoded moves no child row.
@@ -142,6 +144,66 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
         IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(Ct);
         Assert.Equal(1, stats.Single(stat => stat.Name == "P").RowCount);
         Assert.Equal(2, stats.Single(stat => stat.Name == "C").RowCount);
+    }
+
+    /// <summary>
+    /// A rewritten child row of inline MEMO values that the new key grows past
+    /// a data page has the largest of them moved to LVAL pages, as an insert
+    /// does. <c>C.PCode</c> references the Text key <c>P.Code</c> and cascades
+    /// updates. The child row holds two 950-character MEMO values on Jet3
+    /// (1,943 bytes) and four 980-character ones on Jet4 and ACCDB (about
+    /// 4,000 bytes), each under the 1,024-byte inline cap, so changing the key
+    /// from 'k' to 200 characters takes it past a page. The update succeeds,
+    /// and the child row reads back with the new key and every MEMO value
+    /// intact, with its row count and indexes in step.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the update.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task CascadeUpdate_RewrittenChildRowPastAPageWithInlineMemoValues_MovesThemToLvalPages(DatabaseFormat format, WriteMode mode)
+    {
+        int memoColumns = format == DatabaseFormat.Jet3Mdb ? 2 : 4;
+        int memoLength = format == DatabaseFormat.Jet3Mdb ? 950 : 980;
+        object[] memos = [.. Enumerable.Range(0, memoColumns).Select(i => (object)new string((char)('a' + i), memoLength))];
+        string newCode = new('n', 200);
+
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("P", [new ColumnDefinition("Code", typeof(string), maxLength: 200) { IsPrimaryKey = true }], Ct);
+            await writer.CreateTableAsync(
+                "C",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("PCode", typeof(string), maxLength: 200),
+                    .. Enumerable.Range(0, memoColumns).Select(i => new ColumnDefinition($"Memo{i}", typeof(string))),
+                ],
+                Ct);
+            await writer.InsertRowAsync("P", ["k"], Ct);
+            await writer.InsertRowAsync("C", [1, "k", .. memos], Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_P", "P", "Code", "C", "PCode") { CascadeUpdates = true }, Ct);
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.Where("Code", "k"), new RowValues { ["Code"] = newCode }, Ct)));
+        }
+
+        Assert.Equal([newCode], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        ms.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, Ct))
+        {
+            object[] child = Assert.Single(await reader.Rows("C", cancellationToken: Ct).ToListAsync(Ct));
+            object[] expected = [1, newCode, .. memos];
+            Assert.Equal(expected, child);
+            IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(Ct);
+            Assert.Equal(1, stats.Single(stat => stat.Name == "C").RowCount);
+        }
+
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
     }
 
     /// <summary>

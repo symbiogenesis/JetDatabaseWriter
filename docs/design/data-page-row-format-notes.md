@@ -71,18 +71,27 @@ header and one row-offset slot: 2,036 bytes on Jet3 and 4,080 on Jet4/ACE
 (`DataPageLayout.MaxRowLength`). MEMO values over 1,024 bytes and OLE
 values over 256 bytes go to LVAL pages and take a 12-byte header in the row.
 `TableRowStore.EncodeRow` serializes the row with a zeroed placeholder for
-each such header, with no I/O, and `TableRowStore.InsertRowDataLocAsync`
-calls it before it writes any LVAL or data page, so
-`RowEncoder.SerializeRow` throws `JetLimitationException` for a longer row
-with the file unchanged. (The LVAL pages used to be written first, and
-stayed behind, unreferenced, after the throw.) Before the check existed, the
-writer appended an empty data page and then threw
-`ArgumentOutOfRangeException` from the copy, or `InvalidDataException` after
-copying a row one byte too long over the row-offset table;
-`DataPageInserter.WriteRowToPageAsync` now checks the free space before it
-touches the page. Jackcess's `MAX_ROW_SIZE` (recalled as 2,012 and 4,060) and
-Access's documented 2,000 / 4,000 characters per record are lower; whether
-Access rejects rows between those and the page capacity is unchecked.
+each such header, with no I/O. While the row is longer than a page, it
+moves the largest MEMO or byte-array OLE value still inline (the first of
+equal ones in column order) to a placeholder too and measures again:
+moving a value shrinks the row by its payload's length, so it moves values
+until their payloads cover the excess before it serializes the row again.
+Calculated columns with a Memo or OLE result take part, measured by their
+wrapped payload, and compressed text by its compressed bytes. An OLE value
+given as a string stays inline, as UTF-8 bytes. Access moves long values
+out of a full row too; which ones it picks is unchecked.
+`TableRowStore.InsertRowDataLocAsync` calls `EncodeRow` before it writes
+any LVAL or data page, so a row still too long with every such value moved
+throws `JetLimitationException` with the file unchanged. (The LVAL pages
+used to be written first, and stayed behind, unreferenced, after the
+throw.) Before the check existed, the writer appended an empty data page
+and then threw `ArgumentOutOfRangeException` from the copy, or
+`InvalidDataException` after copying a row one byte too long over the
+row-offset table; `DataPageInserter.WriteRowToPageAsync` now checks the
+free space before it touches the page. Jackcess's `MAX_ROW_SIZE` (recalled
+as 2,012 and 4,060) and Access's documented 2,000 / 4,000 characters per
+record are lower; whether Access rejects rows between those and the page
+capacity is unchecked.
 
 An update rewrites a row by deleting it and inserting the new version, so
 `RelationshipEnforcer.PlanCascadeUpdatesAsync`, which writes nothing, calls
