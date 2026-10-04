@@ -108,7 +108,7 @@ pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha <commit> -Branch ci/bench-<name> 
 - `-Job short`, `medium` or `dry` replaces BenchmarkDotNet's default adaptive job.
 - The call waits and exits with code 2 like a CI gate. A run can take an hour or more, so keep calling it until it finishes.
 - The full results are in the run's `benchmark-results` artifact.
-- Hosted runners are noisy: treat a difference of a few percent as noise unless it is well outside the error column.
+- Hosted runners are noisy: treat a difference of a few percent as noise unless it is well outside both error columns (BenchmarkDotNet's Error, half the 99.9% confidence interval).
 
 BenchmarkDotNet practice, wherever the benchmarks run:
 

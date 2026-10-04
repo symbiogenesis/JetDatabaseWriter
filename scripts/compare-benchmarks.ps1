@@ -4,8 +4,9 @@ Compares two BenchmarkDotNet result sets and writes a markdown table to the outp
 
 .DESCRIPTION
 Reads every *-report*.json under each directory (a BenchmarkDotNet --artifacts directory or its results folder),
-matches benchmarks by their full name (type, method and parameters), and prints, for each one, the mean time and the
-bytes allocated per operation in both sets, with the head/baseline ratio. A ratio below 1 is faster or smaller.
+matches benchmarks by their full name (type, method and parameters), and prints, for each one, the mean time, its
+error and the bytes allocated per operation in both sets, with the head/baseline ratio. A ratio below 1 is faster or
+smaller. The error is BenchmarkDotNet's Error column: half the width of the mean's 99.9% confidence interval.
 Benchmarks found in only one set are listed after the table. The benchmarks workflow
 (.github/workflows/benchmarks.yml) calls this script to write its run summary.
 
@@ -30,7 +31,8 @@ function Read-Results([string] $dir) {
             $map[$b.FullName] = [pscustomobject]@{
                 Label = $label
                 Mean = if ($b.Statistics) { [double]$b.Statistics.Mean } else { $null }
-                Error = if ($b.Statistics) { [double]$b.Statistics.StandardError } else { $null }
+                # BenchmarkDotNet's Error column is the confidence interval's margin, not the standard error.
+                Error = if ($b.Statistics.ConfidenceInterval) { [double]$b.Statistics.ConfidenceInterval.Margin } else { $null }
                 Allocated = if ($b.Memory) { [double]$b.Memory.BytesAllocatedPerOperation } else { $null }
             }
         }
@@ -65,17 +67,17 @@ $headResults = Read-Results $Head
 $out = [System.Collections.Generic.List[string]]::new()
 $out.Add('## Benchmark comparison')
 $out.Add('')
-$out.Add('The baseline and the head ran back to back on the same runner. Ratio is head / baseline: below 1.00 is faster or smaller. On hosted runners, differences of a few percent are usually noise; compare a change against the error column before reading anything into it.')
+$out.Add('The baseline and the head ran back to back on the same runner. Ratio is head / baseline: below 1.00 is faster or smaller. Error is BenchmarkDotNet''s Error column, half the width of the 99.9% confidence interval of the mean. On hosted runners, differences of a few percent are usually noise; compare a change against both error columns before reading anything into it.')
 $out.Add('')
-$out.Add('| Benchmark | Baseline mean | Head mean | Ratio | Head error | Baseline allocated | Head allocated | Ratio |')
-$out.Add('|---|---:|---:|---:|---:|---:|---:|---:|')
+$out.Add('| Benchmark | Baseline mean | Baseline error | Head mean | Head error | Ratio | Baseline allocated | Head allocated | Ratio |')
+$out.Add('|---|---:|---:|---:|---:|---:|---:|---:|---:|')
 foreach ($name in $headResults.Keys) {
     if (-not $base.Contains($name)) { continue }
     $h = $headResults[$name]
     $b = $base[$name]
-    $out.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f
-        ($h.Label -replace '\|', '\|'), (Format-Time $b.Mean), (Format-Time $h.Mean), (Format-Ratio $h.Mean $b.Mean),
-        (Format-Time $h.Error), (Format-Bytes $b.Allocated), (Format-Bytes $h.Allocated), (Format-Ratio $h.Allocated $b.Allocated)))
+    $out.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f
+        ($h.Label -replace '\|', '\|'), (Format-Time $b.Mean), (Format-Time $b.Error), (Format-Time $h.Mean), (Format-Time $h.Error),
+        (Format-Ratio $h.Mean $b.Mean), (Format-Bytes $b.Allocated), (Format-Bytes $h.Allocated), (Format-Ratio $h.Allocated $b.Allocated)))
 }
 
 $onlyHead = @($headResults.Keys | Where-Object { -not $base.Contains($_) })
