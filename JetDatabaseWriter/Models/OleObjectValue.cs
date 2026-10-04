@@ -18,7 +18,11 @@ using JetDatabaseWriter.ValueDecoding;
 /// <c>FormatID</c> of 2 for an embedded and 1 for a linked object, and the class, topic
 /// and item names), then for an embedded object its native data. An OLE Package (class
 /// <c>Package</c>) holds a label, a source path and either an embedded file (type 3) or
-/// a link (type 1) in its native data.
+/// a link (type 1) in its native data. Only the object's presentation data and Access's
+/// 4-byte trailer follow the native data, and unwrapping does not need them: a value cut
+/// right after the native data still unwraps, while one cut before its end is
+/// <see cref="Enums.OleObjectKind.Unknown"/> (or <see cref="Enums.OleObjectKind.NotWrapped"/>
+/// when cut before the <c>15 1C</c> signature).
 /// </remarks>
 public static class OleObjectValue
 {

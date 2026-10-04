@@ -82,22 +82,21 @@ release-quality benchmark results justify reopening a specific area.
   rows with an integer plus MEMO payload. `LargeLongValues` has 30 rows whose
   three 1.5M-character MEMOs (about 370 LVAL pages each) and three 2 MB OLE
   values (about 490 pages each) are each longer than the default 256-page cache;
-  every other long-value fixture fits in the cache, which is how the evicted-page
-  bug (bug 1 in `docs/todo.md`) went unmeasured. The numeric database also has an
-  `AccdbAesCfbWrapped`-encrypted copy. The relational database has 1,000
-  `Customers` and 10,000 `Orders` (primary keys, a non-unique `OrderDate` index,
-  and the `FK_Orders_Customers` relationship), the query database has a 6-row
-  `QuerySmall` table and a 25K-row `QueryLarge` table (integer primary key and a
-  non-unique `Score` index), and the attachment database has
-  150 `Documents` rows with one 16 KB attachment each. The relational and
-  attachment databases are smaller than
-  planned because of a writer limit: a full index rebuild that spreads a table's
-  index pages over more than one inline usage-map bitmap throws
-  `NotSupportedException` ("REFERENCE usage maps for index pages are not yet
-  supported"). Creating the relationship over 20,000 orders that already have
-  two indexes hits it, and so does `AddAttachmentAsync`, which rebuilds the
-  hidden flat table's indexes on every call: on an 800-row table the 338th call
-  threw.
+  every other long-value fixture fits in the cache, which is how a cache-eviction
+  bug that dropped the rows after a large MEMO went unmeasured. The numeric
+  database also has an `AccdbAesCfbWrapped`-encrypted copy. The relational
+  database has 1,000 `Customers` and 10,000 `Orders` (primary keys, a non-unique
+  `OrderDate` index, and the `FK_Orders_Customers` relationship), the query
+  database has a 6-row `QuerySmall` table and a 25K-row `QueryLarge` table
+  (integer primary key and a non-unique `Score` index), and the attachment
+  database has 150 `Documents` rows with one 16 KB attachment each. The
+  relational and attachment databases are smaller than planned because of a
+  writer limit: a full index rebuild that spreads a table's index pages over
+  more than one inline usage-map bitmap throws `NotSupportedException`
+  ("REFERENCE usage maps for index pages are not yet supported"). Creating the
+  relationship over 20,000 orders that already have two indexes hits it, and so
+  does `AddAttachmentAsync`, which rebuilds the hidden flat table's indexes on
+  every call: on an 800-row table the 338th call threw.
 - The `OpenAsync` floor is settled at roughly 1.1 ms / 41 KB. Do not spend
   optimization time on lazy catalog loading or catalog span rewrites without new
   measurements that contradict that floor.
