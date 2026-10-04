@@ -24,7 +24,9 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <summary>
 /// Row DML workflows behind <see cref="Interfaces.IAccessWriter"/>: insert, update, and
 /// delete. Each workflow stages its rows, applies client-side constraints,
-/// runs foreign-key and unique-index checks before any page is mutated, then
+/// checks that every index of the table can be maintained
+/// (<see cref="IndexMaintainer.ThrowIfIndexesUnmaintainableAsync"/>), and runs
+/// foreign-key and unique-index checks before any page is mutated, then
 /// writes the rows and maintains indexes. The public facade owns the
 /// auto-commit scope around each call.
 /// </summary>
@@ -294,6 +296,10 @@ internal sealed class TableDataWriter(
             pendingUpdates.Add((i, oldRow, newRow));
         }
 
+        // An index the writer cannot maintain would fail the index rebuild
+        // after the rows below had been rewritten; refuse the update first.
+        await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+
         if (pendingUpdates.Count == 0)
         {
             return 0;
@@ -394,6 +400,11 @@ internal sealed class TableDataWriter(
             }
         }
 
+        // An index the writer cannot maintain would fail the index rebuild
+        // after the rows, and any cascaded rows, had been deleted; refuse the
+        // delete first.
+        await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+
         IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         if (rels.Count > 0 && matchingRows.Count > 0)
         {
@@ -470,6 +481,13 @@ internal sealed class TableDataWriter(
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
+
+        // Before any AutoNumber value is taken and any row written: an index
+        // the writer cannot maintain would fail the index maintenance after
+        // the rows were written, and the incremental path would already have
+        // added them to the indexes before it.
+        await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+
         IReadOnlyList<FkRelationship> relationships = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         FkContext? fkContext = relationships.Count > 0 ? new FkContext(relationships) : null;
 
