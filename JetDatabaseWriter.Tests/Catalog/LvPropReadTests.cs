@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -308,10 +307,10 @@ public sealed class LvPropReadTests
 
     /// <summary>
     /// Every table of every Access-authored fixture reads the same properties as
-    /// the earlier string decode of <c>MSysObjects</c>, except where that decode
-    /// matched a row by its Id's low 24 bits only, or took the blob for a file
-    /// because it holds a file signature. Those differences are intended, and
-    /// the read then returns the table's own stored blob.
+    /// the earlier string decode of <c>MSysObjects</c>, kept in this test, except
+    /// where that decode matched a row by its Id's low 24 bits only, or took the
+    /// blob for a file because it holds a file signature. Those differences are
+    /// intended, and the read then returns the table's own stored blob.
     /// </summary>
     /// <param name="fixture">The fixture path.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
@@ -320,37 +319,7 @@ public sealed class LvPropReadTests
     public async Task ReadLvProp_EveryFixtureTable_MatchesLegacyStringPath(string fixture)
     {
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(fixture, cancellationToken: Ct);
-        DatabaseFile db = harness.Database;
-        IReadOnlyList<RawCatalogRow> rows = await ReadRawCatalogRowsAsync(db);
-        IReadOnlyList<(long Id, string LvProp)> legacyRows = await ReadLegacyStringRowsAsync(harness);
-
-        var collisions = new List<string>();
-        var signatures = new List<string>();
-        foreach (RawCatalogRow table in rows.Where(r => r.Type == Constants.SystemObjects.UserTableType && r.Id > 0 && r.Id == (r.Id & LowIdBits)))
-        {
-            ColumnPropertyBlock? read = await harness.Services.Catalog.ReadLvPropForTableAsync(table.Id, Ct);
-            byte[]? ownBlob = await table.ReadLvPropAsync(db);
-            Assert.Equal(Describe(ColumnPropertyBlock.Parse(ownBlob, db.Format)), Describe(read));
-
-            (long legacyId, string legacyLvProp) = legacyRows.FirstOrDefault(r => (r.Id & LowIdBits) == table.Id);
-            ColumnPropertyBlock? legacyBlock = BinaryStringParser.TryDecodeBase64DataUri(legacyLvProp ?? string.Empty, "application/octet-stream", out byte[] legacyBytes)
-                ? ColumnPropertyBlock.Parse(legacyBytes, db.Format)
-                : null;
-            if (Describe(legacyBlock).SequenceEqual(Describe(read)))
-            {
-                continue;
-            }
-
-            if (legacyId != table.Id)
-            {
-                collisions.Add(table.Name);
-            }
-            else
-            {
-                Assert.True(legacyBlock is null && ownBlob is not null && SignatureOffset(ownBlob) >= 0, $"{table.Name}: the read differs from the string decode for no intended reason.");
-                signatures.Add(table.Name);
-            }
-        }
+        (List<string> collisions, _) = await CompareWithLegacyStringPathAsync(harness);
 
         if (fixture == TestDatabases.NorthwindTraders)
         {
@@ -358,6 +327,34 @@ public sealed class LvPropReadTests
                 new HashSet<string>(["Companies", "CompanyTypes", "EmployeePrivileges", "Catalog_TableOfContents", "Contacts", "Employees"]),
                 new HashSet<string>(collisions));
         }
+    }
+
+    /// <summary>
+    /// The same comparison on a writer-created table whose description holds a
+    /// file signature. On Jet3 the earlier decode found the signature in the
+    /// code-page text of the blob and dropped it, while the read returns it; on
+    /// Jet4 and ACCDB the blob is UTF-16 and both reads agree.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="description">The column description.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndDescriptions))]
+    public async Task ReadLvProp_DescriptionContainsFileSignature_DiffersFromLegacyStringPathOnJet3Only(DatabaseFormat format, string description)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("T", [new("Id", typeof(int)), ScoreColumn(description)], Ct);
+        }
+
+        ms.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        (List<string> collisions, List<string> signatures) = await CompareWithLegacyStringPathAsync(harness);
+
+        string[] expectedSignatures = format == DatabaseFormat.Jet3Mdb ? ["T"] : [];
+        Assert.Empty(collisions);
+        Assert.Equal(expectedSignatures, signatures);
     }
 
     /// <summary>
@@ -452,8 +449,91 @@ public sealed class LvPropReadTests
     }
 
     /// <summary>
+    /// Reads every table's properties and compares them with the earlier string
+    /// decode of <c>MSysObjects</c>, kept in this test. Asserts that the read is
+    /// the table's own stored blob, and that it differs from the earlier decode
+    /// only where that decode took another object's row (a collision) or dropped
+    /// the blob for a file signature (a signature case).
+    /// </summary>
+    /// <param name="harness">The open database.</param>
+    /// <returns>The names of the tables in each kind of intended difference.</returns>
+    private static async Task<(List<string> Collisions, List<string> Signatures)> CompareWithLegacyStringPathAsync(ReaderHarness harness)
+    {
+        DatabaseFile db = harness.Database;
+        IReadOnlyList<RawCatalogRow> rows = await ReadRawCatalogRowsAsync(db);
+        var collisions = new List<string>();
+        var signatures = new List<string>();
+        foreach (RawCatalogRow table in rows.Where(r => r.Type == Constants.SystemObjects.UserTableType && r.Id > 0 && r.Id == (r.Id & LowIdBits)))
+        {
+            ColumnPropertyBlock? read = await harness.Services.Catalog.ReadLvPropForTableAsync(table.Id, Ct);
+            byte[]? ownBlob = await table.ReadLvPropAsync(db);
+            Assert.Equal(Describe(ColumnPropertyBlock.Parse(ownBlob, db.Format)), Describe(read));
+
+            // The earlier read scanned the rows in page and slot order, as
+            // ReadRawCatalogRowsAsync lists them, and took the first whose Id's
+            // low 24 bits equal the TDEF page.
+            RawCatalogRow legacyRow = rows.First(r => (r.Id & LowIdBits) == table.Id);
+            var legacyBlock = ColumnPropertyBlock.Parse(await ReadLegacyLvPropAsync(db, legacyRow), db.Format);
+            if (Describe(legacyBlock).SequenceEqual(Describe(read)))
+            {
+                continue;
+            }
+
+            if (legacyRow.Id != table.Id)
+            {
+                collisions.Add(table.Name);
+            }
+            else
+            {
+                Assert.True(legacyBlock is null && ownBlob is not null && SignatureOffset(ownBlob) >= 0, $"{table.Name}: the read differs from the string decode for no intended reason.");
+                signatures.Add(table.Name);
+            }
+        }
+
+        return (collisions, signatures);
+    }
+
+    /// <summary>
+    /// The <c>LvProp</c> bytes the earlier string decode took from a catalog row.
+    /// It rendered the OLE column as a data URI the way the OLE decode did before
+    /// reads returned stored bytes, and kept the bytes only for an
+    /// <c>application/octet-stream</c> URI. That decode first unwrapped an OLE
+    /// Package (<c>15 1C</c>); a property blob starts with <c>KKD\0</c> or
+    /// <c>MR2\0</c>, so that step never applied and is asserted instead of copied.
+    /// It then looked for a file signature in the first 512 bytes, and on a match
+    /// rendered the bytes from there with the signature's media type, which the
+    /// read rejected. Otherwise every stored byte was kept. An unreadable value
+    /// rendered as placeholder text, which the read also rejected.
+    /// </summary>
+    /// <param name="db">The open database.</param>
+    /// <param name="row">The catalog row.</param>
+    /// <returns>The bytes the earlier read parsed, or <see langword="null"/> when it found none.</returns>
+    private static async Task<byte[]?> ReadLegacyLvPropAsync(DatabaseFile db, RawCatalogRow row)
+    {
+        byte[]? stored;
+        try
+        {
+            stored = await row.ReadLvPropAsync(db);
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+
+        if (stored is null || stored.Length == 0)
+        {
+            return null;
+        }
+
+        Assert.False(stored is [0x15, 0x1C, ..], $"{row.Name}: an LvProp blob starts with the OLE Package header, which the copied decode does not unwrap.");
+        return SignatureOffset(stored) >= 0 ? null : stored;
+    }
+
+    /// <summary>
     /// Returns the offset of the first file signature in the first 512 bytes, as
-    /// the earlier OLE decode looked for one, or -1.
+    /// the earlier OLE decode looked for one, or -1. Like that decode, it tries
+    /// every offset up to four bytes before the end of the window, and a
+    /// signature must end inside the window.
     /// </summary>
     /// <param name="bytes">The stored bytes.</param>
     private static int SignatureOffset(byte[] bytes)
@@ -473,30 +553,6 @@ public sealed class LvPropReadTests
         }
 
         return -1;
-    }
-
-    /// <summary>
-    /// The earlier read: every <c>MSysObjects</c> row decoded as strings, its
-    /// <c>Id</c> and its <c>LvProp</c> rendered as a data URI, in scan order.
-    /// </summary>
-    /// <param name="harness">The open database.</param>
-    private static async Task<IReadOnlyList<(long Id, string LvProp)>> ReadLegacyStringRowsAsync(ReaderHarness harness)
-    {
-        DatabaseFile db = harness.Database;
-        TableDef msys = Assert.IsType<TableDef>(await db.ReadTableDefAsync(2, Ct));
-        int idxId = msys.FindColumnIndex("Id");
-        int idxLvProp = msys.FindColumnIndex("LvProp");
-        var decoder = new RowDecoder(db, harness.Services.PageCache, new LongValueDecoder(db, harness.Services.PageCache), strictParsing: true);
-        var result = new List<(long Id, string LvProp)>();
-        await foreach (string[] row in decoder.EnumerateRowsForTdefAsync(2, msys, Ct))
-        {
-            if (long.TryParse(row[idxId], NumberStyles.Integer, CultureInfo.InvariantCulture, out long id))
-            {
-                result.Add((id, idxLvProp >= 0 ? row[idxLvProp] : string.Empty));
-            }
-        }
-
-        return result;
     }
 
     /// <summary>
