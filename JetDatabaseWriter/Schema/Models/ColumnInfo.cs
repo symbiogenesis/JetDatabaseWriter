@@ -69,6 +69,16 @@ internal sealed class ColumnInfo
     /// </summary>
     public bool IsCompressedUnicode => (this.ExtraFlags & Constants.CompressedUnicodeExtFlagMask) != 0;
 
+    /// <summary>
+    /// Gets a value indicating whether the column is an AutoNumber column whose insert
+    /// generates the next value: <c>FLAG_AUTO_LONG</c>
+    /// (<see cref="Constants.ColumnDescriptorFlags.AutoNumber"/>) is set in <see cref="Flags"/>.
+    /// Complex columns (<c>Attachment</c> / <c>Complex</c>) carry the magic <c>0x07</c>
+    /// marker in that byte rather than flag bits, so they never count.
+    /// </summary>
+    public bool IsAutoNumber => this.Type is not AttachmentType and not ComplexType
+        && (this.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
+
     public string Name { get; init; } = string.Empty;
 
     /// <summary>

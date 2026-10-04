@@ -223,6 +223,11 @@ internal static class RowMapper<T>
     /// <see langword="null"/> produces <see cref="DBNull.Value"/>, which stores
     /// database null. A column no readable property maps to is left out of the
     /// insert: it produces <see cref="DbDefault.Value"/>, so it gets its default.
+    /// A non-nullable numeric property mapped to an AutoNumber column produces
+    /// <see cref="DbDefault.Value"/> while it holds its CLR default (<c>0</c>), so
+    /// the insert generates the next AutoNumber, as Entity Framework treats a
+    /// generated key; any other value is stored as given. Only inserts use this
+    /// delegate, so an update never turns a 0 into a generated value.
     /// </summary>
     /// <param name="td">Parsed table definition.</param>
     private static Func<T, object[]> BuildToRow(TableDef td)
@@ -243,7 +248,22 @@ internal static class RowMapper<T>
             {
                 Type pt = acc.Property.PropertyType;
                 Expression propAccess = Expression.Property(itemParam, acc.Property);
-                if (pt.IsValueType && Nullable.GetUnderlyingType(pt) == null)
+                if (pt.IsValueType && Nullable.GetUnderlyingType(pt) == null && td.Columns[i].IsAutoNumber && CanCompareToDefault(pt))
+                {
+                    // Non-nullable value type on an AutoNumber column: its CLR
+                    // default (0) means "not supplied", so the insert generates
+                    // the next value, as for null; any other value is stored.
+                    ParameterExpression local = Expression.Variable(pt, "id");
+                    valueExpr = Expression.Block(
+                        typeof(object),
+                        [local],
+                        Expression.Assign(local, propAccess),
+                        Expression.Condition(
+                            Expression.Equal(local, Expression.Default(pt)),
+                            dbDefault,
+                            Expression.Convert(local, typeof(object))));
+                }
+                else if (pt.IsValueType && Nullable.GetUnderlyingType(pt) == null)
                 {
                     // Non-nullable value type — can never be null, so skip the
                     // Coalesce(null, DBNull) check that would otherwise force
@@ -271,6 +291,14 @@ internal static class RowMapper<T>
         NewArrayExpression body = Expression.NewArrayInit(typeof(object), values);
         return Expression.Lambda<Func<T, object[]>>(body, itemParam).Compile();
     }
+
+    /// <summary>
+    /// Returns whether <see cref="Expression.Equal(Expression, Expression)"/> can compare a
+    /// value of <paramref name="type"/> with its CLR default: the primitives,
+    /// <see cref="decimal"/> and enums, which cover every type an AutoNumber property can have.
+    /// </summary>
+    /// <param name="type">A non-nullable value type.</param>
+    private static bool CanCompareToDefault(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(decimal);
 
     private static Dictionary<string, Accessor> BuildPropertyMap()
     {
