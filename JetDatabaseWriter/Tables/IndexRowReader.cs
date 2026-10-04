@@ -58,18 +58,7 @@ internal sealed class IndexRowReader(
         cancellationToken.ThrowIfCancellationRequested();
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (resolved == null)
-        {
-            return [];
-        }
-
-        byte[]? td = await db.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null || td.Length < db.TDef.BlockEnd)
-        {
-            return [];
-        }
-
-        return IndexCatalogReader.ReadMetadata(db, td, resolved.Definition.Columns);
+        return resolved == null ? [] : await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -181,7 +170,7 @@ internal sealed class IndexRowReader(
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class, new()
     {
-        IndexPlan? plan = await this.TryPlanIndexReadAsync(tableName, pushable, cancellationToken).ConfigureAwait(false);
+        IndexPlan? plan = await this.TryPlanIndexReadAsync(tableName, typeof(T), pushable, cancellationToken).ConfigureAwait(false);
 
         IAsyncEnumerable<T> candidates = plan is not null
             ? this.ReadIndexRowsAsync<T>(tableName, plan.Index.Name, plan.Criteria, cancellationToken)
@@ -203,14 +192,17 @@ internal sealed class IndexRowReader(
     /// <summary>
     /// Picks the index that best satisfies <paramref name="pushable"/>, or returns
     /// <see langword="null"/> when a full scan is required (no pushable conditions,
-    /// a Jet3 database, a linked or missing table, or no covering index).
+    /// a Jet3 database, a linked or missing table, no comparison a seek answers
+    /// exactly, or no covering index).
     /// </summary>
     /// <param name="tableName">The table to read.</param>
+    /// <param name="rowType">The type the rows map to, whose properties the conditions compare.</param>
     /// <param name="pushable">The index-seekable necessary conditions.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The chosen index plan, or <see langword="null"/> to scan.</returns>
     private async ValueTask<IndexPlan?> TryPlanIndexReadAsync(
         string tableName,
+        Type rowType,
         RowCriteria pushable,
         CancellationToken cancellationToken)
     {
@@ -220,8 +212,34 @@ internal sealed class IndexRowReader(
             return null;
         }
 
-        IReadOnlyList<IndexMetadata> indexes = await this.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
-        return IndexPlanner.TryPlan(indexes, pushable);
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved == null)
+        {
+            return null;
+        }
+
+        // A seek compares the operand with the stored keys, the residual filter with the
+        // mapped property; keep only the comparisons on which the two agree.
+        RowCriteria seekable = IndexSeekFilter.SelectSeekable(pushable, rowType, resolved.Definition);
+        if (seekable.Count == 0)
+        {
+            return null;
+        }
+
+        IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
+        return IndexPlanner.TryPlan(indexes, seekable);
+    }
+
+    private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)
+    {
+        byte[]? td = await db.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (td == null || td.Length < db.TDef.BlockEnd)
+        {
+            return [];
+        }
+
+        return IndexCatalogReader.ReadMetadata(db, td, resolved.Definition.Columns);
     }
 
     private async IAsyncEnumerable<TRow> EnumerateIndexRowsAsync<TRow>(

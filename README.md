@@ -247,7 +247,7 @@ await foreach (Order order in reader.Rows<Order>("Orders", o => o.OrderDate >= s
     Console.WriteLine(order.OrderId);
 ```
 
-Only conjuncts combined with `&&` over direct column members (`o.Column == value`, `o.Column > value`, …) drive inference; method calls, `||`, computed members such as `o.When.Year`, and column-to-column comparisons are evaluated client-side. Jet3 `.mdb` files always scan.
+Only conjuncts combined with `&&` over direct column members (`o.Column == value`, `o.Column > value`, …) drive inference; method calls, `||`, computed members such as `o.When.Year`, and column-to-column comparisons are evaluated client-side. So is a comparison an index can't answer exactly: one on a property that holds a converted value, such as an enum or `Guid` property bound to a Text column, whose index holds the text; one whose bound the column can't hold, such as `o.Id > 1.5` or a `long` beyond Long Integer's range on a Long Integer column; and an upper bound on a Date/Time column finer than a millisecond, such as `o.When < DateTime.Now`, since the index keeps whole milliseconds. Jet3 `.mdb` files always scan.
 
 `FromIndex(...)` is the explicit override — reach for it to **force a specific index**, guarantee **index-ordered** streaming, or seek shapes the inferrer does not model. With no predicate it streams rows in index order; `WhereEquals(...)` performs a complete-key equality seek; `WhereKeyPrefix(...)` filters by leading composite-key columns; `WhereBetween(...)` / `WhereRange(...)` walk bounded key ranges. The typed overload maps rows through the same POCO mapper as `Rows<T>(...)`.
 

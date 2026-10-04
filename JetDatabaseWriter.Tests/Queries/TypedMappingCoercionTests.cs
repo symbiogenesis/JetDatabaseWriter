@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
@@ -23,7 +24,9 @@ using Xunit;
 /// <c>Query&lt;T&gt;</c>, <c>Rows&lt;T&gt;(predicate)</c>, <c>FromIndex&lt;T&gt;</c> and the
 /// entities <c>Include</c> loads must agree; <c>Include</c> used to leave such a property at
 /// its default without an error. <c>Include</c> converts only the related rows a root reaches,
-/// so a value in a row the query never returns does not fail it.
+/// so a value in a row the query never returns does not fail it. A predicate on a converted
+/// property returns the rows a scan returns, even when its column has an index whose keys hold
+/// the stored value rather than the converted one.
 /// </summary>
 /// <param name="db">Caches the fixture files.</param>
 public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -66,6 +69,24 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
         DatabaseFormat.Jet4Mdb,
         DatabaseFormat.AceAccdb,
     ];
+
+    /// <summary>Gets each format with index seeks, with each predicate name <see cref="IndexedPredicate(string)"/> knows.</summary>
+    public static TheoryData<DatabaseFormat, string> IndexedPredicates
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, string>();
+            foreach (DatabaseFormat format in (DatabaseFormat[])[DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb])
+            {
+                foreach (string name in (string[])["EnumOnText", "GuidOnText", "GuidOnBinary", "EnumOnLongInteger", "FractionalBound", "BoundBeyondTheRange"])
+                {
+                    data.Add(format, name);
+                }
+            }
+
+            return data;
+        }
+    }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -178,6 +199,53 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
         Assert.Equal(["12|5"], held.Holder?.OverflowItems.Select(i => $"{i.Id}|{i.Small}"));
     }
 
+    [Theory]
+    [MemberData(nameof(IndexedPredicates))]
+    public async Task Predicate_OnAnIndexedColumn_ReturnsTheRowsAScanReturns(DatabaseFormat format, string predicateName)
+    {
+        (Expression<Func<CoercedRow, bool>> predicate, int[] expected) = IndexedPredicate(predicateName);
+        await using MemoryStream ms = await this.CreateAsync(format, indexEveryColumn: true);
+        await using AccessReader reader = await OpenReaderAsync(ms);
+
+        List<CoercedRow> all = await reader.Rows<CoercedRow>(Table, cancellationToken: Ct).ToListAsync(Ct);
+        Assert.Equal(expected, all.Where(predicate.Compile()).Select(r => r.Id).Order());
+
+        Assert.Equal(expected, (await reader.Rows<CoercedRow>(Table, predicate, cancellationToken: Ct).ToListAsync(Ct)).Select(r => r.Id).Order());
+        Assert.Equal(expected, (await reader.Query<CoercedRow>(Table).Where(predicate).ToListAsync(Ct)).Select(r => r.Id).Order());
+    }
+
+    /// <summary>
+    /// Returns the predicate <see cref="IndexedPredicates"/> names, over a table with an index on
+    /// every column, and the ids of the rows it matches.
+    /// </summary>
+    /// <param name="name">The predicate's name.</param>
+    /// <returns>The predicate and the matching ids.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="name"/> names no predicate.</exception>
+    private static (Expression<Func<CoercedRow, bool>> Predicate, int[] Expected) IndexedPredicate(string name)
+    {
+        // A local, since the compiler rejects a constant an int can never reach.
+#pragma warning disable RCS1118 // The comparison must not be a constant.
+        long beyondLongInteger = 3_000_000_000L;
+#pragma warning restore RCS1118
+
+        return name switch
+        {
+            // An enum or Guid property bound to a Text or Binary column: the index keys hold
+            // the text or the bytes, never the operand's integer or Guid.
+            "EnumOnText" => (r => r.ShadeName == Shade.Blue, [1]),
+            "GuidOnText" => (r => r.Token == TokenOne, [1]),
+            "GuidOnBinary" => (r => r.RawToken == RawTwo, [2]),
+
+            // An enum bound to a Long Integer column compares by value, as its keys do.
+            "EnumOnLongInteger" => (r => r.Shade == (Shade)7, [2]),
+
+            // Bounds the Long Integer key cannot hold: a fraction, and a number outside its range.
+            "FractionalBound" => (r => r.Id > 1.5, [2]),
+            "BoundBeyondTheRange" => (r => r.Id < beyondLongInteger, [1, 2]),
+            _ => throw new ArgumentOutOfRangeException(nameof(name), name, "Unknown predicate."),
+        };
+    }
+
     private static string[] ExpectedRoots() =>
     [
         $"1|Green|Blue|{TokenOne}|{RawOne}",
@@ -203,8 +271,18 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
         return AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
     }
 
-    private async Task<MemoryStream> CreateAsync(DatabaseFormat format)
+    private async Task<MemoryStream> CreateAsync(DatabaseFormat format, bool indexEveryColumn = false)
     {
+        IndexDefinition[] indexes = indexEveryColumn
+            ?
+            [
+                new IndexDefinition("IX_Shade", "Shade"),
+                new IndexDefinition("IX_ShadeName", "ShadeName"),
+                new IndexDefinition("IX_Token", "Token"),
+                new IndexDefinition("IX_RawToken", "RawToken"),
+                new IndexDefinition("IX_Big", "Big"),
+            ]
+            : [];
         MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
         {
@@ -219,6 +297,7 @@ public sealed class TypedMappingCoercionTests(DatabaseCache db) : IClassFixture<
                     new ColumnDefinition("RawToken", typeof(byte[]), maxLength: 16),
                     new ColumnDefinition("Big", typeof(int)),
                 ],
+                indexes,
                 Ct);
             await writer.CreateTableAsync(
                 ItemTable,
