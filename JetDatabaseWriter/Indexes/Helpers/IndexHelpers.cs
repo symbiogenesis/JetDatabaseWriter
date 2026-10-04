@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -324,12 +325,19 @@ internal static class IndexHelpers
     /// DropColumn and RenameColumn: forwards every Normal / PrimaryKey index
     /// whose key columns all survive the rewrite, with each key column renamed
     /// through <paramref name="mapColumnName"/>, and keeps its unique,
-    /// descending, ignore-nulls and required settings. Relationship-owned FK
-    /// indexes are excluded; the relationship manager re-emits them.
+    /// descending, ignore-nulls and required settings. An index on a column
+    /// the rewrite drops is dropped with it. An index with a key column that
+    /// has no name, which is how the reader reports a key column the table
+    /// does not have, cannot be forwarded, and is refused rather than dropped
+    /// (the write preflight refuses such a table first; this is the backstop).
+    /// Relationship-owned FK indexes are excluded; the relationship manager
+    /// re-emits them.
     /// </summary>
     /// <param name="existing">The indexes of the table before the rewrite.</param>
     /// <param name="newDefs">The columns of the rebuilt table.</param>
     /// <param name="mapColumnName">Maps a current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
+    /// <returns>The index definitions of the rebuilt table.</returns>
+    /// <exception cref="JetLimitationException">An index the rewrite would keep has a key column with no name; the message names the index.</exception>
     public static List<IndexDefinition> ProjectIndexes(
         IReadOnlyList<IndexMetadata> existing,
         IReadOnlyList<ColumnDefinition> newDefs,
@@ -356,11 +364,20 @@ internal static class IndexHelpers
 
             var keyColumns = new List<string>(idx.Columns.Count);
             var descendingCols = new List<string>();
+            bool dropped = false;
+            IndexColumnReference? unnamed = null;
             foreach (IndexColumnReference ic in idx.Columns)
             {
-                string? mapped = string.IsNullOrEmpty(ic.Name) ? null : mapColumnName(ic.Name);
+                if (string.IsNullOrEmpty(ic.Name))
+                {
+                    unnamed ??= ic;
+                    continue;
+                }
+
+                string? mapped = mapColumnName(ic.Name);
                 if (mapped is null || !newColumnNames.Contains(mapped))
                 {
+                    dropped = true;
                     break;
                 }
 
@@ -371,9 +388,17 @@ internal static class IndexHelpers
                 }
             }
 
-            if (keyColumns.Count != idx.Columns.Count)
+            // An index on a dropped column goes with it, whatever its other
+            // key columns are.
+            if (dropped)
             {
                 continue;
+            }
+
+            if (unnamed is not null)
+            {
+                throw new JetLimitationException(
+                    $"Index '{idx.Name}' cannot be carried through the schema change: it names column number {unnamed.ColumnNumber}, which the table does not have. The table is unchanged.");
             }
 
             if (idx.Kind == IndexKind.PrimaryKey)
