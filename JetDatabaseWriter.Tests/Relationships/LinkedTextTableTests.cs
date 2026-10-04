@@ -734,40 +734,6 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTextTable_CsvFile_CancellationDuringLongQuotedRecord_ThrowsOperationCanceled()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkCancelLongRecordFE");
-        string sourceDirectory = Path.GetDirectoryName(frontEndPath)!;
-        string csvFileName = $"cancel_long_record_{Guid.NewGuid():N}.csv";
-        string csvPath = Path.Combine(sourceDirectory, csvFileName);
-        this.tempFiles.Add(csvPath);
-        string longQuotedValue = new('x', 2_000_000);
-        await File.WriteAllTextAsync(csvPath, "Id,Note\r\n1,\"" + longQuotedValue + "\"\r\n", ct);
-
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
-        {
-            await writer.CreateLinkedTextTableAsync(
-                "LinkedCancelLongRecordCsv",
-                sourceDirectory,
-                csvFileName,
-                "Text;HDR=YES;FMT=Delimited",
-                ct);
-        }
-
-        var options = new AccessReaderOptions
-        {
-            LinkedTextMaxFieldLength = 3_000_000,
-            LinkedTextMaxRecordLength = 3_000_100,
-        };
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-            await reader.GetRealRowCountAsync("LinkedCancelLongRecordCsv", timeout.Token));
-    }
-
-    [Fact]
     public async Task LinkedTextTable_CsvFile_MaxRowsPreview_DoesNotParseOversizedLaterRecord()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

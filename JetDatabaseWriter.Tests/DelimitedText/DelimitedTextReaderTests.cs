@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.DelimitedText;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -298,6 +299,37 @@ public sealed class DelimitedTextReaderTests
         Assert.Contains("MaxColumnCount", exception.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LongQuotedRecord_CancelledInsideTheField_StopsBeforeTheRecordEnds(bool countRecords)
+    {
+        // A quoted field far longer than the parser's buffer: the source cancels the token once the
+        // parser has read past the middle of the field, and the parse must stop there rather than
+        // at the end of the record.
+        string text = "Id,Note\r\n1,\"" + new string('x', 100_000) + "\"\r\n";
+        using var cancellation = new CancellationTokenSource();
+        using var stringReader = new CancellingStringReader(text, cancelAt: text.Length / 2, cancellation);
+        using DelimitedTextReader reader = CreateReader(stringReader);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            if (countRecords)
+            {
+                _ = await reader.CountRecordsAsync(skipFirstRecord: true, cancellation.Token);
+                return;
+            }
+
+            DelimitedTextRecord? record;
+            do
+            {
+                record = await reader.ReadRecordAsync(cancellation.Token);
+            }
+            while (record is not null);
+        });
+        Assert.True(stringReader.CharsRead < text.Length, $"The parser read all {text.Length} characters before it saw the cancellation.");
+    }
+
     [Fact]
     public void Normalize_DuplicateAndBlankHeaders_ProducesStableColumnNames()
     {
@@ -481,5 +513,26 @@ public sealed class DelimitedTextReaderTests
     private sealed class NoPeekStringReader(string value) : StringReader(value)
     {
         public override int Peek() => -1;
+    }
+
+    /// <summary>Cancels <paramref name="cancellation"/> once it has handed out <paramref name="cancelAt"/> characters.</summary>
+    /// <param name="value">The text to read.</param>
+    /// <param name="cancelAt">The number of characters read after which the token is cancelled.</param>
+    /// <param name="cancellation">The source of the token the parser is given.</param>
+    private sealed class CancellingStringReader(string value, int cancelAt, CancellationTokenSource cancellation) : StringReader(value)
+    {
+        public int CharsRead { get; private set; }
+
+        public override Task<int> ReadAsync(char[] buffer, int index, int count)
+        {
+            int read = this.Read(buffer, index, count);
+            this.CharsRead += read;
+            if (this.CharsRead >= cancelAt)
+            {
+                cancellation.Cancel();
+            }
+
+            return Task.FromResult(read);
+        }
     }
 }
