@@ -26,6 +26,15 @@
 
     <!-- Restore the exact packages as listed in the lock file -->
     <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+
+    <!--
+      CI spreads the analyzers, which take most of a Release build, over parallel jobs.
+      -p:AnalyzeOnly=<project name> analyzes that project alone and compiles the projects it
+      references without analyzers; -p:AnalyzeExcept=<project name> analyzes every project but
+      that one. Source generators run either way.
+    -->
+    <RunAnalyzers Condition="'$(AnalyzeOnly)' != '' and '$(AnalyzeOnly)' != '$(MSBuildProjectName)'">false</RunAnalyzers>
+    <RunAnalyzers Condition="'$(AnalyzeExcept)' == '$(MSBuildProjectName)'">false</RunAnalyzers>
   </PropertyGroup>
 
   <ItemGroup>

@@ -23,13 +23,32 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
+# Every job runs on Windows: the suite uses Windows paths and byte-range locks, and the
+# DAO round-trip tests skip themselves when Access is not installed. The jobs run in
+# parallel. The analyzers take most of a Release build, so three jobs share them, and the
+# test legs build without them.
 jobs:
-  build-and-test:
-    name: Build (Release) and test
-    # Windows only: the suite uses Windows paths and byte-range locks, and the DAO
-    # round-trip tests skip themselves when Access is not installed.
+  analyze:
+    name: Analyze (${{ matrix.name }})
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every project but the tests, then the package.
+          - name: library and tools
+            project: JetDatabaseWriter.slnx
+            options: -p:AnalyzeExcept=JetDatabaseWriter.Tests
+            pack: true
+          # The test project once per target framework; the projects it references build
+          # without analyzers here.
+          - name: tests net10.0
+            project: JetDatabaseWriter.Tests
+            options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+          - name: tests net8.0
+            project: JetDatabaseWriter.Tests
+            options: -f net8.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
 
     steps:
       # MinVer computes the package version from the tags, so fetch the full history.
@@ -38,40 +57,70 @@ jobs:
         with:
           fetch-depth: 0
 
-      # global.json pins the .NET 10 SDK that builds everything. The .NET 8 SDK is
-      # installed only for its runtime, which runs the net8.0 test leg; that leg loads
-      # the library's netstandard2.1 build.
+      # global.json pins the .NET 10 SDK that builds everything.
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
-          dotnet-version: 8.0.x
           cache: true
-          cache-dependency-path: '**/packages.lock.json'
+          cache-dependency-path: '*/packages.lock.json'
 
       - name: Restore
-        run: dotnet restore JetDatabaseWriter.slnx --locked-mode
+        run: dotnet restore ${{ matrix.project }} --locked-mode
 
       # Release turns on every analyzer, code-style rule and XML-doc check as an error,
       # including in the test project.
       - name: Build
-        run: dotnet build JetDatabaseWriter.slnx -c Release --no-restore
-
-      - name: Test (net10.0, library net10.0 build)
-        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f net10.0
-
-      - name: Test (net8.0, library netstandard2.1 build)
-        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f net8.0
+        run: dotnet build ${{ matrix.project }} -c Release --no-restore ${{ matrix.options }}
 
       - name: Pack
+        if: matrix.pack
         run: dotnet pack JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
 
-      # publish.yml pushes this artifact, so a release publishes the exact package
-      # these tests ran against instead of rebuilding it.
+      # publish.yml pushes this artifact only when every job of the run has passed, so a
+      # release publishes the package this run built from the tested commit instead of
+      # rebuilding it.
       - name: Upload package
+        if: matrix.pack
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nupkg
           path: artifacts/nupkg/*.nupkg
           if-no-files-found: error
           retention-days: 7
+
+  test:
+    name: Test (${{ matrix.tf }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # net8.0 runs the suite against the library's netstandard2.1 build, net10.0
+        # against its net10.0 build.
+        tf: [net10.0, net8.0]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # The .NET 8 SDK is installed only for its runtime, which runs the net8.0 leg.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
+          cache: true
+          cache-dependency-path: '*/packages.lock.json'
+
+      - name: Restore
+        run: dotnet restore JetDatabaseWriter.Tests --locked-mode
+
+      # The analyze jobs check this code; the compiler's own warnings still fail the build.
+      - name: Build
+        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:RunAnalyzers=false
+
+      - name: Test
+        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }}
