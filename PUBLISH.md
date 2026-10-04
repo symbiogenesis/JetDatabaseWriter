@@ -25,7 +25,7 @@ CI checks out the full history (`fetch-depth: 0`) so MinVer sees every tag.
    ```
 
    A prerelease uses a SemVer prerelease tag, such as `v4.1.0-beta.1`.
-3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml`, which restores in locked mode, builds the solution in Release, runs both test legs, packs the library and uploads the package as the `nupkg` artifact. The publish job then downloads that artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org with the `NUGET_API_KEY` secret. Nothing is rebuilt between the tests and the push.
+3. The tag runs `.github/workflows/publish.yml`. It calls `ci.yml`, whose parallel jobs restore in locked mode, build every project in Release with its analyzers, run both test legs, and pack the library and upload the package as the `nupkg` artifact. Once every job has passed, the publish job downloads that artifact, checks that it holds `JetDatabaseWriter.<tag without the v>.nupkg`, and pushes it to nuget.org with the `NUGET_API_KEY` secret. Nothing is rebuilt between the CI run and the push.
 4. Check that the version appears at <https://www.nuget.org/packages/JetDatabaseWriter/> and at <https://api.nuget.org/v3-flatcontainer/jetdatabasewriter/index.json>.
 
 To start the prereleases of a new major or minor version before its first tag, raise `MinVerMinimumMajorMinor` (for example to `5.0`).

@@ -28,7 +28,8 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 
 ## Build
 
-- `dotnet build JetDatabaseWriter.slnx -c Release` must report 0 warnings and 0 errors. `Directory.Build.props` turns on `TreatWarningsAsErrors`, `AnalysisLevel` latest-all, `EnforceCodeStyleInBuild`, XML documentation and nullable reference types for every project. CI builds the whole solution in Release, so an analyzer finding in test code fails it too.
+- `dotnet build JetDatabaseWriter.slnx -c Release` must report 0 warnings and 0 errors. `Directory.Build.props` turns on `TreatWarningsAsErrors`, `AnalysisLevel` latest-all, `EnforceCodeStyleInBuild`, XML documentation and nullable reference types for every project. CI analyzes every project and target framework in Release, so an analyzer finding in test code fails it too.
+- The analyzers take most of a Release build. `-p:AnalyzeOnly=<project names>` analyzes only the named projects and `-p:AnalyzeExcept=<project names>` every project but those (names separated by spaces); the other projects compile without analyzers, and source generators run either way. CI's analyze jobs use them, and `dotnet build JetDatabaseWriter.Tests -c Release -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests` checks test code alone.
 - `JetDatabaseWriter.Tests` turns off `RunAnalyzersDuringBuild`, `EnforceCodeStyleInBuild` and `GenerateDocumentationFile` in non-Release builds, for speed; keep Release strict. Its `NoWarn` holds only `CA1707` and `SA1615`, and nothing else may be added. Fix any other finding in test code. Where a rule works against what a test checks, suppress it at the site with `#pragma warning disable <id> // <reason>`, for example CA1812 on a POCO that only reflection, `Rows<T>` or an expression tree creates.
 - `JetDatabaseWriter.FormatProbe` does not turn off its analyzers.
 - CI restores with `--locked-mode`. After changing a package reference or a target framework, restore once without it and commit the updated `packages.lock.json` files.
@@ -57,7 +58,7 @@ The script's other switches:
 
 Use one `ci/*` branch per commit you gate, such as `ci/<topic>-<n>`, and delete the branches when you are done. A run takes about 8 minutes on windows-latest. The script uses the GitHub CLI (`gh`) when it is installed and logged in. `gh run view <id> --log-failed` shows a failed run's logs.
 
-A timing-sensitive test can fail on CI and pass on a re-run. `LinkedTextTableTests.LinkedTextTable_CsvFile_CancellationDuringLongQuotedRecord_ThrowsOperationCanceled` on net8.0 is a known case. Re-run the failed jobs once before you call a failure real.
+A timing-sensitive test can fail on CI and pass on a re-run. Re-run the failed jobs once before you call a failure real.
 
 ## Tests
 
@@ -90,7 +91,7 @@ xUnit v3 on Microsoft Testing Platform:
 - Writing tests:
   - Prefer primary constructors for fixtures and output, for example `public class MyTests(DatabaseCache db, ITestOutputHelper output) : IClassFixture<DatabaseCache>`.
   - Test methods may return `Task` or `ValueTask`.
-  - Use `[Collection(DisableParallelization = true)]` to run a class serially.
+  - `xunit.runner.json` sets `parallelMode` to `all`, so every test runs in parallel with every other, including the tests of one class. Keep tests independent: give each its own database stream or uniquely named file. A test that cannot share the machine takes `[Fact(DisableParallelization = true)]`, and a class whose tests share state takes `[TestClass(DisableParallelization = true)]`.
   - `[InlineData]` is type-checked strictly; `TheoryData<T>`, `MemberData` and `ClassData` still work.
 - Write the test first, and for a bug write a failing test first.
 
