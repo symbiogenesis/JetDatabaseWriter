@@ -87,6 +87,59 @@ internal static class ClosureValueReader
     }
 
     /// <summary>
+    /// Returns <see langword="true"/> when every value of <paramref name="from"/> converts to
+    /// <paramref name="to"/> exactly: the integral widenings, and the conversions to
+    /// <see cref="float"/>, <see cref="double"/> and <see cref="decimal"/> that keep every
+    /// digit. The implicit conversions that can round (<see cref="int"/> to <see cref="float"/>,
+    /// <see cref="long"/> to <see cref="double"/>, and so on) are not widenings here, so this
+    /// reader leaves them to the compiled expression, and the index seek filter
+    /// (<see cref="Indexes.IndexSeekFilter"/>) does not push a comparison that needs one.
+    /// </summary>
+    /// <param name="from">The operand's type.</param>
+    /// <param name="to">The conversion's type.</param>
+    /// <returns><see langword="true"/> for a lossless widening.</returns>
+    internal static bool IsLosslessWidening(Type from, Type to)
+    {
+        if (from == typeof(sbyte))
+        {
+            return to == typeof(short) || to == typeof(int) || to == typeof(long) || IsFloatingOrDecimal(to);
+        }
+
+        if (from == typeof(byte))
+        {
+            return to == typeof(short) || to == typeof(ushort) || to == typeof(int) || to == typeof(uint)
+                || to == typeof(long) || to == typeof(ulong) || IsFloatingOrDecimal(to);
+        }
+
+        if (from == typeof(short))
+        {
+            return to == typeof(int) || to == typeof(long) || IsFloatingOrDecimal(to);
+        }
+
+        if (from == typeof(ushort))
+        {
+            return to == typeof(int) || to == typeof(uint) || to == typeof(long) || to == typeof(ulong) || IsFloatingOrDecimal(to);
+        }
+
+        if (from == typeof(int))
+        {
+            return to == typeof(long) || to == typeof(double) || to == typeof(decimal);
+        }
+
+        if (from == typeof(uint))
+        {
+            return to == typeof(long) || to == typeof(ulong) || to == typeof(double) || to == typeof(decimal);
+        }
+
+        if (from == typeof(long) || from == typeof(ulong))
+        {
+            return to == typeof(decimal);
+        }
+
+        return from == typeof(float) && to == typeof(double);
+    }
+
+    /// <summary>
     /// Reads the object a member chain starts from: a constant, or an instance field or
     /// property of such an object. A static member here is not a closure chain, so it is
     /// left to the compiled expression.
@@ -253,57 +306,6 @@ internal static class ClosureValueReader
         || (from.IsEnum && Enum.GetUnderlyingType(from) == to)
         || (to.IsEnum && Enum.GetUnderlyingType(to) == from)
         || IsLosslessWidening(from, to);
-
-    /// <summary>
-    /// Returns <see langword="true"/> when every value of <paramref name="from"/> converts to
-    /// <paramref name="to"/> exactly: the integral widenings, and the conversions to
-    /// <see cref="float"/>, <see cref="double"/> and <see cref="decimal"/> that keep every
-    /// digit. The implicit conversions that can round (<see cref="int"/> to <see cref="float"/>,
-    /// <see cref="long"/> to <see cref="double"/>, and so on) are left to the compiled expression.
-    /// </summary>
-    /// <param name="from">The operand's type.</param>
-    /// <param name="to">The conversion's type.</param>
-    /// <returns><see langword="true"/> for a lossless widening.</returns>
-    private static bool IsLosslessWidening(Type from, Type to)
-    {
-        if (from == typeof(sbyte))
-        {
-            return to == typeof(short) || to == typeof(int) || to == typeof(long) || IsFloatingOrDecimal(to);
-        }
-
-        if (from == typeof(byte))
-        {
-            return to == typeof(short) || to == typeof(ushort) || to == typeof(int) || to == typeof(uint)
-                || to == typeof(long) || to == typeof(ulong) || IsFloatingOrDecimal(to);
-        }
-
-        if (from == typeof(short))
-        {
-            return to == typeof(int) || to == typeof(long) || IsFloatingOrDecimal(to);
-        }
-
-        if (from == typeof(ushort))
-        {
-            return to == typeof(int) || to == typeof(uint) || to == typeof(long) || to == typeof(ulong) || IsFloatingOrDecimal(to);
-        }
-
-        if (from == typeof(int))
-        {
-            return to == typeof(long) || to == typeof(double) || to == typeof(decimal);
-        }
-
-        if (from == typeof(uint))
-        {
-            return to == typeof(long) || to == typeof(ulong) || to == typeof(double) || to == typeof(decimal);
-        }
-
-        if (from == typeof(long) || from == typeof(ulong))
-        {
-            return to == typeof(decimal);
-        }
-
-        return from == typeof(float) && to == typeof(double);
-    }
 
     private static bool IsFloatingOrDecimal(Type type) =>
         type == typeof(float) || type == typeof(double) || type == typeof(decimal);

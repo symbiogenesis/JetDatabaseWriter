@@ -30,6 +30,11 @@ using JetDatabaseWriter.Models;
 /// <c>[NotMapped]</c> properties are never pushed. The reader matches the column names
 /// to index key columns case-insensitively.
 /// </para>
+/// <para>
+/// The translator does not know the columns' types. Before it plans a seek, the reader keeps
+/// only the comparisons <see cref="IndexSeekFilter"/> finds a seek answers exactly, for
+/// example not an enum property bound to a Text column, whose operand is the enum's integer.
+/// </para>
 /// </remarks>
 internal static class IndexPredicateTranslator
 {
