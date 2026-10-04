@@ -96,12 +96,27 @@ xUnit v3 on Microsoft Testing Platform:
 
 ## Benchmarks
 
+Run benchmarks on GitHub Actions (`.github/workflows/benchmarks.yml`), not on a shared development machine:
+
+```
+pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha <commit> -Branch ci/bench-<name> -Benchmarks "<filter patterns>" -Baseline <branch point>
+```
+
+- `-Benchmarks` takes BenchmarkDotNet `--filter` patterns separated by spaces, for example `"*AccessWriterBenchmarks* *AccessReaderRowDecodeBenchmarks*"`.
+- With `-Baseline`, the runner benchmarks the baseline commit and then the commit under test back to back on the same machine. The script prints the comparison table (mean, error, allocations and head/baseline ratios), which also goes to the run summary.
+- `-Job short`, `medium` or `dry` replaces BenchmarkDotNet's default adaptive job.
+- The call waits and exits with code 2 like a CI gate. A run can take an hour or more, so keep calling it until it finishes.
+- The full results are in the run's `benchmark-results` artifact.
+- Hosted runners are noisy: treat a difference of a few percent as noise unless it is well outside the error column.
+
+BenchmarkDotNet practice, wherever the benchmarks run:
+
 - BenchmarkDotNet warms up by default; do not add a separate warmup run.
 - Keep the default adaptive job for release-quality numbers. Use `--job short` only for a focused refresh. Narrow a run with `--filter` (plus `dotnet run --no-restore`) instead of lowering iteration or warmup counts.
 - BenchmarkDotNet already switches Windows to the High performance power plan during runs; add no boilerplate for it.
 - `[IterationSetup]` suits destructive writer benchmarks that need a fresh database per operation, but it forces `InvocationCount=1` and `UnrollFactor=1`. Copy from an unmeasured baseline fixture instead of rebuilding the schema in each benchmark.
 - A `Mean` or `Allocated` of `NA`, or a "Benchmarks with issues" section in `BenchmarkDotNet.Artifacts/results/*-report-github.md`, means the benchmark is broken; fix it before tuning anything. `--job dry` reports `Error = NA` from its single measurement, which is expected.
-- Compare against the branch point, measured in the same session.
+- Compare a change against its branch point, measured in the same run: `-Baseline` does that.
 
 ## Code
 

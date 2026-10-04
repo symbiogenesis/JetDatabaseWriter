@@ -1,0 +1,137 @@
+name: Benchmarks
+
+# Runs BenchmarkDotNet on a GitHub-hosted runner, so benchmarks never load a shared
+# development machine. Start it with scripts/ci-gate.ps1 -Workflow benchmarks.yml, or
+# from the Actions tab. With a baseline, the baseline commit and the dispatched commit
+# run back to back on the same runner, and the run summary compares the two.
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: BenchmarkDotNet --filter patterns, separated by spaces (for example *AccessWriterBenchmarks*)
+        required: true
+        type: string
+      baseline:
+        description: Commit, branch or tag to compare against on the same runner; leave empty to run only the dispatched commit
+        required: false
+        default: ''
+        type: string
+      job:
+        description: BenchmarkDotNet job; default is the adaptive job for release-quality numbers
+        required: false
+        default: default
+        type: choice
+        options:
+          - default
+          - short
+          - medium
+          - dry
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  benchmarks:
+    name: Benchmarks
+    # Windows, like the development machines and the test job; some benchmarks are Windows only.
+    runs-on: windows-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      # The inputs reach the scripts only through environment variables, never through
+      # expression interpolation inside a script.
+      - name: Check out the baseline
+        if: inputs.baseline != ''
+        shell: pwsh
+        env:
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          git worktree add --detach "$env:RUNNER_TEMP/baseline" "$env:BASELINE"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot check out the baseline '$env:BASELINE'." }
+          git -C "$env:RUNNER_TEMP/baseline" log -1 --format='Baseline: %H %s'
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet restore JetDatabaseWriter.Benchmarks --locked-mode
+          dotnet build JetDatabaseWriter.Benchmarks -c Release --no-restore
+
+      - name: Build the baseline
+        if: inputs.baseline != ''
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/baseline
+        run: |
+          dotnet restore JetDatabaseWriter.Benchmarks --locked-mode
+          dotnet build JetDatabaseWriter.Benchmarks -c Release --no-restore
+
+      # The baseline runs first, then the dispatched commit, on the same runner.
+      - name: Run the baseline benchmarks
+        if: inputs.baseline != ''
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/baseline
+        env:
+          FILTER: ${{ inputs.filter }}
+          JOB: ${{ inputs.job }}
+        run: |
+          $filters = @($env:FILTER -split '\s+' | Where-Object { $_ })
+          $jobArgs = if ($env:JOB -ne 'default') { @('--job', $env:JOB) } else { @() }
+          dotnet run --project JetDatabaseWriter.Benchmarks -c Release --no-build -- --filter @filters @jobArgs --exporters json github --artifacts "$env:RUNNER_TEMP/results/baseline"
+          if ($LASTEXITCODE -ne 0) { throw "The baseline benchmarks failed." }
+
+      - name: Run the benchmarks
+        shell: pwsh
+        env:
+          FILTER: ${{ inputs.filter }}
+          JOB: ${{ inputs.job }}
+        run: |
+          $filters = @($env:FILTER -split '\s+' | Where-Object { $_ })
+          $jobArgs = if ($env:JOB -ne 'default') { @('--job', $env:JOB) } else { @() }
+          dotnet run --project JetDatabaseWriter.Benchmarks -c Release --no-build -- --filter @filters @jobArgs --exporters json github --artifacts "$env:RUNNER_TEMP/results/head"
+          if ($LASTEXITCODE -ne 0) { throw "The benchmarks failed." }
+
+      - name: Summarize
+        if: always()
+        shell: pwsh
+        env:
+          HAS_BASELINE: ${{ inputs.baseline != '' }}
+        run: |
+          $results = "$env:RUNNER_TEMP/results"
+          $summary = if ($env:HAS_BASELINE -eq 'true') {
+              ./scripts/compare-benchmarks.ps1 -Baseline "$results/baseline" -Head "$results/head"
+          }
+          else {
+              Get-ChildItem "$results/head/results" -Filter '*-report-github.md' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content -Raw $_.FullName }
+          }
+          if (-not $summary) { $summary = 'No benchmark results were produced.' }
+          New-Item -ItemType Directory -Force $results | Out-Null
+          $summary | Set-Content -Encoding utf8NoBOM "$results/summary.md"
+          $summary | Add-Content -Encoding utf8NoBOM $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-results
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: warn
+          retention-days: 30

@@ -11,6 +11,11 @@ Calling again never pushes or dispatches twice for the same commit on the same b
 When the run has finished, the script downloads its logs and prints every job and step result, the build summary,
 the test summaries of both legs, and the failing tests with their messages.
 
+With -Benchmarks, the script runs .github/workflows/benchmarks.yml instead: BenchmarkDotNet on a hosted runner, for
+the given --filter patterns. With -Baseline as well, the runner benchmarks the baseline commit and then the commit
+under test back to back, and the script prints the comparison table the workflow writes. The baseline commit is
+pushed to <branch>-base first, so the runner can always fetch it.
+
 The script uses the GitHub CLI (gh) when it is installed and logged in, and otherwise a github.com credential stored
 in git. It never prints the token. Its state and downloaded logs live in <git common dir>/ci-gate, which every
 worktree shares and git never commits.
@@ -20,6 +25,10 @@ Exit codes: 0 = the run succeeded, 1 = the run failed or was cancelled, 2 = stil
 
 .EXAMPLE
 pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 8615e8f -Branch ci/core-split-a-3
+
+.EXAMPLE
+# Benchmark a branch tip against its branch point on the same runner.
+pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 519bba1 -Branch ci/bench-core-split-a -Benchmarks "*AccessWriterBenchmarks* *AccessReaderRowDecodeBenchmarks*" -Baseline 56d84f3
 
 .EXAMPLE
 # Re-run only the failed jobs of the last run on this branch, to tell a flaky failure from a real one, then wait.
@@ -40,6 +49,12 @@ param(
     [int] $WaitSeconds = 480,
     [switch] $RerunFailed,
     [switch] $Delete,
+    # Run the benchmarks workflow instead of ci.yml: BenchmarkDotNet --filter patterns, separated by spaces.
+    [string] $Benchmarks,
+    # With -Benchmarks: the commit to benchmark first on the same runner, for a comparison.
+    [string] $Baseline,
+    # With -Benchmarks: the BenchmarkDotNet job.
+    [ValidateSet('default', 'short', 'medium', 'dry')] [string] $Job = 'default',
     # owner/name of the GitHub repository; defaults to the one origin points at.
     [string] $Repo
 )
@@ -121,43 +136,86 @@ function Write-RunReport($run, $headers) {
     }
 }
 
+# Downloads a finished run's benchmark-results artifact and prints the summary the workflow wrote.
+function Write-BenchmarkSummary($run, $headers) {
+    $artifacts = Invoke-RestMethod -Uri "$api/actions/runs/$($run.id)/artifacts" -Headers $headers
+    $artifact = $artifacts.artifacts | Where-Object { $_.name -eq 'benchmark-results' } | Select-Object -First 1
+    if (-not $artifact) { return }
+    $dir = Join-Path $stateDir "run-$($run.id)-attempt$($run.run_attempt)-benchmark-results"
+    if (-not (Test-Path $dir)) {
+        $zip = "$dir.zip"
+        Invoke-WebRequest -Uri $artifact.archive_download_url -Headers $headers -OutFile $zip
+        Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+        Remove-Item -LiteralPath $zip
+    }
+    Write-Host "BENCHMARK RESULTS: $dir"
+    $summary = Get-ChildItem -LiteralPath $dir -Recurse -File -Filter 'summary.md' | Select-Object -First 1
+    if ($summary) { Get-Content -LiteralPath $summary.FullName | ForEach-Object { Write-Host $_ } }
+}
+
 if ($RunId) {
     $headers = Get-Headers
     $run = Invoke-RestMethod -Uri "$api/actions/runs/$RunId" -Headers $headers
     Write-RunReport $run $headers
+    if ($run.status -eq 'completed') { Write-BenchmarkSummary $run $headers }
     if ($run.status -ne 'completed') { exit 2 }
     if ($run.conclusion -eq 'success') { exit 0 } else { exit 1 }
 }
 
 if (-not $Branch -or $Branch -notlike 'ci/*') { Write-Host 'ERROR: -Branch must be a ci/* branch; this script never pushes main or any other branch.'; exit 3 }
-$stateFile = Join-Path $stateDir (($Branch -replace '[/\\]', '_') + '.json')
+$workflow = if ($Benchmarks) { 'benchmarks.yml' } else { 'ci.yml' }
+$statePrefix = if ($Benchmarks) { 'benchmarks__' } else { '' }
+$stateFile = Join-Path $stateDir ($statePrefix + ($Branch -replace '[/\\]', '_') + '.json')
+$baseBranch = "$Branch-base"
 
 if ($Delete) {
     git -C $gitDir push origin --delete $Branch 2>&1 | ForEach-Object { Write-Host $_ }
-    Remove-Item -LiteralPath $stateFile -ErrorAction SilentlyContinue
+    if (git -C $gitDir ls-remote --heads origin $baseBranch) { git -C $gitDir push origin --delete $baseBranch 2>&1 | ForEach-Object { Write-Host $_ } }
+    Get-ChildItem -LiteralPath $stateDir -Filter ('*' + ($Branch -replace '[/\\]', '_') + '.json') | Remove-Item
     exit 0
 }
 
 if (-not $Sha) { Write-Host 'ERROR: -Sha is required.'; exit 3 }
 $full = (git -C $gitDir rev-parse --verify "$Sha^{commit}" 2>$null)
 if (-not $full) { Write-Host "ERROR: $Sha is not a commit in this repository."; exit 3 }
+$inputs = [ordered]@{}
+if ($Benchmarks) {
+    $inputs.filter = $Benchmarks
+    $inputs.job = $Job
+    $inputs.baseline = ''
+    if ($Baseline) {
+        $baseFull = (git -C $gitDir rev-parse --verify "$Baseline^{commit}" 2>$null)
+        if (-not $baseFull) { Write-Host "ERROR: $Baseline is not a commit in this repository."; exit 3 }
+        $inputs.baseline = $baseFull
+    }
+}
+elseif ($Baseline) { Write-Host 'ERROR: -Baseline needs -Benchmarks.'; exit 3 }
+$inputsKey = ($inputs.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
 $headers = Get-Headers
 $state = if (Test-Path -LiteralPath $stateFile) { Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json } else { $null }
 
-if (-not $state -or $state.sha -ne $full) {
+if (-not $state -or $state.sha -ne $full -or [string]$state.inputs -ne $inputsKey) {
     git -C $gitDir push --force origin "${full}:refs/heads/$Branch" 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { Write-Host 'ERROR: git push failed.'; exit 3 }
+    if ($inputs.baseline) {
+        # The runner fetches the baseline from origin, so make sure origin has it.
+        git -C $gitDir push --force origin "$($inputs.baseline):refs/heads/$baseBranch" 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { Write-Host 'ERROR: git push of the baseline failed.'; exit 3 }
+    }
     $dispatchedAt = (Get-Date).ToUniversalTime()
     if ($gh) {
-        & $gh workflow run ci.yml --repo $Repo --ref $Branch 2>&1 | ForEach-Object { Write-Host $_ }
+        $fields = @($inputs.GetEnumerator() | ForEach-Object { '-f'; "$($_.Key)=$($_.Value)" })
+        & $gh workflow run $workflow --repo $Repo --ref $Branch @fields 2>&1 | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) { Write-Host 'ERROR: gh workflow run failed.'; exit 3 }
     }
     else {
-        Invoke-RestMethod -Method Post -Uri "$api/actions/workflows/ci.yml/dispatches" -Headers $headers -ContentType 'application/json' -Body (@{ ref = $Branch } | ConvertTo-Json) | Out-Null
+        $body = @{ ref = $Branch }
+        if ($inputs.Count -gt 0) { $body.inputs = $inputs }
+        Invoke-RestMethod -Method Post -Uri "$api/actions/workflows/$workflow/dispatches" -Headers $headers -ContentType 'application/json' -Body ($body | ConvertTo-Json) | Out-Null
     }
-    $state = [pscustomobject]@{ sha = $full; branch = $Branch; dispatchedAt = $dispatchedAt.ToString('o'); runId = $null }
+    $state = [pscustomobject]@{ sha = $full; branch = $Branch; workflow = $workflow; inputs = $inputsKey; dispatchedAt = $dispatchedAt.ToString('o'); runId = $null }
     Save-State $state $stateFile
-    Write-Host "Pushed $full to origin/$Branch and dispatched ci.yml at $($state.dispatchedAt)."
+    Write-Host "Pushed $full to origin/$Branch and dispatched $workflow at $($state.dispatchedAt)."
 }
 elseif ($RerunFailed -and $state.runId) {
     if ($gh) { & $gh run rerun $state.runId --failed --repo $Repo 2>&1 | ForEach-Object { Write-Host $_ } }
@@ -171,7 +229,7 @@ $run = $null
 while ($true) {
     if (-not $state.runId) {
         $since = (ConvertTo-Utc $state.dispatchedAt).AddMinutes(-1)
-        $runs = Invoke-RestMethod -Uri "$api/actions/workflows/ci.yml/runs?branch=$([uri]::EscapeDataString($Branch))&event=workflow_dispatch&per_page=10" -Headers $headers
+        $runs = Invoke-RestMethod -Uri "$api/actions/workflows/$workflow/runs?branch=$([uri]::EscapeDataString($Branch))&event=workflow_dispatch&per_page=10" -Headers $headers
         $run = $runs.workflow_runs | Where-Object { $_.head_sha -eq $full -and (ConvertTo-Utc $_.created_at) -ge $since } | Sort-Object { ConvertTo-Utc $_.created_at } -Descending | Select-Object -First 1
         if ($run) { $state.runId = $run.id; Save-State $state $stateFile }
     }
@@ -186,4 +244,5 @@ while ($true) {
 if (-not $run) { Write-Host "PENDING: dispatched at $($state.dispatchedAt); the run has not appeared yet. Call again with the same arguments."; exit 2 }
 if ($run.status -ne 'completed') { Write-Host "PENDING: $($run.html_url) is $($run.status). Call again with the same arguments."; exit 2 }
 Write-RunReport $run $headers
+if ($Benchmarks) { Write-BenchmarkSummary $run $headers }
 if ($run.conclusion -eq 'success') { exit 0 } else { exit 1 }
