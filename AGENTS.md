@@ -56,7 +56,7 @@ The script's other switches:
 - `-RunId <id>` reports on an existing run.
 - `-Branch ci/<name> -Delete` deletes the branch.
 
-Use one `ci/*` branch per commit you gate, such as `ci/<topic>-<n>`, and delete the branches when you are done. A run takes about 8 minutes on windows-latest. The script uses the GitHub CLI (`gh`) when it is installed and logged in. `gh run view <id> --log-failed` shows a failed run's logs.
+Use one `ci/*` branch per commit you gate, such as `ci/<topic>-<n>`, and delete the branches when you are done. A run takes about 2.5 minutes: its six jobs run in parallel on windows-latest, four analyze jobs (the library and its package, the other tools, and the test project on each target framework) and one test job per leg, which builds without analyzers. The script uses the GitHub CLI (`gh`) when it is installed and logged in. `gh run view <id> --log-failed` shows a failed run's logs.
 
 A timing-sensitive test can fail on CI and pass on a re-run. Re-run the failed jobs once before you call a failure real.
 
