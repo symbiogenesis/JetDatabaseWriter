@@ -189,6 +189,40 @@ public sealed partial class PowerShellProcessRunnerTests
         }
     }
 
+    [Fact(DisableParallelization = true)]
+    public void Run_ThreadPoolBusy_CapturesOutputBeforeDrainTimeout()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+
+        // Every thread-pool thread is blocked, with more work queued behind them, as can happen
+        // when the whole suite runs in parallel. The lines the host writes before it exits must
+        // still reach the result within the drain timeout. The test starves the pool, so it runs
+        // alone.
+        var gate = new PoolGate();
+        int blockers = ThreadPool.ThreadCount + (Environment.ProcessorCount * 8);
+        for (int i = 0; i < blockers; i++)
+        {
+            _ = ThreadPool.UnsafeQueueUserWorkItem(static blocker => blocker.Block(), gate, preferLocal: false);
+        }
+
+        try
+        {
+            PowerShellRunResult result = PowerShellProcessRunner.Run(
+                PowerShellPath,
+                CommandArguments("Write-Output 'host done'; exit 0"),
+                TimeSpan.FromSeconds(60),
+                drainTimeout: TimeSpan.FromSeconds(2));
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.True(result.OutputComplete, "The output did not reach its end within the drain timeout.");
+            Assert.Contains("host done", result.StandardOutput, StringComparison.Ordinal);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     private static string[] CommandArguments(string script) =>
         ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script];
 
@@ -418,4 +452,35 @@ public sealed partial class PowerShellProcessRunnerTests
     [SupportedOSPlatform("windows")]
     private sealed class ProcessAccessRule(IdentityReference identity, int accessMask, AccessControlType type)
         : AccessRule(identity, accessMask, isInherited: false, InheritanceFlags.None, PropagationFlags.None, type);
+
+    /// <summary>
+    /// Holds the thread-pool threads that call <see cref="Block"/> until <see cref="Release"/>.
+    /// It is never disposed, so a work item that starts after the release, once the test has
+    /// ended, returns at once.
+    /// </summary>
+    private sealed class PoolGate
+    {
+        private readonly object sync = new();
+        private bool released;
+
+        public void Block()
+        {
+            lock (this.sync)
+            {
+                while (!this.released)
+                {
+                    Monitor.Wait(this.sync);
+                }
+            }
+        }
+
+        public void Release()
+        {
+            lock (this.sync)
+            {
+                this.released = true;
+                Monitor.PulseAll(this.sync);
+            }
+        }
+    }
 }

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Threading;
 
@@ -16,10 +17,10 @@ using System.Threading;
 /// Reading a redirected stream to its end before waiting for the process, as this code used to,
 /// makes the timeout useless: <c>ReadToEnd</c> returns only when every process holding the pipe
 /// has exited, so a hung host, or a child it started, blocked the caller for as long as it ran.
-/// Here both streams are read through events while the process runs, the timeout applies to the
-/// process itself, and a timed-out host is killed together with every process it started. A
-/// process in that tree that this user may not terminate is left running, and the run still
-/// returns as a timeout instead of throwing.
+/// Here each stream is read on a background thread of its own while the process runs, the
+/// timeout applies to the process itself, and a timed-out host is killed together with every
+/// process it started. A process in that tree that this user may not terminate is left running,
+/// and the run still returns as a timeout instead of throwing.
 /// </remarks>
 internal static class PowerShellProcessRunner
 {
@@ -56,20 +57,16 @@ internal static class PowerShellProcessRunner
             startInfo.ArgumentList.Add(argument);
         }
 
-        // The captures outlive the process: disposing it cancels the pending reads, which then
-        // report end of stream to these handlers, so they hold nothing that needs disposing.
         var output = new StreamCapture();
         var error = new StreamCapture();
         using var process = new Process { StartInfo = startInfo };
-        process.OutputDataReceived += output.OnDataReceived;
-        process.ErrorDataReceived += error.OnDataReceived;
         if (!process.Start())
         {
             throw new InvalidOperationException($"Failed to start '{powerShellPath}'.");
         }
 
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        StartCapture(process.StandardOutput, output, "output");
+        StartCapture(process.StandardError, error, "error");
 
         bool timedOut = !process.WaitForExit(timeout);
         if (timedOut)
@@ -85,6 +82,44 @@ internal static class PowerShellProcessRunner
 
         int exitCode = timedOut ? -1 : process.ExitCode;
         return new PowerShellRunResult(exitCode, output.GetText(), error.GetText(), timedOut, outputComplete);
+    }
+
+    /// <summary>
+    /// Reads <paramref name="reader"/> to its end on a background thread of its own. A read
+    /// blocks until a process holding the pipe writes to it or every one has closed it, so a
+    /// thread-pool thread would be held as long, and on a saturated pool the lines a host wrote
+    /// before it exited arrived after the drain timeout. The thread owns the reader: the process
+    /// does not dispose a stream that was read synchronously.
+    /// </summary>
+    /// <param name="reader">One of the process's redirected streams.</param>
+    /// <param name="capture">Receives the stream's lines and its end.</param>
+    /// <param name="name">The stream's name, for the thread's name.</param>
+    private static void StartCapture(StreamReader reader, StreamCapture capture, string name)
+    {
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                while (reader.ReadLine() is { } line)
+                {
+                    capture.Append(line);
+                }
+            }
+            catch (IOException)
+            {
+                // A broken pipe ends the stream like a closed one.
+            }
+            finally
+            {
+                reader.Dispose();
+                capture.End();
+            }
+        })
+        {
+            IsBackground = true,
+            Name = $"PowerShellProcessRunner {name}",
+        };
+        thread.Start();
     }
 
     private static void KillProcessTree(Process process)
@@ -111,19 +146,20 @@ internal static class PowerShellProcessRunner
         private readonly StringBuilder text = new();
         private bool ended;
 
-        public void OnDataReceived(object sender, DataReceivedEventArgs e)
+        public void Append(string line)
         {
             lock (this.text)
             {
-                if (e.Data is null)
-                {
-                    this.ended = true;
-                    Monitor.PulseAll(this.text);
-                }
-                else
-                {
-                    this.text.AppendLine(e.Data);
-                }
+                this.text.AppendLine(line);
+            }
+        }
+
+        public void End()
+        {
+            lock (this.text)
+            {
+                this.ended = true;
+                Monitor.PulseAll(this.text);
             }
         }
 
