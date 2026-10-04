@@ -180,7 +180,9 @@ public sealed class JetFormatTests
 
     /// <summary>
     /// The database file an open reader builds takes its format members from
-    /// its profile, which it builds from the file's header.
+    /// its profile, which it builds from the file's header, and reads row
+    /// column counts and text as the profile does from the row format it
+    /// copies from it.
     /// </summary>
     /// <param name="fixture">The fixture name.</param>
     [Theory]
@@ -200,6 +202,15 @@ public sealed class JetFormatTests
         Assert.Equal(db.Profile.DataPage, db.DataPage);
         Assert.Equal(db.Profile.TDef, db.TDef);
         Assert.Equal(db.Profile.RowFields, db.RowFields);
+        Assert.Equal(db.Profile.RowFields.NumCols, db.RowColumnCountFieldSize);
+        Assert.Same(db.Profile.AnsiEncoding, db.AnsiEncoding);
+
+        byte[] row = [0x34, 0x12];
+        Assert.Equal(db.Profile.ReadRowColumnCount(row, 0), db.ReadRowColumnCount(row, 0));
+
+        byte[] text = db.Profile.EncodeText(SampleText);
+        Assert.Equal(SampleText, db.DecodeTextForFormat(text, 0, text.Length));
+        Assert.Equal(string.Empty, db.DecodeTextForFormat(text, 0, 0));
     }
 
     private static async ValueTask<byte[]> ReadHeaderAsync(string fixture)

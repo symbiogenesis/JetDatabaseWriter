@@ -224,6 +224,13 @@ of the object-array work for supported shapes.
 Object-array consumers should still expect to pay for all requested columns.
 There is no pending change here without a new API shape or fresh profiling.
 
+A few nanoseconds per column show on a 40-column row. The decoder reads the
+format, the row-trailer field sizes and the code-page encoding per row and per
+column, so `DatabaseFile` keeps copies of them as fields instead of forwarding
+to its `JetFormat` profile, and the decode loops read the field sizes once per
+row. Reading them through the profile, one more dependent load per read, made
+`Decode_Wide_Untyped` 4-8% slower.
+
 Primary code path:
 
 - `TableReader.EnumerateTypedRowsAsync`

@@ -382,6 +382,7 @@ internal sealed class RowDecodePlan
             return null;
         }
 
+        RowFieldSizes rowFields = source.RowFields;
         string[] result = new string[this.columns.Count];
         for (int columnIndex = 0; columnIndex < this.columns.Count; columnIndex++)
         {
@@ -394,7 +395,7 @@ internal sealed class RowDecodePlan
             }
 
             ColumnInfo column = this.columns[columnIndex];
-            ColumnSlice slice = ResolveColumnSlice(source.RowFields, page, rowStart, rowSize, layout, column);
+            ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
             result[columnIndex] = await this.DecodeStringValueAsync(
                 source,
                 page,
@@ -423,6 +424,7 @@ internal sealed class RowDecodePlan
             return false;
         }
 
+        RowFieldSizes rowFields = source.RowFields;
         for (int columnIndex = 0; columnIndex < this.columns.Count; columnIndex++)
         {
             if (this.wantedColumns?[columnIndex] == false)
@@ -432,7 +434,7 @@ internal sealed class RowDecodePlan
             }
 
             ColumnInfo column = this.columns[columnIndex];
-            ColumnSlice slice = ResolveColumnSlice(source.RowFields, page, rowStart, rowSize, layout, column);
+            ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
             buffer[columnIndex] = this.DecodeTypedValue(source, page, rowStart, slice, column, longValueDecoder, ref needsLongValue);
         }
 
@@ -451,6 +453,7 @@ internal sealed class RowDecodePlan
             return false;
         }
 
+        RowFieldSizes rowFields = source.RowFields;
         for (int resultIndex = 0; resultIndex < this.columnOrdinals.Length; resultIndex++)
         {
             int columnOrdinal = this.columnOrdinals[resultIndex];
@@ -460,7 +463,7 @@ internal sealed class RowDecodePlan
             }
 
             ColumnInfo column = this.columns[columnOrdinal];
-            ColumnSlice slice = ResolveColumnSlice(source.RowFields, page, rowStart, rowSize, layout, column);
+            ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
             switch (slice.Kind)
             {
                 case ColumnSliceKind.Bool:

@@ -27,12 +27,20 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// or the writer's <see cref="Pager"/>), the TDEF parser
 /// (<see cref="TableDefReader"/>) and the owned-page and row enumeration
 /// (<see cref="OwnedDataPages"/>, <see cref="DataPageRows"/>). It forwards to
-/// them and keeps only the in-place TDEF write-backs, which move to the
-/// writer's TDEF writer in core-split-b. Shared by the reader and writer
-/// service graphs; it knows nothing about either facade.
+/// them, except for the row format it copies for the row decoder, and keeps
+/// only the in-place TDEF write-backs, which move to the writer's TDEF writer
+/// in core-split-b. Shared by the reader and writer service graphs; it knows
+/// nothing about either facade.
 /// </summary>
 internal sealed class DatabaseFile : IAsyncDisposable
 {
+    /// <summary>
+    /// Whether the file is Jet3, copied from <see cref="Profile"/> with the row
+    /// format below, so the row column count and text decoders branch on it as
+    /// <see cref="JetFormat"/> does.
+    /// </summary>
+    private readonly bool isJet3;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="DatabaseFile"/> class
     /// from a pre-read database file header.
@@ -66,6 +74,10 @@ internal sealed class DatabaseFile : IAsyncDisposable
         // an encrypted file reports, as when the code page was decoded after
         // the page keys.
         this.Profile = JetFormat.FromHeader(header);
+        this.Format = this.Profile.Kind;
+        this.isJet3 = this.Profile.IsJet3;
+        this.RowFields = this.Profile.RowFields;
+        this.AnsiEncoding = this.Profile.AnsiEncoding;
         bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
         string passwordOptionName = ownerType == typeof(AccessWriter)
             ? EncryptionManager.WriterPasswordOption
@@ -80,7 +92,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>
     /// Gets the file's immutable format profile: format, page size, code page,
-    /// byte layouts and text codecs. The format members below forward to it.
+    /// byte layouts and text codecs. The format members below forward to it,
+    /// except the row format, which the constructor copies from it.
     /// </summary>
     internal JetFormat Profile { get; }
 
@@ -106,6 +119,25 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// </summary>
     internal OwnedDataPages OwnedPages { get; }
 
+    // ── Row format (copied from Profile) ─────────────────────────────
+    //
+    // The row decoder reads these per row and per column. Read through
+    // Profile, each read takes a second dependent load, which shows on wide
+    // rows, so the constructor copies them, and the Jet3 flag, once from the
+    // immutable profile.
+
+    /// <summary>Gets the detected database format — <see cref="JetFormat.Kind"/>, copied from <see cref="Profile"/>.</summary>
+    internal DatabaseFormat Format { get; }
+
+    /// <summary>Gets per-format byte sizes of the in-row trailer fields — <see cref="JetFormat.RowFields"/>, copied from <see cref="Profile"/>.</summary>
+    internal RowFieldSizes RowFields { get; }
+
+    /// <summary>Gets the database's ANSI code-page encoding — <see cref="JetFormat.AnsiEncoding"/>, copied from <see cref="Profile"/>.</summary>
+    internal Encoding AnsiEncoding { get; }
+
+    /// <summary>Gets the byte size of a row's column-count field: 1 on Jet3, 2 on Jet4 and ACE.</summary>
+    internal int RowColumnCountFieldSize => this.RowFields.NumCols;
+
     // ── Format-specific layouts (forwarders to Profile) ──────────────
 
     /// <summary>Gets per-format byte offsets within a data-page (page type 0x01) header — see <see cref="JetFormat.DataPage"/>.</summary>
@@ -120,20 +152,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <summary>Gets per-format byte offsets within one column descriptor — see <see cref="JetFormat.ColumnDescriptor"/>.</summary>
     internal ColumnDescriptorLayout ColumnDescriptor => this.Profile.ColumnDescriptor;
 
-    /// <summary>Gets per-format byte sizes of the in-row trailer fields — see <see cref="JetFormat.RowFields"/>.</summary>
-    internal RowFieldSizes RowFields => this.Profile.RowFields;
-
     /// <summary>Gets the per-format real-idx and logical-idx layouts — see <see cref="JetFormat.Index"/>.</summary>
     internal IndexLayout IndexLayoutInfo => this.Profile.Index;
 
     /// <summary>Gets the database page size in bytes — see <see cref="JetFormat.PageSize"/>.</summary>
     internal int PageSizeBytes => this.Profile.PageSize;
-
-    /// <summary>Gets the detected database format — see <see cref="JetFormat.Kind"/>.</summary>
-    internal DatabaseFormat Format => this.Profile.Kind;
-
-    /// <summary>Gets the database's ANSI code-page encoding — see <see cref="JetFormat.AnsiEncoding"/>.</summary>
-    internal Encoding AnsiEncoding => this.Profile.AnsiEncoding;
 
     /// <summary>Gets the decoded database code page — see <see cref="JetFormat.CodePage"/>.</summary>
     internal int CodePage => this.Profile.CodePage;
@@ -187,8 +210,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <see cref="IPageSource.PageCount"/>.
     /// </summary>
     internal long PageCount => this.Pages.PageCount;
-
-    internal int RowColumnCountFieldSize => this.Profile.RowFields.NumCols;
 
     /// <summary>Gets the writer's <see cref="Pager"/>, or throws on a read-only file.</summary>
     /// <exception cref="InvalidOperationException">The file is read-only.</exception>
@@ -370,18 +391,37 @@ internal sealed class DatabaseFile : IAsyncDisposable
     internal ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
         => this.TableDefs.ReadRequiredTableDefAsync(tdefPage, tableName, cancellationToken);
 
-    /// <summary>Reads the per-row column count at <paramref name="rowStart"/> — see <see cref="JetFormat.ReadRowColumnCount"/>.</summary>
+    /// <summary>
+    /// Reads the per-row column count at <paramref name="rowStart"/> as
+    /// <see cref="JetFormat.ReadRowColumnCount"/> does, from the Jet3 flag
+    /// copied from <see cref="Profile"/>: one byte on Jet3, a 16-bit
+    /// little-endian word on Jet4/ACE.
+    /// </summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="rowStart">The row start.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal int ReadRowColumnCount(byte[] page, int rowStart) => this.Profile.ReadRowColumnCount(page, rowStart);
+    internal int ReadRowColumnCount(byte[] page, int rowStart)
+        => this.isJet3 ? page[rowStart] : Ru16(page, rowStart);
 
-    /// <summary>Decodes a text/memo slice — see <see cref="JetFormat.DecodeText"/>.</summary>
+    /// <summary>
+    /// Decodes a text/memo slice as <see cref="JetFormat.DecodeText"/> does,
+    /// from the Jet3 flag and the <see cref="AnsiEncoding"/> copied from
+    /// <see cref="Profile"/>: Jet4 compressed/UCS-2 or Jet3 ANSI. Empty slices
+    /// return <see cref="string.Empty"/>.
+    /// </summary>
     /// <param name="bytes">The bytes.</param>
     /// <param name="start">The start.</param>
     /// <param name="len">The length in bytes.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal string DecodeTextForFormat(byte[] bytes, int start, int len) => this.Profile.DecodeText(bytes, start, len);
+    internal string DecodeTextForFormat(byte[] bytes, int start, int len)
+    {
+        if (len <= 0)
+        {
+            return string.Empty;
+        }
+
+        return this.isJet3 ? this.AnsiEncoding.GetString(bytes, start, len) : DecodeJet4Text(bytes, start, len);
+    }
 
     /// <summary>Encodes a string for storage — see <see cref="JetFormat.EncodeText(string, bool)"/>.</summary>
     /// <param name="value">The value.</param>

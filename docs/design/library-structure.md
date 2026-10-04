@@ -11,7 +11,7 @@ JetDatabaseWriter/
 ├── AccessBase.cs                          (public base: format, page size, code page; owns the facade's DatabaseFile)
 ├── AccessReader.cs                        (public read API — facade; every operation forwards to one reader service)
 ├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)
-├── DatabaseFile.cs                        (one open database: composes its JetFormat, PageFile or Pager, TableDefReader and OwnedDataPages and forwards to them; keeps only the TDEF write-backs)
+├── DatabaseFile.cs                        (one open database: composes its JetFormat, PageFile or Pager, TableDefReader and OwnedDataPages and forwards to them; keeps only the TDEF write-backs and a copy of the row format)
 ├── JetFormat.cs                           (immutable per-file format profile: format, page size, code page, byte layouts, text and name codecs)
 ├── ReaderServices.cs                      (reader composition root: builds and wires the reader's collaborators)
 ├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
@@ -403,7 +403,7 @@ Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only wh
 
 Each facade owns one **`DatabaseFile`**, which composes the file's parts and forwards to them:
 
-- its format profile, `JetFormat` (`DatabaseFile.Profile`): the format, page size, code page, byte layouts and text codecs, built once from the header;
+- its format profile, `JetFormat` (`DatabaseFile.Profile`): the format, page size, code page, byte layouts and text codecs, built once from the header. The row format that the row decoder reads per row and per column (`Format`, `RowFields`, `AnsiEncoding` and whether the file is Jet3) is copied from the profile into fields of `DatabaseFile`, which reads row column counts and decodes text from those copies, so that path does not load the profile on every read;
 - its page I/O (`DatabaseFile.Pages`): a read-only `PageFile` for the reader, which owns the stream, the I/O gate, the page cipher and the positional reads, and cannot write; or, for the writer, a `Pager`, the `PageFile` that also writes, appends, truncates and flushes pages, encrypts on write, takes the cooperative byte-range locks and holds the transaction journal. `TransactionLifecycle` attaches and detaches that journal only through a `Pager.JournalGate` lease, never through the gate or the journal directly. The reader's object graph holds no `Pager`, so its write forwarders throw;
 - its TDEF parser, `TableDefReader` (`DatabaseFile.TableDefs`), which reads a table's TDEF chain through the page file and parses its columns, so over the writer's `Pager` it sees a transaction's pending TDEF pages; the in-place TDEF write-backs (`WriteTDefChainInPlaceAsync`, `WriteTDefInt32Async`) stay on `DatabaseFile` until the writer gets its own TDEF writer;
 - its owned-page discovery and row enumeration, `OwnedDataPages` (`DatabaseFile.OwnedPages`), which memoizes each table's owned pages only on the read-only file (its constructor refuses to cache over a `Pager`), with the row-directory parsing in the static `DataPageRows` and the scalar and partial column reads in `ScalarColumnReader` and `PartialColumnReader`.
