@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -11,6 +12,7 @@ using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.TestSupport;
+using Microsoft.Win32.SafeHandles;
 using Xunit;
 
 /// <summary>
@@ -21,7 +23,7 @@ using Xunit;
 /// host exits must not block the caller. Both legs run these, so the runner is checked on net8.0
 /// as well as net10.0.
 /// </summary>
-public sealed class PowerShellProcessRunnerTests
+public sealed partial class PowerShellProcessRunnerTests
 {
     private const string WindowsOnly = "Runs powershell.exe and ping.exe, which only Windows has.";
 
@@ -89,20 +91,22 @@ public sealed class PowerShellProcessRunnerTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
 
         // As soon as the host records the ping's process id, the test denies this user the
-        // right to terminate the ping, as an elevated or protected process would. When the
-        // timeout passes, Kill(entireProcessTree: true) kills the host, fails on the ping and
-        // reports that failure in an AggregateException. The run must still come back as a
-        // timeout: the DAO probe and scripts treat anything else as a broken environment.
+        // right to terminate the ping, as an elevated or protected process would. The run
+        // holds no privileges, because SeDebugPrivilege opens a process whatever its
+        // access-control list denies. When the timeout passes, Kill(entireProcessTree: true)
+        // kills the host, fails on the ping and reports that failure in an AggregateException.
+        // The run must still come back as a timeout: the DAO probe and scripts treat anything
+        // else as a broken environment.
         string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
         using var stopGuard = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         Task<Process?> guardedPing = DenyTerminateOnceStartedAsync(pidPath, stopGuard.Token);
         try
         {
-            PowerShellRunResult result = PowerShellProcessRunner.Run(
+            PowerShellRunResult result = RunWithoutPrivileges(() => PowerShellProcessRunner.Run(
                 PowerShellPath,
                 CommandArguments(StartPingScript(pidPath) + "; Start-Sleep -Seconds 120"),
                 TimeSpan.FromSeconds(30),
-                drainTimeout: TimeSpan.FromSeconds(1));
+                drainTimeout: TimeSpan.FromSeconds(1)));
             await stopGuard.CancelAsync();
             Process? ping = await guardedPing;
 
@@ -242,6 +246,40 @@ public sealed class PowerShellProcessRunnerTests
         return null;
     }
 
+    /// <summary>
+    /// Runs <paramref name="run"/> on this thread while impersonating this user's token with every
+    /// privilege removed. When the process token holds SeDebugPrivilege, as the elevated token of
+    /// a CI runner does, .NET enables it for the whole process, and a process opened under it
+    /// grants any access its access-control list denies.
+    /// </summary>
+    /// <typeparam name="T">The result of <paramref name="run"/>.</typeparam>
+    /// <param name="run">The work to run without privileges.</param>
+    /// <returns>What <paramref name="run"/> returned.</returns>
+    /// <exception cref="Win32Exception">The token without privileges could not be created.</exception>
+    [SupportedOSPlatform("windows")]
+    private static T RunWithoutPrivileges<T>(Func<T> run)
+    {
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Duplicate | TokenAccessLevels.Query | TokenAccessLevels.Impersonate);
+        if (!NativeMethods.CreateRestrictedToken(
+            identity.AccessToken,
+            NativeMethods.DisableMaxPrivilege,
+            0,
+            IntPtr.Zero,
+            0,
+            IntPtr.Zero,
+            0,
+            IntPtr.Zero,
+            out SafeAccessTokenHandle token))
+        {
+            throw new Win32Exception();
+        }
+
+        using (token)
+        {
+            return WindowsIdentity.RunImpersonated(token, run);
+        }
+    }
+
     private static void KillWithOwnHandle(Process? process)
     {
         if (process is null)
@@ -275,6 +313,26 @@ public sealed class PowerShellProcessRunnerTests
         {
             // Exited while being killed.
         }
+    }
+
+    private static partial class NativeMethods
+    {
+        /// <summary>Removes every privilege but SeChangeNotifyPrivilege from the new token.</summary>
+        public const int DisableMaxPrivilege = 0x1;
+
+        [LibraryImport("advapi32.dll", SetLastError = true)]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static partial bool CreateRestrictedToken(
+            SafeAccessTokenHandle existingTokenHandle,
+            int flags,
+            int disableSidCount,
+            IntPtr sidsToDisable,
+            int deletePrivilegeCount,
+            IntPtr privilegesToDelete,
+            int restrictedSidCount,
+            IntPtr sidsToRestrict,
+            out SafeAccessTokenHandle newTokenHandle);
     }
 
     /// <summary>The discretionary access-control list of a process, read and written through a handle to it.</summary>
