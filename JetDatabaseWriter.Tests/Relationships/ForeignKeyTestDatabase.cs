@@ -222,6 +222,33 @@ internal static class ForeignKeyTestDatabase
     }
 
     /// <summary>
+    /// Asserts that every real index of each of <paramref name="tableNames"/>
+    /// holds exactly one entry for each live row of its table, pointing at
+    /// that row.
+    /// </summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="tableNames">The tables.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous check.</returns>
+    public static async Task AssertIndexesCoverRowsAsync(MemoryStream ms, params string[] tableNames)
+    {
+        ms.Position = 0;
+        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(ms, ReaderOptions, cancellationToken: Ct))
+        {
+            foreach (string tableName in tableNames)
+            {
+                CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, Ct);
+                Assert.NotNull(entry);
+                foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, entry.TDefPage, Ct))
+                {
+                    await IndexLeafChain.AssertCoversLiveRowsAsync(harness.Database, entry.TDefPage, root, Ct);
+                }
+            }
+        }
+
+        ms.Position = 0;
+    }
+
+    /// <summary>
     /// Reads every row of <paramref name="tableName"/> as its values joined by
     /// <c>|</c>, with database null as an empty string, sorted ordinally.
     /// </summary>

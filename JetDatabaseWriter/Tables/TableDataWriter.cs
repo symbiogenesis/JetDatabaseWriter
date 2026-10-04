@@ -305,6 +305,7 @@ internal sealed class TableDataWriter(
             return 0;
         }
 
+        List<CascadeUpdate> cascades = [];
         IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
         if (rels.Count > 0)
         {
@@ -312,17 +313,19 @@ internal sealed class TableDataWriter(
 
             // FK-side: as in Access, only a foreign key this update changes
             // must name a parent row; keys it leaves alone are not re-checked.
-            var rowChanges = new List<(object[] OldRow, object[] NewRow)>(pendingUpdates.Count);
-            foreach ((_, object[] oldRow, object[] newRow) in pendingUpdates)
+            var rowChanges = new List<(RowLocation Location, object[] OldRow, object[] NewRow)>(pendingUpdates.Count);
+            foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
             {
-                rowChanges.Add((oldRow, newRow));
+                rowChanges.Add((rows[i].Location, oldRow, newRow));
             }
 
             await enforcer.EnforceFkOnForeignUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
 
-            // PK-side: cascade or reject only the relationships whose
-            // referenced key this update changes.
-            await enforcer.EnforceFkOnPrimaryUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
+            // PK-side: plan the cascade, or make the refusal, of every
+            // relationship whose referenced key this update changes. Nothing
+            // is written yet. Through a self-relationship, a matching row's
+            // own cascaded key goes into its new row in pendingUpdates.
+            cascades = await enforcer.PlanCascadeUpdatesAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
         }
 
         // Pre-write unique-index enforcement: after FK checks succeed,
@@ -330,6 +333,10 @@ internal sealed class TableDataWriter(
         // any unique index. The check sees the table's rows with
         // pendingUpdates substituted at their original positions.
         await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
+
+        // Every check has passed: rewrite the dependent rows the cascades
+        // reach, then the matching rows.
+        await enforcer.ApplyCascadeUpdatesAsync(cascades, cancellationToken).ConfigureAwait(false);
 
         var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
         var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
