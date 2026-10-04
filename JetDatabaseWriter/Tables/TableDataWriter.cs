@@ -288,10 +288,12 @@ internal sealed class TableDataWriter(
             await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
 
             // The row is deleted and re-inserted, so every carried MEMO / OLE
-            // value must have been read, and every text value must encode;
-            // refuse before any page is touched.
+            // value must have been read, every text value must encode, and the
+            // new version must encode and fit on a data page; refuse before
+            // any page is touched, the cascades below included.
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
             this.ThrowIfTextNotStorable(tableName, tableDef, newRow);
+            _ = tableRows.EncodeRow(tableDef, newRow);
 
             pendingUpdates.Add((i, oldRow, newRow));
         }

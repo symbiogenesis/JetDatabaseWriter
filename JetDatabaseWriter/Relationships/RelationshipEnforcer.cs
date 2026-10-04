@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
@@ -20,7 +21,7 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="tableCatalog">Resolves child tables by name.</param>
-/// <param name="tableRows">Deletes and rewrites cascaded child rows.</param>
+/// <param name="tableRows">Encodes, deletes and rewrites cascaded child rows.</param>
 /// <param name="indexes">Rebuilds child-table indexes after cascades.</param>
 /// <param name="catalog">Loads the enforced relationships from <c>MSysRelationships</c>.</param>
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
@@ -227,14 +228,17 @@ internal sealed class RelationshipEnforcer(
     /// dependent rows, which its child index seek counts without reading them
     /// where it can, and each cascading relationship's dependent rows are read
     /// and every rewritten child row is built and checked for unreadable MEMO
-    /// and OLE values. A refusal from any relationship therefore comes before
-    /// any row is written. A child row that several relationships reach is
+    /// and OLE values. A child row that several relationships reach is
     /// rewritten once, with every key change. Through a self-relationship, a
     /// row of
     /// <paramref name="rows"/> is a dependent row when its new foreign key
     /// still names a key the update moves; its cascaded key is written into
     /// its new row, which the caller rewrites, rather than planned as a
-    /// second rewrite.
+    /// second rewrite. Last, every rewritten child row, and every row of
+    /// <paramref name="rows"/> that took a cascaded key, is encoded and
+    /// measured as its re-insert will encode it
+    /// (<see cref="TableRowStore.EncodeRow"/>). A refusal from any
+    /// relationship therefore comes before any row is written.
     /// </summary>
     /// <param name="primaryTable">The table being updated.</param>
     /// <param name="primaryDef">The table's definition.</param>
@@ -259,6 +263,11 @@ internal sealed class RelationshipEnforcer(
     /// A dependent row holds a MEMO or OLE value whose stored data cannot be
     /// read, which rewriting the row would lose.
     /// </exception>
+    /// <exception cref="JetLimitationException">
+    /// A rewritten row is longer than one data page, or holds a value past
+    /// what its column stores.
+    /// </exception>
+    /// <exception cref="OverflowException">A rewritten row holds a value that does not fit its column's type.</exception>
     public async ValueTask<List<CascadeUpdate>> PlanCascadeUpdatesAsync(
         string primaryTable,
         TableDef primaryDef,
@@ -374,13 +383,35 @@ internal sealed class RelationshipEnforcer(
 
         // Every relationship has passed, so the update's own rows take their
         // cascaded keys; each decision above read the rows as the caller
-        // built them.
+        // built them. The set holds each new row once, by reference, however
+        // many self-relationships reach it.
+        HashSet<object[]> foldedRows = [];
         foreach ((object[] newRow, int[] fkIdx, object[] newPkSubset) in ownRowChanges)
         {
             for (int column = 0; column < fkIdx.Length; column++)
             {
                 newRow[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
             }
+
+            _ = foldedRows.Add(newRow);
+        }
+
+        // Every rewritten row is final now, so each is encoded and measured as
+        // its re-insert will encode it: a value the encoder refuses, or a row
+        // longer than a data page, refuses the update before any row is
+        // deleted. The caller encoded its own rows before the plan; one that
+        // took a cascaded key is encoded again.
+        foreach ((_, ResolvedTable table, List<(RowLocation Location, object[] NewRow)> rewrites) in cascades)
+        {
+            foreach ((_, object[] newRow) in rewrites)
+            {
+                _ = tableRows.EncodeRow(table.Definition, newRow);
+            }
+        }
+
+        foreach (object[] newRow in foldedRows)
+        {
+            _ = tableRows.EncodeRow(primaryDef, newRow);
         }
 
         return cascades;

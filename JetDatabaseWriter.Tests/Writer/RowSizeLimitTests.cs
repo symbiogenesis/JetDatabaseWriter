@@ -132,17 +132,25 @@ public sealed class RowSizeLimitTests
 
     /// <summary>
     /// An update that grows a row past a page throws the same exception. The
-    /// update deletes the old row before it re-inserts the new one, so this
-    /// checks the two modes that undo the delete: <see cref="AccessWriterOptions.UseTransactionalWrites"/>
-    /// and a rolled-back explicit transaction.
+    /// update rewrites a row by deleting it and inserting the new version, and
+    /// it used to encode the new version only after the delete, so without a
+    /// transaction the row was lost. Every new version is now encoded and
+    /// measured first: the row keeps its old values and the file is
+    /// byte-for-byte what it was, in every write mode (an explicit transaction
+    /// is committed after the failure).
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="mode">"transactional" or "explicit".</param>
+    /// <param name="mode">"direct", "transactional" or "explicit".</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "direct")]
     [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
     [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "direct")]
     [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
+    [InlineData(DatabaseFormat.AceAccdb, "direct")]
+    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
     [InlineData(DatabaseFormat.AceAccdb, "explicit")]
     public async Task UpdateGrowingRowPastAPage_ThrowsJetLimitationException_AndKeepsTheRow(DatabaseFormat format, string mode)
     {
@@ -155,31 +163,110 @@ public sealed class RowSizeLimitTests
             await writer.InsertRowAsync(TableName, original, ct);
         }
 
-        var changes = new Dictionary<string, object?>();
+        var changes = new RowValues();
         for (int i = 0; i < oleColumns; i++)
         {
             changes[$"Blob{i}"] = Ole(250, i);
         }
 
-        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" }, ct))
+        await AssertOversizedUpdateWritesNothingAsync(ms, format, mode, RowCriteria.Where("Id", 1), changes, [original], ct);
+    }
+
+    /// <summary>
+    /// A multi-row update whose later row grows past a page changes no row,
+    /// not even the earlier one, whose new version fits. The rows hold inline
+    /// MEMO values, as in the README's "Table and row size" limitation: on
+    /// Jet3 three MEMO columns, where the second row holds two 900-character
+    /// values and the update sets the third to 1,000 characters (2,858 bytes),
+    /// and on Jet4 and ACCDB five, four of them 900 characters long (4,691 bytes).
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "direct")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "direct")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
+    [InlineData(DatabaseFormat.AceAccdb, "direct")]
+    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
+    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
+    public async Task UpdateGrowingALaterRowPastAPage_ChangesNoRow(DatabaseFormat format, string mode)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int memoColumns = format == DatabaseFormat.Jet3Mdb ? 3 : 5;
+        var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
+        for (int i = 0; i < memoColumns; i++)
         {
-            JetTransaction? transaction = mode == "explicit" ? await writer.BeginTransactionAsync(ct) : null;
-            JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(TableName, "Id", 1, changes, ct));
+            columns.Add(new ColumnDefinition($"Memo{i}", typeof(string)));
+        }
+
+        await using MemoryStream ms = await CreateDatabaseAsync(format, columns, ct);
+        object[] fits = [1, .. Enumerable.Repeat<object>(DBNull.Value, memoColumns)];
+        object[] grows = [2, DBNull.Value, .. Enumerable.Repeat<object>(new string('b', 900), memoColumns - 1)];
+        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct))
+        {
+            Assert.Equal(2, await writer.InsertRowsAsync(TableName, [fits, grows], ct));
+        }
+
+        await AssertOversizedUpdateWritesNothingAsync(
+            ms,
+            format,
+            mode,
+            RowCriteria.All(),
+            new RowValues { ["Memo0"] = new string('a', 1_000) },
+            [fits, grows],
+            ct);
+    }
+
+    private static int MaxRowLength(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb ? 2036 : 4080;
+
+    /// <summary>
+    /// Runs <paramref name="changes"/> on the rows <paramref name="criteria"/>
+    /// matches in <paramref name="mode"/>, expects the row-size
+    /// <see cref="JetLimitationException"/>, and checks that the file is
+    /// byte-for-byte unchanged, the table holds <paramref name="expectedRows"/>
+    /// and its stored row count is unchanged.
+    /// </summary>
+    /// <param name="ms">The database.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="criteria">The rows to update.</param>
+    /// <param name="changes">Changes that grow a matching row past a page.</param>
+    /// <param name="expectedRows">The table's rows, in table order.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    private static async Task AssertOversizedUpdateWritesNothingAsync(
+        MemoryStream ms,
+        DatabaseFormat format,
+        string mode,
+        RowCriteria criteria,
+        RowValues changes,
+        object[][] expectedRows,
+        CancellationToken cancellationToken)
+    {
+        byte[] before = ms.ToArray();
+        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" }, cancellationToken))
+        {
+            JetTransaction? transaction = mode == "explicit" ? await writer.BeginTransactionAsync(cancellationToken) : null;
+            JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(TableName, criteria, changes, cancellationToken));
             Assert.Contains($"{MaxRowLength(format)}-byte maximum", ex.Message, StringComparison.Ordinal);
 
             if (transaction is not null)
             {
-                await transaction.RollbackAsync(ct);
+                await transaction.CommitAsync(cancellationToken);
                 await transaction.DisposeAsync();
             }
         }
 
-        await using AccessReader reader = await OpenReaderAsync(ms, ct);
-        object[] row = Assert.Single(await reader.Rows(TableName, cancellationToken: ct).ToListAsync(ct));
-        Assert.Equal(original, row);
+        Assert.Equal(before, ms.ToArray());
+        await using AccessReader reader = await OpenReaderAsync(ms, cancellationToken);
+        Assert.Equal(expectedRows, await reader.Rows(TableName, cancellationToken: cancellationToken).ToListAsync(cancellationToken));
+        TableStat stat = Assert.Single(await reader.GetTableStatsAsync(cancellationToken), s => s.Name == TableName);
+        Assert.Equal(expectedRows.Length, stat.RowCount);
     }
-
-    private static int MaxRowLength(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb ? 2036 : 4080;
 
     /// <summary>
     /// Inserts <paramref name="row"/> in <paramref name="mode"/>, expects the
@@ -233,7 +320,7 @@ public sealed class RowSizeLimitTests
         return bytes;
     }
 
-    private static async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format, int oleColumns, bool memo, CancellationToken cancellationToken)
+    private static Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format, int oleColumns, bool memo, CancellationToken cancellationToken)
     {
         var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
         for (int i = 0; i < oleColumns; i++)
@@ -246,6 +333,11 @@ public sealed class RowSizeLimitTests
             columns.Add(new ColumnDefinition("Notes", typeof(string)));
         }
 
+        return CreateDatabaseAsync(format, columns, cancellationToken);
+    }
+
+    private static async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format, List<ColumnDefinition> columns, CancellationToken cancellationToken)
+    {
         var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken))
         {

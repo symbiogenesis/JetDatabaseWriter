@@ -406,9 +406,12 @@ internal sealed class RowEncoder(DatabaseFile db)
         int jumpSize = jet3 ? Jet3JumpTable.CountForLength(baseRowLength) : 0;
         int rowLength = baseRowLength + jumpSize;
 
-        // A row never spans pages. TableRowStore serializes the row, with a
-        // placeholder header for each value bound for LVAL pages, before it
-        // writes any LVAL or data page, so this throw leaves the file unchanged.
+        // A row never spans pages. TableRowStore.EncodeRow serializes the row,
+        // with a placeholder header for each value bound for LVAL pages, before
+        // an insert writes any LVAL or data page and before an update deletes
+        // the first row it or its cascades rewrite (TableDataWriter.
+        // UpdateRowsAsync, RelationshipEnforcer.PlanCascadeUpdatesAsync), so
+        // this throw leaves the file unchanged.
         int maxRowLength = db.DataPage.MaxRowLength(db.PageSizeBytes);
         if (rowLength > maxRowLength)
         {

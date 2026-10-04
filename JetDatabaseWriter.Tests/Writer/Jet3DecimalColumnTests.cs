@@ -376,6 +376,46 @@ public sealed class Jet3DecimalColumnTests
     }
 
     /// <summary>
+    /// An update to a value outside the Currency range throws the same
+    /// <see cref="OverflowException"/> before it changes anything, in each
+    /// write mode. The update rewrites the row by deleting it and inserting
+    /// the new version, and it used to encode the new version only after the
+    /// delete, so without a transaction the row was lost; an explicit
+    /// transaction committed after the failure wrote the delete.
+    /// </summary>
+    /// <param name="mode">The <see cref="WriteMode"/>.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    [Theory]
+    [MemberData(nameof(WriteModes))]
+    public async Task Update_ValueOutsideCurrencyRange_ThrowsAndKeepsTheRow(string mode)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, ct);
+        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Amt", typeof(decimal)) { NumericPrecision = 14 }],
+                ct);
+            await writer.InsertRowAsync(TableName, [1, 12m], ct);
+        }
+
+        byte[] before = ms.ToArray();
+        await WriteInModeAsync(
+            ms,
+            mode,
+            async writer => await Assert.ThrowsAsync<OverflowException>(async () =>
+                await writer.UpdateRowsAsync(TableName, "Id", 1, new Dictionary<string, object?> { ["Amt"] = 999_999_999_999_999m }, ct)),
+            ct);
+
+        Assert.Equal(before, ms.ToArray());
+        await using AccessReader reader = await OpenReaderAsync(ms, ct);
+        object[] expected = [1, 12m];
+        Assert.Equal(expected, Assert.Single(await reader.Rows(TableName, cancellationToken: ct).ToListAsync(ct)));
+        Assert.Equal(1, Assert.Single(await reader.GetTableStatsAsync(ct), stat => stat.Name == TableName).RowCount);
+    }
+
+    /// <summary>
     /// A unique index on a Jet3 decimal column rejects a duplicate value in
     /// each write mode.
     /// </summary>

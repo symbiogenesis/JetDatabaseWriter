@@ -70,8 +70,9 @@ A row never spans pages, so it is at most the page size less the data-page
 header and one row-offset slot: 2,036 bytes on Jet3 and 4,080 on Jet4/ACE
 (`DataPageLayout.MaxRowLength`). MEMO values over 1,024 bytes and OLE
 values over 256 bytes go to LVAL pages and take a 12-byte header in the row.
-`TableRowStore.InsertRowDataLocAsync` serializes the row with a zeroed
-placeholder for each such header before it writes any LVAL or data page, so
+`TableRowStore.EncodeRow` serializes the row with a zeroed placeholder for
+each such header, with no I/O, and `TableRowStore.InsertRowDataLocAsync`
+calls it before it writes any LVAL or data page, so
 `RowEncoder.SerializeRow` throws `JetLimitationException` for a longer row
 with the file unchanged. (The LVAL pages used to be written first, and
 stayed behind, unreferenced, after the throw.) Before the check existed, the
@@ -82,6 +83,16 @@ copying a row one byte too long over the row-offset table;
 touches the page. Jackcess's `MAX_ROW_SIZE` (recalled as 2,012 and 4,060) and
 Access's documented 2,000 / 4,000 characters per record are lower; whether
 Access rejects rows between those and the page capacity is unchecked.
+
+An update rewrites a row by deleting it and inserting the new version, so
+`TableDataWriter.UpdateRowsAsync` calls `EncodeRow` for every new version as
+it stages the update, and `RelationshipEnforcer.PlanCascadeUpdatesAsync`,
+which writes nothing, calls it at its end for every child row the cascades
+rewrite, with the key changes of every relationship that reaches the row,
+and again for every row of the update that took a self-relationship's
+cascaded key. No row is deleted before then, so the encoder's refusals, a
+row too long or a value such as a Currency out of range, leave the file
+unchanged.
 
 ### The Jet3 jump table
 
