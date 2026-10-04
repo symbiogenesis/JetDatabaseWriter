@@ -542,6 +542,65 @@ public sealed class SchemaEvolutionTests
         }
     }
 
+    /// <summary>
+    /// Dropping a column drops every index it is a key column of, single and
+    /// composite, and carries every other index with its settings; a schema
+    /// rewrite refuses only an index whose key column it cannot name.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DropColumn_OfIndexKeyColumn_StillDropsThatIndex(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Keys";
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)),
+                    new("Code", typeof(int)),
+                    new("Tag", typeof(int)),
+                ],
+                [
+                    new IndexDefinition("PK", "Id") { IsPrimaryKey = true },
+                    new IndexDefinition("UX_Code", "Code") { IsUnique = true, IgnoreNulls = true },
+                    new IndexDefinition("IX_Tag", "Tag"),
+                    new IndexDefinition("IX_CodeTag", ["Code", "Tag"]) { DescendingColumns = ["Tag"] },
+                ],
+                TestContext.Current.CancellationToken);
+            _ = await writer.InsertRowsAsync(table, [[1, 10, 100], [2, 20, 200]], TestContext.Current.CancellationToken);
+
+            await writer.DropColumnAsync(table, "Tag", TestContext.Current.CancellationToken);
+
+            // The carried unique index still refuses a duplicate.
+            _ = await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await writer.InsertRowAsync(table, [3, 10], TestContext.Current.CancellationToken));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(table, TestContext.Current.CancellationToken);
+        Assert.Equal(["PK", "UX_Code"], indexes.Select(index => index.Name).Order(StringComparer.Ordinal));
+
+        IndexMetadata primaryKey = Assert.Single(indexes, index => index.Name == "PK");
+        Assert.Equal(IndexKind.PrimaryKey, primaryKey.Kind);
+        Assert.Equal("Id", Assert.Single(primaryKey.Columns).Name);
+
+        IndexMetadata unique = Assert.Single(indexes, index => index.Name == "UX_Code");
+        Assert.True(unique.HasUniqueFlag);
+        Assert.True(unique.IgnoreNulls);
+        Assert.Equal("Code", Assert.Single(unique.Columns).Name);
+
+        using DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(["Id", "Code"], rows.Columns.Cast<DataColumn>().Select(column => column.ColumnName));
+        Assert.Equal([10, 20], rows.Rows.Cast<DataRow>().Select(row => (int)row["Code"]).Order());
+    }
+
     [Fact]
     public async Task FreshlyCreatedTable_HasNoUserDefinedIndexEntries()
     {
