@@ -1125,15 +1125,19 @@ internal sealed class ComplexColumnManager(
     // the file.
 
     /// <summary>
-    /// Cascades a pending delete of <paramref name="deletedParentLocations"/>
-    /// rows in <paramref name="parentDef"/> to the hidden flat child tables
-    /// of every Attachment / MultiValue column on the parent. Must be called
-    /// BEFORE the parent rows are marked deleted, since the per-row
-    /// complex-reference slot value is needed to identify which flat
-    /// rows to delete.
+    /// Finds, without writing anything, the rows of the hidden flat child
+    /// tables of every Attachment / MultiValue column on
+    /// <paramref name="parentDef"/> that a delete of
+    /// <paramref name="deletedParentLocations"/> removes, and adds them to
+    /// <paramref name="plan"/>. Must be called BEFORE any of the statement's
+    /// rows is marked deleted, since the per-row complex-reference slot value
+    /// is needed to identify which flat rows to delete; the statement then
+    /// deletes them with <see cref="ApplyComplexChildDeletesAsync"/> just
+    /// before it deletes the parent rows.
     /// </summary>
     /// <param name="parentDef">The parent def.</param>
     /// <param name="deletedParentLocations">The deleted parent locations.</param>
+    /// <param name="plan">The statement's group for these parent rows, which this call adds to; a flat row another group of the statement holds is left out.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <remarks>
     /// Per-flat-table cost is O(P) where P is the database page count
@@ -1142,9 +1146,10 @@ internal sealed class ComplexColumnManager(
     /// cascade-delete cost profile and the complex-reference allocator
     /// used by the row-add path.
     /// </remarks>
-    public async ValueTask CascadeDeleteComplexChildrenAsync(
+    public async ValueTask PlanComplexChildDeletesAsync(
         TableDef parentDef,
         List<RowLocation> deletedParentLocations,
+        ComplexChildDeletes plan,
         CancellationToken cancellationToken)
     {
         if (deletedParentLocations.Count == 0)
@@ -1220,8 +1225,8 @@ internal sealed class ComplexColumnManager(
         }
 
         // For each complex column with collected IDs, scan the flat
-        // child table once and delete every row whose FK back-reference
-        // is in the set. Adjust the flat TDEF row count once.
+        // child table once and plan the delete of every row whose FK
+        // back-reference is in the set.
         foreach (ColumnInfo col in complexCols)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1246,7 +1251,6 @@ internal sealed class ComplexColumnManager(
                 continue;
             }
 
-            var rowsToDelete = new List<RowLocation>();
             await this.db.ForEachLiveTableRowAsync(
                 flatTdefPage,
                 (row, _) =>
@@ -1255,24 +1259,34 @@ internal sealed class ComplexColumnManager(
                     if (CatalogValueReader.TryParseInt32(fkText, out int fk)
                         && ids.Contains(fk))
                     {
-                        rowsToDelete.Add(row.Location);
+                        plan.Add(flatTdefPage, row.Location);
                     }
 
                     return new ValueTask<bool>(true);
                 },
                 cancellationToken).ConfigureAwait(false);
+        }
+    }
 
-            int deletedFromFlat = 0;
-            foreach (RowLocation row in rowsToDelete)
+    /// <summary>
+    /// Deletes the flat rows the group <paramref name="plan"/> holds and
+    /// lowers each flat table's row count once; the statement calls it just
+    /// before it deletes the group's parent rows. Takes no cancellation token:
+    /// it is part of the delete statement's writes, and a statement that has
+    /// started writing runs to completion.
+    /// </summary>
+    /// <param name="plan">The group's flat rows, which <see cref="PlanComplexChildDeletesAsync"/> found.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public async ValueTask ApplyComplexChildDeletesAsync(ComplexChildDeletes plan)
+    {
+        foreach ((long flatTdefPage, List<RowLocation> rows) in plan.Tables)
+        {
+            foreach (RowLocation row in rows)
             {
-                await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, cancellationToken).ConfigureAwait(false);
-                deletedFromFlat++;
+                await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, CancellationToken.None).ConfigureAwait(false);
             }
 
-            if (deletedFromFlat > 0)
-            {
-                await tableRows.AdjustTDefRowCountAsync(flatTdefPage, -deletedFromFlat, cancellationToken).ConfigureAwait(false);
-            }
+            await tableRows.AdjustTDefRowCountAsync(flatTdefPage, -rows.Count, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

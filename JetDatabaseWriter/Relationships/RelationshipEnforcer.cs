@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
@@ -170,48 +171,81 @@ internal sealed class RelationshipEnforcer(
     }
 
     /// <summary>
-    /// Cascades or refuses the delete of <paramref name="deletedParentRows"/>
-    /// from <paramref name="primaryTable"/>, for every relationship whose
-    /// primary table it is and, in turn, for every relationship of each table
-    /// the delete cascades into: dependent rows are deleted when the
-    /// relationship cascades deletes, and the delete is refused otherwise.
-    /// Every dependent row is found and every relationship checked before
-    /// any row is deleted, so a refused delete changes nothing.
+    /// Plans, without writing anything, the cascades of a delete of
+    /// <paramref name="deletedParentRows"/> from
+    /// <paramref name="primaryTable"/>, and makes every refusal they call
+    /// for: for every relationship whose primary table it is and, in turn,
+    /// for every relationship of each table the delete cascades into,
+    /// dependent rows are planned for deletion when the relationship
+    /// cascades deletes, and the delete is refused otherwise. Every dependent
+    /// row is found and every relationship checked before any row is
+    /// deleted, so a refused delete changes nothing. Then it finds, in the
+    /// planned order, the hidden flat-table rows of each cascade's Attachment
+    /// and multi-value columns, each cascade's into a group of its own
+    /// (<see cref="CascadeDelete.FlatRows"/>) made from
+    /// <paramref name="complexChildren"/>.
     /// </summary>
     /// <param name="primaryTable">The table rows are deleted from.</param>
     /// <param name="primaryDef">The table's definition.</param>
     /// <param name="deletedParentRows">The deleted rows, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
+    /// <param name="complexChildren">The group for the flat rows of the statement's matching rows, which the caller fills after this call, so a flat row a cascade also reaches stays with the cascade.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>
+    /// The dependent rows to delete, by relationship, deepest cascades first,
+    /// for <see cref="ApplyCascadeDeletesAsync"/>.
+    /// </returns>
     /// <exception cref="InvalidOperationException">
     /// A deleted key has dependent rows and the relationship does not cascade
     /// deletes, a relationship with a non-null deleted key names a table or
     /// column that cannot be found, or the cascades nest deeper than
     /// <see cref="RelationshipCascadePolicy.MaxDepth"/>.
     /// </exception>
-    public async ValueTask EnforceFkOnPrimaryDeleteAsync(
+    public async ValueTask<List<CascadeDelete>> PlanCascadeDeletesAsync(
         string primaryTable,
         TableDef primaryDef,
         List<object?[]> deletedParentRows,
         FkContext ctx,
+        ComplexChildDeletes complexChildren,
         CancellationToken cancellationToken)
     {
         var cascades = new List<CascadeDelete>();
         HashSet<(long PageNumber, int RowIndex)> cascaded = [];
-        await this.PlanCascadeDeletesAsync(primaryTable, primaryDef, deletedParentRows, ctx, depth: 0, cascades, cascaded, cancellationToken).ConfigureAwait(false);
+        await this.PlanCascadeDeletesAsync(primaryTable, primaryDef, deletedParentRows, ctx, depth: 0, cascades, cascaded, complexChildren, cancellationToken).ConfigureAwait(false);
 
-        foreach ((string tableName, ResolvedTable table, List<RowLocation> locations) in cascades)
+        foreach ((_, ResolvedTable table, List<RowLocation> locations, ComplexChildDeletes flatRows) in cascades)
         {
-            await complexColumns.CascadeDeleteComplexChildrenAsync(table.Definition, locations, cancellationToken).ConfigureAwait(false);
+            await complexColumns.PlanComplexChildDeletesAsync(table.Definition, locations, flatRows, cancellationToken).ConfigureAwait(false);
+        }
 
+        return cascades;
+    }
+
+    /// <summary>
+    /// Deletes the dependent rows <see cref="PlanCascadeDeletesAsync(string, TableDef, List{object[]}, FkContext, ComplexChildDeletes, CancellationToken)"/>
+    /// planned, in the planned order: for each cascade, its hidden flat-table
+    /// rows, then its rows, then it lowers the table's row count and
+    /// maintains its indexes. Takes no cancellation token: it is part of the
+    /// delete statement's writes, and a statement that has started writing
+    /// runs to completion. Only a child table's index rebuild checks that the
+    /// writer can maintain that table's indexes, so a failure there throws
+    /// after that table's rows and their flat rows are deleted; the rows of
+    /// the later cascades, and the statement's own rows, keep theirs.
+    /// </summary>
+    /// <param name="cascades">The planned deletes, by relationship.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    public async ValueTask ApplyCascadeDeletesAsync(IReadOnlyList<CascadeDelete> cascades)
+    {
+        foreach ((string tableName, ResolvedTable table, List<RowLocation> locations, ComplexChildDeletes flatRows) in cascades)
+        {
+            await complexColumns.ApplyComplexChildDeletesAsync(flatRows).ConfigureAwait(false);
             foreach (RowLocation location in locations)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, cancellationToken).ConfigureAwait(false);
+                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, CancellationToken.None).ConfigureAwait(false);
             }
 
-            await tableRows.AdjustTDefRowCountAsync(table.Entry.TDefPage, -locations.Count, cancellationToken).ConfigureAwait(false);
-            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
+            await tableRows.AdjustTDefRowCountAsync(table.Entry.TDefPage, -locations.Count, CancellationToken.None).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, tableName, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -425,23 +459,22 @@ internal sealed class RelationshipEnforcer(
     /// plan and the caller make. Only a child table's index rebuild checks
     /// that table's unique indexes and that the writer can maintain its
     /// indexes, so a failure of either throws after that table's rows are
-    /// rewritten.
+    /// rewritten. Takes no cancellation token: the update's writes start
+    /// here, and a statement that has started writing runs to completion.
     /// </summary>
     /// <param name="cascades">The planned rewrites, by table.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public async ValueTask ApplyCascadeUpdatesAsync(IReadOnlyList<CascadeUpdate> cascades, CancellationToken cancellationToken)
+    public async ValueTask ApplyCascadeUpdatesAsync(IReadOnlyList<CascadeUpdate> cascades)
     {
         foreach ((string tableName, ResolvedTable table, List<(RowLocation Location, object[] NewRow)> rewrites) in cascades)
         {
             foreach ((RowLocation location, object[] newRow) in rewrites)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, cancellationToken).ConfigureAwait(false);
-                await tableRows.InsertRowDataAsync(table.Entry.TDefPage, table.Definition, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, CancellationToken.None).ConfigureAwait(false);
+                await tableRows.InsertRowDataAsync(table.Entry.TDefPage, table.Definition, newRow, updateTDefRowCount: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
             }
 
-            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, tableName, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -654,6 +687,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="depth">How many cascades lead to this delete.</param>
     /// <param name="cascades">The cascading deletes found so far, in delete order.</param>
     /// <param name="cascaded">The rows <paramref name="cascades"/> deletes.</param>
+    /// <param name="complexChildren">A group of the statement's flat rows, from which each cascade's own, still empty, group is made.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">
     /// A deleted key has dependent rows and the relationship does not cascade
@@ -669,6 +703,7 @@ internal sealed class RelationshipEnforcer(
         int depth,
         List<CascadeDelete> cascades,
         HashSet<(long PageNumber, int RowIndex)> cascaded,
+        ComplexChildDeletes complexChildren,
         CancellationToken cancellationToken)
     {
         RelationshipCascadePolicy.ThrowIfDepthExceeded(depth);
@@ -710,7 +745,7 @@ internal sealed class RelationshipEnforcer(
                 dependentValues.Add(row.Values);
             }
 
-            await this.PlanCascadeDeletesAsync(rel.ForeignTable, childTable.Definition, dependentValues, ctx, depth + 1, cascades, cascaded, cancellationToken).ConfigureAwait(false);
+            await this.PlanCascadeDeletesAsync(rel.ForeignTable, childTable.Definition, dependentValues, ctx, depth + 1, cascades, cascaded, complexChildren, cancellationToken).ConfigureAwait(false);
 
             // A dependent row that a cascade nested in this one already
             // deletes, such as the child of another dependent row through a
@@ -726,7 +761,7 @@ internal sealed class RelationshipEnforcer(
 
             if (locations.Count > 0)
             {
-                cascades.Add(new CascadeDelete(rel.ForeignTable, childTable, locations));
+                cascades.Add(new CascadeDelete(rel.ForeignTable, childTable, locations, complexChildren.NewGroup()));
             }
         }
     }

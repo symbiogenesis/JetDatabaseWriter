@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -27,8 +28,10 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// checks that every index of the table can be maintained
 /// (<see cref="IndexMaintainer.ThrowIfIndexesUnmaintainableAsync"/>), and runs
 /// foreign-key and unique-index checks before any page is mutated, then
-/// writes the rows and maintains indexes. The public facade owns the
-/// auto-commit scope around each call.
+/// writes the rows and maintains indexes. Cancellation is honoured through
+/// those reads and checks; an insert also honours it between rows, while an
+/// update or delete ignores it from its first page write and runs to
+/// completion. The public facade owns the auto-commit scope around each call.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="catalog">Resolves the target table by name.</param>
@@ -336,19 +339,24 @@ internal sealed class TableDataWriter(
         // pendingUpdates substituted at their original positions.
         await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
 
-        // Every check has passed: rewrite the dependent rows the cascades
-        // reach, then the matching rows.
-        await enforcer.ApplyCascadeUpdatesAsync(cascades, cancellationToken).ConfigureAwait(false);
+        // Every check has passed, and this is the last point at which
+        // cancellation is honoured. From the first write on, the update runs
+        // to completion with CancellationToken.None: stopping between a row's
+        // delete and its re-insert would lose the row, and stopping before
+        // index maintenance would leave the indexes out of step with the rows.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Rewrite the dependent rows the cascades reach, then the matching rows.
+        await enforcer.ApplyCascadeUpdatesAsync(cascades).ConfigureAwait(false);
 
         var updateInsertedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
         var updateDeletedHints = new List<(RowLocation Loc, object[] Row)>(pendingUpdates.Count);
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
-            cancellationToken.ThrowIfCancellationRequested();
             RowLocation oldLoc = rows[i].Location;
-            await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, CancellationToken.None).ConfigureAwait(false);
             updateDeletedHints.Add((oldLoc, oldRow));
-            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
             updateInsertedHints.Add((newLoc, newRow));
         }
 
@@ -357,10 +365,10 @@ internal sealed class TableDataWriter(
             tableDef,
             updateInsertedHints,
             updateDeletedHints,
-            cancellationToken).ConfigureAwait(false);
+            CancellationToken.None).ConfigureAwait(false);
         if (!incremental)
         {
-            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, CancellationToken.None).ConfigureAwait(false);
         }
 
         // An explicit AutoNumber value raises the TDEF high-water exactly as it
@@ -373,7 +381,7 @@ internal sealed class TableDataWriter(
                 newRows.Add(newRow);
             }
 
-            await autoNumbers.UpdateHighWaterAsync(entry.TDefPage, tableDef, newRows, cancellationToken).ConfigureAwait(false);
+            await autoNumbers.UpdateHighWaterAsync(entry.TDefPage, tableDef, newRows, CancellationToken.None).ConfigureAwait(false);
         }
 
         return pendingUpdates.Count;
@@ -394,11 +402,11 @@ internal sealed class TableDataWriter(
 
         // FK enforcement: identify the rows we are about to delete; if any
         // FK relationship names this table as the primary side, capture the
-        // deleted PK tuples and let EnforceFkOnPrimaryDeleteAsync
-        // cascade-delete dependent child rows (or throw when cascade is
+        // deleted PK tuples and let PlanCascadeDeletesAsync find the
+        // dependent child rows to cascade-delete (or throw when cascade is
         // disabled). It finds and checks every dependent row, at every
-        // cascade level, before it deletes any, so a refused delete leaves
-        // the database unchanged.
+        // cascade level, before anything is deleted, so a refused delete
+        // leaves the database unchanged.
         var matchingRows = new List<LocatedRow>();
         foreach (LocatedRow row in rows)
         {
@@ -415,13 +423,25 @@ internal sealed class TableDataWriter(
         await indexes.ThrowIfIndexesUnmaintainableAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
 
         IReadOnlyList<FkRelationship> rels = await enforcer.GetEnforcedRelationshipsAsync(cancellationToken).ConfigureAwait(false);
-        if (rels.Count > 0 && matchingRows.Count > 0)
+        if (matchingRows.Count == 0)
+        {
+            return 0;
+        }
+
+        // The hidden flat-table rows of every Attachment / MultiValue column
+        // the delete reaches: each cascade's go into a group of its own, and
+        // the matching rows' into this one. They are found by the rows'
+        // per-row complex-reference slots, so all of them are read before any
+        // row is marked deleted.
+        var complexChildren = new ComplexChildDeletes();
+        List<CascadeDelete> cascades = [];
+        if (rels.Count > 0)
         {
             var fkCtx = new FkContext(rels);
 
             // The typed full row of every parent we are about to delete, in
-            // primary-table column order. EnforceFkOnPrimaryDeleteAsync
-            // consumes this once per relationship (slicing the relationship's
+            // primary-table column order. PlanCascadeDeletesAsync consumes
+            // this once per relationship (slicing the relationship's
             // PrimaryColumns out for the FK seek / snapshot scan).
             var deletedParentRows = new List<object?[]>(matchingRows.Count);
             foreach (LocatedRow row in matchingRows)
@@ -429,51 +449,55 @@ internal sealed class TableDataWriter(
                 deletedParentRows.Add(row.Values);
             }
 
-            await enforcer.EnforceFkOnPrimaryDeleteAsync(
+            cascades = await enforcer.PlanCascadeDeletesAsync(
                 tableName,
                 tableDef,
                 deletedParentRows,
                 fkCtx,
+                complexChildren,
                 cancellationToken).ConfigureAwait(false);
         }
 
-        // Cascade flat-child rows for any complex columns on the parent
-        // BEFORE we mark the parent rows deleted (we need to read the
-        // parent's per-row complex-reference slots while the rows are still live).
-        if (matchingRows.Count > 0)
+        var parentLocs = new List<RowLocation>(matchingRows.Count);
+        foreach (LocatedRow row in matchingRows)
         {
-            var parentLocs = new List<RowLocation>(matchingRows.Count);
-            foreach (LocatedRow row in matchingRows)
-            {
-                parentLocs.Add(row.Location);
-            }
-
-            await complexColumns.CascadeDeleteComplexChildrenAsync(tableDef, parentLocs, cancellationToken).ConfigureAwait(false);
+            parentLocs.Add(row.Location);
         }
+
+        await complexColumns.PlanComplexChildDeletesAsync(tableDef, parentLocs, complexChildren, cancellationToken).ConfigureAwait(false);
+
+        // Every row the delete removes has been found and every check has
+        // passed, and this is the last point at which cancellation is
+        // honoured. From the first write on, the delete runs to completion
+        // with CancellationToken.None: stopping partway would leave rows
+        // deleted without index maintenance and the TDEF row counts too high.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Each set of rows loses its flat rows just before it is deleted, so
+        // a cascade whose index rebuild throws leaves the rows not yet
+        // deleted, the matching rows among them, with their items.
+        await enforcer.ApplyCascadeDeletesAsync(cascades).ConfigureAwait(false);
+        await complexColumns.ApplyComplexChildDeletesAsync(complexChildren).ConfigureAwait(false);
 
         int deleted = 0;
         var deleteHints = new List<(RowLocation Loc, object[] Row)>(matchingRows.Count);
         foreach ((RowLocation location, object[] oldRow) in matchingRows)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, tableDef, CancellationToken.None).ConfigureAwait(false);
             deleteHints.Add((location, oldRow));
             deleted++;
         }
 
-        if (deleted > 0)
+        await tableRows.AdjustTDefRowCountAsync(entry.TDefPage, -deleted, CancellationToken.None).ConfigureAwait(false);
+        bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
+            entry.TDefPage,
+            tableDef,
+            insertedRows: null,
+            deleteHints,
+            CancellationToken.None).ConfigureAwait(false);
+        if (!incremental)
         {
-            await tableRows.AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
-            bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
-                entry.TDefPage,
-                tableDef,
-                insertedRows: null,
-                deleteHints,
-                cancellationToken).ConfigureAwait(false);
-            if (!incremental)
-            {
-                await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
-            }
+            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, CancellationToken.None).ConfigureAwait(false);
         }
 
         return deleted;

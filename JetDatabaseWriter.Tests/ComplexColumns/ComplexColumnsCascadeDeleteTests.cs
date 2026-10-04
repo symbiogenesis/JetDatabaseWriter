@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -397,5 +398,70 @@ public sealed class ComplexColumnsCascadeDeleteTests
         IReadOnlyList<MultiValueItem> mvItems = await reader.GetMultiValueItemsAsync("Items", "Tags", TestContext.Current.CancellationToken);
         MultiValueItem mvItem = Assert.Single(mvItems);
         Assert.Equal(300, Convert.ToInt32(mvItem.Value, System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task DeleteRowsAsync_RowAlsoReachedThroughSelfCascade_RemovesItsFlatRowsOnce()
+    {
+        // Row 2 is both matched by the delete and a child of row 1 through a
+        // cascading self-relationship. Every flat row the delete removes is
+        // found before any row is written, so the second route to row 2 must
+        // leave out the attachment rows the first already planned: deleting
+        // them twice would lower the flat table's row count twice.
+        await using var ms = new MemoryStream();
+
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            ms,
+            DatabaseFormat.AceAccdb,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Tree",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("ParentId", typeof(int)),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowsAsync(
+                "Tree",
+                [
+                    [1, DBNull.Value, DBNull.Value],
+                    [2, 1, DBNull.Value],
+                    [3, DBNull.Value, DBNull.Value],
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Tree_Self", "Tree", "Id", "Tree", "ParentId") { CascadeDeletes = true },
+                TestContext.Current.CancellationToken);
+
+            foreach ((int id, string fileName) in new[] { (1, "a.txt"), (2, "b1.txt"), (2, "b2.txt"), (3, "c.txt") })
+            {
+                await writer.AddAttachmentAsync(
+                    "Tree",
+                    "Files",
+                    new Dictionary<string, object?> { ["Id"] = id },
+                    new AttachmentInput(fileName, Encoding.UTF8.GetBytes(fileName)),
+                    TestContext.Current.CancellationToken);
+            }
+
+            int deleted = await writer.DeleteRowsAsync(
+                "Tree",
+                RowCriteria.Where(ColumnPredicate.In("Id", 1, 2)),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(2, deleted);
+        }
+
+        Assert.Equal((1L, 1), await FlatTableRowCounts.ReadAsync(ms, "Tree", "Files", TestContext.Current.CancellationToken));
+
+        ms.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            ms,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+        IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync("Tree", "Files", TestContext.Current.CancellationToken);
+        AttachmentRecord single = Assert.Single(attachments);
+        Assert.Equal("c.txt", single.FileName);
     }
 }

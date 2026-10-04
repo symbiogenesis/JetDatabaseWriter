@@ -362,6 +362,83 @@ public sealed class UnmaintainableIndexWriteTests
         Assert.Contains("ends before the descriptor of real index 2", ex.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A delete that cascades into the damaged table deletes that table's
+    /// dependent rows before its index rebuild refuses (docs/todo.md). The rows
+    /// the delete has not deleted by then, its own row and the rows of a
+    /// cascade applied after the damaged table's, must keep their attachments:
+    /// each set of rows loses its attachment rows just before it is deleted.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task Delete_CascadeIntoDamagedTable_KeepsTheAttachmentsOfRowsNotYetDeleted()
+    {
+        // Owner (Id primary key, Files) <- Kid (Id primary key, OwnerId, Files)
+        // <- Wide.C001, both cascading deletes. Deleting Owner 2 cascades to
+        // Kid 10001 and on to the 8 Wide rows whose C001 is 10001. The deepest
+        // cascade, Wide's, is applied first, and its index rebuild throws.
+        const int owners = 5;
+        await using MemoryStream stream = await CreateDamagedTableAsync(
+            DatabaseFormat.AceAccdb,
+            DamagedTable.NonUnique200,
+            async writer =>
+            {
+                await writer.CreateTableAsync(
+                    "Owner",
+                    [
+                        new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                        new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                    ],
+                    Ct);
+                await writer.CreateTableAsync(
+                    "Kid",
+                    [
+                        new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                        new ColumnDefinition("OwnerId", typeof(int)),
+                        new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                    ],
+                    Ct);
+                _ = await writer.InsertRowsAsync("Owner", [.. Enumerable.Range(1, owners).Select(id => new object[] { id, DBNull.Value })], Ct);
+                _ = await writer.InsertRowsAsync("Kid", [.. Enumerable.Range(1, owners).Select(id => new object[] { KidOf(id), id, DBNull.Value })], Ct);
+                for (int id = 1; id <= owners; id++)
+                {
+                    await writer.AddAttachmentAsync("Owner", "Files", new Dictionary<string, object?> { ["Id"] = id }, new AttachmentInput(OwnerFile(id), [(byte)id]), Ct);
+                    await writer.AddAttachmentAsync("Kid", "Files", new Dictionary<string, object?> { ["Id"] = KidOf(id) }, new AttachmentInput(KidFile(id), [(byte)id]), Ct);
+                }
+
+                await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_Kid_Owner", "Owner", "Id", "Kid", "OwnerId") { CascadeDeletes = true }, Ct);
+                await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_Wide_Kid", "Kid", "Id", TableName, "C001") { CascadeDeletes = true }, Ct);
+            });
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
+        {
+            JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.DeleteRowsAsync("Owner", "Id", 2, Ct));
+            Assert.Contains($"'{TableName}'", ex.Message, StringComparison.Ordinal);
+        }
+
+        stream.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct))
+        {
+            IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(Ct);
+            Assert.Equal(owners, stats.Single(stat => stat.Name == "Owner").RowCount);
+            Assert.Equal(owners, stats.Single(stat => stat.Name == "Kid").RowCount);
+            IReadOnlyList<AttachmentRecord> ownerFiles = await reader.GetAttachmentsAsync("Owner", "Files", Ct);
+            Assert.Equal(Enumerable.Range(1, owners).Select(OwnerFile), ownerFiles.Select(file => file.FileName).Order(StringComparer.Ordinal));
+            IReadOnlyList<AttachmentRecord> kidFiles = await reader.GetAttachmentsAsync("Kid", "Files", Ct);
+            Assert.Equal(Enumerable.Range(1, owners).Select(KidFile), kidFiles.Select(file => file.FileName).Order(StringComparer.Ordinal));
+        }
+
+        Assert.Equal((owners, owners), await FlatTableRowCounts.ReadAsync(stream, "Owner", "Files", Ct));
+        Assert.Equal((owners, owners), await FlatTableRowCounts.ReadAsync(stream, "Kid", "Files", Ct));
+
+        // Kid keys 10000 to 10004 are the C001 values of the Wide rows.
+        static int KidOf(int ownerId) => 9_999 + ownerId;
+
+        static string OwnerFile(int ownerId) => string.Create(CultureInfo.InvariantCulture, $"owner-{ownerId}.txt");
+
+        static string KidFile(int ownerId) => string.Create(CultureInfo.InvariantCulture, $"kid-{KidOf(ownerId)}.txt");
+    }
+
     private static async Task<int> CountIndexesAsync(MemoryStream stream)
     {
         stream.Position = 0;
@@ -439,8 +516,9 @@ public sealed class UnmaintainableIndexWriteTests
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="layout">The layout.</param>
+    /// <param name="addRelatedTables">Run with the writer once the table's rows are written and before the damage, to add other tables and relationships to it; <see langword="null"/> for none.</param>
     /// <returns>The database, positioned at its start.</returns>
-    private static async Task<MemoryStream> CreateDamagedTableAsync(DatabaseFormat format, DamagedTable layout)
+    private static async Task<MemoryStream> CreateDamagedTableAsync(DatabaseFormat format, DamagedTable layout, Func<AccessWriter, Task>? addRelatedTables = null)
     {
         int columnCount = ColumnCountOf(layout);
         var columns = new List<ColumnDefinition>(columnCount);
@@ -461,6 +539,10 @@ public sealed class UnmaintainableIndexWriteTests
         {
             await writer.CreateTableAsync(TableName, columns, indexes, Ct);
             _ = await writer.InsertRowsAsync(TableName, [.. Enumerable.Range(1, RowCount).Select(key => WideRow(layout, key))], Ct);
+            if (addRelatedTables != null)
+            {
+                await addRelatedTables(writer);
+            }
         }
 
         stream.Position = 0;

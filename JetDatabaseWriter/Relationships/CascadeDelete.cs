@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Relationships;
 
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Pages.Models;
 
 /// <summary>
@@ -11,4 +12,5 @@ using JetDatabaseWriter.Pages.Models;
 /// <param name="TableName">The table's name.</param>
 /// <param name="Table">The table's catalog entry and definition.</param>
 /// <param name="Locations">The rows to delete.</param>
-internal sealed record CascadeDelete(string TableName, ResolvedTable Table, List<RowLocation> Locations);
+/// <param name="FlatRows">The hidden flat-table rows of the rows' Attachment and multi-value columns, deleted just before the rows.</param>
+internal sealed record CascadeDelete(string TableName, ResolvedTable Table, List<RowLocation> Locations, ComplexChildDeletes FlatRows);
