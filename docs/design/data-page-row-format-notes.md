@@ -85,14 +85,16 @@ Access's documented 2,000 / 4,000 characters per record are lower; whether
 Access rejects rows between those and the page capacity is unchecked.
 
 An update rewrites a row by deleting it and inserting the new version, so
-`TableDataWriter.UpdateRowsAsync` calls `EncodeRow` for every new version as
-it stages the update, and `RelationshipEnforcer.PlanCascadeUpdatesAsync`,
-which writes nothing, calls it at its end for every child row the cascades
-rewrite, with the key changes of every relationship that reaches the row,
-and again for every row of the update that took a self-relationship's
-cascaded key. No row is deleted before then, so the encoder's refusals, a
-row too long or a value such as a Currency out of range, leave the file
-unchanged.
+`RelationshipEnforcer.PlanCascadeUpdatesAsync`, which writes nothing, calls
+`EncodeRow` at its end for every child row the cascades rewrite, with the
+key changes of every relationship that reaches the row, and
+`TableDataWriter.UpdateRowsAsync` then calls it for every new version of its
+own rows. It waits for the plan because a self-relationship's cascaded key
+goes into the update's own new rows, so each is measured as it is written:
+a row whose old key would not fit beside the update's other assignments, but
+whose shorter cascaded key does, is updated. No row is deleted before then,
+so the encoder's refusals, a row too long or a value such as a Currency out
+of range, leave the file unchanged.
 
 ### The Jet3 jump table
 

@@ -23,9 +23,10 @@ using WriteMode = JetDatabaseWriter.Tests.Writer.TransactionReadVisibilityTests.
 /// index-seek path and on the snapshot path. Jet3 always takes the snapshot
 /// path; Jet4 and ACCDB seek the child's foreign-key index, and take the
 /// snapshot path when the seek cannot decode a child row (one with a MEMO
-/// value). The update's own new rows are encoded before any cascade is
-/// planned, so a parent row that cannot be encoded moves no child row, and
-/// again once a self-relationship has written its cascaded key into them.
+/// value). The update's own new rows are encoded once the plan has written
+/// any self-relationship's cascaded key into them and before any cascade is
+/// applied, so each is measured as it will be written, and a parent row that
+/// cannot be encoded moves no child row.
 /// </summary>
 /// <param name="db">Caches the fixture files.</param>
 public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -221,7 +222,7 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
     /// Through the cascading self-relationship <c>Tree.ParentCode</c> to
     /// <c>Tree.Code</c>, the update's own row ['k', 'k'] is a dependent row of
     /// the key it moves, so the plan writes the cascaded key into the row's own
-    /// new version after the update has encoded it. The row is padded with
+    /// new version, which the update then encodes. The row is padded with
     /// Binary values to about 300 bytes under the maximum row length: the new
     /// 200-character <c>Code</c> alone fits, but with the cascaded
     /// <c>ParentCode</c> as well the row is past a data page. The update throws
@@ -279,8 +280,69 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
     }
 
     /// <summary>
-    /// The update's own row is encoded and measured before any cascade runs.
-    /// Here the parent row is padded with Binary values to about 100 bytes
+    /// The update's own row is measured as it will be written, with the key a
+    /// self-relationship cascades into it. Through the cascading
+    /// self-relationship <c>Tree.ParentCode</c> to <c>Tree.Code</c>, the row
+    /// [K, K], where K is 41 characters, moves its key to 'x' and so takes 'x'
+    /// as its <c>ParentCode</c> too. The row is padded with Binary values to
+    /// about 10 bytes under the maximum row length, and the update also sets
+    /// <c>Extra</c> to 60 characters: with <c>ParentCode</c> still K the row
+    /// would be past a data page, but the version the update writes,
+    /// ['x', 'x'], fits. The update succeeds, and the row reads back as
+    /// written, with its row count and indexes in step.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the update.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task CascadeUpdate_SelfReferencingRowThatFitsWithItsCascadedKey_IsUpdated(DatabaseFormat format, WriteMode mode)
+    {
+        int[] padLengths = PadLengthsWithRoomForTenBytes(format);
+        string oldCode = new('k', 41);
+        string extra = new('e', 60);
+
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            var columns = new List<ColumnDefinition>
+            {
+                new("Code", typeof(string), maxLength: 200) { IsPrimaryKey = true },
+                new("ParentCode", typeof(string), maxLength: 200),
+            };
+            columns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255)));
+            columns.Add(new ColumnDefinition("Extra", typeof(string), maxLength: 200));
+            await writer.CreateTableAsync("Tree", columns, Ct);
+            await writer.InsertRowAsync("Tree", [oldCode, oldCode, .. padLengths.Select(length => (object)new byte[length]), null], Ct);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Tree_Self", "Tree", "Code", "Tree", "ParentCode") { CascadeUpdates = true },
+                Ct);
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("Tree", RowCriteria.Where("Code", oldCode), new RowValues { ["Code"] = "x", ["Extra"] = extra }, Ct)));
+        }
+
+        ms.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, Ct))
+        {
+            object[] row = Assert.Single(await reader.Rows("Tree", cancellationToken: Ct).ToListAsync(Ct));
+            Assert.Equal("x", row[0]);
+            Assert.Equal("x", row[1]);
+            Assert.Equal(padLengths, row.Skip(2).Take(padLengths.Length).Select(value => ((byte[])value).Length));
+            Assert.Equal(extra, row[^1]);
+            IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(Ct);
+            Assert.Equal(1, stats.Single(stat => stat.Name == "Tree").RowCount);
+        }
+
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "Tree");
+    }
+
+    /// <summary>
+    /// The update's own row is encoded and measured before any cascade is
+    /// applied. Here the parent row is padded with Binary values to about 100 bytes
     /// under the maximum row length, so changing its key from 'k' to 200
     /// characters grows it past a data page, while the short child rows would
     /// take the new key. The update throws the row-size
@@ -412,6 +474,17 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
     private static int[] PadLengthsWithRoomForOneKey(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb
         ? [.. Enumerable.Repeat(255, 6), 180]
         : [.. Enumerable.Repeat(255, 14), 161];
+
+    /// <summary>
+    /// Gets the lengths of Binary pad values that bring a row of two
+    /// 41-character Text keys, the pads and a Null Text value to about 10
+    /// bytes under the maximum row length.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>The pad lengths.</returns>
+    private static int[] PadLengthsWithRoomForTenBytes(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb
+        ? [.. Enumerable.Repeat(255, 7), 136]
+        : [.. Enumerable.Repeat(255, 15), 112];
 
     /// <summary>Gets the maximum row length: 2,036 bytes on Jet3 and 4,080 on Jet4 and ACE.</summary>
     /// <param name="format">The database format.</param>

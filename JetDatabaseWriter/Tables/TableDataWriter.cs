@@ -291,12 +291,12 @@ internal sealed class TableDataWriter(
             await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
 
             // The row is deleted and re-inserted, so every carried MEMO / OLE
-            // value must have been read, every text value must encode, and the
-            // new version must encode and fit on a data page; refuse before
-            // any page is touched, the cascades below included.
+            // value must have been read and every text value must encode;
+            // refuse before any page is touched, the cascades below included.
+            // The new version is encoded and measured once it is final, after
+            // the cascade plan.
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
             this.ThrowIfTextNotStorable(tableName, tableDef, newRow);
-            _ = tableRows.EncodeRow(tableDef, newRow);
 
             pendingUpdates.Add((i, oldRow, newRow));
         }
@@ -331,6 +331,16 @@ internal sealed class TableDataWriter(
             // is written yet. Through a self-relationship, a matching row's
             // own cascaded key goes into its new row in pendingUpdates.
             cascades = await enforcer.PlanCascadeUpdatesAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Every new version is final now, a self-relationship's cascaded key
+        // included, so each is encoded and measured as its re-insert will
+        // encode it: a value the encoder refuses, or a row longer than a data
+        // page, refuses the update before any row is deleted. A row is never
+        // measured with a key the plan replaces.
+        foreach ((_, _, object[] newRow) in pendingUpdates)
+        {
+            _ = tableRows.EncodeRow(tableDef, newRow);
         }
 
         // Pre-write unique-index enforcement: after FK checks succeed,
