@@ -207,8 +207,7 @@ internal static class EmittedPageInvariantAssert
     /// <param name="rowSlots">The page's row slots.</param>
     private static void AssertLvalPage(ReadOnlySpan<byte> page, int pageNumber, int pageSize, DatabaseFormat format, List<RowSlotInfo> rowSlots)
     {
-        Assert.Single(rowSlots);
-        RowSlotInfo rowSlot = rowSlots[0];
+        RowSlotInfo rowSlot = Assert.Single(rowSlots);
         Assert.True(rowSlot.IsLive, Message(pageNumber, "LVAL row slot is marked deleted or overflow."));
 
         if (format == DatabaseFormat.Jet3Mdb)

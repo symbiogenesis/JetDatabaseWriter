@@ -523,8 +523,8 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         await using AccessReader reader = await OpenReaderAsync(temp);
         DataTable t = await reader.ReadDataTableAsync(child, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Single(t.Rows);
-        Assert.Equal(parentRowCount - 7, Convert.ToInt32(t.Rows[0]["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
+        DataRow row = Assert.Single(t.Rows.Cast<DataRow>());
+        Assert.Equal(parentRowCount - 7, Convert.ToInt32(row["ParentId"], System.Globalization.CultureInfo.InvariantCulture));
     }
 
     [Fact]

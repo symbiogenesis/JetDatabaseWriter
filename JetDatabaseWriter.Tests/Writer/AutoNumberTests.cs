@@ -205,8 +205,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
                 ids.Add((int)row[0]);
             }
 
-            Assert.Single(ids);
-            Assert.Equal(3, ids[0]);
+            Assert.Equal(3, Assert.Single(ids));
         }
     }
 

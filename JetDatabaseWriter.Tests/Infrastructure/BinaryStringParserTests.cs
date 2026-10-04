@@ -69,8 +69,7 @@ public sealed class BinaryStringParserTests
         bool decoded = BinaryStringParser.TryDecodeBase64("TQ==".AsSpan(), out byte[] bytes);
 
         Assert.True(decoded);
-        Assert.Single(bytes);
-        Assert.Equal((byte)'M', bytes[0]);
+        Assert.Equal((byte)'M', Assert.Single(bytes));
     }
 
     [Theory]

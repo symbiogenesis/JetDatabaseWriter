@@ -188,9 +188,9 @@ public sealed class IndexMaintenanceTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
-        Assert.Single(indexes);
-        Assert.Equal("IX_Id", indexes[0].Name);
-        Assert.Equal("Id", indexes[0].Columns[0].Name);
+        IndexMetadata index = Assert.Single(indexes);
+        Assert.Equal("IX_Id", index.Name);
+        Assert.Equal("Id", index.Columns[0].Name);
     }
 
     [Theory]
@@ -214,9 +214,9 @@ public sealed class IndexMaintenanceTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
-        Assert.Single(indexes);
-        Assert.Equal("IX_Id", indexes[0].Name);
-        Assert.Equal("Identifier", indexes[0].Columns[0].Name);
+        IndexMetadata index = Assert.Single(indexes);
+        Assert.Equal("IX_Id", index.Name);
+        Assert.Equal("Identifier", index.Columns[0].Name);
     }
 
     [Theory]
@@ -246,8 +246,8 @@ public sealed class IndexMaintenanceTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
-        Assert.Single(indexes);
-        Assert.Equal("IX_Id", indexes[0].Name);
+        IndexMetadata index = Assert.Single(indexes);
+        Assert.Equal("IX_Id", index.Name);
     }
 
     [Theory]
@@ -444,8 +444,8 @@ public sealed class IndexMaintenanceTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", this.ct);
-        Assert.Single(indexes);
-        Assert.Equal("IX_Id", indexes[0].Name);
+        IndexMetadata index = Assert.Single(indexes);
+        Assert.Equal("IX_Id", index.Name);
 
         // Rows still readable via table scan (the reader does not consume the
         // index, but the rows-on-disk count is the index's truth source).

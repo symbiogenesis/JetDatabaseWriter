@@ -563,8 +563,8 @@ public sealed class LinkedTableTests : IDisposable
         DataTable dt = await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
-        Assert.Single(dt.Rows);
-        Assert.Equal(7, dt.Rows[0]["Id"]);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        Assert.Equal(7, row["Id"]);
     }
 
     [Fact]

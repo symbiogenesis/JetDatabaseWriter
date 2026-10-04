@@ -34,8 +34,7 @@ public sealed class ComplexColumnsDataFixtureTests(DatabaseCache db) : IClassFix
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
 
-        Assert.Single(tables);
-        Assert.Equal("Table1", tables[0]);
+        Assert.Equal("Table1", Assert.Single(tables));
     }
 
     /// <summary>

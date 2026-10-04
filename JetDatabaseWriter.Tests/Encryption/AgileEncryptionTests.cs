@@ -318,9 +318,9 @@ public sealed class AgileEncryptionTests(DatabaseCache db) : IClassFixture<Datab
             DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.NotNull(dt);
-            Assert.Single(dt.Rows);
-            Assert.Equal(42, dt.Rows[0]["Id"]);
-            Assert.Equal("agile-write-roundtrip", dt.Rows[0]["Label"]);
+            DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+            Assert.Equal(42, row["Id"]);
+            Assert.Equal("agile-write-roundtrip", row["Label"]);
         }
         finally
         {

@@ -296,9 +296,9 @@ public sealed class StandardEncryptionTests(DatabaseCache db) : IClassFixture<Da
             DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.NotNull(dt);
-            Assert.Single(dt.Rows);
-            Assert.Equal(99, dt.Rows[0]["Id"]);
-            Assert.Equal("standard-write-roundtrip", dt.Rows[0]["Label"]);
+            DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+            Assert.Equal(99, row["Id"]);
+            Assert.Equal("standard-write-roundtrip", row["Label"]);
         }
         finally
         {

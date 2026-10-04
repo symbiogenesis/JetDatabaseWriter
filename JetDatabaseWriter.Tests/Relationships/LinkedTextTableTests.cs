@@ -792,8 +792,8 @@ public sealed class LinkedTextTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         DataTable preview = await reader.ReadDataTableAsync("LinkedPreviewBudgetCsv", maxRows: 1, cancellationToken: ct);
-        Assert.Single(preview.Rows);
-        Assert.Equal("ok", preview.Rows[0]["Note"]);
+        DataRow row = Assert.Single(preview.Rows.Cast<DataRow>());
+        Assert.Equal("ok", row["Note"]);
 
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.ReadDataTableAsync("LinkedPreviewBudgetCsv", cancellationToken: ct));
@@ -1092,8 +1092,8 @@ public sealed class LinkedTextTableTests : IDisposable
 
         DataTable table = await reader.ReadDataTableAsync("LinkedAllowedCsv", cancellationToken: ct);
 
-        Assert.Single(table.Rows);
-        Assert.Equal("Ada", table.Rows[0]["Name"]);
+        DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
+        Assert.Equal("Ada", row["Name"]);
     }
 
     [Theory]

@@ -152,10 +152,10 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.Single(dt.Rows);
-        Assert.Equal(1, dt.Rows[0]["Id"]);
-        Assert.Equal(expectedText1, dt.Rows[0]["Text1"]);
-        Assert.Equal(expectedText2, dt.Rows[0]["Text2"]);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        Assert.Equal(1, row["Id"]);
+        Assert.Equal(expectedText1, row["Text1"]);
+        Assert.Equal(expectedText2, row["Text2"]);
     }
 
     /// <summary>

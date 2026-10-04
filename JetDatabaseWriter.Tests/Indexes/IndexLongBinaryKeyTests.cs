@@ -51,8 +51,8 @@ public sealed class IndexLongBinaryKeyTests
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
         DataTable dt = await reader.ReadDataTableAsync("LongBin", cancellationToken: this.ct);
-        Assert.Single(dt.Rows);
-        byte[] actual = Assert.IsType<byte[]>(dt.Rows[0]["Bin"]);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        byte[] actual = Assert.IsType<byte[]>(row["Bin"]);
         Assert.Equal(payload, actual);
     }
 

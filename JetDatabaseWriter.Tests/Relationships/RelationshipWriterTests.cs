@@ -51,8 +51,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
             .ToArray();
 
-        Assert.Single(matching);
-        DataRow row = matching[0];
+        DataRow row = Assert.Single(matching);
         Assert.Equal(1, (int)row["ccolumn"]);
         Assert.Equal(0, (int)row["icolumn"]);
         Assert.Equal(0, (int)row["grbit"]);
@@ -271,10 +270,10 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         Assert.NotEqual(parentFk.RelatedTablePage, childFk.RelatedTablePage);
 
         // FK columns surface in col_map.
-        Assert.Single(parentFk.Columns);
-        Assert.Single(childFk.Columns);
-        Assert.Equal("Id", parentFk.Columns[0].Name);
-        Assert.Equal("ParentId", childFk.Columns[0].Name);
+        IndexColumnReference parentColumn = Assert.Single(parentFk.Columns);
+        IndexColumnReference childColumn = Assert.Single(childFk.Columns);
+        Assert.Equal("Id", parentColumn.Name);
+        Assert.Equal("ParentId", childColumn.Name);
     }
 
     [Fact]

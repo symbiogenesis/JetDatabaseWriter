@@ -205,9 +205,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
-        Assert.Single(dt.Rows);
-        Assert.Equal(42, dt.Rows[0]["Id"]);
-        Assert.Equal("encrypted-write", dt.Rows[0]["Label"]);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        Assert.Equal(42, row["Id"]);
+        Assert.Equal("encrypted-write", row["Label"]);
     }
 
     [Fact]
@@ -243,9 +243,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
-        Assert.Single(dt.Rows);
-        Assert.Equal(7, dt.Rows[0]["Id"]);
-        Assert.Equal("jet3-xor-write", dt.Rows[0]["Label"]);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        Assert.Equal(7, row["Id"]);
+        Assert.Equal("jet3-xor-write", row["Label"]);
     }
 
     [Fact]
@@ -292,9 +292,9 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
-        Assert.Single(dt.Rows);
-        Assert.Equal(11, dt.Rows[0]["Id"]);
-        Assert.Equal("legacy-aes-cfb-write", dt.Rows[0]["Label"]);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        Assert.Equal(11, row["Id"]);
+        Assert.Equal("legacy-aes-cfb-write", row["Label"]);
     }
 
     // ═══════════════════════════════════════════════════════════════════
