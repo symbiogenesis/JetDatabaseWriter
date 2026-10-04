@@ -525,7 +525,7 @@ public sealed class DelimitedTextReaderTests
 
         public override async Task<int> ReadAsync(char[] buffer, int index, int count)
         {
-            int read = await base.ReadAsync(buffer.AsMemory(index, count), TestContext.Current.CancellationToken);
+            int read = await this.ReadAsync(buffer.AsMemory(index, count), TestContext.Current.CancellationToken);
             this.CharsRead += read;
             if (this.CharsRead >= cancelAt)
             {
