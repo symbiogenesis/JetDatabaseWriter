@@ -459,7 +459,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             candidate => candidate.Kind == IndexKind.ForeignKey);
 
         List<(int Key, long DataPage, byte DataRow)> entries = await ReadIndexLeafEntriesAsync(
-            db, entry.TDefPage, tableDef, foreignKey.FirstDp, ParentIdColumn, unique: false, cancellationToken);
+            db, entry.TDefPage, tableDef, foreignKey.FirstDp, ParentIdColumn, unique: false, leafBoundaryKeys: null, cancellationToken);
         Assert.Equal(expectedParentIds.Values.Order(), entries.Select(e => e.Key));
 
         List<RowLocation> liveRows = await db.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken);
@@ -474,8 +474,8 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     /// which reads a writer's pending transaction pages when one is active.
     /// Every expected key must appear once in the scan and once in the index,
     /// and every leaf entry must point at a live row of the table holding the
-    /// entry's key. Formats that support seeks also seek every key through
-    /// the intermediate pages.
+    /// entry's key. Formats that support seeks also seek the first and last
+    /// key of every leaf through the intermediate pages.
     /// </summary>
     /// <param name="db">The database file to read, a writer's or a reopened reader's.</param>
     /// <param name="tableName">The table.</param>
@@ -512,8 +512,9 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             await services.Indexes.ListIndexesAsync(tableName, cancellationToken),
             candidate => candidate.Name == indexName);
 
+        var leafBoundaryKeys = new List<int>();
         List<(int Key, long DataPage, byte DataRow)> entries = await ReadIndexLeafEntriesAsync(
-            db, entry.TDefPage, tableDef, index.FirstDp, keyColumn, unique: true, cancellationToken);
+            db, entry.TDefPage, tableDef, index.FirstDp, keyColumn, unique: true, leafBoundaryKeys, cancellationToken);
         Assert.Equal(expected, entries.Select(e => e.Key));
 
         if (db.Format == DatabaseFormat.Jet3Mdb)
@@ -521,8 +522,11 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             return;
         }
 
+        // A seek descends to the first child whose summary key is not below the search key, so
+        // the keys that reach a leaf form a range, and the first and last key of every leaf take
+        // every path through the intermediate pages. The leaf walk above has checked every entry.
         int seekMisses = 0;
-        foreach (int key in expected)
+        foreach (int key in leafBoundaryKeys)
         {
             int hits = 0;
             await foreach (object[] row in services.Indexes.SeekRowsAsync(tableName, indexName, [key], cancellationToken))
@@ -553,6 +557,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     /// <param name="rootPage">The index root page.</param>
     /// <param name="keyColumn">The indexed column.</param>
     /// <param name="unique">Whether keys must be strictly increasing.</param>
+    /// <param name="leafBoundaryKeys">Receives the first and last key of every leaf that holds entries, when not <see langword="null"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the reads.</param>
     private static async Task<List<(int Key, long DataPage, byte DataRow)>> ReadIndexLeafEntriesAsync(
         DatabaseFile db,
@@ -561,6 +566,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         long rootPage,
         string keyColumn,
         bool unique,
+        List<int>? leafBoundaryKeys,
         CancellationToken cancellationToken)
     {
         var layout = IndexPageLayout.ForFormat(db.Format);
@@ -596,6 +602,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             Assert.True(leaf[0] == Constants.IndexLeafPage.PageTypeLeaf, $"Leaf chain reached page {current} of type 0x{leaf[0]:X2}.");
             Assert.True(Ri32(leaf, 4) == tdefPage, $"Leaf page {current} is owned by page {Ri32(leaf, 4)}, not the table's TDEF {tdefPage}.");
 
+            int leafStart = entries.Count;
             foreach (IndexEntry indexEntry in IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes))
             {
                 if (!dataPages.TryGetValue(indexEntry.DataPage, out (byte[] Page, RowBound[] Rows) data))
@@ -619,6 +626,12 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                 Assert.True(unique ? order < 0 : order <= 0, $"Leaf page {current} holds key {key} out of order.");
                 previousKey = indexEntry.Key;
                 entries.Add((key, indexEntry.DataPage, indexEntry.DataRow));
+            }
+
+            if (leafBoundaryKeys is not null && entries.Count > leafStart)
+            {
+                leafBoundaryKeys.Add(entries[leafStart].Key);
+                leafBoundaryKeys.Add(entries[^1].Key);
             }
 
             current = IndexPageCodec.ReadNextPage(layout, leaf);

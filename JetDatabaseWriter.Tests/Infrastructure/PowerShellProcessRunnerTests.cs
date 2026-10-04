@@ -27,6 +27,16 @@ public sealed partial class PowerShellProcessRunnerTests
 {
     private const string WindowsOnly = "Runs powershell.exe and ping.exe, which only Windows has.";
 
+    /// <summary>
+    /// The first timeout of the tests that let a host outlive it. The timeout must pass only
+    /// after the host has started the ping and recorded its id, and host start-up varies widely
+    /// (well under a second on CI, 12 s on a busy machine), so a test whose host was too slow
+    /// runs again with twice the timeout, up to <see cref="LastTimeout"/>.
+    /// </summary>
+    private static readonly TimeSpan FirstTimeout = TimeSpan.FromSeconds(5);
+
+    private static readonly TimeSpan LastTimeout = TimeSpan.FromSeconds(40);
+
     private static string PowerShellPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
 
@@ -54,33 +64,42 @@ public sealed partial class PowerShellProcessRunnerTests
 
         // The host starts a ping that would run for two minutes and shares the host's output
         // pipes, records the ping's process id, and sleeps for two minutes. The id goes to a
-        // file because the host's buffered output is lost when it is killed. The 30 s timeout
-        // leaves room for a slow host start on a busy machine (12 s was seen here).
-        string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
-        var stopwatch = Stopwatch.StartNew();
-        PowerShellRunResult result = PowerShellProcessRunner.Run(
-            PowerShellPath,
-            CommandArguments(StartPingScript(pidPath) + "; Start-Sleep -Seconds 120"),
-            TimeSpan.FromSeconds(30));
-        stopwatch.Stop();
+        // file because the host's buffered output is lost when it is killed.
+        for (TimeSpan timeout = FirstTimeout; ; timeout += timeout)
+        {
+            string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
+            var stopwatch = Stopwatch.StartNew();
+            PowerShellRunResult result = PowerShellProcessRunner.Run(
+                PowerShellPath,
+                CommandArguments(StartPingScript(pidPath) + "; Start-Sleep -Seconds 120"),
+                timeout);
+            stopwatch.Stop();
 
-        int? pingId = ReadProcessId(pidPath);
-        try
-        {
-            Assert.True(result.TimedOut);
-            Assert.Equal(-1, result.ExitCode);
-            Assert.True(
-                stopwatch.Elapsed < TimeSpan.FromSeconds(90),
-                $"Run returned after {stopwatch.Elapsed.TotalSeconds:F1} s; the 30 s timeout did not stop the host.");
-            Assert.True(pingId.HasValue, "The host did not record the ping's process id before the timeout.");
-            Assert.True(
-                await HasExitedWithinAsync(pingId.Value, TimeSpan.FromSeconds(5)),
-                "The ping the host started is still running after the timeout killed the host.");
-        }
-        finally
-        {
-            TryKill(pingId);
-            File.Delete(pidPath);
+            int? pingId = ReadProcessId(pidPath);
+            try
+            {
+                Assert.True(result.TimedOut);
+                Assert.Equal(-1, result.ExitCode);
+                Assert.True(
+                    stopwatch.Elapsed < timeout + TimeSpan.FromSeconds(60),
+                    $"Run returned after {stopwatch.Elapsed.TotalSeconds:F1} s; the {timeout.TotalSeconds:F0} s timeout did not stop the host.");
+                if (pingId is null && timeout < LastTimeout)
+                {
+                    // The host started too slowly to record the id before the timeout.
+                    continue;
+                }
+
+                Assert.True(pingId.HasValue, "The host did not record the ping's process id before the timeout.");
+                Assert.True(
+                    await HasExitedWithinAsync(pingId.Value, TimeSpan.FromSeconds(5)),
+                    "The ping the host started is still running after the timeout killed the host.");
+                return;
+            }
+            finally
+            {
+                TryKill(pingId);
+                File.Delete(pidPath);
+            }
         }
     }
 
@@ -97,30 +116,41 @@ public sealed partial class PowerShellProcessRunnerTests
         // kills the host, fails on the ping and reports that failure in an AggregateException.
         // The run must still come back as a timeout: the DAO probe and scripts treat anything
         // else as a broken environment.
-        string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
-        using var stopGuard = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        Task<Process?> guardedPing = DenyTerminateOnceStartedAsync(pidPath, stopGuard.Token);
-        try
+        for (TimeSpan timeout = FirstTimeout; ; timeout += timeout)
         {
-            PowerShellRunResult result = RunWithoutPrivileges(() => PowerShellProcessRunner.Run(
-                PowerShellPath,
-                CommandArguments(StartPingScript(pidPath) + "; Start-Sleep -Seconds 120"),
-                TimeSpan.FromSeconds(30),
-                drainTimeout: TimeSpan.FromSeconds(1)));
-            await stopGuard.CancelAsync();
-            Process? ping = await guardedPing;
+            string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
+            using var stopGuard = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+            Task<Process?> guardedPing = DenyTerminateOnceStartedAsync(pidPath, stopGuard.Token);
+            try
+            {
+                PowerShellRunResult result = RunWithoutPrivileges(() => PowerShellProcessRunner.Run(
+                    PowerShellPath,
+                    CommandArguments(StartPingScript(pidPath) + "; Start-Sleep -Seconds 120"),
+                    timeout,
+                    drainTimeout: TimeSpan.FromSeconds(1)));
+                await stopGuard.CancelAsync();
+                Process? ping = await guardedPing;
 
-            Assert.True(result.TimedOut);
-            Assert.Equal(-1, result.ExitCode);
-            Assert.True(ping is not null, "The host did not record the ping's process id before the timeout.");
-            Assert.False(ping.HasExited, "The ping exited, so killing it was never refused and the test checked nothing.");
-        }
-        finally
-        {
-            await stopGuard.CancelAsync();
-            using Process? ping = await guardedPing;
-            KillWithOwnHandle(ping);
-            File.Delete(pidPath);
+                Assert.True(result.TimedOut);
+                Assert.Equal(-1, result.ExitCode);
+                if ((ping is null || ping.HasExited) && timeout < LastTimeout)
+                {
+                    // The host started too slowly: the timeout killed the ping, or the host before
+                    // it recorded the id, before the test could deny the right to terminate it.
+                    continue;
+                }
+
+                Assert.True(ping is not null, "The host did not record the ping's process id before the timeout.");
+                Assert.False(ping.HasExited, "The ping exited, so killing it was never refused and the test checked nothing.");
+                return;
+            }
+            finally
+            {
+                await stopGuard.CancelAsync();
+                using Process? ping = await guardedPing;
+                KillWithOwnHandle(ping);
+                File.Delete(pidPath);
+            }
         }
     }
 
