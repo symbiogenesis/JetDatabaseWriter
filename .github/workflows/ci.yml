@@ -36,11 +36,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Every project but the tests, then the package.
-          - name: library and tools
-            project: JetDatabaseWriter.slnx
-            options: -p:AnalyzeExcept=JetDatabaseWriter.Tests
+          # Both target frameworks of the library, then the package.
+          - name: library
+            project: JetDatabaseWriter
             pack: true
+          # Every other project but the tests; the library builds without analyzers here.
+          - name: tools
+            project: JetDatabaseWriter.slnx
+            options: '"-p:AnalyzeExcept=JetDatabaseWriter JetDatabaseWriter.Tests"'
           # The test project once per target framework; the projects it references build
           # without analyzers here.
           - name: tests net10.0

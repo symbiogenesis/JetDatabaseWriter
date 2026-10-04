@@ -29,12 +29,13 @@
 
     <!--
       CI spreads the analyzers, which take most of a Release build, over parallel jobs.
-      -p:AnalyzeOnly=<project name> analyzes that project alone and compiles the projects it
-      references without analyzers; -p:AnalyzeExcept=<project name> analyzes every project but
-      that one. Source generators run either way.
+      "-p:AnalyzeOnly=<project names>" analyzes only the named projects and compiles every other
+      project the build reaches without analyzers; "-p:AnalyzeExcept=<project names>" analyzes
+      every project but the named ones. Names are separated by spaces. Source generators run
+      either way.
     -->
-    <RunAnalyzers Condition="'$(AnalyzeOnly)' != '' and '$(AnalyzeOnly)' != '$(MSBuildProjectName)'">false</RunAnalyzers>
-    <RunAnalyzers Condition="'$(AnalyzeExcept)' == '$(MSBuildProjectName)'">false</RunAnalyzers>
+    <RunAnalyzers Condition="'$(AnalyzeOnly)' != '' and !$([System.String]::Concat(' ', '$(AnalyzeOnly)', ' ').Contains(' $(MSBuildProjectName) '))">false</RunAnalyzers>
+    <RunAnalyzers Condition="$([System.String]::Concat(' ', '$(AnalyzeExcept)', ' ').Contains(' $(MSBuildProjectName) '))">false</RunAnalyzers>
   </PropertyGroup>
 
   <ItemGroup>
