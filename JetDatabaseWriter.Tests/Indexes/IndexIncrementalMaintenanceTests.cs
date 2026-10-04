@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -64,8 +65,8 @@ public sealed class IndexIncrementalMaintenanceTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
-        Assert.Single(dt.Rows);
-        Assert.Equal(42, dt.Rows[0]["Id"]);
+        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
+        Assert.Equal(42, row["Id"]);
     }
 
     [Theory]

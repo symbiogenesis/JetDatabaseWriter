@@ -162,9 +162,9 @@ public sealed class IndexTailPageAppendTests
 
         IndexBTreeBuildResult r = IndexBTreeBuilder.Build(Constants.PageSizes.Jet4, parentTdef, entries, firstPage);
 
-        Assert.Single(r.Pages);
-        Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, r.Pages[0][0]);
-        Assert.Equal(0, ReadI32(r.Pages[0], 16));
+        byte[] leaf = Assert.Single(r.Pages);
+        Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, leaf[0]);
+        Assert.Equal(0, ReadI32(leaf, 16));
     }
 
     [Fact]

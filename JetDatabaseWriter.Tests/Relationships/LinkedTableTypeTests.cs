@@ -136,7 +136,7 @@ public sealed class LinkedTableTypeTests(DatabaseCache db) : IClassFixture<Datab
 
         IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
-        Assert.Single(linked);
-        Assert.Equal("Table2", linked[0].Name);
+        LinkedTableInfo link = Assert.Single(linked);
+        Assert.Equal("Table2", link.Name);
     }
 }

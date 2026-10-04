@@ -29,9 +29,9 @@ public sealed class IndexBTreeBuilderTests
 
         IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, [], FirstPage);
 
-        Assert.Single(r.Pages);
+        byte[] leaf = Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);
-        Assert.Equal(0x04, r.Pages[0][0]);
+        Assert.Equal(0x04, leaf[0]);
     }
 
     [Theory]
@@ -50,13 +50,13 @@ public sealed class IndexBTreeBuilderTests
 
         IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
-        Assert.Single(r.Pages);
+        byte[] leaf = Assert.Single(r.Pages);
         Assert.Equal(FirstPage, r.RootPageNumber);
-        Assert.Equal(0x04, r.Pages[0][0]);
+        Assert.Equal(0x04, leaf[0]);
 
         // No siblings.
-        Assert.Equal(0, ReadI32(r.Pages[0], 8));   // prev_page
-        Assert.Equal(0, ReadI32(r.Pages[0], 12));  // next_page
+        Assert.Equal(0, ReadI32(leaf, 8));   // prev_page
+        Assert.Equal(0, ReadI32(leaf, 12));  // next_page
     }
 
     [Theory]
@@ -180,8 +180,7 @@ public sealed class IndexBTreeBuilderTests
 
         IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
-        Assert.Single(r.Pages);
-        byte[] leaf = r.Pages[0];
+        byte[] leaf = Assert.Single(r.Pages);
         Assert.Equal(0x04, leaf[0]);
 
         // pref_len in the page header should be 4 (the shared 0x7F 0x80 0x00 0x00 prefix).
@@ -215,8 +214,8 @@ public sealed class IndexBTreeBuilderTests
 
         IndexBTreeBuildResult r = IndexBTreeBuilder.Build(layout, pageSize, ParentTdef, entries, FirstPage);
 
-        Assert.Single(r.Pages);
-        Assert.Equal(0, ReadU16(r.Pages[0], 20));
+        byte[] leaf = Assert.Single(r.Pages);
+        Assert.Equal(0, ReadU16(leaf, 20));
     }
 
     [Theory]

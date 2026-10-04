@@ -101,9 +101,9 @@ public sealed class PersistedColumnPropertiesTests
         byte[] reblob = copy.ToBytes(DatabaseFormat.Jet4Mdb)!;
         ColumnPropertyBlock reparsed = ColumnPropertyBlock.Parse(reblob, DatabaseFormat.Jet4Mdb)!;
 
-        Assert.Single(reparsed.UnknownChunks);
-        Assert.Equal((ushort)0xABCD, reparsed.UnknownChunks[0].ChunkType);
-        Assert.Equal(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF }, reparsed.UnknownChunks[0].Payload);
+        ColumnPropertyUnknownChunk chunk = Assert.Single(reparsed.UnknownChunks);
+        Assert.Equal((ushort)0xABCD, chunk.ChunkType);
+        Assert.Equal(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF }, chunk.Payload);
         Assert.Equal("alpha", reparsed.FindTarget("A")!.GetTextValue(Constants.ColumnPropertyNames.Description, DatabaseFormat.Jet4Mdb));
     }
 
@@ -294,10 +294,10 @@ public sealed class PersistedColumnPropertiesTests
 
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", TestContext.Current.CancellationToken);
 
-        Assert.Single(meta);
-        Assert.Equal("Qty", meta[0].Name);
-        Assert.Equal("0", meta[0].DefaultValueExpression);
-        Assert.Equal("qty", meta[0].Description);
+        ColumnMetadata qty = Assert.Single(meta);
+        Assert.Equal("Qty", qty.Name);
+        Assert.Equal("0", qty.DefaultValueExpression);
+        Assert.Equal("qty", qty.Description);
     }
 
     [Fact]

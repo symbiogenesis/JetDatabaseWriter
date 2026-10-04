@@ -115,8 +115,7 @@ public sealed class LogicalTDefChainTests
             writeFreeSpace: true,
             this.ct);
 
-        Assert.Single(chain.PageNumbers);
-        Assert.Equal(10L, chain.PageNumbers[0]);
+        Assert.Equal(10L, Assert.Single(chain.PageNumbers));
         Assert.Equal(0, Ri32(pages[10], 4));
         Assert.Equal(usedLength - 8, Ri32(pages[10], 8));
         Assert.Equal((ushort)(PageSize - usedLength), Ru16(pages[10], 2));

@@ -44,13 +44,11 @@ public class ColumnPropertyBlockTests
         var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
 
         Assert.NotNull(parsed);
-        Assert.Single(parsed.Targets);
 
-        ColumnPropertyTarget target = parsed.Targets[0];
+        ColumnPropertyTarget target = Assert.Single(parsed.Targets);
         Assert.Equal("Qty", target.Name);
-        Assert.Single(target.Entries);
 
-        ColumnPropertyEntry entry = target.Entries[0];
+        ColumnPropertyEntry entry = Assert.Single(target.Entries);
         Assert.Equal(Constants.ColumnPropertyNames.DefaultValue, entry.Name);
         Assert.Equal(ColumnType.TextType, entry.DataType);
         Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
@@ -136,9 +134,9 @@ public class ColumnPropertyBlockTests
 
         ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(ms.ToArray(), DatabaseFormat.Jet4Mdb)!;
 
-        Assert.Single(parsed.UnknownChunks);
-        Assert.Equal((ushort)0xABCD, parsed.UnknownChunks[0].ChunkType);
-        Assert.Equal(unknownPayload, parsed.UnknownChunks[0].Payload);
+        ColumnPropertyUnknownChunk chunk = Assert.Single(parsed.UnknownChunks);
+        Assert.Equal((ushort)0xABCD, chunk.ChunkType);
+        Assert.Equal(unknownPayload, chunk.Payload);
 
         Assert.Single(parsed.Targets);
         Assert.Equal("ok", parsed.FindTarget("X")!.GetTextValue("Description", DatabaseFormat.Jet4Mdb));

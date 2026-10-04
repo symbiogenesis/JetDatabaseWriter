@@ -1061,9 +1061,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
             IReadOnlyList<WriterPoco> items = await reader.ReadTableAsync<WriterPoco>(tableName, 100, TestContext.Current.CancellationToken);
-            Assert.Single(items);
-            Assert.Equal(42, items[0].Id);
-            Assert.Equal("Roundtrip", items[0].Label);
+            WriterPoco item = Assert.Single(items);
+            Assert.Equal(42, item.Id);
+            Assert.Equal("Roundtrip", item.Label);
         }
     }
 
