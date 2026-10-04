@@ -133,7 +133,7 @@ public sealed partial class PowerShellProcessRunnerTests
 
                 Assert.True(result.TimedOut);
                 Assert.Equal(-1, result.ExitCode);
-                if ((ping is null || ping.HasExited) && timeout < LastTimeout)
+                if (ping is not { HasExited: false } && timeout < LastTimeout)
                 {
                     // The host started too slowly: the timeout killed the ping, or the host before
                     // it recorded the id, before the test could deny the right to terminate it.
