@@ -983,15 +983,14 @@ internal sealed class IndexMaintainer(
 
     /// <summary>
     /// Collects, for each maintained real index, every page its tree now
-    /// spans, and points the index's <c>used_pages</c> at its usage-map row in
-    /// <paramref name="tdefBuffer"/> (in memory only). Reads pages but writes
-    /// nothing, so the caller can still bail and release what it reserved.
+    /// spans. Reads pages without changing <paramref name="tdefBuffer"/> or
+    /// writing pages, so the caller can still bail and release what it reserved.
     /// Returns an empty array when the format keeps no index usage maps
     /// (Jet3) or no slot was maintained, and <see langword="null"/> when a
     /// tree cannot be walked or the table has no usage-map page.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="tdefBuffer">The logical TDEF bytes, patched in place.</param>
+    /// <param name="tdefBuffer">The logical TDEF bytes naming the maintained indexes.</param>
     /// <param name="layout">The index page layout.</param>
     /// <param name="slots">The maintained real-index slots.</param>
     /// <param name="numRealIdx">The number of real indexes.</param>

@@ -232,10 +232,20 @@ A TDEF names two usage-map rows, each by a 1-byte row index and a 3-byte page
 number: `used_pages`, the table's data pages, and `free_pages`, those with room
 for a row. Each real index's descriptor names a third (`used_pages`, its
 tree's pages). The rows sit on a usage-map page, a data page whose rows are
-maps. The writer gives each Jet4 and ACE table one, with the owned-pages and
-free-space rows at rows 0 and 1 and real index `n` at row `n + 2`, 69 bytes
-each (`CatalogArtifactWriter`, `DataPageInserter`); it keeps no Jet3 table or
-index usage maps. A row's first byte is its type:
+maps. New writer-created Jet4 and ACE tables have one, with the owned-pages
+and free-space rows at rows 0 and 1 and real index `n` at row `n + 2`, 69
+bytes each (`CatalogArtifactWriter`, `DataPageInserter`); the writer keeps
+no Jet3 table or index usage maps.
+
+Existing Access-authored maps can use larger rows and different index row
+numbers. Index maintenance follows each descriptor's page and row pointer,
+updates that row within its actual bounds, and preserves every unrelated
+row, including owned-pages, free-space and long-value maps. In
+`NorthwindTraders.accdb`, `MSysObjects` (TDEF 2) uses map page 6: owned
+row 0 is 381 bytes, free-space row 1 is 69 bytes, and its two indexes point
+to rows 16 and 17. Rows 2 through 15 must not be repurposed as index maps.
+
+A row's first byte is its type:
 
 | Type | Layout |
 |---|---|
