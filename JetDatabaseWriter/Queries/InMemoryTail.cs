@@ -48,10 +48,10 @@ internal static class InMemoryTail
         ["SkipLast"] = static (call, source, cancellationToken) => SkipLastAsync(source, CountArgument(call), cancellationToken),
         ["TakeLast"] = static (call, source, cancellationToken) => TakeLastAsync(source, CountArgument(call), cancellationToken),
         ["Distinct"] = static (call, source, cancellationToken) => DistinctAsync(source, ElementEquality(call, comparerIndex: 1), cancellationToken),
-        ["Union"] = static (call, source, cancellationToken) => UnionAsync(source, SecondSource(call), ElementEquality(call, comparerIndex: 2), cancellationToken),
-        ["Intersect"] = static (call, source, cancellationToken) => IntersectAsync(source, SecondSource(call), ElementEquality(call, comparerIndex: 2), cancellationToken),
-        ["Except"] = static (call, source, cancellationToken) => ExceptAsync(source, SecondSource(call), ElementEquality(call, comparerIndex: 2), cancellationToken),
-        ["Concat"] = static (call, source, cancellationToken) => ConcatAsync(source, SecondSource(call), cancellationToken),
+        ["Union"] = static (call, source, cancellationToken) => UnionAsync(source, SecondSource(call, cancellationToken), ElementEquality(call, comparerIndex: 2), cancellationToken),
+        ["Intersect"] = static (call, source, cancellationToken) => IntersectAsync(source, SecondSource(call, cancellationToken), ElementEquality(call, comparerIndex: 2), cancellationToken),
+        ["Except"] = static (call, source, cancellationToken) => ExceptAsync(source, SecondSource(call, cancellationToken), ElementEquality(call, comparerIndex: 2), cancellationToken),
+        ["Concat"] = static (call, source, cancellationToken) => ConcatAsync(source, SecondSource(call, cancellationToken), cancellationToken),
         ["Reverse"] = static (_, source, cancellationToken) => ReverseAsync(source, cancellationToken),
         ["DefaultIfEmpty"] = static (call, source, cancellationToken) => DefaultIfEmptyAsync(source, DefaultElement(call), cancellationToken),
         ["Append"] = static (call, source, cancellationToken) => AppendAsync(source, ClosureValueReader.Evaluate(call.Arguments[1]), cancellationToken),
@@ -212,8 +212,9 @@ internal static class InMemoryTail
     /// through its own provider, asynchronously; anything else is an in-memory sequence.
     /// </summary>
     /// <param name="call">The operator call whose second argument is the sequence.</param>
-    /// <returns>A factory that starts the sequence when the operator reaches it.</returns>
-    private static Func<CancellationToken, IAsyncEnumerable<object?>> SecondSource(MethodCallExpression call)
+    /// <param name="cancellationToken">A token used to cancel the enumeration.</param>
+    /// <returns>The prepared sequence, validated before either source is read.</returns>
+    private static IAsyncEnumerable<object?> SecondSource(MethodCallExpression call, CancellationToken cancellationToken)
     {
         Expression argument = call.Arguments[1];
         Expression root = argument;
@@ -224,11 +225,11 @@ internal static class InMemoryTail
 
         if (root is ConstantExpression { Value: IQueryable { Provider: IAccessQueryEngine engine } })
         {
-            return cancellationToken => engine.ExecuteStreamAsync(argument, cancellationToken);
+            return engine.ExecuteStreamAsync(argument, cancellationToken);
         }
 
         var values = (IEnumerable)ClosureValueReader.Evaluate(argument)!;
-        return _ => values.Cast<object?>().ToAsyncEnumerable();
+        return values.Cast<object?>().ToAsyncEnumerable();
     }
 
     /// <summary>
@@ -455,7 +456,7 @@ internal static class InMemoryTail
 
     private static async IAsyncEnumerable<object?> UnionAsync(
         IAsyncEnumerable<object?> first,
-        Func<CancellationToken, IAsyncEnumerable<object?>> second,
+        IAsyncEnumerable<object?> second,
         BoxedEqualityComparer comparer,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -468,7 +469,7 @@ internal static class InMemoryTail
             }
         }
 
-        await foreach (object? item in second(cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+        await foreach (object? item in second.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (seen.Add(item))
             {
@@ -479,12 +480,12 @@ internal static class InMemoryTail
 
     private static async IAsyncEnumerable<object?> IntersectAsync(
         IAsyncEnumerable<object?> first,
-        Func<CancellationToken, IAsyncEnumerable<object?>> second,
+        IAsyncEnumerable<object?> second,
         BoxedEqualityComparer comparer,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // As in Enumerable.Intersect, the second sequence is read first, and each match is yielded once.
-        HashSet<object?> remaining = await ToSetAsync(second(cancellationToken), comparer, cancellationToken).ConfigureAwait(false);
+        HashSet<object?> remaining = await ToSetAsync(second, comparer, cancellationToken).ConfigureAwait(false);
         await foreach (object? item in first.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (remaining.Remove(item))
@@ -496,12 +497,12 @@ internal static class InMemoryTail
 
     private static async IAsyncEnumerable<object?> ExceptAsync(
         IAsyncEnumerable<object?> first,
-        Func<CancellationToken, IAsyncEnumerable<object?>> second,
+        IAsyncEnumerable<object?> second,
         BoxedEqualityComparer comparer,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // As in Enumerable.Except, the second sequence is read first, and each survivor is yielded once.
-        HashSet<object?> excluded = await ToSetAsync(second(cancellationToken), comparer, cancellationToken).ConfigureAwait(false);
+        HashSet<object?> excluded = await ToSetAsync(second, comparer, cancellationToken).ConfigureAwait(false);
         await foreach (object? item in first.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (excluded.Add(item))
@@ -527,7 +528,7 @@ internal static class InMemoryTail
 
     private static async IAsyncEnumerable<object?> ConcatAsync(
         IAsyncEnumerable<object?> first,
-        Func<CancellationToken, IAsyncEnumerable<object?>> second,
+        IAsyncEnumerable<object?> second,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         await foreach (object? item in first.WithCancellation(cancellationToken).ConfigureAwait(false))
@@ -535,7 +536,7 @@ internal static class InMemoryTail
             yield return item;
         }
 
-        await foreach (object? item in second(cancellationToken).WithCancellation(cancellationToken).ConfigureAwait(false))
+        await foreach (object? item in second.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             yield return item;
         }

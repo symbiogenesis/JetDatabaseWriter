@@ -55,25 +55,22 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
         throw AsyncOnlyQuery.ExecutionNotSupported(expression);
     }
 
-    public async IAsyncEnumerable<object?> ExecuteStreamAsync(Expression expression, [EnumeratorCancellation] CancellationToken cancellationToken)
+    public IAsyncEnumerable<object?> ExecuteStreamAsync(Expression expression, CancellationToken cancellationToken)
     {
         Guard.NotNull(expression, nameof(expression));
         (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
 
         // A tail (a projection, or operators the engine does not translate) runs over the
         // engine's rows as they stream. It is composed here, before a row is read, so an
-        // operator it does not run throws first. With or without one, Take/First can
-        // short-circuit before the whole table is read.
+        // operator it does not run throws first, including one in a second query source.
+        // Enumeration remains deferred; streaming stages let Take/First stop the read.
         IAsyncEnumerable<object?> rows = this.ExecuteEngineAsync(plan, cancellationToken);
         if (!ReferenceEquals(boundary, expression))
         {
             rows = InMemoryTail.Apply(rows, expression, boundary, cancellationToken);
         }
 
-        await foreach (object? item in rows.ConfigureAwait(false))
-        {
-            yield return item;
-        }
+        return rows;
     }
 
     public async ValueTask<long> CountAsync(Expression expression, CancellationToken cancellationToken)

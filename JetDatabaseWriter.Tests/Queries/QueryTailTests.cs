@@ -135,6 +135,9 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
     [InlineData("IndexedSelect", "Select")]
     [InlineData("IndexedWhere", "Where")]
     [InlineData("IndexedTakeWhile", "TakeWhile")]
+    [InlineData("IndexedSkipWhile", "SkipWhile")]
+    [InlineData("TakeRangeEngine", "Take")]
+    [InlineData("TakeRangeTail", "Take")]
     public async Task UnsupportedOperator_Throws_NamingItAndAsAsyncEnumerable(string shape, string operatorName)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -147,6 +150,41 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(async () => await query.ToListAsync(ct));
 
         Assert.Contains($"'{operatorName}'", error.Message, StringComparison.Ordinal);
+        Assert.Contains("AsAsyncEnumerable()", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, counting.BytesRead);
+    }
+
+    [Theory]
+    [InlineData("Concat", false)]
+    [InlineData("Concat", true)]
+    [InlineData("Union", false)]
+    [InlineData("Union", true)]
+    [InlineData("Intersect", false)]
+    [InlineData("Intersect", true)]
+    [InlineData("Except", false)]
+    [InlineData("Except", true)]
+    public async Task UnsupportedNestedSecondSource_ThrowsBeforeEitherSourceIsRead(string operation, bool takeFirst)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using var counting = new CountingStream(stream);
+        await using AccessReader reader = await OpenReaderAsync(counting, ct);
+        IQueryable<TailItem> source = reader.Query<TailItem>(Table);
+        IQueryable<TailItem> second = source.Concat(source.Where((_, index) => index > 0));
+        IQueryable<TailItem> query = operation switch
+        {
+            "Concat" => source.Concat(second),
+            "Union" => source.Union(second),
+            "Intersect" => source.Intersect(second),
+            "Except" => source.Except(second),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unknown set operator."),
+        };
+        counting.Reset();
+
+        NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
+            async () => await (takeFirst ? query.Take(1) : query).ToListAsync(ct));
+
+        Assert.Contains("'Where'", error.Message, StringComparison.Ordinal);
         Assert.Contains("AsAsyncEnumerable()", error.Message, StringComparison.Ordinal);
         Assert.Equal(0L, counting.BytesRead);
     }
@@ -229,6 +267,9 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         "IndexedSelect" => q.Select((i, index) => i.Id + index).Cast<object?>(),
         "IndexedWhere" => q.Where((_, index) => index > 1),
         "IndexedTakeWhile" => q.Select(i => i.Id).TakeWhile((_, index) => index < 3).Cast<object?>(),
+        "IndexedSkipWhile" => q.SkipWhile((_, index) => index < 3),
+        "TakeRangeEngine" => q.Take(..3),
+        "TakeRangeTail" => q.Select(i => i.Id).Take(..3).Cast<object?>(),
         _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "Unknown query shape."),
     };
 

@@ -13,8 +13,10 @@ using System.Threading.Tasks;
 internal interface IAccessQueryEngine
 {
     /// <summary>
-    /// Runs <paramref name="expression"/> and streams its results, boxed: the engine's rows,
+    /// Prepares <paramref name="expression"/> and streams its results, boxed: the engine's rows,
     /// or the output of the operators above them (a projection's values can be null).
+    /// Preparation validates all operators, including second query sources, synchronously;
+    /// the returned sequence does not read rows until it is enumerated.
     /// </summary>
     /// <param name="expression">The query expression to run.</param>
     /// <param name="cancellationToken">A token used to cancel the enumeration.</param>

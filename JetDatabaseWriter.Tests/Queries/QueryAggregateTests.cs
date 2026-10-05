@@ -77,6 +77,9 @@ public sealed class QueryAggregateTests
         ["AverageNullableDecimal"] = new(static async (q, ct) => await q.AverageAsync(i => i.Price, ct), static r => r.Average(i => i.Price)),
         ["AverageIntAccumulatesInLong"] = new(static async (q, ct) => await q.AverageAsync(_ => int.MaxValue, ct), static r => r.Average(_ => int.MaxValue)),
         ["AverageLongOverflow"] = new(static async (q, ct) => await q.AverageAsync(_ => long.MaxValue, ct), static r => r.Average(_ => long.MaxValue)),
+        ["AverageNullableLongOverflow"] = new(static async (q, ct) => await q.AverageAsync(i => i.Score == null ? null : (long?)long.MaxValue, ct), static r => r.Average(i => i.Score == null ? null : (long?)long.MaxValue)),
+        ["AverageDecimalOverflow"] = new(static async (q, ct) => await q.AverageAsync(_ => decimal.MaxValue, ct), static r => r.Average(_ => decimal.MaxValue)),
+        ["AverageNullableDecimalOverflow"] = new(static async (q, ct) => await q.AverageAsync(i => i.Price == null ? null : (decimal?)decimal.MaxValue, ct), static r => r.Average(i => i.Price == null ? null : (decimal?)decimal.MaxValue)),
         ["MinInt"] = new(static async (q, ct) => await q.MinAsync(i => i.Id, ct), static r => r.Min(i => i.Id)),
         ["MaxInt"] = new(static async (q, ct) => await q.MaxAsync(i => i.Id, ct), static r => r.Max(i => i.Id)),
         ["MinNullableInt"] = new(static async (q, ct) => await q.MinAsync(i => i.Score, ct), static r => r.Min(i => i.Score)),
@@ -147,6 +150,33 @@ public sealed class QueryAggregateTests
         }
 
         Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task AverageFloatingPoint_PreservesNegativeZeroLikeLinqToObjects()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        IQueryable<AggItem> query = reader.Query<AggItem>(Table).OrderBy(i => i.Id).Take(3);
+        List<AggItem> rows = await query.ToListAsync(ct);
+
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(rows.Average(_ => -0.0)),
+            BitConverter.DoubleToInt64Bits(await query.AverageAsync(_ => -0.0, ct)));
+        Assert.Equal(
+            BitConverter.SingleToInt32Bits(rows.Average(_ => -0.0f)),
+            BitConverter.SingleToInt32Bits(await query.AverageAsync(_ => -0.0f, ct)));
+
+        // A leading null must not seed the sum with positive zero either.
+        double? nullableDouble = await query.AverageAsync(i => i.Id == 1 ? null : (double?)-0.0, ct);
+        float? nullableFloat = await query.AverageAsync(i => i.Id == 1 ? null : (float?)-0.0f, ct);
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(rows.Average(i => i.Id == 1 ? null : (double?)-0.0)!.Value),
+            BitConverter.DoubleToInt64Bits(nullableDouble!.Value));
+        Assert.Equal(
+            BitConverter.SingleToInt32Bits(rows.Average(i => i.Id == 1 ? null : (float?)-0.0f)!.Value),
+            BitConverter.SingleToInt32Bits(nullableFloat!.Value));
     }
 
     [Theory]

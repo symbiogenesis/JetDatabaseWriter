@@ -830,7 +830,7 @@ public static class AccessQueryExtensions
         long count = 0;
         await foreach (float value in Project(source, selector, cancellationToken).ConfigureAwait(false))
         {
-            sum += value;
+            sum = count == 0 ? value : sum + value;
             count++;
         }
 
@@ -851,7 +851,7 @@ public static class AccessQueryExtensions
         {
             if (value is float present)
             {
-                sum += present;
+                sum = count == 0 ? present : sum + present;
                 count++;
             }
         }
@@ -872,7 +872,7 @@ public static class AccessQueryExtensions
         long count = 0;
         await foreach (double value in Project(source, selector, cancellationToken).ConfigureAwait(false))
         {
-            sum += value;
+            sum = count == 0 ? value : sum + value;
             count++;
         }
 
@@ -893,7 +893,7 @@ public static class AccessQueryExtensions
         {
             if (value is double present)
             {
-                sum += present;
+                sum = count == 0 ? present : sum + present;
                 count++;
             }
         }

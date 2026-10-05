@@ -127,7 +127,7 @@ internal static class AccessQueryTranslator
             // A trailing IComparer<TKey> argument would be ignored by the engine's sort,
             // so only the two-argument ordering forms stay in the engine.
             "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" => call.Arguments.Count == 2,
-            "Skip" or "Take" => call.Arguments.Count == 2,
+            "Skip" or "Take" => call.Arguments.Count == 2 && call.Arguments[1].Type == typeof(int),
             _ => false,
         };
     }
