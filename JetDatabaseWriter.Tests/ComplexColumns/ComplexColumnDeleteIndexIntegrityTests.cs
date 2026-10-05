@@ -25,7 +25,7 @@ public sealed class ComplexColumnDeleteIndexIntegrityTests
         byte[] payload = new byte[20_000];
         for (int index = 0; index < payload.Length; index++)
         {
-            payload[index] = (byte)((index * 73 + (index / 251)) & 0xFF);
+            payload[index] = (byte)(((index * 73) + (index / 251)) & 0xFF);
         }
 
         var options = new AccessWriterOptions { UseLockFile = false, SecureEraseMode = JetDatabaseWriter.Enums.SecureEraseMode.DeletedRowsAndFreedPages };
