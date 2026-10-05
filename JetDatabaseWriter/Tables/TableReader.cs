@@ -721,14 +721,14 @@ internal sealed class TableReader(
         // null when any bound column requires the slow path (Memo/Ole
         // LVAL chain, Complex/Attachment, Hyperlink prop); complex columns
         // T does not bind are never read.
-        DirectRowDecoder<T>? directDecoder = DirectRowDecoderBuilder.TryBuild<T>(headers, td.Columns, td.ClrTypes);
+        DirectRowDecoder<T>? directDecoder = DirectRowDecoderBuilder.TryBuild<T>(td);
 
         if (directDecoder != null)
         {
             return this.EnumerateDirectRowsAsync(entry, td, directDecoder, progress, cancellationToken);
         }
 
-        Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
+        Func<object?[], T> factory = RowMapper<T>.Build(td);
 
         // Skip per-row decode of columns the mapper never reads. For wide
         // tables and narrow DTOs this can eliminate the bulk of the per-row

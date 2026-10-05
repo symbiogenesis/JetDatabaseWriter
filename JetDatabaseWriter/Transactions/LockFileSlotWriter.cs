@@ -179,6 +179,7 @@ internal sealed class LockFileSlotWriter : IDisposable
     /// Thrown when <paramref name="respectExisting"/> is <see langword="true"/> and the
     /// lock-file already exists, or when all <see cref="MaxSlots"/> slots are populated.
     /// </exception>
+    /// <exception cref="JetLockException">The database is in use or every lock-file slot is occupied.</exception>
     public static LockFileSlotWriter? Open(
         string databasePath,
         string ownerTypeName,
@@ -359,7 +360,8 @@ internal sealed class LockFileSlotWriter : IDisposable
             }
         }
 
-        throw new JetLockException(JetErrorCode.LockFileFull,
+        throw new JetLockException(
+            JetErrorCode.LockFileFull,
             $"Cannot open the database. The database has been opened by another user, or you have reached your limit of concurrent users (max {MaxSlots} slots in lock-file).");
     }
 

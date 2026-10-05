@@ -3,12 +3,18 @@ namespace JetDatabaseWriter.Catalog.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class TableDef
 {
+    private RowShape? shape;
+
+    /// <summary>Gets the immutable materializer identity for this definition.</summary>
+    public RowShape Shape => this.shape ??= new RowShape(this.Columns.ConvertAll(static column => column.Name), this.ClrTypes, this.Columns);
+
     public List<ColumnInfo> Columns { get; set; } = [];
 
     /// <summary>
@@ -64,6 +70,7 @@ internal sealed class TableDef
     /// </summary>
     public void InitializeColumnMetadata()
     {
+        this.shape = null;
         var clrTypes = new Type[this.Columns.Count];
         bool hasVar = false;
         bool hasComplex = false;

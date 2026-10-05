@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -19,6 +20,7 @@ using JetDatabaseWriter.Models;
 internal sealed class IndexCursor
 {
     private const int MaxDepth = 32;
+    private const int MaxLeafHops = 1_048_576;
 
     private readonly IndexPageLayout layout;
     private readonly Func<long, CancellationToken, ValueTask<byte[]>> readPage;
@@ -207,6 +209,99 @@ internal sealed class IndexCursor
         }
     }
 
+    /// <summary>Streams matching row pointers, retaining only the current leaf's matches.</summary>
+    /// <param name="format">The format profile.</param>
+    /// <param name="tableName">The owning table.</param>
+    /// <param name="index">The selected index.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="criteria">The seek criteria.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="NotSupportedException">The criteria kind is unsupported.</exception>
+    public async IAsyncEnumerable<(long DataPage, int RowIndex)> EnumerateRowLocationsForCriteriaAsync(
+        JetFormat format,
+        string tableName,
+        IndexMetadata index,
+        TableDef tableDef,
+        IndexQueryCriteria criteria,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        EncodedIndexRange range;
+        switch (criteria.Kind)
+        {
+            case IndexQueryKind.All:
+                range = new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None);
+                break;
+            case IndexQueryKind.Exact:
+                byte[] key = IndexKeyEncoder.EncodeIndexSeekKey(format, tableName, index, tableDef, criteria.Values!);
+                range = new EncodedIndexRange(new EncodedIndexBound(key, true, false), new EncodedIndexBound(key, true, false));
+                break;
+            case IndexQueryKind.KeyPrefix:
+                byte[] prefix = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, index, tableDef, criteria.Values!, nameof(criteria));
+                range = new EncodedIndexRange(new EncodedIndexBound(prefix, true, false), EncodedIndexBound.None, prefix);
+                break;
+            case IndexQueryKind.Range:
+                EncodedIndexBound lower = criteria.Lower == null ? EncodedIndexBound.None : new EncodedIndexBound(IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, index, tableDef, criteria.Lower.Values, nameof(criteria)), criteria.Lower.IsInclusive, criteria.Lower.Values.Count < index.Columns.Count);
+                EncodedIndexBound upper = criteria.Upper == null ? EncodedIndexBound.None : new EncodedIndexBound(IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, index, tableDef, criteria.Upper.Values, nameof(criteria)), criteria.Upper.IsInclusive, criteria.Upper.Values.Count < index.Columns.Count);
+                range = new EncodedIndexRange(lower, upper);
+                break;
+            default:
+                throw new NotSupportedException($"Index query kind '{criteria.Kind}' is not supported.");
+        }
+
+        await foreach ((long DataPage, int RowIndex) location in this.EnumerateRowLocationsInRangeAsync(index.FirstDp, range, cancellationToken).ConfigureAwait(false))
+        {
+            yield return location;
+        }
+    }
+
+    /// <summary>Streams an encoded range without reading subsequent leaves until requested.</summary>
+    /// <param name="rootPageNumber">The B-tree root.</param>
+    /// <param name="range">The encoded range.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    public async IAsyncEnumerable<(long DataPage, int RowIndex)> EnumerateRowLocationsInRangeAsync(
+        long rootPageNumber,
+        EncodedIndexRange range,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (!range.Lower.IsUnbounded && !range.Upper.IsUnbounded)
+        {
+            int comparison = IndexHelpers.CompareKeyBytes(range.Lower.Key!, range.Upper.Key!);
+            if (comparison > 0 || (comparison == 0 && (!range.Lower.Inclusive || !range.Upper.Inclusive)))
+            {
+                yield break;
+            }
+        }
+
+        (long PageNumber, byte[] Page)? candidate = await this.FindCandidateLeafWithNumberAsync(rootPageNumber, range.Lower.Key ?? range.RequiredPrefix ?? [], cancellationToken).ConfigureAwait(false);
+        if (candidate == null)
+        {
+            yield break;
+        }
+
+        byte[]? page = candidate.Value.Page;
+        var matches = new List<(long DataPage, int RowIndex)>();
+        var visited = new HashSet<long> { candidate.Value.PageNumber };
+        while (page != null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            matches.Clear();
+            bool continueToNext = IndexPageCodec.CollectRangeLeafEntries(this.layout, page, this.pageSize, in range, matches);
+            foreach ((long DataPage, int RowIndex) location in matches)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return location;
+            }
+
+            long next = IndexPageCodec.ReadNextPage(this.layout, page);
+            if (!continueToNext || next <= 0 || visited.Count >= MaxLeafHops || !visited.Add(next))
+            {
+                yield break;
+            }
+
+            page = await this.readPage(next, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>
     /// Returns the last entry of the B-tree rooted at
     /// <paramref name="rootPageNumber"/>, the one with the largest key, or
@@ -287,7 +382,12 @@ internal sealed class IndexCursor
         }
     }
 
-    private async ValueTask<byte[]?> FindCandidateLeafAsync(
+    private async ValueTask<byte[]?> FindCandidateLeafAsync(long rootPageNumber, byte[] searchKey, CancellationToken cancellationToken)
+    {
+        (long PageNumber, byte[] Page)? candidate = await this.FindCandidateLeafWithNumberAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
+        return candidate?.Page;
+    }
+    private async ValueTask<(long PageNumber, byte[] Page)?> FindCandidateLeafWithNumberAsync(
         long rootPageNumber,
         byte[] searchKey,
         CancellationToken cancellationToken)
@@ -305,7 +405,7 @@ internal sealed class IndexCursor
             byte[] page = await this.readPage(currentPageNumber, cancellationToken).ConfigureAwait(false);
             if (IndexPageCodec.IsLeaf(page))
             {
-                return page;
+                return (currentPageNumber, page);
             }
 
             if (!IndexPageCodec.IsIntermediate(page))

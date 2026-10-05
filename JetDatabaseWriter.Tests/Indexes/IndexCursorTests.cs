@@ -300,6 +300,165 @@ public sealed class IndexCursorTests
         Assert.Null(last);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task StreamingRange_StopsWithoutReadingTheWholeTree(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, BuildIntEntries(25000));
+        int reads = 0;
+        var cursor = new IndexCursor(
+            tree.Layout,
+            (page, _) =>
+            {
+                reads++;
+                return new ValueTask<byte[]>(tree.Pages[page]);
+            },
+            tree.PageSize);
+        int count = 0;
+        await foreach ((long _, int _) in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken))
+        {
+            if (++count == 10)
+            {
+                break;
+            }
+        }
+
+        Assert.Equal(10, count);
+        Assert.InRange(reads, 1, 16);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task StreamingRange_MatchesListAcrossLeaves(DatabaseFormat format)
+    {
+        TreeFixture tree = BuildTree(format, BuildIntEntries(5000));
+        IndexCursor cursor = CreateCursor(tree);
+        var range = new EncodedIndexRange(new EncodedIndexBound(EncodeIntKey(100), false, false), new EncodedIndexBound(EncodeIntKey(4000), false, false));
+        List<(long DataPage, int RowIndex)> expected = await cursor.FindRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken);
+        var actual = new List<(long DataPage, int RowIndex)>();
+        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken))
+        {
+            actual.Add(location);
+        }
+
+        Assert.Equal(expected, actual);
+    }
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task StreamingRange_CyclicLeafIsNotEmittedTwice(DatabaseFormat format)
+    {
+        int pageSize = PageSizeOf(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        byte[] page = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, BuildIntEntries(8), prevPage: 0, nextPage: FirstPageNumber, tailPage: 0, enablePrefixCompression: true);
+        int reads = 0;
+        var cursor = new IndexCursor(
+            layout,
+            (_, _) =>
+            {
+                reads++;
+                return new ValueTask<byte[]>(page);
+            },
+            pageSize);
+        var actual = new List<(long DataPage, int RowIndex)>();
+        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken))
+        {
+            actual.Add(location);
+        }
+
+        Assert.Equal(8, actual.Count);
+        Assert.Equal(1, reads);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task StreamingRange_DuplicatesAndCompositePrefixMatchList(DatabaseFormat format)
+    {
+        byte[] key = EncodeIntKey(42);
+        TreeFixture duplicates = BuildTree(format, BuildDuplicateEntries(key, 500));
+        var exact = new EncodedIndexRange(new EncodedIndexBound(key, true, false), new EncodedIndexBound(key, true, false));
+        await this.AssertStreamingMatchesListAsync(duplicates, exact);
+        TreeFixture composite = BuildTree(format, BuildCompositeIntEntries(5, 200));
+        byte[] prefix = EncodeIntKey(2);
+        await this.AssertStreamingMatchesListAsync(composite, new EncodedIndexRange(new EncodedIndexBound(prefix, true, false), EncodedIndexBound.None, prefix));
+        await this.AssertStreamingMatchesListAsync(composite, new EncodedIndexRange(new EncodedIndexBound(prefix, false, true), new EncodedIndexBound(EncodeIntKey(3), true, true)));
+        await this.AssertStreamingMatchesListAsync(composite, new EncodedIndexRange(new EncodedIndexBound(prefix, true, true), new EncodedIndexBound(EncodeIntKey(3), false, true)));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task StreamingRange_DescendingAndEmptyBoundsMatchList(DatabaseFormat format)
+    {
+        List<IndexEntry> entries = Enumerable.Range(0, 500).Reverse().Select(static value => new IndexEntry(IndexKeyEncoder.EncodeEntry(LongIntegerType, value, ascending: false), DataPage: 100 + (value / 200), DataRow: (byte)(value % 200))).ToList();
+        TreeFixture tree = BuildTree(format, entries);
+        byte[] lower = IndexKeyEncoder.EncodeEntry(LongIntegerType, 400, ascending: false);
+        byte[] upper = IndexKeyEncoder.EncodeEntry(LongIntegerType, 100, ascending: false);
+        await this.AssertStreamingMatchesListAsync(tree, new EncodedIndexRange(new EncodedIndexBound(lower, false, false), new EncodedIndexBound(upper, true, false)));
+        var empty = new List<(long DataPage, int RowIndex)>();
+        IndexCursor cursor = CreateCursor(tree);
+        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, new EncodedIndexRange(new EncodedIndexBound(lower, false, false), new EncodedIndexBound(lower, false, false)), this.cancellationToken))
+        {
+            empty.Add(location);
+        }
+
+        Assert.Empty(empty);
+        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, new EncodedIndexRange(new EncodedIndexBound(upper, true, false), new EncodedIndexBound(lower, true, false)), this.cancellationToken))
+        {
+            empty.Add(location);
+        }
+
+        Assert.Empty(empty);
+    }
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task StreamingRange_MultiLeafCycleEmitsEachLeafOnce(DatabaseFormat format)
+    {
+        int pageSize = PageSizeOf(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        List<IndexEntry> entries = BuildIntEntries(16);
+        var pages = new Dictionary<long, byte[]>
+        {
+            [FirstPageNumber] = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, entries.GetRange(0, 8), prevPage: 0, nextPage: FirstPageNumber + 1, tailPage: 0, enablePrefixCompression: true),
+            [FirstPageNumber + 1] = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, entries.GetRange(8, 8), prevPage: FirstPageNumber, nextPage: FirstPageNumber, tailPage: 0, enablePrefixCompression: true),
+        };
+        int reads = 0;
+        var cursor = new IndexCursor(
+            layout,
+            (page, _) =>
+            {
+                reads++;
+                return new ValueTask<byte[]>(pages[page]);
+            },
+            pageSize);
+        var actual = new List<(long DataPage, int RowIndex)>();
+        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken))
+        {
+            actual.Add(location);
+        }
+
+        Assert.Equal(16, actual.Count);
+        Assert.Equal(16, actual.Distinct().Count());
+        Assert.Equal(2, reads);
+    }
+
+    private async Task AssertStreamingMatchesListAsync(TreeFixture tree, EncodedIndexRange range)
+    {
+        IndexCursor cursor = CreateCursor(tree);
+        List<(long DataPage, int RowIndex)> expected = await cursor.FindRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken);
+        var actual = new List<(long DataPage, int RowIndex)>();
+        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken))
+        {
+            actual.Add(location);
+        }
+
+        Assert.Equal(expected, actual);
+    }
+
     private static void AssertLastKey(int expected, IndexEntry? last)
     {
         Assert.NotNull(last);

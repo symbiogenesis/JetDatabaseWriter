@@ -36,7 +36,7 @@ guidance below to produce new evidence before changing the core reader.
 - Long values longer than the page cache: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderLargeLongValueBenchmarks.cs`
 - Concurrent scans on one shared reader versus one reader per scan, plain and AES-encrypted, in `Disabled` (page reads through the reader's I/O gate) and `Auto`: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderConcurrentScanBenchmarks.cs`
 - `Query<T>().Include(...)` over a related customer/order pair: `JetDatabaseWriter.Benchmarks/Queries/QueryIncludeBenchmarks.cs`
-- The per-call cost of typed reads and `Query<T>()` (materializer and predicate compiles, translation, the in-memory tail, index-ordered reads, inferred range seeks and aggregates): `JetDatabaseWriter.Benchmarks/Queries/QueryBenchmarks.cs`
+- The per-call cost of typed reads and `Query<T>()` (materializer cache lookup and predicate compilation, translation, the in-memory tail, index-ordered reads, inferred range seeks and aggregates): `JetDatabaseWriter.Benchmarks/Queries/QueryBenchmarks.cs`
 - Aggregate allocation scaling at 1,000 and 25,000 rows: `JetDatabaseWriter.Benchmarks/Queries/QueryAggregateAllocationBenchmarks.cs` compares `Query_SumAsync_Large` with a direct `Rows<T>` sum over the same entities. Total allocations include one materialized entity per row on both paths; compare the difference between those paths to check that the query aggregate adds constant overhead and no growing row buffer.
 - Attachment reads (`GetAttachmentsAsync`, `Rows()`, `Rows<T>()` with `ComplexCellValue.ReadAttachments`), writer-authored and Access-authored: `JetDatabaseWriter.Benchmarks/Reader/ComplexColumnReadBenchmarks.cs`
 - Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
@@ -64,11 +64,20 @@ release-quality benchmark results justify reopening a specific area.
   `RowDecodePlan.CreateStrings` / `TryDecodeStringRowAsync` for row-layout
   preflight and per-column string materialization instead of a separate row
   parser.
-- `RowMapper<T>.Build(headers, sourceTypes?)` builds an expression-tree
+- `RowMapper<T>.Build` caches an expression-tree
   `Func<object?[], T>` that typed reads use when no direct page-to-POCO decoder
   applies (and that index and linked-table reads always use); type mismatches flow through
   `Mapping/ValueCoercer`, which `Include`'s `RuntimeRowMapper` shares, and the
   `ToRow` / `Accessor` API remains available for writer-side mapping.
+  One LRU cache retains at most 64 immutable row shapes per entity type across
+  read, write and direct-decoder delegates. Shapes include ordered names, source
+  types, physical column layout and AutoNumber flags, so equivalent definitions
+  reuse delegates across opens while schema edits select a new shape. User
+  property getters run after the cache lock is released.
+- `IndexCursor.EnumerateRowLocationsForCriteriaAsync` streams matches one leaf
+  at a time, letting `Take` and abandoned seeks stop further leaf reads. The
+  cursor detects repeated leaf pages and bounds its hops; writer maintenance
+  retains the collecting APIs.
 - `DirectRowDecoderBuilder.TryBuild<T>` can emit a direct page-to-POCO delegate
   for primitive projections. The compiled delegate still asks `RowDecodePlan`
   to parse row layout and resolve column slices, so direct and fallback decode

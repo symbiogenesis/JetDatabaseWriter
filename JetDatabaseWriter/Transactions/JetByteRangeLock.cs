@@ -251,8 +251,10 @@ internal sealed class JetByteRangeLock
     private void ThrowTimeout(long offset, long length)
     {
         long pageNumber = length > 0 ? offset / length : -1;
-        throw new JetLockException(JetErrorCode.LockTimeout,
-            $"Timed out after {this.lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.", new JetErrorInfo { PageNumber = pageNumber });
+        throw new JetLockException(
+            JetErrorCode.LockTimeout,
+            $"Timed out after {this.lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.",
+            new JetErrorInfo { PageNumber = pageNumber });
     }
 
     /// <summary>

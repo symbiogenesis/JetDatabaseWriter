@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Mapping;
@@ -23,14 +22,7 @@ using JetDatabaseWriter.Models;
 internal static class RowMapper<T>
     where T : new()
 {
-    /// <summary>
-    /// Per-TableDef cache for the compiled write delegate. Keyed by
-    /// reference identity so the same TableDef instance reused across many
-    /// rows pays the expression-compilation cost exactly once. TableDef is
-    /// already cached upstream by AccessWriter, so a ConditionalWeakTable
-    /// lets the entries fall out naturally when a TableDef is evicted.
-    /// </summary>
-    private static readonly ConditionalWeakTable<TableDef, Func<T, object[]>> WriteCache = [];
+    private static readonly MaterializerCache<Materializers> Cache = new();
 
     /// <summary>
     /// Gets the column name to accessor map, built from <see cref="EntityMap"/> on
@@ -95,7 +87,51 @@ internal static class RowMapper<T>
     public static Func<object?[], T> Build(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes = null)
     {
         Guard.NotNull(headers, nameof(headers));
+        return GetRead(new RowShape(headers, sourceTypes), headers, sourceTypes);
+    }
 
+    /// <summary>Gets the mapper cached against a table's immutable shape.</summary>
+    /// <param name="td">The table definition.</param>
+    internal static Func<object?[], T> Build(TableDef td)
+    {
+        Materializers entry = Cache.Get(td.Shape, static () => new Materializers());
+        lock (entry)
+        {
+            return entry.Read ??= BuildUncached(td.Columns.ConvertAll(static column => column.Name), td.ClrTypes);
+        }
+    }
+
+    /// <summary>Gets the direct decoder, including a cached refusal for unsupported columns.</summary>
+    /// <typeparam name="TDelegate">The decoder delegate type.</typeparam>
+    /// <param name="shape">The immutable row shape.</param>
+    /// <param name="create">The decoder factory.</param>
+    internal static TDelegate? GetDirect<TDelegate>(RowShape shape, Func<TDelegate?> create)
+        where TDelegate : class
+    {
+        Materializers entry = Cache.Get(shape, static () => new Materializers());
+        lock (entry)
+        {
+            if (!entry.DirectInitialized)
+            {
+                entry.Direct = create();
+                entry.DirectInitialized = true;
+            }
+
+            return (TDelegate?)entry.Direct;
+        }
+    }
+
+    private static Func<object?[], T> GetRead(RowShape shape, IReadOnlyList<string> headers, IReadOnlyList<Type>? types)
+    {
+        Materializers entry = Cache.Get(shape, static () => new Materializers());
+        lock (entry)
+        {
+            return entry.Read ??= BuildUncached(headers, types);
+        }
+    }
+
+    private static Func<object?[], T> BuildUncached(IReadOnlyList<string> headers, IReadOnlyList<Type>? sourceTypes)
+    {
         ParameterExpression rowParam = Expression.Parameter(typeof(object?[]), "row");
         ParameterExpression itemLocal = Expression.Variable(typeof(T), "item");
         ParameterExpression lenLocal = Expression.Variable(typeof(int), "len");
@@ -203,16 +239,22 @@ internal static class RowMapper<T>
 
     /// <summary>
     /// Projects <paramref name="item"/> to an <c>object[]</c> in column order
-    /// using a compiled delegate cached on <paramref name="td"/>. The
-    /// expression compilation happens at most once per <see cref="TableDef"/>
-    /// instance and is transparently amortised across batch writes.
+    /// using a compiled delegate cached by entity type and immutable row shape. The
+    /// expression compilation is shared across equivalent table definitions
+    /// and is transparently amortised across batch writes.
     /// </summary>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="item">The source item.</param>
     public static object[] ToRow(TableDef td, T item)
     {
         Guard.NotNull(td, nameof(td));
-        Func<T, object[]> writer = WriteCache.GetValue(td, static key => BuildToRow(key));
+        Materializers entry = Cache.Get(td.Shape, static () => new Materializers());
+        Func<T, object[]> writer;
+        lock (entry)
+        {
+            writer = entry.Write ??= BuildToRow(td);
+        }
+
         return writer(item);
     }
 
@@ -310,6 +352,17 @@ internal static class RowMapper<T>
         }
 
         return map;
+    }
+
+    private sealed class Materializers
+    {
+        internal Func<object?[], T>? Read { get; set; }
+
+        internal Func<T, object[]>? Write { get; set; }
+
+        internal object? Direct { get; set; }
+
+        internal bool DirectInitialized { get; set; }
     }
 
     /// <summary>

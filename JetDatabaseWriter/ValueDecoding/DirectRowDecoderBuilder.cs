@@ -6,6 +6,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -67,6 +68,26 @@ internal static class DirectRowDecoderBuilder
         IReadOnlyList<string> headers,
         IReadOnlyList<ColumnInfo> columns,
         IReadOnlyList<Type> clrTypes)
+        where T : class, new()
+    {
+        Guard.NotNull(headers, nameof(headers));
+        Guard.NotNull(columns, nameof(columns));
+        Guard.NotNull(clrTypes, nameof(clrTypes));
+        if (columns.Count < headers.Count || clrTypes.Count < headers.Count)
+        {
+            return null;
+        }
+
+        return RowMapper<T>.GetDirect(new RowShape(headers, clrTypes, columns), () => TryBuildUncached<T>(headers, columns, clrTypes));
+    }
+
+    /// <summary>Gets a direct decoder cached against the table's immutable shape.</summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="td">The table definition.</param>
+    internal static DirectRowDecoder<T>? TryBuild<T>(Catalog.Models.TableDef td)
+        where T : class, new() => RowMapper<T>.GetDirect(td.Shape, () => TryBuildUncached<T>(td.Columns.ConvertAll(static column => column.Name), td.Columns, td.ClrTypes));
+
+    private static DirectRowDecoder<T>? TryBuildUncached<T>(IReadOnlyList<string> headers, IReadOnlyList<ColumnInfo> columns, IReadOnlyList<Type> clrTypes)
         where T : class, new()
     {
         Guard.NotNull(headers, nameof(headers));

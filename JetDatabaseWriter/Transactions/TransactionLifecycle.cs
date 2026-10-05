@@ -148,7 +148,7 @@ internal sealed class TransactionLifecycle(
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
+    /// <exception cref="JetOperationException">Another transaction is already active on the writer.</exception>
     private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken)
     {
         pager.ThrowIfDisposed();
@@ -158,7 +158,8 @@ internal sealed class TransactionLifecycle(
         using Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
         if (this.ActiveTransaction is not null)
         {
-            throw JetErrors.Operation(JetErrorCode.TransactionAlreadyActive,
+            throw JetErrors.Operation(
+                JetErrorCode.TransactionAlreadyActive,
                 "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
         }
 
@@ -294,7 +295,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation before replay starts.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
+    /// <exception cref="JetOperationException">The transaction is terminated or is not active on this writer.</exception>
     private async ValueTask CommitTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
         Guard.NotNull(transaction, nameof(transaction));
@@ -382,7 +383,7 @@ internal sealed class TransactionLifecycle(
     /// </summary>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
+    /// <exception cref="JetOperationException">The transaction is terminated or is not active on this writer.</exception>
     private async ValueTask RollbackTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
         Guard.NotNull(transaction, nameof(transaction));
@@ -412,6 +413,11 @@ internal sealed class TransactionLifecycle(
         transaction.MarkRolledBack();
     }
 
+    /// <summary>Serializes a mutation and detects active callback re-entry.</summary>
+    /// <param name="work">The operation.</param>
+    /// <param name="cancellationToken">The token used while awaiting the gate.</param>
+    /// <returns>The asynchronous completion.</returns>
+    /// <exception cref="JetOperationException">A mutation was called from an active mutation callback.</exception>
     private async ValueTask RunSerializedAsync(Func<ValueTask> work, CancellationToken cancellationToken)
     {
         if (this.mutationActive.Value is { IsActive: true })
@@ -437,21 +443,20 @@ internal sealed class TransactionLifecycle(
     private async ValueTask<TResult> RunSerializedAsync<TResult>(Func<ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
         TResult result = default!;
-        await this.RunSerializedAsync(async () =>
-        {
-            result = await work().ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        Func<ValueTask> invoke = async () => result = await work().ConfigureAwait(false);
+        await this.RunSerializedAsync(invoke, cancellationToken).ConfigureAwait(false);
         return result;
     }
 
     private async ValueTask RunInSavepointAsync(JetTransaction transaction, Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
-    {
-        await this.RunInSavepointAsync<object?>(transaction, async token =>
-        {
-            await work(token).ConfigureAwait(false);
-            return null;
-        }, cancellationToken).ConfigureAwait(false);
-    }
+        => await this.RunInSavepointAsync<object?>(
+            transaction,
+            async token =>
+            {
+                await work(token).ConfigureAwait(false);
+                return null;
+            },
+            cancellationToken).ConfigureAwait(false);
 
     private async ValueTask<TResult> RunInSavepointAsync<TResult>(JetTransaction transaction, Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {

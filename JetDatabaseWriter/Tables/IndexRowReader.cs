@@ -161,7 +161,7 @@ internal sealed class IndexRowReader(
 
                 // Decode and load only the columns T binds; complex columns
                 // it leaves out are never read from their flat tables.
-                Func<object?[], T> factory = RowMapper<T>.Build(headers, td.ClrTypes);
+                Func<object?[], T> factory = RowMapper<T>.Build(td);
                 bool[] wantedColumns = RowMapper<T>.GetBoundColumnMask(headers);
 
                 return (factory, wantedColumns);
@@ -406,13 +406,7 @@ internal sealed class IndexRowReader(
             format.IndexPage,
             pages.ReadPageAsync,
             format.PageSize);
-        List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsForCriteriaAsync(
-            format,
-            tableName,
-            index,
-            td,
-            criteria,
-            cancellationToken).ConfigureAwait(false);
+        IAsyncEnumerable<(long DataPage, int RowIndex)> hits = cursor.EnumerateRowLocationsForCriteriaAsync(format, tableName, index, td, criteria, cancellationToken);
 
         (Func<object?[], TRow> factory, bool[]? wantedColumns) = createProjection(td);
 
@@ -425,7 +419,7 @@ internal sealed class IndexRowReader(
             : null;
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
-        foreach ((long dataPage, int rowIndex) in hits)
+        await foreach ((long dataPage, int rowIndex) in hits.ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
