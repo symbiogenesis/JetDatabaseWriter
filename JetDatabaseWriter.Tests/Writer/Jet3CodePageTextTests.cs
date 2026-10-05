@@ -89,6 +89,7 @@ public sealed class Jet3CodePageTextTests
     [MemberData(nameof(NameCallsAndTexts))]
     public async Task NameOutsideCodePage_ThrowsBeforeWriting(string call, string text)
     {
+        ArgumentNullException.ThrowIfNull(call);
         (string paramName, Func<AccessWriter, string, ValueTask> invoke) = NameCalls[call];
         await using MemoryStream ms = await CreateJet3TableAsync();
         await using (AccessWriter writer = await OpenWriterAsync(ms))
