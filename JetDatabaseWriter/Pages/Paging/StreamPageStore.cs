@@ -44,17 +44,17 @@ internal class StreamPageStore : IPageStore
 
     /// <summary>Enables positional reads on a supported file handle.</summary>
     internal void EnablePositionalReads()
-    {
 #if NET6_0_OR_GREATER
+    {
         if (this.Stream is FileStream file)
         {
             this.handle = file.SafeFileHandle;
             this.PositionalReads = !this.handle.IsInvalid && !this.handle.IsClosed;
         }
-#else
-        this.PositionalReads = false;
-#endif
     }
+#else
+        => this.PositionalReads = false;
+#endif
 
     /// <inheritdoc/>
     public async ValueTask ReadAsync(long offset, Memory<byte> buffer, bool inline, CancellationToken cancellationToken)

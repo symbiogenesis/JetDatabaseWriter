@@ -194,7 +194,7 @@ public sealed class OwnedDataPagesTests
     {
         const int rowCount = 300;
         await using MemoryStream stream = await CreateDatabaseAsync(format);
-        var options = WriteModes.WriterOptions(mode);
+        AccessWriterOptions options = WriteModes.WriterOptions(mode);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, options, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         long physicalPages = stream.Length / db.Format.PageSize;

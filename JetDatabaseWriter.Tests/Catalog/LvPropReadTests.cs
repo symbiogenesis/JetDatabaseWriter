@@ -49,9 +49,9 @@ public sealed class LvPropReadTests
 
     /// <summary>Gets every writer-created format with every description that holds a file signature.</summary>
     /// <returns>The format and description pairs.</returns>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndDescriptions()
+    public static TheoryData<DatabaseFormat, string> FormatsAndDescriptions()
     {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
+        var data = new TheoryData<DatabaseFormat, string>();
         foreach (DatabaseFormat format in Formats)
         {
             foreach (string description in SignatureDescriptions)

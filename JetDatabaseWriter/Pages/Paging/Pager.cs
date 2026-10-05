@@ -77,6 +77,7 @@ internal sealed class Pager : PageFile
 #endif
 
         this.cacheSize = cacheSize;
+        this.ByteRangeLock = JetByteRangeLock.Disabled;
     }
 
     /// <summary>
@@ -101,9 +102,12 @@ internal sealed class Pager : PageFile
         set
         {
             field = value;
-            ((StreamPageStore)this.Store).AcquireWriteLock = value.IsEnabled ? value.AcquirePageLockAsync : null;
+            if (this.Store is StreamPageStore streamStore)
+            {
+                streamStore.AcquireWriteLock = value.IsEnabled ? value.AcquirePageLockAsync : null;
+            }
         }
-    } = JetByteRangeLock.Disabled;
+    }
 
     /// <summary>Gets a value indicating whether a transaction journal is attached.</summary>
     internal bool IsJournalActive => this.journal is not null;

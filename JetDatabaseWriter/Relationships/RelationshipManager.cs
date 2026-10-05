@@ -1871,7 +1871,6 @@ internal sealed class RelationshipManager(
             return -1;
         }
 
-
         // Locate the matching logical-idx entry, then walk the names list to
         // the same index to find its variable-length name record.
         int matchEntryIdx = FindFkLogicalIdxEntry(this.format.Index, td, in layout, columnNumbers, otherTdefPage, out int releasedRealIdxNum);

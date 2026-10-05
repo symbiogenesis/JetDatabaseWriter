@@ -351,7 +351,7 @@ public sealed class AccessReaderIndexSeekTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         List<object[]> rows = await SeekAsync(reader, "T", "IX_Id", [1]);
         Assert.Equal(1, Assert.Single(rows)[0]);
-        Assert.Single(await QueryAsync(reader.Query<PersonRow>("T").FromIndex("IX_Id")));
+        Assert.Single(await QueryAsync(reader.FromIndex<PersonRow>("T", "IX_Id")));
     }
 
     private static async ValueTask<List<object[]>> SeekAsync(

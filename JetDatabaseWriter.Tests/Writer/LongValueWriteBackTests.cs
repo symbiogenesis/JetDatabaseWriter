@@ -68,9 +68,9 @@ public sealed class LongValueWriteBackTests
         DropColumn = 2,
     }
 
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndPayloads()
+    public static TheoryData<DatabaseFormat, string> FormatsAndPayloads()
     {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
+        var data = new TheoryData<DatabaseFormat, string>();
         foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
         {
             foreach (OlePayload payload in Enum.GetValues<OlePayload>())

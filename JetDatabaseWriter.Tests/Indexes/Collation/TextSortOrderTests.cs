@@ -35,21 +35,19 @@ public sealed class TextSortOrderTests
         header[0x14] = JetFormat.ForNewDatabase(kind).NewDatabaseVersion;
         EncryptionManager.TransformHeaderMask(header, kind);
         byte[] original = (byte[])header.Clone();
-        JetFormat format = JetFormat.FromHeader(header);
+        var format = JetFormat.FromHeader(header);
         Assert.Equal(new TextSortOrder(0x0409, 0, hasVersion), format.DefaultTextSortOrder);
         Assert.Equal(original, header);
     }
 
     [Fact]
     public void ZeroSortOrder_UsesGeneralLegacy()
-    {
-        Assert.Equal(GeneralLegacyTextIndexEncoder.Encode("Éléphant!", true), IndexKeyEncoder.EncodeTextEntry(default, "Éléphant!", true));
-    }
+        => Assert.Equal(GeneralLegacyTextIndexEncoder.Encode("Éléphant!", true), IndexKeyEncoder.EncodeTextEntry(default, "Éléphant!", true));
 
     [Fact]
     public void ExpressionComparison_KeepsTrailingSpacesAndLongSuffixes()
     {
-        var collation = JetTextCollation.GeneralLegacy;
+        JetTextCollation collation = JetTextCollation.GeneralLegacy;
         Assert.Equal(0, collation.Compare("Éléphant!", "éléphant!"));
         Assert.NotEqual(0, collation.Compare("a", "a "));
         string prefix = new('a', Constants.IndexTextEncoding.MaxTextIndexCharLength);
@@ -78,13 +76,9 @@ public sealed class TextSortOrderTests
 
     [Fact]
     public void GeneralLongKeyWithoutSuffixTable_RefusesEncoding()
-    {
-        Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x0409, 1, true), new string('é', 255)));
-    }
+        => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x0409, 1, true), new string('é', 255)));
 
     [Fact]
     public void UnsupportedSortOrder_RefusesNonNullText()
-    {
-        Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x041D, 0, true), "a", true));
-    }
+        => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x041D, 0, true), "a", true));
 }

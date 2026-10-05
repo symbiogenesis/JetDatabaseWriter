@@ -48,9 +48,9 @@ public sealed class ObjectNameValidationTests
 
     /// <summary>Gets every writer-created format with every invalid name.</summary>
     /// <returns>The format and name pairs.</returns>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndInvalidNames()
+    public static TheoryData<DatabaseFormat, string> FormatsAndInvalidNames()
     {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
+        var data = new TheoryData<DatabaseFormat, string>();
         foreach (DatabaseFormat format in Formats)
         {
             foreach (string name in InvalidNames)
@@ -64,9 +64,9 @@ public sealed class ObjectNameValidationTests
 
     /// <summary>Gets every writer-created format with names at the edge of the rules that Access allows.</summary>
     /// <returns>The format and name pairs.</returns>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndBoundaryNames()
+    public static TheoryData<DatabaseFormat, string> FormatsAndBoundaryNames()
     {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
+        var data = new TheoryData<DatabaseFormat, string>();
         foreach (DatabaseFormat format in Formats)
         {
             foreach (string name in new[] { new string('x', 64), "=Eq", "a'b", "a\"b", "Order Details", "Trail ", "#Col", "Café" })

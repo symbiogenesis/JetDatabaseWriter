@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Indexes.Collation;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -61,45 +62,49 @@ public sealed class UnsupportedTextCollationTests(DatabaseCache cache) : IClassF
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
                 {
-                    switch (operation)
+                    JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
                     {
-                        case "insert":
-                            await writer.InsertRowAsync("Bad", [2, 1, "other", 9], ct);
-                            break;
-                        case "update":
-                            await writer.UpdateRowsAsync("Bad", "Id", 1, new RowValues { ["Note"] = "other" }, ct);
-                            break;
-                        case "delete":
-                            await writer.DeleteRowsAsync("Bad", "Id", 1, ct);
-                            break;
-                        case "add":
-                            await writer.AddColumnAsync("Bad", new ColumnDefinition("Added", typeof(int)), ct);
-                            break;
-                        case "rename":
-                            await writer.RenameColumnAsync("Bad", "Note", "Renamed", ct);
-                            break;
-                        case "dropColumn":
-                            await writer.DropColumnAsync("Bad", "Extra", ct);
-                            break;
-                        case "relationship":
-                            await writer.CreateRelationshipAsync(new RelationshipDefinition("BadParent", "P", "Id", "Bad", "ParentId"), ct);
-                            break;
-                        case "cascadeDelete":
-                            await writer.DeleteRowsAsync("P", "Id", 1, ct);
-                            break;
-                        case "cascadeUpdate":
-                            await writer.UpdateRowsAsync("P", "Id", 1, new RowValues { ["Id"] = 2 }, ct);
-                            break;
-                        default:
-                            throw new InvalidOperationException(operation);
-                    }
-                });
-                Assert.Contains("Bad", error.Message, StringComparison.Ordinal);
-            }, ct);
+                        switch (operation)
+                        {
+                            case "insert":
+                                await writer.InsertRowAsync("Bad", [2, 1, "other", 9], ct);
+                                break;
+                            case "update":
+                                await writer.UpdateRowsAsync("Bad", "Id", 1, new Dictionary<string, object?> { ["Note"] = "other" }, ct);
+                                break;
+                            case "delete":
+                                await writer.DeleteRowsAsync("Bad", "Id", 1, ct);
+                                break;
+                            case "add":
+                                await writer.AddColumnAsync("Bad", new ColumnDefinition("Added", typeof(int)), ct);
+                                break;
+                            case "rename":
+                                await writer.RenameColumnAsync("Bad", "Note", "Renamed", ct);
+                                break;
+                            case "dropColumn":
+                                await writer.DropColumnAsync("Bad", "Extra", ct);
+                                break;
+                            case "relationship":
+                                await writer.CreateRelationshipAsync(new RelationshipDefinition("BadParent", "P", "Id", "Bad", "ParentId"), ct);
+                                break;
+                            case "cascadeDelete":
+                                await writer.DeleteRowsAsync("P", "Id", 1, ct);
+                                break;
+                            case "cascadeUpdate":
+                                await writer.UpdateRowsAsync("P", "Id", 1, new Dictionary<string, object?> { ["Id"] = 2 }, ct);
+                                break;
+                            default:
+                                throw new InvalidOperationException(operation);
+                        }
+                    });
+                    Assert.Contains("Bad", error.Message, StringComparison.Ordinal);
+                },
+                ct);
         }
 
         Assert.Equal(before, stream.ToArray());
@@ -118,16 +123,21 @@ public sealed class UnsupportedTextCollationTests(DatabaseCache cache) : IClassF
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
-                    await writer.CreateTableAsync("NeverCreated", [new ColumnDefinition("Id", typeof(int))], ct));
-                Assert.Contains("MSysObjects", error.Message, StringComparison.Ordinal);
-            }, ct);
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+                        await writer.CreateTableAsync("NeverCreated", [new ColumnDefinition("Id", typeof(int))], ct));
+                    Assert.Contains("MSysObjects", error.Message, StringComparison.Ordinal);
+                },
+                ct);
         }
 
         Assert.Equal(before, stream.ToArray());
     }
+
     [Theory]
     [InlineData(WriteMode.Direct, false)]
     [InlineData(WriteMode.AutoCommit, false)]
@@ -153,12 +163,16 @@ public sealed class UnsupportedTextCollationTests(DatabaseCache cache) : IClassF
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
-                    await writer.CreateRelationshipAsync(new RelationshipDefinition("TextRel", "TextParent", "Code", "TextChild", "ParentCode"), ct));
-                Assert.Contains(patchParent ? "TextParent" : "TextChild", error.Message, StringComparison.Ordinal);
-            }, ct);
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+                        await writer.CreateRelationshipAsync(new RelationshipDefinition("TextRel", "TextParent", "Code", "TextChild", "ParentCode"), ct));
+                    Assert.Contains(patchParent ? "TextParent" : "TextChild", error.Message, StringComparison.Ordinal);
+                },
+                ct);
         }
 
         Assert.Equal(before, stream.ToArray());

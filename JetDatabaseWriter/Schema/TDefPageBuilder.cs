@@ -325,7 +325,6 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 }
             }
 
-
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : format.EncodeAnsiText(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {

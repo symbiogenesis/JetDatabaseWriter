@@ -27,7 +27,7 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     [Params(0, 256)]
     public int PageCacheSize { get; set; }
 
-    /// <summary>Gets or sets whether calls use private transactions.</summary>
+    /// <summary>Gets or sets a value indicating whether calls use private transactions.</summary>
     [Params(false, true)]
     public bool Transactional { get; set; }
 
@@ -36,7 +36,7 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     [GlobalSetup]
     public async Task Setup()
     {
-        using var stream = new MemoryStream();
+        await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, this.Options(), leaveOpen: true))
         {
             await writer.CreateTableAsync("PageIo", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("Name", typeof(string), 255)]);
@@ -45,7 +45,7 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
 
         this.baseline = stream.ToArray();
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NorthwindTraders.accdb");
-        using var northwindStream = new MemoryStream();
+        await using var northwindStream = new MemoryStream();
         await using (FileStream source = File.OpenRead(path))
         {
             await source.CopyToAsync(northwindStream);
@@ -84,16 +84,13 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     /// <returns>The mutation completion.</returns>
     [Benchmark]
     public Task NewAccdb_Update()
-        => this.RunAsync(async writer =>
-        {
-            _ = await writer.UpdateRowsAsync("PageIo", "Id", 1, new Dictionary<string, object?> { ["Name"] = "updated" });
-        });
+        => this.RunAsync(async writer => _ = await writer.UpdateRowsAsync("PageIo", "Id", 1, new Dictionary<string, object?> { ["Name"] = "updated" }));
 
     /// <summary>Deletes one row in a newly created ACCDB.</summary>
     /// <returns>The mutation completion.</returns>
     [Benchmark]
     public Task NewAccdb_Delete()
-        => this.RunAsync(async writer => { _ = await writer.DeleteRowsAsync("PageIo", "Id", 1); });
+        => this.RunAsync(async writer => _ = await writer.DeleteRowsAsync("PageIo", "Id", 1));
 
     /// <summary>Rewrites a table to add a column.</summary>
     /// <returns>The mutation completion.</returns>

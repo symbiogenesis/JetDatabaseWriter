@@ -857,9 +857,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("Between(\"é\", \"a\", \"z\")", true)]
     [InlineData("In(\"É\", \"é\", \"z\")", true)]
     public void TextComparisons_UseAccessSortKeys(string expression, bool expected)
-    {
-        Assert.Equal(expected, Assert.IsType<bool>(Evaluate(expression, typeof(bool))));
-    }
+        => Assert.Equal(expected, Assert.IsType<bool>(Evaluate(expression, typeof(bool))));
 
     private static object EvaluateDates(string expression, Type resultType)
         => EvaluateDeclared(

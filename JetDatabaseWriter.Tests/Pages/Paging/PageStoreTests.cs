@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.Pages.Paging;
 
 using System;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -15,7 +14,7 @@ public sealed class PageStoreTests
     [Fact]
     public async Task Memory_Capabilities_AndOwnership()
     {
-        using var stream = new MemoryStream();
+        await using var stream = new MemoryStream();
         await using (var store = new MemoryPageStore(stream, leaveOpen: true))
         {
             Assert.Equal(new StoreCapabilities(false, false, false, false, false, true), store.Capabilities);
@@ -34,7 +33,7 @@ public sealed class PageStoreTests
     [Fact]
     public async Task ShortRead_DoesNotLeakGate()
     {
-        using var stream = new MemoryStream();
+        await using var stream = new MemoryStream();
         await using var store = new MemoryPageStore(stream, leaveOpen: true);
         _ = await Assert.ThrowsAsync<EndOfStreamException>(async () => await store.ReadAsync(0, new byte[16], false, TestContext.Current.CancellationToken));
         await store.WriteAsync(0, new byte[16], TestContext.Current.CancellationToken);
@@ -45,7 +44,7 @@ public sealed class PageStoreTests
     [Fact]
     public async Task ConcurrentReads_UseTheirOwnOffsets()
     {
-        using var stream = new MemoryStream(new byte[] { 1, 2, 3, 4 });
+        await using var stream = new MemoryStream([1, 2, 3, 4]);
         await using var store = new MemoryPageStore(stream, leaveOpen: true);
         byte[] first = new byte[2];
         byte[] second = new byte[2];
@@ -90,10 +89,10 @@ public sealed class PageStoreTests
 
     /// <summary>Construction cleanup releases synchronization without taking stream ownership.</summary>
     [Fact]
-    public void ConstructionCleanup_LeavesCallerStreamOpen()
+    public async Task ConstructionCleanup_LeavesCallerStreamOpen()
     {
-        using var stream = new MemoryStream();
-        var store = new MemoryPageStore(stream, leaveOpen: true);
+        await using var stream = new MemoryStream();
+        await using var store = new MemoryPageStore(stream, leaveOpen: true);
         store.DisposeManagedResources();
         store.DisposeManagedResources();
         Assert.True(stream.CanRead);

@@ -75,11 +75,15 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
             stream.Position = 0;
             await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
             {
-                await WriteModes.RunAsync(writer, mode, async () =>
-                {
-                    InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(table, row, ct));
-                    Assert.Contains("unique", error.Message, StringComparison.OrdinalIgnoreCase);
-                }, ct);
+                await WriteModes.RunAsync(
+                    writer,
+                    mode,
+                    async () =>
+                    {
+                        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(table, row, ct));
+                        Assert.Contains("unique", error.Message, StringComparison.OrdinalIgnoreCase);
+                    },
+                    ct);
             }
 
             Assert.Equal(before, stream.ToArray());
@@ -106,16 +110,20 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                await writer.CreateTableAsync(
-                    "CollatedKeys",
-                    [new ColumnDefinition("Code", typeof(string), 40) { IsPrimaryKey = true }, new ColumnDefinition("Value", typeof(int))],
-                    ct);
-                await writer.InsertRowsAsync("CollatedKeys", [["\u0152uvre", 1], ["caf\u00e9", 2], ["stra\u00dfe", 3]], ct);
-                Assert.Equal(1, await writer.UpdateRowsAsync("CollatedKeys", "Code", "caf\u00e9", new RowValues { ["Code"] = "r\u00e9sum\u00e9" }, ct));
-                Assert.Equal(1, await writer.DeleteRowsAsync("CollatedKeys", "Code", "stra\u00dfe", ct));
-            }, ct);
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    await writer.CreateTableAsync(
+                        "CollatedKeys",
+                        [new ColumnDefinition("Code", typeof(string), 40) { IsPrimaryKey = true }, new ColumnDefinition("Value", typeof(int))],
+                        ct);
+                    await writer.InsertRowsAsync("CollatedKeys", [["\u0152uvre", 1], ["caf\u00e9", 2], ["stra\u00dfe", 3]], ct);
+                    Assert.Equal(1, await writer.UpdateRowsAsync("CollatedKeys", "Code", "caf\u00e9", new Dictionary<string, object?> { ["Code"] = "r\u00e9sum\u00e9" }, ct));
+                    Assert.Equal(1, await writer.DeleteRowsAsync("CollatedKeys", "Code", "stra\u00dfe", ct));
+                },
+                ct);
         }
 
         stream.Position = 0;
@@ -147,11 +155,20 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
         var cursor = new IndexCursor(format.IndexPage, harness.ReadPageCopyAsync, format.PageSize);
         foreach (string key in new[] { "\u0152uvre", "r\u00e9sum\u00e9" })
         {
-            byte[] expected = format.IsJet3
-                ? General97TextIndexEncoder.Encode(key, ascending: true)
-                : format.DefaultTextSortOrder.Version == 1
-                    ? GeneralTextIndexEncoder.Encode(key, ascending: true)
-                    : GeneralLegacyTextIndexEncoder.Encode(key, ascending: true);
+            byte[] expected;
+            if (format.IsJet3)
+            {
+                expected = General97TextIndexEncoder.Encode(key, ascending: true);
+            }
+            else if (format.DefaultTextSortOrder.Version == 1)
+            {
+                expected = GeneralTextIndexEncoder.Encode(key, ascending: true);
+            }
+            else
+            {
+                expected = GeneralLegacyTextIndexEncoder.Encode(key, ascending: true);
+            }
+
             Assert.True(await cursor.ContainsKeyAsync(primary.FirstDp, expected, ct), "The stored key must match the independently selected fixture-family encoder.");
         }
     }

@@ -29,7 +29,7 @@ public sealed class WriterPageIoTests(ITestOutputHelper output)
     [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
     public async Task Bulk999_ReadsDropWithFrameCache(DatabaseFormat format, WriteMode mode)
     {
-        using var baseline = new MemoryStream();
+        await using var baseline = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(baseline, format, Options(0, false), leaveOpen: true, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync("PageIo", [new("Id", typeof(int)), new("Name", typeof(string), 100)], TestContext.Current.CancellationToken);
@@ -61,14 +61,14 @@ public sealed class WriterPageIoTests(ITestOutputHelper output)
     [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
     public async Task RepeatedReads_EachEligiblePageHitsStoreOnce(DatabaseFormat format, WriteMode mode)
     {
-        using var stream = new MemoryStream();
+        await using var stream = new MemoryStream();
         await using (AccessWriter created = await AccessWriter.CreateDatabaseAsync(stream, format, Options(0, false), leaveOpen: true, TestContext.Current.CancellationToken))
         {
             await created.CreateTableAsync("PageIo", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         }
 
         int pageSize = format == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
-        using var trace = new PageTraceStream(stream, pageSize);
+        await using var trace = new PageTraceStream(stream, pageSize);
         await using WriterHarness writer = await WriterHarness.OpenAsync(trace, Options(256, mode == WriteMode.AutoCommit), cancellationToken: TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("PageIo", [1], TestContext.Current.CancellationToken);
         await using JetTransaction? transaction = mode == WriteMode.ExplicitCommit
@@ -88,12 +88,13 @@ public sealed class WriterPageIoTests(ITestOutputHelper output)
             await transaction.CommitAsync(TestContext.Current.CancellationToken);
         }
     }
+
     /// <summary>Negative cache capacities fail before touching the caller stream.</summary>
     [Fact]
     public async Task NegativeCapacity_FailsBeforeReadingStream()
     {
-        using var image = new MemoryStream(new byte[4096]);
-        using var trace = new PageTraceStream(image);
+        await using var image = new MemoryStream(new byte[4096]);
+        await using var trace = new PageTraceStream(image);
         _ = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await AccessWriter.OpenAsync(trace, Options(-1, false), leaveOpen: true, TestContext.Current.CancellationToken));
         Assert.Equal(0, trace.BytesRead);
         Assert.Equal(0, trace.BytesWritten);
@@ -110,15 +111,16 @@ public sealed class WriterPageIoTests(ITestOutputHelper output)
 
     private static async Task<long> InsertAsync(byte[] image, int capacity, WriteMode mode, int pageSize)
     {
-        using var stream = new MemoryStream();
+        await using var stream = new MemoryStream();
         await stream.WriteAsync(image, TestContext.Current.CancellationToken);
-        using var trace = new PageTraceStream(stream, pageSize);
+        await using var trace = new PageTraceStream(stream, pageSize);
         await using AccessWriter writer = await AccessWriter.OpenAsync(trace, Options(capacity, mode == WriteMode.AutoCommit), leaveOpen: true, TestContext.Current.CancellationToken);
         trace.Reset();
-        await WriteModes.RunAsync(writer, mode, async () =>
-        {
-            _ = await writer.InsertRowsAsync("PageIo", Enumerable.Range(1, 999).Select(i => new object?[] { i, $"row-{i}" }), TestContext.Current.CancellationToken);
-        }, TestContext.Current.CancellationToken);
+        await WriteModes.RunAsync(
+            writer,
+            mode,
+            async () => _ = await writer.InsertRowsAsync("PageIo", Enumerable.Range(1, 999).Select(i => new object?[] { i, $"row-{i}" }), TestContext.Current.CancellationToken),
+            TestContext.Current.CancellationToken);
         return trace.ReadCounts(pageSize).Values.Sum();
     }
 }

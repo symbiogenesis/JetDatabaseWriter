@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
@@ -100,13 +99,17 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("SeekChild", [9, "missing"], ct));
-                await writer.InsertRowAsync("SeekChild", [3, "\u0152uvre"], ct);
-                Assert.Equal(1, await writer.UpdateRowsAsync("SeekParent", "Code", "\u0152uvre", new RowValues { ["Code"] = "caf\u00e9" }, ct));
-                Assert.Equal(1, await writer.DeleteRowsAsync("SeekParent", "Code", "r\u00e9sum\u00e9", ct));
-            }, ct);
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("SeekChild", [9, "missing"], ct));
+                    await writer.InsertRowAsync("SeekChild", [3, "\u0152uvre"], ct);
+                    Assert.Equal(1, await writer.UpdateRowsAsync("SeekParent", "Code", "\u0152uvre", new Dictionary<string, object?> { ["Code"] = "caf\u00e9" }, ct));
+                    Assert.Equal(1, await writer.DeleteRowsAsync("SeekParent", "Code", "r\u00e9sum\u00e9", ct));
+                },
+                ct);
         }
 
         stream.Position = 0;
