@@ -34,7 +34,7 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <param name="catalog">Loads the enforced relationships from <c>MSysRelationships</c>.</param>
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
 /// <param name="snapshots">Reads decoded parent and child rows when no seekable index exists.</param>
-/// <param name="constraints">Checks constraints on keys cascaded to null.</param>
+/// <param name="constraints">Checks constraints on cascaded keys.</param>
 internal sealed class RelationshipEnforcer(
     JetFormat format,
     IPageSource pageSource,
@@ -48,6 +48,7 @@ internal sealed class RelationshipEnforcer(
     TableSnapshotReader snapshots,
     ConstraintRegistry constraints)
 {
+    private readonly UniqueIndexChecker uniqueIndexes = new(format, pageSource, tableDefs, snapshots);
     private readonly RelationshipSeekPlanner seekPlanner = new(format, tableDefs, tableCatalog);
     private readonly RelationshipChildRowLocator childRowLocator = new(format, pageSource, ownedPages);
 
@@ -200,6 +201,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="primaryTable">The table rows are deleted from.</param>
     /// <param name="primaryDef">The table's definition.</param>
     /// <param name="deletedParentRows">The deleted rows, in table-column order.</param>
+    /// <param name="ownLocations">Rows the caller deletes itself, excluded from cascade writes.</param>
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="complexChildren">The group for the flat rows of the statement's matching rows, which the caller fills after this call, so a flat row a cascade also reaches stays with the cascade.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -217,13 +219,20 @@ internal sealed class RelationshipEnforcer(
         string primaryTable,
         TableDef primaryDef,
         List<object?[]> deletedParentRows,
+        IReadOnlyList<LocatedRow> ownLocations,
         FkContext ctx,
         ComplexChildDeletes complexChildren,
         CancellationToken cancellationToken)
     {
         var cascades = new List<CascadeDelete>();
         HashSet<(long PageNumber, int RowIndex)> cascaded = [];
-        await this.PlanCascadeDeletesAsync(primaryTable, primaryDef, deletedParentRows, ctx, depth: 0, cascades, cascaded, complexChildren, cancellationToken).ConfigureAwait(false);
+        HashSet<(long PageNumber, int RowIndex)> ownRows = [];
+        foreach (LocatedRow row in ownLocations)
+        {
+            _ = ownRows.Add((row.Location.PageNumber, row.Location.RowIndex));
+        }
+
+        await this.PlanCascadeDeletesAsync(primaryTable, primaryDef, deletedParentRows, ctx, depth: 0, cascades, cascaded, ownRows, complexChildren, cancellationToken).ConfigureAwait(false);
 
         foreach ((string tableName, ResolvedTable table, List<RowLocation> locations, ComplexChildDeletes flatRows) in cascades)
         {
@@ -235,7 +244,7 @@ internal sealed class RelationshipEnforcer(
     }
 
     /// <summary>
-    /// Deletes the dependent rows <see cref="PlanCascadeDeletesAsync(string, TableDef, List{object[]}, FkContext, ComplexChildDeletes, CancellationToken)"/>
+    /// Deletes the dependent rows <see cref="PlanCascadeDeletesAsync(string, TableDef, List{object[]}, IReadOnlyList{LocatedRow}, FkContext, ComplexChildDeletes, CancellationToken)"/>
     /// planned, in the planned order: for each cascade, its hidden flat-table
     /// rows, then its rows, then it lowers the table's row count and
     /// maintains its indexes. Takes no cancellation token: it is part of the
@@ -254,7 +263,7 @@ internal sealed class RelationshipEnforcer(
             await complexColumns.ApplyComplexChildDeletesAsync(flatRows).ConfigureAwait(false);
             foreach (RowLocation location in locations)
             {
-                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, CancellationToken.None).ConfigureAwait(false);
+                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, CancellationToken.None).ConfigureAwait(false);
             }
 
             await tableRows.AdjustTDefRowCountAsync(table.Entry.TDefPage, -locations.Count, CancellationToken.None).ConfigureAwait(false);
@@ -283,7 +292,7 @@ internal sealed class RelationshipEnforcer(
     /// its new row, which the caller rewrites, rather than planned as a
     /// second rewrite. Last, every rewritten child row is encoded and measured
     /// as its re-insert will encode it (<see cref="TableRowStore.EncodeRow"/>);
-    /// a cascade that sets any key component to null first checks the
+    /// every cascade first checks the
     /// assigned child columns with the update constraints, including through
     /// a self-relationship;
     /// the rows of <paramref name="rows"/> are final once this returns, and
@@ -341,7 +350,7 @@ internal sealed class RelationshipEnforcer(
         var cascades = new List<CascadeUpdate>();
         var plannedTables = new Dictionary<long, (CascadeUpdate Cascade, Dictionary<(long PageNumber, int RowIndex), int> Positions)>();
         var ownRowChanges = new List<(object[] NewRow, int[] ForeignColumnIndexes, object[] NewPkSubset)>();
-        var nullKeyAssignments = new Dictionary<object[], (string TableName, TableDef Definition, HashSet<int> Columns)>();
+        var keyAssignments = new Dictionary<object[], (string TableName, TableDef Definition, HashSet<int> Columns)>();
         foreach (ReferencedKeyChange change in keyChanges)
         {
             FkRelationship rel = change.Relationship;
@@ -389,7 +398,7 @@ internal sealed class RelationshipEnforcer(
             foreach ((object[] newRow, object[] newPkSubset) in ownDependents)
             {
                 ownRowChanges.Add((newRow, fkIdx, newPkSubset));
-                RecordNullKeyAssignments(newRow, newPkSubset, fkIdx, primaryTable, primaryDef);
+                RecordKeyAssignments(newRow, fkIdx, primaryTable, primaryDef);
             }
 
             if (dependents.Count == 0)
@@ -428,7 +437,7 @@ internal sealed class RelationshipEnforcer(
                     newRow[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
                 }
 
-                RecordNullKeyAssignments(newRow, newPkSubset, fkIdx, rel.ForeignTable, change.ChildTable.Definition);
+                RecordKeyAssignments(newRow, fkIdx, rel.ForeignTable, change.ChildTable.Definition);
                 UnreadableLongValue.ThrowIfAny(newRow, rel.ForeignTable);
             }
         }
@@ -444,9 +453,9 @@ internal sealed class RelationshipEnforcer(
             }
         }
 
-        // Null-producing cascades must obey the child column constraints too.
+        // Every cascaded key must obey the child column constraints too.
         // Check the composed rows before any cascade or parent row is written.
-        foreach ((object[] newRow, (string tableName, TableDef definition, HashSet<int> columns)) in nullKeyAssignments)
+        foreach ((object[] newRow, (string tableName, TableDef definition, HashSet<int> columns)) in keyAssignments)
         {
             await constraints.ApplyUpdateAsync(tableName, definition, newRow, columns, cancellationToken).ConfigureAwait(false);
         }
@@ -459,6 +468,32 @@ internal sealed class RelationshipEnforcer(
         foreach ((string tableName, ResolvedTable table, List<(RowLocation Location, object[] NewRow)> rewrites) in cascades)
         {
             await indexes.ThrowIfIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
+            List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            var replacements = new Dictionary<(long PageNumber, int RowIndex), object[]>();
+            foreach ((RowLocation location, object[] newRow) in rewrites)
+            {
+                replacements[(location.PageNumber, location.RowIndex)] = newRow;
+            }
+
+            if (string.Equals(tableName, primaryTable, StringComparison.OrdinalIgnoreCase))
+            {
+                foreach ((RowLocation location, _, object[] newRow) in rows)
+                {
+                    replacements[(location.PageNumber, location.RowIndex)] = newRow;
+                }
+            }
+
+            var pendingUpdates = new List<(int Index, object[] OldRow, object[] NewRow)>();
+            for (int index = 0; index < existingRows.Count; index++)
+            {
+                LocatedRow existing = existingRows[index];
+                if (replacements.TryGetValue((existing.Location.PageNumber, existing.Location.RowIndex), out object[]? replacement))
+                {
+                    pendingUpdates.Add((index, existing.Values, replacement));
+                }
+            }
+
+            await this.uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(table.Entry.TDefPage, table.Definition, tableName, existingRows, pendingUpdates, cancellationToken).ConfigureAwait(false);
             foreach ((_, object[] newRow) in rewrites)
             {
                 _ = tableRows.EncodeRow(table.Definition, newRow);
@@ -467,17 +502,12 @@ internal sealed class RelationshipEnforcer(
 
         return cascades;
 
-        void RecordNullKeyAssignments(object[] newRow, object[] newPkSubset, int[] columns, string tableName, TableDef definition)
+        void RecordKeyAssignments(object[] newRow, int[] columns, string tableName, TableDef definition)
         {
-            if (!Array.Exists(newPkSubset, value => value is null or DBNull))
-            {
-                return;
-            }
-
-            if (!nullKeyAssignments.TryGetValue(newRow, out (string TableName, TableDef Definition, HashSet<int> Columns) assigned))
+            if (!keyAssignments.TryGetValue(newRow, out (string TableName, TableDef Definition, HashSet<int> Columns) assigned))
             {
                 assigned = (tableName, definition, []);
-                nullKeyAssignments.Add(newRow, assigned);
+                keyAssignments.Add(newRow, assigned);
             }
 
             assigned.Columns.UnionWith(columns);
@@ -489,10 +519,8 @@ internal sealed class RelationshipEnforcer(
     /// planned, each with the values it built, and then maintains each child
     /// table's indexes once. Every write of a cascading key update happens
     /// here or in the caller's rewrite of its own rows, after every check the
-    /// plan and the caller make. Only a child table's index rebuild checks
-    /// that table's unique indexes and that the writer can maintain its
-    /// indexes, so a failure of either throws after that table's rows are
-    /// rewritten. Takes no cancellation token: the update's writes start
+    /// plan and the caller make. The plan checks each child table's unique
+    /// indexes before any rewrite. Takes no cancellation token: the writes start
     /// here, and a statement that has started writing runs to completion.
     /// </summary>
     /// <param name="cascades">The planned rewrites, by table.</param>
@@ -503,7 +531,7 @@ internal sealed class RelationshipEnforcer(
         {
             foreach ((RowLocation location, object[] newRow) in rewrites)
             {
-                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, CancellationToken.None).ConfigureAwait(false);
+                await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, CancellationToken.None).ConfigureAwait(false);
                 await tableRows.InsertRowDataAsync(table.Entry.TDefPage, table.Definition, newRow, updateTDefRowCount: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
             }
 
@@ -716,6 +744,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="depth">How many cascades lead to this delete.</param>
     /// <param name="cascades">The cascading deletes found so far, in delete order.</param>
+    /// <param name="ownRows">The rows the caller deletes.</param>
     /// <param name="cascaded">The rows <paramref name="cascades"/> deletes.</param>
     /// <param name="complexChildren">A group of the statement's flat rows, from which each cascade's own, still empty, group is made.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -734,6 +763,7 @@ internal sealed class RelationshipEnforcer(
         int depth,
         List<CascadeDelete> cascades,
         HashSet<(long PageNumber, int RowIndex)> cascaded,
+        HashSet<(long PageNumber, int RowIndex)> ownRows,
         ComplexChildDeletes complexChildren,
         CancellationToken cancellationToken)
     {
@@ -768,13 +798,19 @@ internal sealed class RelationshipEnforcer(
                 throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictDelete, $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependents.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
             }
 
+            _ = dependents.RemoveAll(row => ownRows.Contains((row.Location.PageNumber, row.Location.RowIndex)));
+            if (dependents.Count == 0)
+            {
+                continue;
+            }
+
             var dependentValues = new List<object?[]>(dependents.Count);
             foreach (LocatedRow row in dependents)
             {
                 dependentValues.Add(row.Values);
             }
 
-            await this.PlanCascadeDeletesAsync(rel.ForeignTable, childTable.Definition, dependentValues, ctx, depth + 1, cascades, cascaded, complexChildren, cancellationToken).ConfigureAwait(false);
+            await this.PlanCascadeDeletesAsync(rel.ForeignTable, childTable.Definition, dependentValues, ctx, depth + 1, cascades, cascaded, ownRows, complexChildren, cancellationToken).ConfigureAwait(false);
 
             // A dependent row that a cascade nested in this one already
             // deletes, such as the child of another dependent row through a

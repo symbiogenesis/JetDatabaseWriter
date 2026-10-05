@@ -8,7 +8,7 @@ using JetDatabaseWriter.Infrastructure;
 /// <summary>Mutable builder for a single property target (table or column).</summary>
 internal sealed class ColumnPropertyTargetBuilder
 {
-    /// <summary>Gets or sets the target name (column name, or table name for the table-level target).</summary>
+    /// <summary>Gets or sets the target name (column name, or empty for the table-level target).</summary>
     public string Name { get; set; } = string.Empty;
 
     /// <summary>Gets or sets the chunk-type code. Defaults to <see cref="ColumnPropertyChunkType.PropertyBlock"/> (<c>0x0000</c>), the subtype this library emits for new targets.</summary>

@@ -1295,12 +1295,14 @@ internal sealed class ComplexColumnManager(
     {
         foreach ((long flatTdefPage, List<RowLocation> rows) in plan.Tables)
         {
+            TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", CancellationToken.None).ConfigureAwait(false);
             foreach (RowLocation row in rows)
             {
-                await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, CancellationToken.None).ConfigureAwait(false);
+                await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, flatDef, CancellationToken.None).ConfigureAwait(false);
             }
 
             await tableRows.AdjustTDefRowCountAsync(flatTdefPage, -rows.Count, CancellationToken.None).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, "<flat>", CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -1364,12 +1366,13 @@ internal sealed class ComplexColumnManager(
 
         foreach ((long pg, int ri) in deletedRows)
         {
-            await tableRows.MarkRowDeletedAsync(pg, ri, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(pg, ri, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
         {
             await tableRows.AdjustTDefRowCountAsync(msysCxPg, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         }
 
         if (flatTdefPage <= 0)
@@ -1377,28 +1380,7 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        // Drop the hidden flat-table catalog row. Same model as
-        // DropComplexChildrenForTableAsync — orphaned data pages are reclaimed
-        // by Access on the next Compact &amp; Repair pass.
-        TableDef? msys = await this.tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return;
-        }
-
-        List<CatalogRow> catalog = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (CatalogRow row in catalog)
-        {
-            if (row.ObjectType != Constants.SystemObjects.UserTableType)
-            {
-                continue;
-            }
-
-            if (row.TDefPage == flatTdefPage)
-            {
-                await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-            }
-        }
+        await catalogArtifacts.DeleteCatalogRowsByTdefPagesAsync([flatTdefPage], cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1462,7 +1444,7 @@ internal sealed class ComplexColumnManager(
 
         foreach ((RowLocation loc, object[] _) in matched)
         {
-            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((RowLocation _, object[] values) in matched)
@@ -1474,6 +1456,11 @@ internal sealed class ComplexColumnManager(
                 values,
                 updateTDefRowCount: false,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        if (matched.Count > 0)
+        {
+            await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -1518,7 +1505,7 @@ internal sealed class ComplexColumnManager(
 
         foreach ((RowLocation loc, object[] _) in matched)
         {
-            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((RowLocation _, object[] values) in matched)
@@ -1530,6 +1517,11 @@ internal sealed class ComplexColumnManager(
                 values,
                 updateTDefRowCount: false,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        if (matched.Count > 0)
+        {
+            await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -1625,12 +1617,13 @@ internal sealed class ComplexColumnManager(
 
         foreach ((long pg, int ri) in cxRowsToDelete)
         {
-            await tableRows.MarkRowDeletedAsync(pg, ri, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(pg, ri, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (cxRowsToDelete.Count > 0)
         {
             await tableRows.AdjustTDefRowCountAsync(msysCxPg, -cxRowsToDelete.Count, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(msysCxPg, msysCxDef, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         }
 
         if (flatTdefPages.Count == 0)
@@ -1638,26 +1631,6 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        // Drop the hidden flat-table catalog rows (system-flag tables —
-        // public DropTableAsync would skip them).
-        TableDef? msys = await this.tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return;
-        }
-
-        List<CatalogRow> catalog = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (CatalogRow row in catalog)
-        {
-            if (row.ObjectType != Constants.SystemObjects.UserTableType)
-            {
-                continue;
-            }
-
-            if (flatTdefPages.Contains(row.TDefPage))
-            {
-                await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-            }
-        }
+        await catalogArtifacts.DeleteCatalogRowsByTdefPagesAsync(flatTdefPages, cancellationToken).ConfigureAwait(false);
     }
 }

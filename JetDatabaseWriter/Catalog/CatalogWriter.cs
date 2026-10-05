@@ -157,7 +157,7 @@ internal sealed class CatalogWriter(
         }
         catch (InvalidOperationException ex) when (artifact.RollbackCatalogRowOnIndexFailure && IsCatalogSpliceFailure(ex))
         {
-            await this.RemoveUnindexedCatalogRowAsync(loc, cancellationToken).ConfigureAwait(false);
+            await this.RemoveUnindexedCatalogRowAsync(msys, loc, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
@@ -230,7 +230,7 @@ internal sealed class CatalogWriter(
 
         foreach ((RowLocation row, _) in deletedRows)
         {
-            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, acesDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedRows.Count > 0)
@@ -331,9 +331,9 @@ internal sealed class CatalogWriter(
         }
     }
 
-    private async ValueTask RemoveUnindexedCatalogRowAsync(RowLocation loc, CancellationToken cancellationToken)
+    private async ValueTask RemoveUnindexedCatalogRowAsync(TableDef msys, RowLocation loc, CancellationToken cancellationToken)
     {
-        await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+        await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, msys, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         await tableRows.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
     }
 
@@ -480,7 +480,7 @@ internal sealed class CatalogWriter(
             object[] indexRow = CreateMsysObjectsIndexRow(msys, row);
             deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
 
-            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(row.PageNumber, row.RowIndex, msys, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         }
 
         if (deletedCatalogRows.Count == 0)
@@ -503,6 +503,23 @@ internal sealed class CatalogWriter(
 
         catalog.Invalidate();
         return new UserTableCatalogDeletionResult(deletedCatalogRows.Count, droppedTdefPages, firstTdefPage, firstCatalogFlags);
+    }
+
+    /// <summary>Deletes catalog rows for hidden tables, keeping catalog indexes and counts current.</summary>
+    /// <param name="tdefPages">The table definition pages.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask DeleteCatalogRowsByTdefPagesAsync(IReadOnlyCollection<long> tdefPages, CancellationToken cancellationToken)
+    {
+        TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        var pages = new HashSet<long>(tdefPages);
+        foreach (CatalogRow row in rows)
+        {
+            if (row.ObjectType == Constants.SystemObjects.UserTableType && pages.Remove(row.TDefPage))
+            {
+                _ = await this.DeleteUserTableCatalogRowsAsync(row.Name, row.TDefPage, includeSystemTables: true, throwIfNotFound: false, operation: "DropComplexTable", missingMessage: null, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     private static object[] CreateMsysObjectsIndexRow(TableDef msys, CatalogRow row)

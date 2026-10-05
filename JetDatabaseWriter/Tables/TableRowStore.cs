@@ -184,13 +184,7 @@ internal sealed class TableRowStore(
     internal ValueTask AdjustTDefRowCountAsync(long tdefPage, long delta, CancellationToken cancellationToken)
         => tdefPageBuilder.AdjustTDefRowCountAsync(tdefPage, delta, cancellationToken);
 
-    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, CancellationToken cancellationToken)
-        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, DeletedRowDataMode.Default, cancellationToken);
-
-    internal ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
-        => this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef: null, dataMode, cancellationToken);
-
-    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, CancellationToken cancellationToken)
+    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, CancellationToken cancellationToken)
         => await this.MarkRowDeletedAsync(pageNumber, rowIndex, tableDef, DeletedRowDataMode.Default, cancellationToken).ConfigureAwait(false);
 
     /// <summary>
@@ -206,7 +200,7 @@ internal sealed class TableRowStore(
     /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
     /// <param name="dataMode">Whether the row's bytes are cleared.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
+    internal async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
     {
         byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueDescriptor>? longValueRoots = null;
@@ -233,7 +227,7 @@ internal sealed class TableRowStore(
                     continue;
                 }
 
-                if (tableDef is not null && options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+                if (options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
                     longValueRoots = longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
                 }
@@ -268,7 +262,7 @@ internal sealed class TableRowStore(
     /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
     /// <param name="dataMode">Whether the row's bytes are cleared.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask MarkOverflowRowDeletedAsync(long pageNumber, byte[] page, int rowIndex, TableDef? tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
+    private async ValueTask MarkOverflowRowDeletedAsync(long pageNumber, byte[] page, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
     {
         List<LongValueDescriptor>? longValueRoots = null;
         try
@@ -280,7 +274,7 @@ internal sealed class TableRowStore(
                 {
                     try
                     {
-                        if (tableDef is not null && secureErase)
+                        if (secureErase)
                         {
                             longValueRoots = longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef);
                         }

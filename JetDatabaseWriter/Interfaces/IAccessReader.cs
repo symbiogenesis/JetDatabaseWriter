@@ -153,7 +153,8 @@ public interface IAccessReader : IAccessBase
     /// Each entry links a child (<see cref="RelationshipMetadata.ForeignTable"/>) to a
     /// parent (<see cref="RelationshipMetadata.PrimaryTable"/>), with composite keys listed
     /// in matching column order. Returns an empty list for databases without the
-    /// <c>MSysRelationships</c> table (Jet3 or slim-catalog files).
+    /// <c>MSysRelationships</c> table, including writer-created Jet3, Jet4 and
+    /// slim-catalog ACCDB files. Access-authored Jet3 files can contain relationships.
     /// </remarks>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>
     /// <returns>A read-only list of <see cref="RelationshipMetadata"/> entries.</returns>

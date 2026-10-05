@@ -43,6 +43,12 @@ internal sealed class CatalogArtifactWriter(
     CatalogWriter catalogWriter,
     ConstraintRegistry constraints)
 {
+    /// <summary>Deletes hidden table catalog rows while maintaining counts and indexes.</summary>
+    /// <param name="tdefPages">The table definition pages.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask DeleteCatalogRowsByTdefPagesAsync(IReadOnlyCollection<long> tdefPages, CancellationToken cancellationToken)
+        => catalogWriter.DeleteCatalogRowsByTdefPagesAsync(tdefPages, cancellationToken);
+
     private static IReadOnlyList<ColumnDefinition> BuildFullCatalogColumnDefinitions()
         =>
         [

@@ -55,15 +55,16 @@ public interface IAccessSchema : IAccessBase
 
     /// <summary>
     /// Asynchronously creates a new table with the specified columns and the specified
-    /// single-column, non-unique, ascending logical indexes. Throws if a table with the
+    /// logical indexes on Jet3, Jet4 or ACE. Throws if a table with the
     /// same name already exists.
     /// </summary>
     /// <param name="tableName">Name of the table to create. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character.</param>
     /// <param name="columns">Column definitions for the new table. Each column name follows the same rules, and no two may be equal ignoring case.</param>
     /// <param name="indexes">
     /// Logical-index schema entries to write into the new table's TDEF page chain.
-    /// See <see cref="IndexDefinition"/> for the enforced constraints (single
-    /// column, non-unique, ascending, Jet4/ACE only). Index leaves are emitted at
+    /// Each index may contain up to ten columns, enforce uniqueness or a primary
+    /// key, and select descending columns. See <see cref="IndexDefinition"/> for
+    /// the enforced constraints. Index leaves are emitted at
     /// table-creation time and maintained by supported writer insert / update /
     /// delete paths. Each index name follows the same naming rules.
     /// </param>

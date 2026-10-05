@@ -9,7 +9,7 @@ using JetDatabaseWriter.Enums;
 /// column, but the table itself may also be a target for table-level properties
 /// (e.g. table <c>Description</c>).
 /// </summary>
-/// <param name="Name">Target name from the property block header (column or table name).</param>
+/// <param name="Name">Target name from the property block header (column name, or empty for the table-level target).</param>
 /// <param name="ChunkType">Chunk-type code the block was carried under (0x00, 0x01, or 0x02).</param>
 /// <param name="Entries">Property entries owned by this target, in source order.</param>
 internal sealed record ColumnPropertyTarget(

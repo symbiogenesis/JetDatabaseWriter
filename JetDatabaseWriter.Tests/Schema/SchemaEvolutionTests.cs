@@ -372,7 +372,7 @@ public sealed class SchemaEvolutionTests
             new("Ratio", typeof(double)),
             new("When", typeof(DateTime)),
             new("Price", typeof(decimal)) { IsCurrency = true },
-            new("Name", typeof(string), maxLength: 30) { IsNullable = false },
+            new("Name", typeof(string), maxLength: 30) { IsNullable = false, Description = "the name", DefaultValueExpression = "\"x\"" },
             new("Memo", typeof(string)),
             new("Link", typeof(string)) { IsHyperlink = true },
             new("Bytes", typeof(byte[]), maxLength: 16),
@@ -398,15 +398,13 @@ public sealed class SchemaEvolutionTests
             new Guid("6f9619ff-8b86-d011-b42d-00c04fc964ff"),
         ];
 
-        // Jet3 is left without the persisted text properties: its row encoder
-        // cannot yet write the MSysObjects row once the LvProp blob pushes it
-        // past 255 bytes.
+        columns.Add(new("Amount", typeof(decimal)) { NumericPrecision = 10, NumericScale = 2 });
+        row = [.. row, 12.34m];
+
         if (format != DatabaseFormat.Jet3Mdb)
         {
-            columns[8] = columns[8] with { Description = "the name", DefaultValueExpression = "\"x\"" };
-            columns.Add(new("Amount", typeof(decimal)) { NumericPrecision = 10, NumericScale = 2 });
             columns.Add(new("Plain", typeof(string), maxLength: 20) { IsCompressedUnicode = false });
-            row = [.. row, 12.34m, "plain"];
+            row = [.. row, "plain"];
         }
 
         if (format == DatabaseFormat.AceAccdb)

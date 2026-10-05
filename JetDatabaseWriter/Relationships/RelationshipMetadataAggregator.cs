@@ -18,7 +18,7 @@ internal static class RelationshipMetadataAggregator
     /// (preserving first-seen order), orders each group's columns by
     /// <c>icolumn</c> when present, and emits one <see cref="RelationshipMetadata"/>
     /// per relationship. Returns an empty list when the required catalog columns
-    /// are absent (Jet3 / slim-catalog files) and skips malformed groups.
+    /// are absent and skips malformed groups.
     /// </summary>
     /// <param name="table">The decoded <c>MSysRelationships</c> table.</param>
     public static List<RelationshipMetadata> Aggregate(DataTable table)

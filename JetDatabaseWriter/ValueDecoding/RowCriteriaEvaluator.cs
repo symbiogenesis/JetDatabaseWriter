@@ -121,6 +121,11 @@ internal sealed class RowCriteriaEvaluator
             return leftDbNull && rightDbNull;
         }
 
+        if (left is byte[] leftBytes && right is byte[] rightBytes)
+        {
+            return leftBytes.AsSpan().SequenceEqual(rightBytes);
+        }
+
         if (Equals(left, right))
         {
             return true;

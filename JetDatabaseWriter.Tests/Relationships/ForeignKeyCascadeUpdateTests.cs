@@ -102,6 +102,114 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         return data;
     }
 
+    /// <summary>A non-null cascading key refreshes the child's stored calculated result.</summary>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task Update_CascadedNonNullValue_RefreshesChildCalculatedColumn(WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, DatabaseFormat.AceAccdb);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("P", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+            await writer.CreateTableAsync(
+                "C",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("ParentId", typeof(int)),
+                    new ColumnDefinition("TwiceParentId", typeof(int)) { IsCalculated = true, CalculationExpression = "[ParentId] * 2" },
+                ],
+                Ct);
+            Assert.Equal(1, await writer.InsertRowsAsync("P", [[1]], Ct));
+            Assert.Equal(1, await writer.InsertRowsAsync("C", [[1, 1, null]], Ct));
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_P", "P", "Id", "C", "ParentId") { CascadeUpdates = true }, Ct);
+        }
+
+        Assert.Equal(["1|1|2"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct)));
+        }
+
+        Assert.Equal(["5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["1|5|10"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
+    }
+
+    /// <summary>A non-null cascaded value obeys the child's persisted column rule before writing.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_CascadedNonNullValueViolatesChildRule_ChangesNothing(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("P", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+            await writer.CreateTableAsync("C", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int)) { ValidationRuleExpression = "< 5" }], Ct);
+            Assert.Equal(1, await writer.InsertRowsAsync("P", [[1]], Ct));
+            Assert.Equal(1, await writer.InsertRowsAsync("C", [[1, 1]], Ct));
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_P", "P", "Id", "C", "ParentId") { CascadeUpdates = true }, Ct);
+        }
+
+        byte[] before = ms.ToArray();
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct));
+            });
+        }
+
+        Assert.Equal(before, ms.ToArray());
+        Assert.Equal(["1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["1|1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
+    }
+
+    /// <summary>An orphan holding a duplicate child key causes a refusal before any row is changed.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_CascadedValueDuplicatesChildUniqueIndex_ChangesNothing(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("P", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+            await writer.CreateTableAsync("C", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))], [new IndexDefinition("UX_ParentId", "ParentId") { IsUnique = true }], Ct);
+            Assert.Equal(1, await writer.InsertRowsAsync("P", [[1]], Ct));
+            Assert.Equal(2, await writer.InsertRowsAsync("C", [[1, 1], [2, 5]], Ct));
+        }
+
+        await PlantCascadeRelationshipAsync(ms);
+        byte[] before = ms.ToArray();
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
+                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct));
+            });
+        }
+
+        Assert.Equal(before, ms.ToArray());
+        Assert.Equal(["1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["1|1", "2|5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
+    }
+
     /// <summary>
     /// A key update that a relationship without cascading updates refuses
     /// rewrites no row, even though a relationship read before it cascades
@@ -584,6 +692,27 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         Assert.Equal(["1|1||", "1|2|1|1", "2|1|1|1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "Tree"));
         long[] rowCounts = await ReadRowCountsAsync(ms, "Tree");
         Assert.Equal([3L], rowCounts);
+    }
+
+    /// <summary>Plants a cascading relationship without checking an existing orphan.</summary>
+    /// <param name="ms">The database.</param>
+    /// <returns>The asynchronous operation.</returns>
+    private static async Task PlantCascadeRelationshipAsync(MemoryStream ms)
+    {
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
+        TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, Ct);
+        object[] row = definition.CreateNullValueRow();
+        definition.SetValueByName(row, "ccolumn", 1);
+        definition.SetValueByName(row, "grbit", 0x100);
+        definition.SetValueByName(row, "icolumn", 0);
+        definition.SetValueByName(row, "szColumn", "ParentId");
+        definition.SetValueByName(row, "szObject", "C");
+        definition.SetValueByName(row, "szReferencedColumn", "Id");
+        definition.SetValueByName(row, "szReferencedObject", "P");
+        definition.SetValueByName(row, "szRelationship", "FK_C_P");
+        await harness.Services.Indexes.InsertSystemRowAndMaintainAsync(page, definition, Constants.SystemTableNames.Relationships, row, cancellationToken: Ct);
     }
 
     /// <summary>

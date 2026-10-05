@@ -645,9 +645,11 @@ internal static class FormatProbeApplication
 
     private static async Task WriteMdbCatalogAppendixAsync(string fixturesDir, string outPath)
     {
-        // Recursively discover every .mdb / .accdb under fixturesDir.
+        // Recursively discover the unencrypted corpus, excluding password-protected fixtures.
+        string encryptedPrefix = Path.Combine(Path.GetFullPath(fixturesDir), "Encrypted") + Path.DirectorySeparatorChar;
         string[] fixturePaths = Directory
             .EnumerateFiles(fixturesDir, "*.*", SearchOption.AllDirectories)
+            .Where(p => !Path.GetFullPath(p).StartsWith(encryptedPrefix, StringComparison.OrdinalIgnoreCase))
             .Where(p =>
             {
                 string ext = Path.GetExtension(p);
@@ -668,7 +670,7 @@ internal static class FormatProbeApplication
         _ = sb.AppendLine("This appendix grounds the catalog probe question in [`index-and-relationship-format-notes.md`](../design/index-and-relationship-format-notes.md) §6:");
         _ = sb.AppendLine("**do legacy `.mdb` (Jet3 / Jet4) or `.accdb` files contain `MSysIndexes` / `MSysIndexColumns` system tables, or is index metadata always carried inside the per-table TDEF block?**");
         _ = sb.AppendLine();
-        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Probed every `.mdb` / `.accdb` under `JetDatabaseWriter.Tests/Databases/` ({fixturePaths.Length} files), including the upstream Jackcess corpus (`Databases/Jackcess/V1997/` … `V2019/`).");
+        _ = sb.AppendLine(CultureInfo.InvariantCulture, $"Probed the unencrypted `.mdb` / `.accdb` corpus under `JetDatabaseWriter.Tests/Databases/` ({fixturePaths.Length} files), excluding `Databases/Encrypted/` and including the upstream Jackcess corpus (`Databases/Jackcess/V1997/` … `V2019/`).");
         _ = sb.AppendLine();
 
         using var catalogScanThrottle = new SemaphoreSlim(GetCatalogProbeDegreeOfParallelism());

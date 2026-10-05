@@ -352,7 +352,12 @@ internal sealed class TableDataWriter(
         // validate that the post-update key set contains no duplicates for
         // any unique index. The check sees the table's rows with
         // pendingUpdates substituted at their original positions.
-        await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
+        // A self-cascade plan already checked this table with both its own
+        // rewrites and the caller's rows substituted in one final row set.
+        if (!cascades.Exists(cascade => cascade.Table.Entry.TDefPage == entry.TDefPage))
+        {
+            await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
+        }
 
         // Every check has passed, and this is the last point at which
         // cancellation is honoured. From the first write on, the update runs
@@ -468,6 +473,7 @@ internal sealed class TableDataWriter(
                 tableName,
                 tableDef,
                 deletedParentRows,
+                matchingRows,
                 fkCtx,
                 complexChildren,
                 cancellationToken).ConfigureAwait(false);
@@ -666,7 +672,7 @@ internal sealed class TableDataWriter(
         }
         catch
         {
-            await this.RollbackInsertedRowsAsync(tdefPage, batchLocations).ConfigureAwait(false);
+            await this.RollbackInsertedRowsAsync(tdefPage, tableDef, batchLocations).ConfigureAwait(false);
             ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
             throw;
         }
@@ -720,8 +726,9 @@ internal sealed class TableDataWriter(
     /// intact.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
+    /// <param name="tableDef">The table definition needed to release long values.</param>
     /// <param name="locations">The locations.</param>
-    private async ValueTask RollbackInsertedRowsAsync(long tdefPage, List<RowLocation> locations)
+    private async ValueTask RollbackInsertedRowsAsync(long tdefPage, TableDef tableDef, List<RowLocation> locations)
     {
         if (locations.Count == 0)
         {
@@ -732,7 +739,7 @@ internal sealed class TableDataWriter(
         {
             foreach (RowLocation loc in locations)
             {
-                await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, CancellationToken.None).ConfigureAwait(false);
+                await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, tableDef, CancellationToken.None).ConfigureAwait(false);
             }
 
             await tableRows.AdjustTDefRowCountAsync(tdefPage, -locations.Count, CancellationToken.None).ConfigureAwait(false);

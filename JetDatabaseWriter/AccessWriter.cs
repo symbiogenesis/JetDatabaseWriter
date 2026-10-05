@@ -319,7 +319,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => EncryptionManager.DetectEncryptionFormatAsync(stream, cancellationToken);
 
     /// <summary>
-    /// Changes the password of an already-encrypted JET / ACE database in place,
+    /// Changes the password of an already-encrypted JET / ACE database,
     /// preserving the existing on-disk encryption format. Use
     /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, CancellationToken)"/>
     /// to add encryption to an unencrypted database, or
@@ -334,6 +334,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     /// <exception cref="UnauthorizedAccessException">The supplied <paramref name="oldPassword"/> is wrong, or the database is unencrypted.</exception>
     /// <exception cref="ArgumentException"><paramref name="newPassword"/> is empty.</exception>
+    /// <remarks>
+    /// Writes and flushes a temporary file named <c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>,
+    /// then replaces the database by renaming that file over it.
+    /// </remarks>
+    /// <exception cref="IOException">
+    /// The temporary file cannot be written or the database cannot be replaced,
+    /// for example while a reader holds it open. The original is unchanged unless
+    /// <see cref="Exception.Data"/> contains <c>JetDatabaseWriter.ReplacementFile</c>;
+    /// that entry names the retained temporary file holding the new contents
+    /// when replacement removed the original but could not install the new file.
+    /// </exception>
     public static ValueTask ChangePasswordAsync(
         string path,
         ReadOnlyMemory<char> oldPassword,
@@ -343,7 +354,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => EncryptionManager.ChangePasswordAsync(path, oldPassword, newPassword, options, cancellationToken);
 
     /// <summary>
-    /// Encrypts a currently-unencrypted JET / ACE database in place, applying
+    /// Encrypts a currently-unencrypted JET / ACE database, applying
     /// <paramref name="targetFormat"/> when supplied or the best supported
     /// password encryption for the database format when omitted.
     /// </summary>
@@ -359,6 +370,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// or the format is not valid for the underlying file kind.
     /// </exception>
     /// <exception cref="InvalidOperationException">The file is already encrypted.</exception>
+    /// <remarks>
+    /// Writes and flushes a temporary file named <c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>,
+    /// then replaces the database by renaming that file over it.
+    /// </remarks>
+    /// <exception cref="IOException">
+    /// The temporary file cannot be written or the database cannot be replaced,
+    /// for example while a reader holds it open. The original is unchanged unless
+    /// <see cref="Exception.Data"/> contains <c>JetDatabaseWriter.ReplacementFile</c>;
+    /// that entry names the retained temporary file holding the new contents
+    /// when replacement removed the original but could not install the new file.
+    /// </exception>
     public static ValueTask EncryptAsync(
         string path,
         ReadOnlyMemory<char> newPassword,
@@ -368,7 +390,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => EncryptionManager.EncryptAsync(path, newPassword, targetFormat, options, cancellationToken);
 
     /// <summary>
-    /// Removes encryption from a JET / ACE database in place, leaving an
+    /// Removes encryption from a JET / ACE database, leaving an
     /// unencrypted file with no header password residue.
     /// </summary>
     /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
@@ -378,6 +400,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     /// <exception cref="UnauthorizedAccessException">The supplied <paramref name="oldPassword"/> is wrong.</exception>
     /// <exception cref="InvalidOperationException">The file is already unencrypted.</exception>
+    /// <remarks>
+    /// Writes and flushes a temporary file named <c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>,
+    /// then replaces the database by renaming that file over it.
+    /// </remarks>
+    /// <exception cref="IOException">
+    /// The temporary file cannot be written or the database cannot be replaced,
+    /// for example while a reader holds it open. The original is unchanged unless
+    /// <see cref="Exception.Data"/> contains <c>JetDatabaseWriter.ReplacementFile</c>;
+    /// that entry names the retained temporary file holding the new contents
+    /// when replacement removed the original but could not install the new file.
+    /// </exception>
     public static ValueTask DecryptAsync(
         string path,
         ReadOnlyMemory<char> oldPassword,
