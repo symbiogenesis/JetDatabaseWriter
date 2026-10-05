@@ -4,7 +4,6 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
-using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -31,13 +30,15 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <see langword="false"/> for a reader's, whose page I/O is a read-only
     /// <see cref="PageFile"/> and whose errors name <see cref="AccessReader"/>.
     /// </param>
+    /// <param name="cacheSize">The writer frame-cache capacity.</param>
     private DatabaseFile(
         Stream stream,
         byte[] header,
         ReadOnlyMemory<char> password,
         string path,
         bool leaveOpen,
-        bool writable)
+        bool writable,
+        int cacheSize = 0)
     {
         this.DatabasePath = path ?? string.Empty;
 
@@ -51,9 +52,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
         string passwordOptionName = writable
             ? EncryptionManager.WriterPasswordOption
             : EncryptionManager.ReaderPasswordOption;
-        PageDecryptionKeys pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Format.Kind, isLegacyAesCfb, password, passwordOptionName);
+        IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, isLegacyAesCfb, password, passwordOptionName);
         this.Pages = writable
-            ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType)
+            ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize)
             : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType);
         this.TableDefs = new TableDefReader(this.Pages, this.Format, cacheResults: !writable);
         this.OwnedPages = new OwnedDataPages(this.Pages, this.Format, cacheResults: !writable);
@@ -103,10 +104,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
     /// <param name="pager">Receives the file's pager; the file owns and disposes it.</param>
+    /// <param name="cacheSize">The writer frame-cache capacity.</param>
     /// <returns>The writer's file.</returns>
-    internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager)
+    internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager, int cacheSize = 256)
     {
-        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true);
+        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize);
         pager = (Pager)file.Pages;
         return file;
     }

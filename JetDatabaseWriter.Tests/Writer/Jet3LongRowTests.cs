@@ -66,27 +66,15 @@ public sealed class Jet3LongRowTests
         ("0,0,0,255", "04", 268), // nulls before a long value: only the EOD crosses 256
     ];
 
-    private enum WriteMode
-    {
-        /// <summary>Each write commits on its own.</summary>
-        AutoCommit = 0,
-
-        /// <summary>The writer journals each operation (<see cref="AccessWriterOptions.UseTransactionalWrites"/>).</summary>
-        TransactionalWrites = 1,
-
-        /// <summary>One explicit transaction holds every write, so the update reads the long row back from the journal.</summary>
-        ExplicitTransaction = 2,
-    }
-
     /// <summary>Gets every boundary case in every write mode.</summary>
-    public static TheoryData<string, string, int, string> BoundaryRows
+    public static TheoryData<string, string, int, WriteMode> BoundaryRows
     {
         get
         {
-            var data = new TheoryData<string, string, int, string>();
+            var data = new TheoryData<string, string, int, WriteMode>();
             foreach ((string lengths, string jumpHex, int rowLength) in BoundaryCases)
             {
-                foreach (string mode in Enum.GetNames<WriteMode>())
+                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
                 {
                     data.Add(lengths, jumpHex, rowLength, mode);
                 }
@@ -97,7 +85,7 @@ public sealed class Jet3LongRowTests
     }
 
     /// <summary>Gets the write modes.</summary>
-    public static TheoryData<string> WriteModes => [.. Enum.GetNames<WriteMode>()];
+    public static TheoryData<WriteMode> WriteModes => [WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit];
 
     /// <summary>
     /// Inserts a row of Id + four Text(255) values at a jump-table boundary,
@@ -111,7 +99,7 @@ public sealed class Jet3LongRowTests
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(BoundaryRows))]
-    public async Task TextRow_AtJumpBoundaries_RoundTripsAndMatchesJetLayout(string lengths, string jumpHex, int rowLength, string mode)
+    public async Task TextRow_AtJumpBoundaries_RoundTripsAndMatchesJetLayout(string lengths, string jumpHex, int rowLength, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         Assert.NotNull(lengths);
@@ -183,7 +171,7 @@ public sealed class Jet3LongRowTests
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(WriteModes))]
-    public async Task FixedOnlyRow_200LongColumns_RoundTrips(string mode)
+    public async Task FixedOnlyRow_200LongColumns_RoundTrips(WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         const int columnCount = 200;
@@ -621,12 +609,12 @@ public sealed class Jet3LongRowTests
         return ms;
     }
 
-    private static async Task WriteInModeAsync(MemoryStream ms, string mode, Func<AccessWriter, Task> work, CancellationToken cancellationToken)
+    private static async Task WriteInModeAsync(MemoryStream ms, WriteMode mode, Func<AccessWriter, Task> work, CancellationToken cancellationToken)
     {
-        WriteMode writeMode = Enum.Parse<WriteMode>(mode);
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = writeMode == WriteMode.TransactionalWrites };
+        WriteMode writeMode = mode;
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = writeMode == WriteMode.AutoCommit };
         await using AccessWriter writer = await OpenWriterAsync(ms, options, cancellationToken);
-        if (writeMode == WriteMode.ExplicitTransaction)
+        if (writeMode == WriteMode.ExplicitCommit)
         {
             await using JetTransaction transaction = await writer.BeginTransactionAsync(cancellationToken);
             await work(writer);

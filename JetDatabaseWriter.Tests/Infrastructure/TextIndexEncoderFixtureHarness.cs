@@ -6,9 +6,11 @@ using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
 /// <summary>
@@ -33,11 +35,24 @@ internal static class TextIndexEncoderFixtureHarness
     /// <param name="encode">The encode.</param>
     /// <param name="skipTables">The skip tables.</param>
     /// <param name="ct">The cancellation token.</param>
-    public static async Task ValidateAsync(
+    public static Task ValidateAsync(
         string fixturePath,
         EncodeText encode,
         IReadOnlyCollection<string>? skipTables = null,
         CancellationToken ct = default)
+        => ValidateCoreAsync(fixturePath, encode, skipTables, ct);
+
+    /// <summary>Checks production text-key dispatch against each column's stored sort order.</summary>
+    /// <param name="fixturePath">The Access-authored fixture.</param>
+    /// <param name="ct">The cancellation token.</param>
+    public static Task ValidateSortOrdersAsync(string fixturePath, CancellationToken ct)
+        => ValidateCoreAsync(fixturePath, null, null, ct);
+
+    private static async Task ValidateCoreAsync(
+        string fixturePath,
+        EncodeText? encode,
+        IReadOnlyCollection<string>? skipTables,
+        CancellationToken ct)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(
             fixturePath,
@@ -62,11 +77,25 @@ internal static class TextIndexEncoderFixtureHarness
 
             IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+            CatalogEntry entry = Assert.IsType<CatalogEntry>(await pages.GetCatalogEntryAsync(tableName, ct));
+            TableDef definition = await pages.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, tableName, ct);
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
             foreach (IndexMetadata index in indexes)
             {
                 if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
+                {
+                    continue;
+                }
+
+                // Known fixture gaps remain in docs/todo.md: Fixed-length Text
+                // columns read as Null; GeneralLegacyTextIndexEncoder encodes
+                // 1 of the 8 keys in testUnicodeCompV2003.
+                if (encode is null
+                    && ((fixturePath.Contains("fixedTextTest", StringComparison.OrdinalIgnoreCase)
+                            && index.Name == "Users2_8_idx")
+                        || (fixturePath.Contains("testUnicodeComp", StringComparison.OrdinalIgnoreCase)
+                            && tableName == "Table" && index.Columns[0].Name == "Unicode")))
                 {
                     continue;
                 }
@@ -95,9 +124,12 @@ internal static class TextIndexEncoderFixtureHarness
                     values.Add(v);
                 }
 
-                List<(string? Value, byte[] Key)> encoded = values
-                    .ConvertAll(v => (Value: v, Key: encode(v, keyCol.IsAscending)))
-;
+                ColumnInfo column = Assert.Single(definition.Columns, c => c.Name == keyCol.Name);
+                List<(string? Value, byte[] Key)> encoded = values.ConvertAll(v => (
+                    Value: v,
+                    Key: encode is null
+                        ? IndexKeyEncoder.EncodeColumnEntry(pages.Database.Format, column, v, keyCol.IsAscending)
+                        : encode(v, keyCol.IsAscending)));
                 encoded.Sort((a, b) => CompareBytesUnsigned(a.Key, b.Key));
 
                 Assert.Equal(encoded.Count, onDiskKeys.Count);

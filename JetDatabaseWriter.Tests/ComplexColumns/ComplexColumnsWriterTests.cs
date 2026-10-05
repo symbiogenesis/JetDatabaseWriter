@@ -484,7 +484,7 @@ public sealed class ComplexColumnsWriterTests
 
     [Theory]
     [MemberData(nameof(ComplexColumnTestSupport.AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task CreateTable_ComplexColumns_RaisesComplexIdCounter(ComplexWriteMode mode)
+    public async Task CreateTable_ComplexColumns_RaisesComplexIdCounter(WriteMode mode)
     {
         var ms = new MemoryStream();
         await using (AccessWriter writer = await ComplexColumnTestSupport.CreateWriterAsync(ms, mode))
@@ -499,7 +499,7 @@ public sealed class ComplexColumnsWriterTests
 
     [Theory]
     [MemberData(nameof(ComplexColumnTestSupport.AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task DropThenAddComplexColumn_DoesNotReuseComplexId(ComplexWriteMode mode)
+    public async Task DropThenAddComplexColumn_DoesNotReuseComplexId(WriteMode mode)
     {
         var ms = new MemoryStream();
         await using (AccessWriter writer = await ComplexColumnTestSupport.CreateWriterAsync(ms, mode))

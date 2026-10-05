@@ -339,55 +339,19 @@ public sealed class AccessReaderIndexSeekTests
     }
 
     [Fact]
-    public async Task SeekRowsAsync_Jet3Index_ThrowsNotSupported()
+    public async Task SeekRowsAsync_Jet3Index_ReturnsInsertedRow()
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
-
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.CreateTableAsync(
-                "T",
-                [new ColumnDefinition("Id", typeof(int))],
-                [new IndexDefinition("IX_Id", "Id")],
-                TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("FirstName", typeof(string))], [new IndexDefinition("IX_Id", "Id")], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", [1, "One"], TestContext.Current.CancellationToken);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
-        {
-            await foreach (object[] ignored in reader.SeekRowsAsync("T", "IX_Id", [1], TestContext.Current.CancellationToken)
-                .WithCancellation(TestContext.Current.CancellationToken))
-            {
-            }
-        });
-    }
-
-    [Fact]
-    public async Task FromIndex_Jet3Index_ThrowsNotSupportedOnEnumeration()
-    {
-        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "T",
-                [new ColumnDefinition("Id", typeof(int))],
-                [new IndexDefinition("IX_Id", "Id")],
-                TestContext.Current.CancellationToken);
-        }
-
-        await using AccessReader reader = await OpenReaderAsync(stream);
-
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
-        {
-            await foreach (object[] ignored in reader.FromIndex("T", "IX_Id")
-                .WhereEquals(1)
-                .ToRowsAsync(TestContext.Current.CancellationToken)
-                .WithCancellation(TestContext.Current.CancellationToken))
-            {
-            }
-        });
+        List<object[]> rows = await SeekAsync(reader, "T", "IX_Id", [1]);
+        Assert.Equal(1, Assert.Single(rows)[0]);
+        Assert.Single(await QueryAsync(reader.Query<PersonRow>("T").FromIndex("IX_Id")));
     }
 
     private static async ValueTask<List<object[]>> SeekAsync(

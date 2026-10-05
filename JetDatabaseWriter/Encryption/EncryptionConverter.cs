@@ -234,7 +234,7 @@ internal static class EncryptionConverter
         DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : JetFormat.DetectFormat(header);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
-        using PageDecryptionKeys pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, fmt, isLegacyAesCfb, password, EncryptionManager.OldPasswordArgument);
+        using IPageCodec pageKeys = PageCodecFactory.Open(header, fmt, isLegacyAesCfb, password, EncryptionManager.OldPasswordArgument);
 
         long length = source.Length;
         if (length % pageSize != 0)
@@ -256,7 +256,7 @@ internal static class EncryptionConverter
         await source.ReadExactlyAsync(result.AsMemory(0, pageSize), cancellationToken).ConfigureAwait(false);
         StripEncryptionFromHeader(result, fmt, isLegacyAesCfb);
 
-        bool hasPageEncryption = EncryptionManager.HasPageEncryption(pageKeys);
+        bool hasPageEncryption = pageKeys.HasEncryption;
 
         // Pages 1+: read raw, decrypt in place.
         for (long page = 1, offset = pageSize; offset < length; page++, offset += pageSize)
@@ -267,7 +267,7 @@ internal static class EncryptionConverter
 
             if (hasPageEncryption)
             {
-                EncryptionManager.DecryptPageInPlace(result, (int)offset, page, pageSize, pageKeys);
+                pageKeys.Decode(result, checked((int)offset), page, pageSize);
             }
         }
 
@@ -293,7 +293,7 @@ internal static class EncryptionConverter
         // Microsoft Access.
         result[0x62] = 0x03;
 
-        using var keys = new PageDecryptionKeys(jet3XorMask: null, rc4DbKey: dbKey, aesPageKey: null);
+        using var keys = new Jet4Rc4PageCodec(dbKey);
         EncryptAllPages(result, pageSize, keys);
         return result;
     }
@@ -325,7 +325,7 @@ internal static class EncryptionConverter
         Constants.CompoundFile.Signature.CopyTo(result);
 
         byte[] aesKey = DeriveAesPageKey(password);
-        using var keys = new PageDecryptionKeys(jet3XorMask: null, rc4DbKey: null, aesPageKey: aesKey);
+        using var keys = new AesEcbPageCodec(aesKey);
         EncryptAllPages(result, pageSize, keys);
         return result;
     }
@@ -362,9 +362,9 @@ internal static class EncryptionConverter
         return padded;
     }
 
-    private static void EncryptAllPages(byte[] db, int pageSize, PageDecryptionKeys keys)
+    private static void EncryptAllPages(byte[] db, int pageSize, IPageCodec keys)
     {
-        if (!EncryptionManager.HasPageEncryption(keys))
+        if (!keys.HasEncryption)
         {
             return;
         }
@@ -373,7 +373,7 @@ internal static class EncryptionConverter
         for (long page = 1; page < pages; page++)
         {
             int offset = (int)(page * pageSize);
-            EncryptionManager.EncryptPageInPlace(db, offset, page, pageSize, keys);
+            keys.Encode(db, offset, page, pageSize);
         }
     }
 

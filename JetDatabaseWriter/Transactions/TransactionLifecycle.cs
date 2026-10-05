@@ -254,6 +254,7 @@ internal sealed class TransactionLifecycle(
         }
         catch
         {
+            pager.InvalidateAll();
             if (replayStarted)
             {
                 transaction.MarkCommitFailed();

@@ -973,6 +973,7 @@ var writerOptions = new AccessWriterOptions("secretPassword")
 {
     UseLockFile = true,              // create .ldb/.laccdb lockfile (default: true)
     RespectExistingLockFile = true,  // throw IOException if lockfile already exists (default: true)
+    PageCacheSize = 256,             // writer page frames; 0 disables caching
     MaxTransactionPageBudget = 16_384, // pages one transaction may hold in memory (default: 16384); OpenAsync and
                                        // CreateDatabaseAsync throw ArgumentOutOfRangeException for 0 or less
 };
@@ -989,7 +990,7 @@ catch (FileNotFoundException)   { /* file missing */ }
 catch (ArgumentException)       { /* write: an object name Access does not allow, or an invalid definition */ }
 catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }
-catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained (an insert, update, delete or column change of that table is refused before it changes anything; a cascade into it, CreateRelationshipAsync on it, or an attachment or multi-value item added to it can still change the file before it throws, so use UseTransactionalWrites, or roll back a transaction when it throws), a row larger than one data page, a Jet3 table over 255 columns, or Jet3 text outside the database's code page */ }
+catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained (an insert, update, delete or column change of that table is refused before it changes anything; an attachment or multi-value item added to a legacy null complex reference can still change the file before it throws, so use UseTransactionalWrites, or roll back a transaction when it throws), a row larger than one data page, a Jet3 table over 255 columns, or Jet3 text outside the database's code page */ }
 catch (NotSupportedException)   { /* write: CLR type not mappable to a Jet column, or table definition too large for one TDEF page */ }
 catch (ObjectDisposedException) { /* reader already disposed */ }
 ```

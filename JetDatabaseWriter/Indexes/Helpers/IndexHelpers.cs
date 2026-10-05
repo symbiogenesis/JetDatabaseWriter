@@ -267,6 +267,7 @@ internal static class IndexHelpers
                         + "Microsoft Access does not permit indexes on this column type.");
                 }
 
+                IndexMaintainer.ThrowIfTextCollationUnsupported(column, "new table");
                 colNums[k] = column.ColNum;
             }
 
@@ -464,7 +465,8 @@ internal static class IndexHelpers
                         null,
                         col.Ascending,
                         col.NumericScale,
-                        col.LegacyNumeric);
+                        col.LegacyNumeric,
+                        col.TextSortOrder);
                 }
                 else
                 {
@@ -473,7 +475,8 @@ internal static class IndexHelpers
                         v,
                         col.Ascending,
                         col.NumericScale,
-                        col.LegacyNumeric);
+                        col.LegacyNumeric,
+                        col.TextSortOrder);
                 }
 
                 total += pieces[i].Length;
@@ -534,7 +537,8 @@ internal static class IndexHelpers
                     v,
                     col.Ascending,
                     col.NumericScale,
-                    col.LegacyNumeric);
+                    col.LegacyNumeric,
+                    col.TextSortOrder);
                 total += pieces[i].Length;
             }
         }
@@ -559,8 +563,11 @@ internal static class IndexHelpers
         object? value,
         bool ascending,
         byte numericScale,
-        bool legacyNumeric)
-        => columnType == NumericType
+        bool legacyNumeric,
+        JetDatabaseWriter.Indexes.Collation.TextSortOrder textSortOrder)
+        => columnType is TextType or MemoType
+            ? IndexKeyEncoder.EncodeTextEntry(textSortOrder, value, ascending)
+            : columnType == NumericType
             ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, numericScale, legacyNumeric)
             : IndexKeyEncoder.EncodeEntry(columnType, value, ascending);
 

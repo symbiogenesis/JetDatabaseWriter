@@ -56,14 +56,14 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     }
 
     /// <summary>Gets every format in every write mode: <c>plain</c>, <c>transactional</c> and <c>explicit</c>.</summary>
-    public static TheoryData<DatabaseFormat, string> FormatsAndModes
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes
     {
         get
         {
-            var data = new TheoryData<DatabaseFormat, string>();
+            var data = new TheoryData<DatabaseFormat, WriteMode>();
             foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
             {
-                foreach (string mode in new[] { "plain", "transactional", "explicit" })
+                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
                 {
                     data.Add(format, mode);
                 }
@@ -220,17 +220,17 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// <param name="deleteAll">Whether the first session deletes every row rather than only the top one.</param>
     /// <param name="mode">How the second session writes: <c>plain</c>, <c>transactional</c> or <c>explicit</c>.</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, "plain")]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, "plain")]
-    [InlineData(DatabaseFormat.AceAccdb, false, "plain")]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, "plain")]
-    [InlineData(DatabaseFormat.Jet4Mdb, true, "plain")]
-    [InlineData(DatabaseFormat.AceAccdb, true, "plain")]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, "transactional")]
-    [InlineData(DatabaseFormat.AceAccdb, false, "transactional")]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, "explicit")]
-    [InlineData(DatabaseFormat.AceAccdb, true, "explicit")]
-    public async Task AutoIncrement_AfterDeletingTopRowsInEarlierSession_DoesNotReuseValues(DatabaseFormat format, bool deleteAll, string mode)
+    [InlineData(DatabaseFormat.Jet3Mdb, false, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, false, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, true, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, false, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, true, WriteMode.ExplicitCommit)]
+    public async Task AutoIncrement_AfterDeletingTopRowsInEarlierSession_DoesNotReuseValues(DatabaseFormat format, bool deleteAll, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         var ms = new MemoryStream();
@@ -257,10 +257,10 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
 
         ms.Position = 0;
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit };
         await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, ct))
         {
-            if (mode == "explicit")
+            if (mode == WriteMode.ExplicitCommit)
             {
                 await using JetTransaction tx = await writer.BeginTransactionAsync(ct);
                 await writer.InsertRowAsync("Items", [DBNull.Value, "d"], ct);
@@ -504,7 +504,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(tableName, [42, "explicit"], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [42, WriteMode.ExplicitCommit], TestContext.Current.CancellationToken);
         }
 
         await using (AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
@@ -518,7 +518,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
             Assert.NotNull(row);
             Assert.Equal(42, row[0]);
-            Assert.Equal("explicit", row[1]);
+            Assert.Equal(WriteMode.ExplicitCommit, row[1]);
         }
     }
 
@@ -566,16 +566,16 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// <param name="format">The database format.</param>
     /// <param name="mode"><c>plain</c>, <c>transactional</c> or <c>explicit</c>.</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "plain")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "plain")]
-    [InlineData(DatabaseFormat.AceAccdb, "plain")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
-    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
-    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
-    public async Task AutoIncrement_StrayDefaultValueProperty_IsIgnoredAfterSchemaRewrite(DatabaseFormat format, string mode)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    public async Task AutoIncrement_StrayDefaultValueProperty_IsIgnoredAfterSchemaRewrite(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         var ms = new MemoryStream();
@@ -594,10 +594,10 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
 
         ms.Position = 0;
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit };
         await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, ct))
         {
-            JetTransaction? tx = mode == "explicit" ? await writer.BeginTransactionAsync(ct) : null;
+            JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(ct) : null;
             await writer.InsertRowAsync("Items", [DBNull.Value, "a"], ct);
             await writer.AddColumnAsync("Items", new ColumnDefinition("Extra", typeof(int)), ct);
             await writer.InsertRowAsync("Items", [DbDefault.Value, "b", DBNull.Value], ct);
@@ -644,7 +644,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(FormatsAndModes))]
-    public async Task AutoIncrement_CounterBelowIndexedMax_SeedsAboveIndexMax(DatabaseFormat format, string mode)
+    public async Task AutoIncrement_CounterBelowIndexedMax_SeedsAboveIndexMax(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], rowCount: 5, ct);
@@ -673,7 +673,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
 
         await SetAutoNumberCounterAsync(ms, "Items", 0, ct);
-        await InsertInModeAsync(ms, "plain", "new", ct);
+        await InsertInModeAsync(ms, WriteMode.Direct, "new", ct);
 
         Assert.Equal(8, (await ReadIdsByLabelAsync(ms, ct))["new"]);
     }
@@ -693,7 +693,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         Assert.Equal(Constants.PageTypes.IndexIntermediate, await ReadIndexRootPageTypeAsync(ms, format, "Items", ct));
         await SetAutoNumberCounterAsync(ms, "Items", 1, ct);
 
-        await InsertInModeAsync(ms, "plain", "new", ct);
+        await InsertInModeAsync(ms, WriteMode.Direct, "new", ct);
 
         Assert.Equal(rowCount + 1, (await ReadIdsByLabelAsync(ms, ct))["new"]);
     }
@@ -719,7 +719,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         }
 
         await SetAutoNumberCounterAsync(ms, "Items", 1, ct);
-        await InsertInModeAsync(ms, "plain", "new", ct);
+        await InsertInModeAsync(ms, WriteMode.Direct, "new", ct);
 
         Assert.Equal(2_601, (await ReadIdsByLabelAsync(ms, ct))["new"]);
     }
@@ -738,7 +738,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("IX_IdDesc", "Id") { DescendingColumns = ["Id"] }], rowCount: 5, ct);
         await SetAutoNumberCounterAsync(ms, "Items", 2, ct);
 
-        await InsertInModeAsync(ms, "plain", "new", ct);
+        await InsertInModeAsync(ms, WriteMode.Direct, "new", ct);
 
         Assert.Equal(6, (await ReadIdsByLabelAsync(ms, ct))["new"]);
     }
@@ -754,23 +754,23 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// <param name="mode"><c>transactional</c> or <c>explicit</c>.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
-    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
-    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
-    public async Task AutoIncrement_SeedAfterSchemaRewriteInsideTransaction_UsesJournaledCounter(DatabaseFormat format, string mode)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    public async Task AutoIncrement_SeedAfterSchemaRewriteInsideTransaction_UsesJournaledCounter(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateItemsAsync(format, [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }], rowCount: 5, ct);
         await SetAutoNumberCounterAsync(ms, "Items", 2, ct);
 
         ms.Position = 0;
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit };
         await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, ct))
         {
-            JetTransaction? tx = mode == "explicit" ? await writer.BeginTransactionAsync(ct) : null;
+            JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(ct) : null;
             await writer.AddColumnAsync("Items", new ColumnDefinition("Extra", typeof(int)), ct);
             await writer.InsertRowAsync("Items", [DBNull.Value, "new", DBNull.Value], ct);
             if (tx is not null)
@@ -1109,12 +1109,12 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     /// <param name="mode">The write mode.</param>
     /// <param name="label">The row's label.</param>
     /// <param name="ct">A token used to cancel the operation.</param>
-    private static async ValueTask InsertInModeAsync(MemoryStream ms, string mode, string label, CancellationToken ct)
+    private static async ValueTask InsertInModeAsync(MemoryStream ms, WriteMode mode, string label, CancellationToken ct)
     {
         ms.Position = 0;
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit };
         await using AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, ct);
-        if (mode == "explicit")
+        if (mode == WriteMode.ExplicitCommit)
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(ct);
             await writer.InsertRowAsync("Items", [DBNull.Value, label], ct);

@@ -498,7 +498,7 @@ internal sealed class OwnedDataPages : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await this.pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.pages.ReadUncachedPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.Data)

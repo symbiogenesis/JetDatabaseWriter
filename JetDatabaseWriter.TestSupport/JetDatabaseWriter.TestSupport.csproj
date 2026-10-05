@@ -12,5 +12,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="JetDatabaseWriter.Tests" />
     <InternalsVisibleTo Include="JetDatabaseWriter.FormatProbe" />
+    <InternalsVisibleTo Include="JetDatabaseWriter.Benchmarks" />
   </ItemGroup>
 </Project>

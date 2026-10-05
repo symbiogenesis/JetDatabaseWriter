@@ -71,6 +71,11 @@ internal sealed class CatalogArtifactWriter(
     private static bool IsSystemCatalogFlags(uint catalogFlags)
         => (catalogFlags & Constants.SystemObjects.SystemTableMask) != 0;
 
+    /// <summary>Checks catalog indexes before a plan can allocate or change table pages.</summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask ThrowIfCatalogIndexesUnmaintainableAsync(CancellationToken cancellationToken)
+        => catalogWriter.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken);
+
     /// <summary>
     /// Reserves the contiguous TDEF slots for the core ACCDB system tables
     /// (<c>MSysACEs</c>, <c>MSysQueries</c>, <c>MSysRelationships</c>) of a
@@ -176,7 +181,13 @@ internal sealed class CatalogArtifactWriter(
         CancellationToken cancellationToken)
     {
         Guard.NotNull(plan, nameof(plan));
+        await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
 
+        foreach (CatalogTableArtifact artifact in plan.TableArtifacts)
+        {
+            TableDef definition = TDefPageBuilder.BuildTableDefinition(artifact.Columns, format);
+            _ = IndexHelpers.ResolveIndexes(artifact.Indexes, definition);
+        }
         long[] tablePages = new long[plan.TableArtifacts.Count];
         for (int artifactIndex = 0; artifactIndex < plan.TableArtifacts.Count; artifactIndex++)
         {

@@ -150,6 +150,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 FixedOff = variable ? 0 : fixedOffset,
                 Size = size,
                 Flags = flags,
+                TextSortOrder = definition.TextSortOrderOverride ?? format.DefaultTextSortOrder,
                 Misc = isComplex ? definition.ComplexId : definition.DescriptorMiscOverride ?? 0,
                 NumericPrecision = type == NumericType ? ResolveNumericPrecision(definition, nameof(columns)) : (byte)0,
                 NumericScale = type == NumericType ? ResolveNumericScale(definition, nameof(columns)) : (byte)0,
@@ -244,6 +245,13 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 Wu16(page, o + 9, col.ColNum);
             }
 
+            if (!jet4)
+            {
+                Wu16(page, o + 5, col.ColNum);
+                Wu16(page, o + 9, 0x0409);
+                Wu16(page, o + 11, 1252);
+            }
+
             page[o + format.ColumnDescriptor.FlagsOff] = col.Flags;
             Wu16(page, o + format.ColumnDescriptor.FixedOff, col.FixedOff);
             Wu16(page, o + format.ColumnDescriptor.SzOff, col.Size);
@@ -267,7 +275,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                     page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
                 }
             }
-            else if (jet4 && (col.Type == TextType || col.Type == MemoType))
+            else if (col.Type is TextType or MemoType)
             {
                 // Jet4/ACE text columns require two extra fields that DAO populates
                 // unconditionally; without them DAO refuses to OpenRecordset on the
@@ -285,8 +293,20 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 //                     here through ColumnInfo.ExtraFlags. The reader
                 //                     decodes the FF FE compressed marker regardless of
                 //                     the bit.
-                Wi32(page, o + format.ColumnDescriptor.MiscOff, 0x00000409);
-                page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                Wu16(page, o + (jet4 ? 11 : 9), col.TextSortOrder.Value);
+                if (jet4)
+                {
+                    page[o + 14] = col.TextSortOrder.Version;
+                }
+                else
+                {
+                    Wu16(page, o + 11, 1252);
+                }
+
+                if (jet4)
+                {
+                    page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                }
             }
             else if (jet4 && col.IsCalculated)
             {
@@ -820,6 +840,12 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 Wu16(db, o + 9, col.ColNum);
             }
 
+            if (isJet3)
+            {
+                Wu16(db, o + 5, col.ColNum);
+                Wu16(db, o + 9, 0x0409);
+                Wu16(db, o + 11, 1252);
+            }
             db[o + descriptor.FlagsOff] = col.Flags;
             Wu16(db, o + descriptor.FixedOff, col.FixedOff);
             Wu16(db, o + descriptor.SzOff, col.Size);

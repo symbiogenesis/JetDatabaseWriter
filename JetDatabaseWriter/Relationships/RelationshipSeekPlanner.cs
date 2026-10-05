@@ -7,6 +7,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Schema;
@@ -18,6 +19,7 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
         long FirstDp,
         ColumnType[] ColTypes,
         byte[] NumericScales,
+        TextSortOrder[] TextSortOrders,
         IReadOnlyList<bool> Ascending,
         bool LegacyNumeric);
 
@@ -68,7 +70,8 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
                     core.Value.Ascending[index],
                     foreignRowIndexes[index],
                     core.Value.NumericScales[index],
-                    core.Value.LegacyNumeric);
+                    core.Value.LegacyNumeric,
+                    core.Value.TextSortOrders[index]);
             }
 
             resolved = new ParentSeekIndex(core.Value.FirstDp, keyColumns);
@@ -109,7 +112,8 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
                     core.Value.ColTypes[index],
                     core.Value.Ascending[index],
                     core.Value.NumericScales[index],
-                    core.Value.LegacyNumeric);
+                    core.Value.LegacyNumeric,
+                    core.Value.TextSortOrders[index]);
             }
 
             resolved = new ChildSeekIndex(core.Value.FirstDp, keyColumns);
@@ -142,6 +146,7 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
         int[] columnNumbers = new int[columnNames.Count];
         var columnTypes = new ColumnType[columnNames.Count];
         byte[] numericScales = new byte[columnNames.Count];
+        var textSortOrders = new TextSortOrder[columnNames.Count];
         for (int index = 0; index < columnNames.Count; index++)
         {
             int columnIndex = definition.FindColumnIndex(columnNames[index]);
@@ -153,6 +158,11 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
             columnNumbers[index] = definition.Columns[columnIndex].ColNum;
             columnTypes[index] = definition.Columns[columnIndex].Type;
             numericScales[index] = definition.Columns[columnIndex].NumericScale;
+            textSortOrders[index] = definition.Columns[columnIndex].TextSortOrder;
+            if (columnTypes[index] is TextType or MemoType && !textSortOrders[index].IsSupported)
+            {
+                return null;
+            }
         }
 
         (long FirstDp, IReadOnlyList<bool> AscendingFlags)? hit = await this.TryFindCoveringRealIdxAsync(
@@ -176,6 +186,7 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
             hit.Value.FirstDp,
             columnTypes,
             numericScales,
+            textSortOrders,
             hit.Value.AscendingFlags,
             format.LegacyNumericIndexKeys);
     }

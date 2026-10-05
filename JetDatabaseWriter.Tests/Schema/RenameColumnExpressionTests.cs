@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -22,25 +21,11 @@ using Xunit;
 /// </summary>
 public sealed class RenameColumnExpressionTests
 {
-    /// <summary>How each test drives the writer.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The schema change and the writes after it run inside one explicit transaction that is committed.</summary>
-        ExplicitCommit = 2,
-    }
-
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Gets every write mode.</summary>
     /// <returns>The write modes.</returns>
-    public static TheoryData<WriteMode> WriteModes() => [.. Enum.GetValues<WriteMode>()];
+    public static TheoryData<WriteMode> WriteModes() => [.. new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit }];
 
     /// <summary>Gets every writer-created format (Jet3, Jet4, ACCDB) in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
@@ -49,7 +34,7 @@ public sealed class RenameColumnExpressionTests
         var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
         {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(format, mode);
             }
@@ -580,16 +565,6 @@ public sealed class RenameColumnExpressionTests
         return await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
     }
 
-    private static async Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
-    {
-        if (mode != WriteMode.ExplicitCommit)
-        {
-            await work();
-            return;
-        }
-
-        await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
-        await work();
-        await transaction.CommitAsync(Ct);
-    }
+    private static Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
+        => JetDatabaseWriter.Tests.Infrastructure.WriteModes.RunAsync(writer, mode, work, Ct);
 }

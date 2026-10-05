@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Encryption;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -43,20 +42,6 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
 
     private readonly List<string> tempFiles = [];
 
-    /// <summary>How the writer applies a change.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the file.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps the call in its own transaction.</summary>
-        TransactionalWrites = 1,
-
-        /// <summary>The change runs inside one explicit transaction that is committed.</summary>
-        ExplicitTransaction = 2,
-    }
-
     /// <summary>
     /// Gets every <c>.mdb</c> and <c>.accdb</c> fixture under <c>Databases/</c>, as a path relative to it,
     /// except the library-encrypted ones under <c>Databases/Encrypted/</c>.
@@ -90,7 +75,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         get
         {
             var data = new TheoryData<DatabaseFormat, AccessEncryptionFormat, WriteMode>();
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, mode);
                 data.Add(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword, mode);
@@ -173,11 +158,11 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         {
             UseLockFile = false,
             Password = FirstPassword.AsMemory(),
-            UseTransactionalWrites = mode == WriteMode.TransactionalWrites,
+            UseTransactionalWrites = mode == WriteMode.AutoCommit,
         };
         await using (AccessWriter writer = await AccessWriter.OpenAsync(path, options, Ct))
         {
-            if (mode == WriteMode.ExplicitTransaction)
+            if (mode == WriteMode.ExplicitCommit)
             {
                 await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
                 await writer.InsertRowAsync(TableName, [2, "two"], Ct);

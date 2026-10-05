@@ -120,7 +120,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             object? value = cell is null or DBNull ? null : cell;
             return col.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[0], legacyNumeric)
-                : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
         }
 
         // Multi-column: encode into per-column spans then concatenate.
@@ -134,7 +134,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             object? value = cell is null or DBNull ? null : cell;
             perColumn[k] = col.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[k], legacyNumeric)
-                : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
             lengths[k] = perColumn[k].Length;
             totalLen += perColumn[k].Length;
         }

@@ -159,14 +159,14 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     /// <param name="dropParent">Whether the parent rather than the child is dropped.</param>
     /// <param name="mode"><c>none</c>, <c>transactional</c> (<c>UseTransactionalWrites</c>) or <c>explicit</c> (one committed transaction).</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet4Mdb, true, "none")]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, "none")]
-    [InlineData(DatabaseFormat.AceAccdb, true, "none")]
-    [InlineData(DatabaseFormat.AceAccdb, false, "none")]
-    [InlineData(DatabaseFormat.AceAccdb, true, "explicit")]
-    [InlineData(DatabaseFormat.AceAccdb, false, "transactional")]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, "explicit")]
-    public async Task DropTable_AfterDropRelationship_SucceedsAndNoEntryNamesTheFreedPage(DatabaseFormat format, bool dropParent, string mode)
+    [InlineData(DatabaseFormat.Jet4Mdb, true, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, true, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, false, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, true, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, false, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false, WriteMode.ExplicitCommit)]
+    public async Task DropTable_AfterDropRelationship_SucceedsAndNoEntryNamesTheFreedPage(DatabaseFormat format, bool dropParent, WriteMode mode)
     {
         string dropped = dropParent ? Parent : Child;
         string partner = dropParent ? Child : Parent;
@@ -177,10 +177,10 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         }
 
         long droppedPage = await GetTDefPageAsync(stream, dropped);
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" };
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit };
         await using (AccessWriter writer = await OpenWriterAsync(stream, options))
         {
-            await using JetTransaction? tx = mode == "explicit" ? await writer.BeginTransactionAsync(Ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(Ct) : null;
             await writer.DropRelationshipAsync(RelationshipName, Ct);
             await writer.DropTableAsync(dropped, Ct);
             if (tx is not null)

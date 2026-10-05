@@ -208,7 +208,7 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
 
     private async ValueTask<IAsyncEnumerable<T>?> TryBuildOrderedSourceAsync(OrderStage order, CancellationToken cancellationToken)
     {
-        // Index seeks are Jet4/ACE-only.
+        // Index seeks use the database format layout.
         if (!indexes.CanSeek)
         {
             return null;

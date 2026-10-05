@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Indexes.Models;
 
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Collation;
 
 /// <summary>
 /// Resolved child-side (FK-side) seek index for a single relationship.
@@ -22,8 +23,10 @@ internal sealed record ChildSeekIndex(
 /// <param name="Ascending">The ascending.</param>
 /// <param name="NumericScale">The numeric scale.</param>
 /// <param name="LegacyNumeric">The legacy numeric.</param>
+/// <param name="TextSortOrder">The text collation.</param>
 internal readonly record struct ChildSeekKeyColumn(
     ColumnType ColumnType,
     bool Ascending,
     byte NumericScale,
-    bool LegacyNumeric);
+    bool LegacyNumeric,
+    TextSortOrder TextSortOrder = default);

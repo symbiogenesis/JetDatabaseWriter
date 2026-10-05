@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.ComplexColumns;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -22,20 +21,6 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-/// <summary>How a complex-column test drives the writer.</summary>
-[SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-public enum ComplexWriteMode
-{
-    /// <summary>No transaction; every page write goes straight to the stream.</summary>
-    Direct = 0,
-
-    /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-    AutoCommit = 1,
-
-    /// <summary>The mutations run inside one explicit transaction that is committed.</summary>
-    ExplicitCommit = 2,
-}
-
 /// <summary>
 /// Shared helpers for the complex-column writer tests: fixture copies, write
 /// modes, raw parent slots (<see cref="ComplexIdRef"/>), TDEF header fields
@@ -52,17 +37,17 @@ internal static class ComplexColumnTestSupport
     public static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Gets every write mode.</summary>
-    public static TheoryData<ComplexWriteMode> AllModes =>
+    public static TheoryData<WriteMode> AllModes =>
     [
-        ComplexWriteMode.Direct,
-        ComplexWriteMode.AutoCommit,
-        ComplexWriteMode.ExplicitCommit,
+        WriteMode.Direct,
+        WriteMode.AutoCommit,
+        WriteMode.ExplicitCommit,
     ];
 
-    public static AccessWriterOptions WriterOptions(ComplexWriteMode mode) => new()
+    public static AccessWriterOptions WriterOptions(WriteMode mode) => new()
     {
         UseLockFile = false,
-        UseTransactionalWrites = mode == ComplexWriteMode.AutoCommit,
+        UseTransactionalWrites = mode == WriteMode.AutoCommit,
     };
 
     /// <summary>Returns a writable in-memory copy of an Access-authored fixture.</summary>
@@ -76,10 +61,10 @@ internal static class ComplexColumnTestSupport
         return ms;
     }
 
-    public static async Task<AccessWriter> CreateWriterAsync(MemoryStream ms, ComplexWriteMode mode = ComplexWriteMode.Direct) =>
+    public static async Task<AccessWriter> CreateWriterAsync(MemoryStream ms, WriteMode mode = WriteMode.Direct) =>
         await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, WriterOptions(mode), leaveOpen: true, cancellationToken: Ct);
 
-    public static async Task<AccessWriter> OpenWriterAsync(MemoryStream ms, ComplexWriteMode mode = ComplexWriteMode.Direct)
+    public static async Task<AccessWriter> OpenWriterAsync(MemoryStream ms, WriteMode mode = WriteMode.Direct)
     {
         ms.Position = 0;
         return await AccessWriter.OpenAsync(ms, WriterOptions(mode), leaveOpen: true, cancellationToken: Ct);
@@ -91,22 +76,12 @@ internal static class ComplexColumnTestSupport
         return await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
     }
 
-    /// <summary>Runs <paramref name="work"/> directly, or inside one committed transaction for <see cref="ComplexWriteMode.ExplicitCommit"/>.</summary>
+    /// <summary>Runs <paramref name="work"/> directly, or inside one committed transaction for <see cref="WriteMode.ExplicitCommit"/>.</summary>
     /// <param name="writer">The writer.</param>
     /// <param name="mode">The write mode.</param>
     /// <param name="work">The mutations.</param>
-    public static async Task RunAsync(AccessWriter writer, ComplexWriteMode mode, Func<Task> work)
-    {
-        if (mode != ComplexWriteMode.ExplicitCommit)
-        {
-            await work();
-            return;
-        }
-
-        await using JetTransaction tx = await writer.BeginTransactionAsync(Ct);
-        await work();
-        await tx.CommitAsync(Ct);
-    }
+    public static Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
+        => JetDatabaseWriter.Tests.Infrastructure.WriteModes.RunAsync(writer, mode, work, Ct);
 
     /// <summary>
     /// Reads a user table's TDEF page and its live rows as the writer's

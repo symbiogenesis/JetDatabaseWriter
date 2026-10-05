@@ -195,6 +195,9 @@
           "ClosedXML.Parser": "[2.0.0, )"
         }
       },
+      "jetdatabasewriter.testsupport": {
+        "type": "Project"
+      },
       "ClosedXML.Parser": {
         "type": "CentralTransitive",
         "requested": "[2.0.0, )",

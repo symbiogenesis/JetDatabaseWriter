@@ -850,6 +850,17 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         Assert.DoesNotContain("/", text, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("\"é\" < \"z\"", true)]
+    [InlineData("\"É\" = \"é\"", true)]
+    [InlineData("\"a\" = \"a \"", false)]
+    [InlineData("Between(\"é\", \"a\", \"z\")", true)]
+    [InlineData("In(\"É\", \"é\", \"z\")", true)]
+    public void TextComparisons_UseAccessSortKeys(string expression, bool expected)
+    {
+        Assert.Equal(expected, Assert.IsType<bool>(Evaluate(expression, typeof(bool))));
+    }
+
     private static object EvaluateDates(string expression, Type resultType)
         => EvaluateDeclared(
             expression,

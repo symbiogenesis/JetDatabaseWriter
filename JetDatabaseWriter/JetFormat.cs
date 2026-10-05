@@ -6,6 +6,7 @@ using System.Text;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -43,11 +44,12 @@ internal sealed class JetFormat
     /// </summary>
     static JetFormat() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
-    private JetFormat(DatabaseFormat kind, int codePage)
+    private JetFormat(DatabaseFormat kind, int codePage, TextSortOrder? defaultTextSortOrder = null)
     {
         bool jet3 = kind == DatabaseFormat.Jet3Mdb;
         bool ace = kind == DatabaseFormat.AceAccdb;
         this.Kind = kind;
+        this.DefaultTextSortOrder = defaultTextSortOrder ?? new TextSortOrder(0x0409, 0, !jet3);
         this.IsJet3 = jet3;
         this.PageSize = PageSizeOf(kind);
 
@@ -104,7 +106,7 @@ internal sealed class JetFormat
         this.LegacyNumericIndexKeys = kind == DatabaseFormat.Jet4Mdb;
         this.WritesTDefFormatMagic = !jet3;
         this.WritesTDefFreeSpace = !jet3;
-        this.SupportsIndexSeeks = !jet3;
+        this.SupportsIndexSeeks = true;
 
         this.VersionName = jet3 ? "Jet3" : "Jet4/ACE";
         this.CommitLockOffset = ace ? 0xFFFFFFFCL : 0xFFFFFFFEL;
@@ -129,6 +131,9 @@ internal sealed class JetFormat
     /// holds none, or 65001 (UTF-8) when .NET has no encoding for it.
     /// </summary>
     internal int CodePage { get; }
+
+    /// <summary>Gets the database default for new text columns and expression comparisons.</summary>
+    internal TextSortOrder DefaultTextSortOrder { get; }
 
     /// <summary>
     /// Gets the database's ANSI code-page encoding, which decodes Jet3 text and
@@ -209,9 +214,7 @@ internal sealed class JetFormat
     internal bool WritesTDefFreeSpace { get; }
 
     /// <summary>
-    /// Gets a value indicating whether index seeks are used: Jet4 and ACE.
-    /// Jet3 reads by table scan until its General 97 text keys are encoded
-    /// right.
+    /// Gets a value indicating whether this format supports index seeks.
     /// </summary>
     internal bool SupportsIndexSeeks { get; }
 
@@ -264,7 +267,22 @@ internal sealed class JetFormat
             codePage = 1252;
         }
 
-        return new JetFormat(kind, codePage);
+        byte[] unmasked = (byte[])header.Clone();
+        EncryptionManager.TransformHeaderMask(unmasked, kind);
+        bool jet3 = kind == DatabaseFormat.Jet3Mdb;
+        int offset = jet3 ? 0x3A : 0x6E;
+        var order = new TextSortOrder(
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(unmasked.AsSpan(offset, 2)),
+            jet3 ? (byte)0 : unmasked[0x71],
+            !jet3);
+        // Zero in the database header names General Legacy. New Jet3
+        // columns use General 97, matching the Access 97 descriptor shape.
+        if (order.Value == 0)
+        {
+            order = new TextSortOrder(0x0409, 0, !jet3);
+        }
+
+        return new JetFormat(kind, codePage, order);
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Indexes.Models;
 
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Collation;
 
 /// <summary>
 /// Resolved parent-side seek index for a single relationship. The index cursor
@@ -22,9 +23,11 @@ internal sealed record ParentSeekIndex(
 /// <param name="ForeignColumnIndex">The foreign column index.</param>
 /// <param name="NumericScale">The numeric scale.</param>
 /// <param name="LegacyNumeric">The legacy numeric.</param>
+/// <param name="TextSortOrder">The text collation.</param>
 internal readonly record struct ParentSeekKeyColumn(
     ColumnType ColumnType,
     bool Ascending,
     int ForeignColumnIndex,
     byte NumericScale,
-    bool LegacyNumeric);
+    bool LegacyNumeric,
+    TextSortOrder TextSortOrder = default);

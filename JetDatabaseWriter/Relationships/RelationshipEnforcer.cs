@@ -223,8 +223,9 @@ internal sealed class RelationshipEnforcer(
         HashSet<(long PageNumber, int RowIndex)> cascaded = [];
         await this.PlanCascadeDeletesAsync(primaryTable, primaryDef, deletedParentRows, ctx, depth: 0, cascades, cascaded, complexChildren, cancellationToken).ConfigureAwait(false);
 
-        foreach ((_, ResolvedTable table, List<RowLocation> locations, ComplexChildDeletes flatRows) in cascades)
+        foreach ((string tableName, ResolvedTable table, List<RowLocation> locations, ComplexChildDeletes flatRows) in cascades)
         {
+            await indexes.ThrowIfIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
             await complexColumns.PlanComplexChildDeletesAsync(table.Definition, locations, flatRows, cancellationToken).ConfigureAwait(false);
         }
 
@@ -441,8 +442,9 @@ internal sealed class RelationshipEnforcer(
         // refuses, or a row longer than a data page, refuses the update before
         // any row is deleted. The caller encodes its own rows, which are final
         // once the plan returns.
-        foreach ((_, ResolvedTable table, List<(RowLocation Location, object[] NewRow)> rewrites) in cascades)
+        foreach ((string tableName, ResolvedTable table, List<(RowLocation Location, object[] NewRow)> rewrites) in cascades)
         {
+            await indexes.ThrowIfIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
             foreach ((_, object[] newRow) in rewrites)
             {
                 _ = tableRows.EncodeRow(table.Definition, newRow);
@@ -595,6 +597,7 @@ internal sealed class RelationshipEnforcer(
             if (encodedKey != null)
             {
                 var cursor = new IndexCursor(
+                    format.IndexPage,
                     (page, token) => RelationshipPageReader.ReadOwnedAsync(pageSource, page, token),
                     format.PageSize);
                 bool found = await cursor.ContainsKeyAsync(

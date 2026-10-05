@@ -155,6 +155,7 @@ internal sealed class TableSchemaEditor(
         Guard.NotNull(columns, nameof(columns));
         Guard.NotNull(indexes, nameof(indexes));
         pager.ThrowIfDisposedOrCancelled(cancellationToken);
+        await catalogArtifacts.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
 
         if (columns.Count == 0)
         {
@@ -248,6 +249,7 @@ internal sealed class TableSchemaEditor(
             RelationshipManager.EnsureTableHasNoRelationships(tableName, relationshipNames);
         }
 
+        await catalogArtifacts.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         await this.DropTableCoreAsync(tableName, rewriting: false, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1278,6 +1280,7 @@ internal sealed class TableSchemaEditor(
             IsHyperlink = column.Type == MemoType && (column.Flags & Constants.ColumnDescriptorFlags.Hyperlink) != 0,
             IsDateTimeExtended = valueType == DateTimeExtendedType,
             IsCompressedUnicode = column.IsCompressedUnicode,
+            TextSortOrderOverride = column.TextSortOrder,
         };
 
         // Preserve declared precision/scale through the schema-rewrite copy so

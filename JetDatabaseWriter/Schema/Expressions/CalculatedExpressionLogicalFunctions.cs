@@ -81,8 +81,8 @@ internal static class CalculatedExpressionLogicalFunctions
             return DBNull.Value;
         }
 
-        return CompareNonNullValues(value, lowerBound, static comparison => comparison >= 0)
-            && CompareNonNullValues(value, upperBound, static comparison => comparison <= 0);
+        return CompareNonNullValues(value, lowerBound, static comparison => comparison >= 0, function.Context.TextCollation)
+            && CompareNonNullValues(value, upperBound, static comparison => comparison <= 0, function.Context.TextCollation);
     }
 #pragma warning restore CA1859
 
@@ -97,7 +97,7 @@ internal static class CalculatedExpressionLogicalFunctions
         for (int argIndex = 1; argIndex < function.Count; argIndex++)
         {
             object candidateValue = function.Arg(argIndex);
-            if (!IsNull(candidateValue) && CompareNonNullValues(inValue, candidateValue, static comparison => comparison == 0))
+            if (!IsNull(candidateValue) && CompareNonNullValues(inValue, candidateValue, static comparison => comparison == 0, function.Context.TextCollation))
             {
                 return true;
             }

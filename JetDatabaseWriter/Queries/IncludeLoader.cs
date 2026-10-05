@@ -44,7 +44,7 @@ using JetDatabaseWriter.Tables;
 /// <c>SellerId</c>. When the related table has an index covering
 /// the join columns (a primary key or foreign-key index, inferred automatically) and
 /// the distinct keys are only a small share of that table, the related rows are loaded
-/// with one index seek per distinct key; otherwise (no covering index, a Jet3 file, or
+/// with one index seek per distinct key; otherwise (no covering index or
 /// too many distinct keys relative to the table) it scans the table once and groups in
 /// memory. Either way only the related rows whose key a root holds are mapped to entities,
 /// so a row the query never returns cannot fail the strict value conversion, and a
@@ -267,7 +267,7 @@ internal static class IncludeLoader
 
         // One parent per key: seek the parent key index when one covers the key
         // columns and the keys are few relative to the table, otherwise scan once.
-        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false);
+        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
         if (plan is not SeekPlan seek)
         {
             return await IndexRelatedAsync(metadata, table, type, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
@@ -303,7 +303,7 @@ internal static class IncludeLoader
 
         // Many children per key: seek the foreign-key index when one covers the key
         // columns and the keys are few relative to the table, otherwise scan once.
-        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys.Count, cancellationToken).ConfigureAwait(false);
+        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
         if (plan is not SeekPlan seek)
         {
             return await GroupRelatedAsync(metadata, table, type, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
@@ -332,17 +332,28 @@ internal static class IncludeLoader
         IncludeMetadataCache metadata,
         string table,
         IReadOnlyList<string> keyColumns,
-        int distinctKeyCount,
+        IReadOnlyDictionary<string, object?[]> distinctKeys,
         CancellationToken cancellationToken)
     {
-        // Index seeks are Jet4/ACE only; everything else falls back to a scan.
+        // Index seeks use the database format layout.
         if (!metadata.Indexes.CanSeek)
         {
             return null;
         }
 
         IReadOnlyList<IndexMetadata> indexes = await metadata.GetIndexesAsync(table, cancellationToken).ConfigureAwait(false);
-        IndexMetadata? index = FindCoveringIndex(indexes, keyColumns);
+        var candidates = new List<IndexMetadata>(indexes);
+        IndexMetadata? index;
+        while ((index = FindCoveringIndex(candidates, keyColumns)) is not null)
+        {
+            if (await metadata.Indexes.CanEncodeKeysAsync(table, index, distinctKeys.Values, cancellationToken).ConfigureAwait(false))
+            {
+                break;
+            }
+
+            _ = candidates.Remove(index);
+        }
+
         if (index is null)
         {
             return null;
@@ -353,7 +364,7 @@ internal static class IncludeLoader
         // would seek a large share of the table, scan instead. A row count of 0 (unknown
         // or empty) leaves the seek path enabled.
         long rowCount = await metadata.GetRowCountAsync(table, cancellationToken).ConfigureAwait(false);
-        if (rowCount > 0 && (long)distinctKeyCount * SeekKeyCountTableFraction > rowCount)
+        if (rowCount > 0 && (long)distinctKeys.Count * SeekKeyCountTableFraction > rowCount)
         {
             return null;
         }
@@ -813,7 +824,7 @@ internal static class IncludeLoader
                 return cached;
             }
 
-            IReadOnlyList<IndexMetadata> value = await this.Indexes.ListIndexesAsync(table, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<IndexMetadata> value = await this.Indexes.ListSeekableIndexesAsync(table, cancellationToken).ConfigureAwait(false);
             this.indexes[table] = value;
             return value;
         }

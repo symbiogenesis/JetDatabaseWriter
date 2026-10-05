@@ -154,23 +154,23 @@ internal static class CalculatedExpressionCoercion
         return value;
     }
 
-    internal static object CompareValues(object left, object right, Func<int, bool> predicate)
+    internal static object CompareValues(object left, object right, Func<int, bool> predicate, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
         if (IsNull(left) || IsNull(right))
         {
             return DBNull.Value;
         }
 
-        return CompareNonNullValues(left, right, predicate);
+        return CompareNonNullValues(left, right, predicate, textCollation);
     }
 
-    internal static bool CompareNonNullValues(object left, object right, Func<int, bool> predicate)
+    internal static bool CompareNonNullValues(object left, object right, Func<int, bool> predicate, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
         int comparison;
         if (left is string leftText && right is string rightText)
         {
             // Two strings compare as text in Access, even when both look numeric ("10" < "9").
-            comparison = string.Compare(leftText, rightText, StringComparison.OrdinalIgnoreCase);
+            comparison = (textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy).Compare(leftText, rightText);
         }
         else if ((left is DateTime || right is DateTime)
             && TryConvertDateTime(left, out DateTime leftDateValue)
@@ -195,7 +195,7 @@ internal static class CalculatedExpressionCoercion
         }
         else
         {
-            comparison = string.Compare(ToText(left), ToText(right), StringComparison.OrdinalIgnoreCase);
+            comparison = (textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy).Compare(ToText(left), ToText(right));
         }
 
         return predicate(comparison);

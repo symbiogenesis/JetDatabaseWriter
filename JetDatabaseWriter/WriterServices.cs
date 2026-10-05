@@ -94,7 +94,8 @@ internal sealed class WriterServices
                 return entry is null
                     ? 0
                     : await complexReferenceSeeds.ReadSeedAsync(entry.TDefPage, tableDef, ct).ConfigureAwait(false);
-            });
+            },
+            new JetDatabaseWriter.Indexes.Collation.JetTextCollation(db.Format.DefaultTextSortOrder));
 
         this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
         var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);

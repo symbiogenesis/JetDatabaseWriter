@@ -34,4 +34,12 @@ internal static class PageBuffers
         Return(pooled);
         return copy;
     }
+
+    /// <summary>Reads a scan page without filling the writer cache.</summary>
+    /// <param name="pages">The page source.</param>
+    /// <param name="pageNumber">The page number.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The owned pooled page.</returns>
+    internal static ValueTask<byte[]> ReadUncachedPageAsync(this IPageSource pages, long pageNumber, CancellationToken cancellationToken)
+        => pages is Pager pager ? pager.ReadPageAsync(pageNumber, PageReadHint.NoCache, cancellationToken) : pages.ReadPageAsync(pageNumber, cancellationToken);
 }

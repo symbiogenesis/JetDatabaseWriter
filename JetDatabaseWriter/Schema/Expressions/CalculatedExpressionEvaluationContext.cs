@@ -19,9 +19,10 @@ internal sealed class CalculatedExpressionEvaluationContext
     private readonly bool[] evaluated;
     private double? lastRandomValue;
 
-    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force, string? tableName = null)
+    public CalculatedExpressionEvaluationContext(TableDef tableDef, IReadOnlyList<ColumnConstraint> constraints, object[] values, bool force, string? tableName = null, JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
     {
         this.tableName = tableName;
+        this.TextCollation = textCollation ?? JetDatabaseWriter.Indexes.Collation.JetTextCollation.GeneralLegacy;
         this.constraints = constraints;
         this.values = values;
         this.force = force;
@@ -33,6 +34,8 @@ internal sealed class CalculatedExpressionEvaluationContext
             this.columnIndexes[tableDef.Columns[i].Name] = i;
         }
     }
+
+    internal JetDatabaseWriter.Indexes.Collation.JetTextCollation TextCollation { get; }
 
     public object EvaluateColumn(int index)
     {

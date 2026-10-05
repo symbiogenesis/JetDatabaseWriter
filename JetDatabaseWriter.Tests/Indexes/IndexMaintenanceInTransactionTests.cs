@@ -53,26 +53,25 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true, false)]
-    [InlineData(DatabaseFormat.AceAccdb, false, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
     public async Task SingleInserts_IntoOneKeyRangeAfterAppendedPages_KeepPrimaryKeyConsistent(
         DatabaseFormat format,
-        bool explicitTransaction,
-        bool transactionalWrites)
+        WriteMode mode)
     {
         var expectedIds = new List<int>();
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, expectedIds);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
         {
-            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             await this.InsertTailThenSingleKeysAsync(writer, expectedIds);
             await AssertTableAndPrimaryKeyMatchAsync(writer.Database, expectedIds, this.ct);
 
@@ -94,7 +93,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         var seededIds = new List<int>();
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, seededIds);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites: false))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             var pendingIds = new List<int>(seededIds);
@@ -160,19 +159,18 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true, false)]
-    [InlineData(DatabaseFormat.AceAccdb, false, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
     public async Task BatchInsert_BetweenEveryExistingKey_KeepsPrimaryKeyConsistent(
         DatabaseFormat format,
-        bool explicitTransaction,
-        bool transactionalWrites)
+        WriteMode mode)
     {
         // One batch with a key between every pair of existing keys, so
         // every leaf of the tree splits. Its rows are written, appending
@@ -181,9 +179,9 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         var expectedIds = new List<int>();
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows, keyStep: 10, expectedIds);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
         {
-            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
 
             var middle = new List<object?[]>(baseRows);
             for (int i = 0; i < baseRows; i++)
@@ -206,19 +204,18 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true, false)]
-    [InlineData(DatabaseFormat.AceAccdb, false, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
     public async Task RandomSingleInserts_IntoTableCreatedInTransaction_KeepPrimaryKeyConsistent(
         DatabaseFormat format,
-        bool explicitTransaction,
-        bool transactionalWrites)
+        WriteMode mode)
     {
         // The review's scenario: a table created in the transaction, then
         // single inserts in random key order. A full rebuild that cannot
@@ -226,9 +223,9 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         List<int> expectedIds = DistinctRandomIds(1500);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
         {
-            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             await CreateKeyedTableAsync(writer, this.ct);
             foreach (int id in expectedIds)
             {
@@ -247,19 +244,18 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true, false)]
-    [InlineData(DatabaseFormat.AceAccdb, false, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
     public async Task SingleInserts_IntoChildWithForeignKeyIndex_TakeFullRebuildAndKeepIndexesConsistent(
         DatabaseFormat format,
-        bool explicitTransaction,
-        bool transactionalWrites)
+        WriteMode mode)
     {
         // A foreign-key logical index keeps the table on the full rebuild
         // for every insert (bail C1c), so each insert rebuilds the primary
@@ -270,9 +266,9 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         List<int> expectedIds = DistinctRandomIds(400);
         var expectedParentIds = new Dictionary<int, int>(expectedIds.Count);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
         {
-            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             await writer.CreateTableAsync(
                 ChildTable,
                 [
@@ -318,7 +314,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         List<int> expectedIds = DistinctRandomIds(1500);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites: false))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             await CreateKeyedTableAsync(writer, this.ct);
@@ -423,11 +419,11 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     /// facade's methods do.
     /// </summary>
     /// <param name="stream">The database.</param>
-    /// <param name="transactionalWrites">Whether each call runs in its own transaction.</param>
-    private static ValueTask<WriterHarness> OpenWriterAsync(MemoryStream stream, bool transactionalWrites)
+    /// <param name="mode">The write mode.</param>
+    private static ValueTask<WriterHarness> OpenWriterAsync(MemoryStream stream, WriteMode mode)
         => WriterHarness.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites },
+            WriteModes.WriterOptions(mode),
             cancellationToken: TestContext.Current.CancellationToken);
 
     private static async Task AssertReopenedTableAndPrimaryKeyMatchAsync(MemoryStream stream, List<int> expectedIds, CancellationToken cancellationToken)
@@ -672,7 +668,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
 
         MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         var parentIds = new List<int>();
-        await using (WriterHarness writer = await OpenWriterAsync(stream, transactionalWrites: false))
+        await using (WriterHarness writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
         {
             await writer.CreateTableAsync(
                 "P",

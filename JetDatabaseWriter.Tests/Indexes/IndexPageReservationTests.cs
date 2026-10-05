@@ -289,11 +289,11 @@ public sealed class IndexPageReservationTests
 
     [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
-    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.TransactionalWrites)]
-    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitTransaction)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
     [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
-    [InlineData(DatabaseFormat.AceAccdb, WriteMode.TransactionalWrites)]
-    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitTransaction)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
     public async Task CreateTables_UntilCatalogIndexSplits_LeaveNoReservedPageBehind(DatabaseFormat format, WriteMode mode)
     {
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
@@ -308,11 +308,11 @@ public sealed class IndexPageReservationTests
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = mode == WriteMode.TransactionalWrites },
+            WriteModes.WriterOptions(mode),
             leaveOpen: true,
             this.ct))
         {
-            await using JetTransaction? tx = mode == WriteMode.ExplicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             for (int i = 0; i < 120; i++)
             {
                 await writer.CreateTableAsync(
@@ -366,20 +366,6 @@ public sealed class IndexPageReservationTests
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(harness.Database, allocator, this.ct);
         Assert.Empty(allocatedAfter.Except(allocatedBefore));
         Assert.Empty(allocatedBefore.Except(allocatedAfter));
-    }
-
-    /// <summary>How a test drives the writer's page writes.</summary>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "xUnit theory data must be visible to the public test method.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction: every page write goes straight to the file.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/>: each call runs in its own transaction.</summary>
-        TransactionalWrites = 1,
-
-        /// <summary>One explicit transaction around every call.</summary>
-        ExplicitTransaction = 2,
     }
 
     /// <summary>

@@ -31,20 +31,6 @@ public sealed class LvPropReadTests
 
     private static readonly string[] SignatureDescriptions = ["BMI of patient", "%PDF scan", "GIF89a logo", "{\\rtf1 note"];
 
-    /// <summary>How a test drives the writer.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The calls run inside one explicit transaction that is committed.</summary>
-        ExplicitCommit = 2,
-    }
-
     /// <summary>The schema rewrite a test runs.</summary>
     [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
     public enum Rewrite
@@ -63,9 +49,9 @@ public sealed class LvPropReadTests
 
     /// <summary>Gets every writer-created format with every description that holds a file signature.</summary>
     /// <returns>The format and description pairs.</returns>
-    public static TheoryData<DatabaseFormat, string> FormatsAndDescriptions()
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndDescriptions()
     {
-        var data = new TheoryData<DatabaseFormat, string>();
+        var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in Formats)
         {
             foreach (string description in SignatureDescriptions)
@@ -84,7 +70,7 @@ public sealed class LvPropReadTests
         var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in Formats)
         {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(format, mode);
             }
@@ -102,7 +88,7 @@ public sealed class LvPropReadTests
         {
             foreach (Rewrite rewrite in Enum.GetValues<Rewrite>())
             {
-                foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
                 {
                     data.Add(format, rewrite, mode);
                 }
@@ -641,18 +627,8 @@ public sealed class LvPropReadTests
         return await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
     }
 
-    private static async Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
-    {
-        if (mode != WriteMode.ExplicitCommit)
-        {
-            await work();
-            return;
-        }
-
-        await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
-        await work();
-        await transaction.CommitAsync(Ct);
-    }
+    private static Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
+        => JetDatabaseWriter.Tests.Infrastructure.WriteModes.RunAsync(writer, mode, work, Ct);
 
     /// <summary>One <c>MSysObjects</c> row, read straight from its data page.</summary>
     /// <param name="Id">The row's <c>Id</c>.</param>

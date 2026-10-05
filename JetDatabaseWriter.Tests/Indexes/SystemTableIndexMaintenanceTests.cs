@@ -84,10 +84,10 @@ public sealed class SystemTableIndexMaintenanceTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public async Task CreateTableAsync_MoreTablesThanOneAcesLeafHolds_AllSucceed(bool transactionalWrites, bool explicitTransaction)
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task CreateTableAsync_MoreTablesThanOneAcesLeafHolds_AllSucceed(WriteMode mode)
     {
         // Each table adds two MSysACEs rows; the root leaf held 602 entries,
         // so the 302nd table used to throw, and without a transaction it
@@ -99,11 +99,11 @@ public sealed class SystemTableIndexMaintenanceTests
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites },
+            WriteModes.WriterOptions(mode),
             leaveOpen: true,
             ct))
         {
-            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(ct) : null;
             for (int i = 1; i <= tableCount; i++)
             {
                 await writer.CreateTableAsync(FormattableString.Invariant($"Tbl{i:D4}"), [new ColumnDefinition("Id", typeof(int))], ct);

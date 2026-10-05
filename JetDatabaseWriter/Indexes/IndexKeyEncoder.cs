@@ -56,6 +56,44 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// </summary>
 internal static class IndexKeyEncoder
 {
+    /// <summary>Encodes text using the descriptor's Access sort order.</summary>
+    /// <param name="sortOrder">The declared sort order.</param>
+    /// <param name="value">The value.</param>
+    /// <param name="ascending">The direction.</param>
+    /// <returns>The encoded entry.</returns>
+    internal static byte[] EncodeTextEntry(TextSortOrder sortOrder, object? value, bool ascending = true)
+    {
+        if (value is null or DBNull)
+        {
+            return [ascending ? AscendingNull : DescendingNull];
+        }
+
+        if (!sortOrder.IsSupported)
+        {
+            throw new NotSupportedException($"Text sort order 0x{sortOrder.Value:X4}, version {sortOrder.Version}, is not supported.");
+        }
+
+        string text = ToText(value);
+        return sortOrder.Value == 0 ? GeneralLegacyTextIndexEncoder.Encode(text, ascending) : !sortOrder.HasVersion
+            ? General97TextIndexEncoder.Encode(text, ascending)
+            : sortOrder.Version == 0
+                ? GeneralLegacyTextIndexEncoder.Encode(text, ascending)
+                : GeneralTextIndexEncoder.Encode(text, ascending);
+    }
+
+    /// <summary>Encodes a value with its column's declared collation and numeric scale.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="column">The descriptor.</param>
+    /// <param name="value">The value.</param>
+    /// <param name="ascending">The direction.</param>
+    /// <returns>The encoded entry.</returns>
+    internal static byte[] EncodeColumnEntry(JetFormat format, ColumnInfo column, object? value, bool ascending = true)
+        => column.Type is TextType or MemoType
+            ? EncodeTextEntry(column.TextSortOrder, value, ascending)
+            : column.Type == NumericType
+                ? EncodeNumericEntryAtDeclaredScale(value, ascending, column.NumericScale, format.LegacyNumericIndexKeys)
+                : EncodeEntry(column.Type, value, ascending);
+
     // Column type codes are imported via `using static JetDatabaseWriter.ColumnTypes;`.
 
     /// <summary>
@@ -658,7 +696,7 @@ internal static class IndexKeyEncoder
             object? value = keyValues[i];
             perColumn[i] = column.Type == NumericType
                 ? EncodeNumericEntryAtDeclaredScale(value, keyColumn.IsAscending, column.NumericScale, legacyNumeric)
-                : EncodeEntry(column.Type, value, keyColumn.IsAscending);
+                : EncodeColumnEntry(format, column, value, keyColumn.IsAscending);
             totalLength += perColumn[i].Length;
         }
 

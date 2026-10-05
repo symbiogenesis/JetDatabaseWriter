@@ -116,7 +116,15 @@ internal static class GeneralLegacyTextIndexEncoder
     /// <param name="text">The text to encode.</param>
     /// <param name="ascending">The ascending.</param>
     public static byte[] Encode(string? text, bool ascending)
-        => EncodeWithTables(text, ascending, Codes.Value, ExtCodes.Value);
+        => Encode(text, ascending, trimTrailingSpaces: true);
+
+    /// <summary>Encodes text with control over index-key trailing-space trimming.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="ascending">The direction.</param>
+    /// <param name="trimTrailingSpaces">Whether to trim trailing spaces.</param>
+    /// <returns>The encoded entry.</returns>
+    internal static byte[] Encode(string? text, bool ascending, bool trimTrailingSpaces)
+        => EncodeWithTables(text, ascending, Codes.Value, ExtCodes.Value, trimTrailingSpaces: trimTrailingSpaces);
 
     /// <summary>
     /// Shared "General Legacy"-shape state machine that both
@@ -147,6 +155,7 @@ internal static class GeneralLegacyTextIndexEncoder
     /// Optional callback that can replace the V2010 long-row suffix bytes
     /// immediately before the hard cap truncation is applied.
     /// </param>
+    /// <param name="trimTrailingSpaces">Whether to trim index-key trailing spaces.</param>
     internal static byte[] EncodeWithTables(
         string? text,
         bool ascending,
@@ -154,7 +163,8 @@ internal static class GeneralLegacyTextIndexEncoder
         CharHandler[] extCodes,
         ReadOnlySpan<byte> longRowSeparator = default,
         int maxEntryLength = 0,
-        LongRowSuffixProvider? longRowSuffixProvider = null)
+        LongRowSuffixProvider? longRowSuffixProvider = null,
+        bool trimTrailingSpaces = true)
     {
         if (text is null)
         {
@@ -200,7 +210,11 @@ internal static class GeneralLegacyTextIndexEncoder
             }
         }
 
-        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength));
+        if (trimTrailingSpaces)
+        {
+            chars = chars.TrimEnd(' ');
+        }
 
         return EncodeSingleChunk(text, chars, ascending, codes, extCodes, 0, null);
     }
@@ -414,6 +428,11 @@ internal static class GeneralLegacyTextIndexEncoder
         {
             bout[508] = (byte)(suffix >> 8);
             bout[509] = unchecked((byte)suffix);
+        }
+
+        else
+        {
+            throw new NotSupportedException("The General text index key requires a long-row suffix that is not supported.");
         }
 
         bout.RemoveRange(maxEntryLength, bout.Count - maxEntryLength);

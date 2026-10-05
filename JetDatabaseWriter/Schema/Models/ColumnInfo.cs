@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Schema.Models;
 
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Collation;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class ColumnInfo
@@ -92,6 +93,9 @@ internal sealed class ColumnInfo
     /// </summary>
     public int Misc { get; init; }
 
+    /// <summary>Gets the column's text sort order.</summary>
+    internal TextSortOrder TextSortOrder { get; init; } = new(0x0409, 0, true);
+
     /// <summary>
     /// Gets the declared precision (total significant digits, 1..28)
     /// for a <c>Numeric</c> column. Persisted at descriptor-relative offset
@@ -123,6 +127,7 @@ internal sealed class ColumnInfo
         CalculatedResultType = calculatedResultType,
         Name = this.Name,
         Misc = this.Misc,
+        TextSortOrder = this.TextSortOrder,
         NumericPrecision = this.NumericPrecision,
         NumericScale = this.NumericScale,
     };

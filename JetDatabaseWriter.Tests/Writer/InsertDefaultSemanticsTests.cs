@@ -41,16 +41,16 @@ public sealed class InsertDefaultSemanticsTests
     public static TheoryData<DatabaseFormat> FormatCases => [.. Formats];
 
     /// <summary>Gets every format with each write mode.</summary>
-    public static TheoryData<DatabaseFormat, string> WriteModeCases
+    public static TheoryData<DatabaseFormat, WriteMode, bool> WriteModeCases
     {
         get
         {
-            var data = new TheoryData<DatabaseFormat, string>();
+            var data = new TheoryData<DatabaseFormat, WriteMode, bool>();
             foreach (DatabaseFormat format in Formats)
             {
-                foreach (string mode in new[] { "none", "transactional", "commit", "rollback" })
+                foreach ((WriteMode mode, bool rollback) in new[] { (WriteMode.Direct, false), (WriteMode.AutoCommit, false), (WriteMode.ExplicitCommit, false), (WriteMode.ExplicitCommit, true) })
                 {
-                    data.Add(format, mode);
+                    data.Add(format, mode, rollback);
                 }
             }
 
@@ -242,24 +242,25 @@ public sealed class InsertDefaultSemanticsTests
     /// explicit transaction that commits; a rolled-back transaction writes neither row.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="mode"><c>none</c>, <c>transactional</c>, <c>commit</c> or <c>rollback</c>.</param>
+    /// <param name="mode">The shared write mode.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    /// <param name="rollback">Whether to roll back the explicit transaction.</param>
     [Theory]
     [MemberData(nameof(WriteModeCases))]
-    public async Task ExplicitNullAndDefault_InEveryWriteMode(DatabaseFormat format, string mode)
+    public async Task ExplicitNullAndDefault_InEveryWriteMode(DatabaseFormat format, WriteMode mode, bool rollback)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateTableAsync(format, ScoreColumns(clrDefault: false, isNullable: true), insert: null);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" }))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit }))
         {
-            JetTransaction? transaction = mode is "commit" or "rollback" ? await writer.BeginTransactionAsync(ct) : null;
+            JetTransaction? transaction = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(ct) : null;
             await writer.InsertRowAsync(Table, [1, null], ct);
             await writer.InsertRowAsync(Table, [2, DbDefault.Value], ct);
             _ = await writer.InsertRowsAsync(Table, new List<RowValues> { new() { ["Id"] = 3, ["Score"] = null }, new() { ["Id"] = 4 } }, ct);
             if (transaction is not null)
             {
-                if (mode == "commit")
+                if (!rollback)
                 {
                     await transaction.CommitAsync(ct);
                 }
@@ -273,7 +274,7 @@ public sealed class InsertDefaultSemanticsTests
         }
 
         Dictionary<int, object> scores = await ReadScoresAsync(stream);
-        if (mode == "rollback")
+        if (rollback)
         {
             Assert.Empty(scores);
             return;

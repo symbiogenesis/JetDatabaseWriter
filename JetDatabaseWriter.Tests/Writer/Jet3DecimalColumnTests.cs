@@ -29,20 +29,8 @@ public sealed class Jet3DecimalColumnTests
 {
     private const string TableName = "Ledger";
 
-    private enum WriteMode
-    {
-        /// <summary>Each write commits on its own.</summary>
-        AutoCommit = 0,
-
-        /// <summary>The writer journals each operation (<see cref="AccessWriterOptions.UseTransactionalWrites"/>).</summary>
-        TransactionalWrites = 1,
-
-        /// <summary>One explicit transaction holds every write.</summary>
-        ExplicitTransaction = 2,
-    }
-
     /// <summary>Gets the write modes.</summary>
-    public static TheoryData<string> WriteModes => [.. Enum.GetNames<WriteMode>()];
+    public static TheoryData<WriteMode> WriteModes => [WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit];
 
     /// <summary>
     /// A decimal column, created in each write mode, is a Currency column that
@@ -53,7 +41,7 @@ public sealed class Jet3DecimalColumnTests
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(WriteModes))]
-    public async Task CreateTable_Decimal_IsStoredAsCurrencyAndKeepsFractions(string mode)
+    public async Task CreateTable_Decimal_IsStoredAsCurrencyAndKeepsFractions(WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, ct);
@@ -241,7 +229,7 @@ public sealed class Jet3DecimalColumnTests
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(WriteModes))]
-    public async Task AddColumn_Decimal_IsStoredAsCurrency(string mode)
+    public async Task AddColumn_Decimal_IsStoredAsCurrency(WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateTableWithRowsAsync(ct);
@@ -387,7 +375,7 @@ public sealed class Jet3DecimalColumnTests
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(WriteModes))]
-    public async Task Update_ValueOutsideCurrencyRange_ThrowsAndKeepsTheRow(string mode)
+    public async Task Update_ValueOutsideCurrencyRange_ThrowsAndKeepsTheRow(WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, ct);
@@ -423,7 +411,7 @@ public sealed class Jet3DecimalColumnTests
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(WriteModes))]
-    public async Task UniqueIndex_OnJet3DecimalColumn_RejectsDuplicate(string mode)
+    public async Task UniqueIndex_OnJet3DecimalColumn_RejectsDuplicate(WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, ct);
@@ -556,12 +544,12 @@ public sealed class Jet3DecimalColumnTests
         return ms;
     }
 
-    private static async Task WriteInModeAsync(MemoryStream ms, string mode, Func<AccessWriter, Task> work, CancellationToken cancellationToken)
+    private static async Task WriteInModeAsync(MemoryStream ms, WriteMode mode, Func<AccessWriter, Task> work, CancellationToken cancellationToken)
     {
-        WriteMode writeMode = Enum.Parse<WriteMode>(mode);
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = writeMode == WriteMode.TransactionalWrites };
+        WriteMode writeMode = mode;
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = writeMode == WriteMode.AutoCommit };
         await using AccessWriter writer = await OpenWriterAsync(ms, options, cancellationToken);
-        if (writeMode == WriteMode.ExplicitTransaction)
+        if (writeMode == WriteMode.ExplicitCommit)
         {
             await using JetTransaction transaction = await writer.BeginTransactionAsync(cancellationToken);
             await work(writer);

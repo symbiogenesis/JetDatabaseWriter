@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
 
@@ -37,7 +38,7 @@ public sealed class MultiValueDecimalTests
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task AddMultiValueItem_DecimalElement_KeepsDeclaredScale(ComplexWriteMode mode)
+    public async Task AddMultiValueItem_DecimalElement_KeepsDeclaredScale(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms, mode))

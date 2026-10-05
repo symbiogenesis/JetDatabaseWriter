@@ -7,12 +7,11 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
-using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
-/// The read side of one open database file's page I/O: the backing stream, the
-/// I/O gate that serializes seek-and-read access to it, the page cipher that
+/// The read side of one open database file's page I/O: the physical store,
+/// its independent I/O synchronization, and the page codec that
 /// decrypts each page after it is read, and positional <c>RandomAccess</c>
 /// reads for path-opened readers. It cannot write; the writer's
 /// <see cref="Pager"/> derives from it and adds writes and the transaction
@@ -21,17 +20,8 @@ using JetDatabaseWriter.Infrastructure;
 /// </summary>
 internal class PageFile : IPageSource, IAsyncDisposable
 {
-    private readonly bool leaveOpen;
+    private readonly IPageStore store;
     private readonly Type ownerType;
-
-#if NET6_0_OR_GREATER
-    /// <summary>
-    /// The backing <see cref="FileStream"/>'s handle, read once by
-    /// <see cref="EnableRandomAccessPageReadsIfSupported"/>; <see langword="null"/>
-    /// until then. The stream owns the handle and closes it on dispose.
-    /// </summary>
-    private Microsoft.Win32.SafeHandles.SafeFileHandle? randomAccessHandle;
-#endif
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PageFile"/> class.
@@ -41,12 +31,21 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <param name="pageKeys">The page cipher; the page file owns it and disposes it.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller keeps ownership of <paramref name="stream"/> and it is not disposed.</param>
     /// <param name="ownerType">The public type that owns the file, named by <see cref="ObjectDisposedException"/>s raised after disposal.</param>
-    internal PageFile(Stream stream, int pageSize, PageDecryptionKeys pageKeys, bool leaveOpen, Type ownerType)
+    internal PageFile(Stream stream, int pageSize, IPageCodec pageKeys, bool leaveOpen, Type ownerType)
+        : this(stream is MemoryStream memory ? new MemoryPageStore(memory, leaveOpen) : new StreamPageStore(stream, leaveOpen), pageSize, pageKeys, ownerType)
     {
-        this.Stream = stream;
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="PageFile"/> class over an owned store.</summary>
+    /// <param name="store">The owned physical store.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="pageKeys">The owned page codec.</param>
+    /// <param name="ownerType">The disposal exception owner.</param>
+    internal PageFile(IPageStore store, int pageSize, IPageCodec pageKeys, Type ownerType)
+    {
+        this.store = store;
         this.PageSize = pageSize;
         this.PageKeys = pageKeys;
-        this.leaveOpen = leaveOpen;
         this.ownerType = ownerType;
     }
 
@@ -61,13 +60,13 @@ internal class PageFile : IPageSource, IAsyncDisposable
     public bool IsDisposed { get; private set; }
 
     /// <summary>Gets the backing stream.</summary>
-    internal Stream Stream { get; }
+    internal Stream Stream => ((StreamPageStore)this.store).Stream;
 
     /// <summary>
     /// Gets the page count of the backing stream alone, ignoring any pages a
     /// writer's transaction has appended.
     /// </summary>
-    internal long PhysicalPageCount => this.Stream.Length / this.PageSize;
+    internal long PhysicalPageCount => this.store.Length / this.PageSize;
 
     /// <summary>
     /// Gets the length of the backing stream. Inside a writer's transaction
@@ -75,16 +74,16 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// stay in the journal until commit; use <see cref="PageCount"/> for page
     /// bounds.
     /// </summary>
-    internal long LengthBytes => this.Stream.Length;
+    internal long LengthBytes => this.store.Length;
 
     /// <summary>Gets a value indicating whether the backing stream is a <see cref="FileStream"/>.</summary>
-    internal bool IsFileBacked => this.Stream is FileStream;
+    internal bool IsFileBacked => this.store.Capabilities.IsFileBacked;
 
     /// <summary>
     /// Gets a value indicating whether <see cref="EnableRandomAccessPageReadsIfSupported"/>
     /// switched page reads to positional <c>RandomAccess</c> reads.
     /// </summary>
-    internal bool UsesRandomAccessPageReads { get; private set; }
+    internal bool UsesRandomAccessPageReads => this.store.Capabilities.PositionalReads;
 
     /// <summary>
     /// Gets or sets a value indicating whether a page read that starts on a
@@ -103,23 +102,20 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// </remarks>
     internal bool ReadsInlineOnThreadPool { get; set; }
 
-    /// <summary>
-    /// Gets the I/O gate that serializes seek-based stream access and, in the
-    /// writer, journal attach and detach. Never held across a page read or
-    /// write call: those take it themselves, and it is not reentrant.
-    /// </summary>
+    /// <summary>Gets the gate for journal access only. It is never held across a store call.</summary>
     private protected SemaphoreSlim IoGate { get; } = new(1, 1);
 
     /// <summary>Gets the page cipher: page reads decrypt with it, and the writer's page writes encrypt with it.</summary>
-    private protected PageDecryptionKeys PageKeys { get; }
+    private protected IPageCodec PageKeys { get; }
 
-    /// <summary>
-    /// Gets a value indicating whether a page read may bypass <see cref="IoGate"/>
-    /// through a positional <c>RandomAccess</c> read. The writer turns it off
-    /// while a transaction journal is attached, because a pending page must be
-    /// read from the journal under the gate.
-    /// </summary>
-    private protected virtual bool CanReadPositionally => true;
+    /// <summary>Gets the owned physical page store.</summary>
+    private protected IPageStore Store => this.store;
+
+    /// <summary>Gets whether the writer may have pending journal pages.</summary>
+    private protected virtual bool HasPendingPages => false;
+
+    /// <summary>Records a physical store read.</summary>
+    private protected virtual void OnStoreRead() { }
 
     /// <summary>
     /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.
@@ -152,49 +148,19 @@ internal class PageFile : IPageSource, IAsyncDisposable
     internal static FileStream OpenFileStream(string path, FileAccess access, FileShare share, FileOptions options) => FileStreamFactory.Open(path, FileMode.Open, access, share, options);
 
     /// <inheritdoc/>
-    public async ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
+    public virtual async ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-
-        byte[] buf = ArrayPool<byte>.Shared.Rent(this.PageSize);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(this.PageSize);
         try
         {
-#if NET6_0_OR_GREATER
-            if (this.randomAccessHandle is { } handle && this.CanReadPositionally)
-            {
-                if (this.CanReadInline())
-                {
-                    this.ReadPageRandomAccess(handle, pageNumber, buf);
-                }
-                else
-                {
-                    await this.ReadPageRandomAccessAsync(handle, pageNumber, buf, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            else
-#endif
+            bool pending = false;
+            if (this.HasPendingPages)
             {
                 await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    // Inside a writer's transaction, prefer the journal: the page
-                    // may be a transaction-local mutation (or an appended page that
-                    // has no on-disk slot yet). Journal bytes are plaintext, so a
-                    // hit skips the decrypt.
-                    if (this.TryCopyPendingPage(pageNumber, buf))
-                    {
-                        return buf;
-                    }
-
-                    _ = this.Stream.Seek(pageNumber * this.PageSize, SeekOrigin.Begin);
-                    if (this.CanReadInline())
-                    {
-                        this.ReadPageFromStream(buf);
-                    }
-                    else
-                    {
-                        await this.Stream.ReadExactlyAsync(buf.AsMemory(0, this.PageSize), cancellationToken).ConfigureAwait(false);
-                    }
+                    pending = this.TryCopyPendingPage(pageNumber, buffer);
                 }
                 finally
                 {
@@ -202,13 +168,18 @@ internal class PageFile : IPageSource, IAsyncDisposable
                 }
             }
 
-            EncryptionManager.DecryptPageInPlace(buf, pageNumber, this.PageSize, this.PageKeys);
+            if (!pending)
+            {
+                this.OnStoreRead();
+                await this.store.ReadAsync(pageNumber * this.PageSize, buffer.AsMemory(0, this.PageSize), this.CanReadInline(), cancellationToken).ConfigureAwait(false);
+                this.PageKeys.Decode(buffer, 0, pageNumber, this.PageSize);
+            }
 
-            return buf;
+            return buffer;
         }
         catch
         {
-            PageBuffers.Return(buf);
+            PageBuffers.Return(buffer);
             throw;
         }
     }
@@ -240,10 +211,7 @@ internal class PageFile : IPageSource, IAsyncDisposable
         this.IsDisposed = true;
         try
         {
-            if (!this.leaveOpen)
-            {
-                await this.Stream.DisposeAsync().ConfigureAwait(false);
-            }
+            await this.store.DisposeAsync().ConfigureAwait(false);
         }
         finally
         {
@@ -257,36 +225,16 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// and the shared stream position. Does nothing for other streams and in
     /// the netstandard2.1 build, which has no <c>RandomAccess</c>.
     /// </summary>
-    internal void EnableRandomAccessPageReadsIfSupported()
-    {
-#if NET6_0_OR_GREATER
-        // FileStream.SafeFileHandle is not a field read: every get flushes the
-        // stream's buffer and seeks the OS file pointer to the stream's
-        // position. Read once per page, it made RandomAccess page reads slower
-        // than seek-and-read through the stream, so the handle is kept here.
-        if (this.Stream is FileStream fileStream)
-        {
-            Microsoft.Win32.SafeHandles.SafeFileHandle handle = fileStream.SafeFileHandle;
-            if (!handle.IsInvalid && !handle.IsClosed)
-            {
-                this.randomAccessHandle = handle;
-                this.UsesRandomAccessPageReads = true;
-            }
-        }
-#else
-        this.UsesRandomAccessPageReads = false;
-
-        _ = this.UsesRandomAccessPageReads;
-#endif
-    }
+    internal void EnableRandomAccessPageReadsIfSupported() => ((StreamPageStore)this.store).EnablePositionalReads();
 
     /// <summary>
     /// Disposes the I/O gate and the page cipher, but not the backing stream.
     /// The owning reader or writer calls it when its construction fails before
     /// an instance can be returned to the caller and disposed normally.
     /// </summary>
-    internal void DisposeManagedResources()
+    internal virtual void DisposeManagedResources()
     {
+        this.store.DisposeManagedResources();
         this.IoGate.Dispose();
         this.PageKeys.Dispose();
     }
@@ -294,8 +242,8 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <summary>
     /// Copies the pending (not yet written) contents of <paramref name="pageNumber"/>
     /// into <paramref name="buffer"/> when the writer holds one. Called under
-    /// <see cref="IoGate"/>, in the same acquisition as the stream read it
-    /// replaces; a hit is plaintext and is not decrypted. The read-only page
+    /// <see cref="IoGate"/>; the gate is released before any store read.
+    /// A hit is plaintext and is not decrypted. The read-only page
     /// file has none.
     /// </summary>
     /// <param name="pageNumber">The page number.</param>
@@ -314,68 +262,4 @@ internal class PageFile : IPageSource, IAsyncDisposable
         && Thread.CurrentThread.IsThreadPoolThread
         && SynchronizationContext.Current is null
         && TaskScheduler.Current == TaskScheduler.Default;
-
-    /// <summary>
-    /// Reads one page from the backing stream's current position, blocking the
-    /// calling thread. The caller holds <see cref="IoGate"/>.
-    /// </summary>
-    /// <param name="page">The buffer that receives the page.</param>
-    /// <exception cref="EndOfStreamException">The stream ends before the page does.</exception>
-    private void ReadPageFromStream(byte[] page)
-    {
-        int totalRead = 0;
-        while (totalRead < this.PageSize)
-        {
-            int bytesRead = this.Stream.Read(page.AsSpan(totalRead, this.PageSize - totalRead));
-            if (bytesRead == 0)
-            {
-                throw new EndOfStreamException();
-            }
-
-            totalRead += bytesRead;
-        }
-    }
-
-#if NET6_0_OR_GREATER
-    /// <summary>Reads one page at its file offset through <paramref name="handle"/>, blocking the calling thread.</summary>
-    /// <param name="handle">The cached file handle.</param>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="page">The buffer that receives the page.</param>
-    /// <exception cref="EndOfStreamException">The file ends before the page does.</exception>
-    private void ReadPageRandomAccess(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long pageNumber, byte[] page)
-    {
-        long fileOffset = pageNumber * this.PageSize;
-        int totalRead = 0;
-        while (totalRead < this.PageSize)
-        {
-            int bytesRead = RandomAccess.Read(handle, page.AsSpan(totalRead, this.PageSize - totalRead), fileOffset + totalRead);
-            if (bytesRead == 0)
-            {
-                throw new EndOfStreamException();
-            }
-
-            totalRead += bytesRead;
-        }
-    }
-
-    private async ValueTask ReadPageRandomAccessAsync(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long pageNumber, byte[] page, CancellationToken cancellationToken)
-    {
-        long fileOffset = pageNumber * this.PageSize;
-        int totalRead = 0;
-        while (totalRead < this.PageSize)
-        {
-            int bytesRead = await RandomAccess.ReadAsync(
-                handle,
-                page.AsMemory(totalRead, this.PageSize - totalRead),
-                fileOffset + totalRead,
-                cancellationToken).ConfigureAwait(false);
-            if (bytesRead == 0)
-            {
-                throw new EndOfStreamException();
-            }
-
-            totalRead += bytesRead;
-        }
-    }
-#endif
 }

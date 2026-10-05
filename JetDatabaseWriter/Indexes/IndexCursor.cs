@@ -25,16 +25,6 @@ internal sealed class IndexCursor
     private readonly int pageSize;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="IndexCursor"/> class for Jet4 / ACE pages.
-    /// </summary>
-    /// <param name="readPage">The read page.</param>
-    /// <param name="pageSize">The page size.</param>
-    public IndexCursor(Func<long, CancellationToken, ValueTask<byte[]>> readPage, int pageSize)
-        : this(IndexPageLayout.Jet4, readPage, pageSize)
-    {
-    }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="IndexCursor"/> class using the supplied per-format index page layout.
     /// </summary>
     /// <param name="layout">The layout.</param>

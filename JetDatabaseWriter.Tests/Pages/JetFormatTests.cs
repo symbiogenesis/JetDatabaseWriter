@@ -70,13 +70,13 @@ public sealed class JetFormatTests
     /// the profile instead of comparing formats. The column types and features
     /// each format stores, Jet4's legacy Numeric index keys, the TDEF format
     /// magic and free-space word the writer stamps only on Jet4 and ACE, and
-    /// index seeks, which Jet3 lacks until its General 97 text keys are right.
+    /// index seeks on all supported formats.
     /// A flag added to the profile appears here and needs its rows updated.
     /// </summary>
     /// <param name="kind">The database format.</param>
     /// <param name="expectedTrueFlags">The profile's flags that are true, in name order.</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "IsJet3")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "IsJet3 SupportsIndexSeeks")]
     [InlineData(DatabaseFormat.Jet4Mdb, "LegacyNumericIndexKeys SupportsIndexSeeks SupportsNumeric WritesTDefFormatMagic WritesTDefFreeSpace")]
     [InlineData(DatabaseFormat.AceAccdb, "SupportsBigInt SupportsCalculatedColumns SupportsComplexColumns SupportsDateTimeExtended SupportsIndexSeeks SupportsNumeric WritesTDefFormatMagic WritesTDefFreeSpace")]
     public void CapabilityFlags_MatchFormat(DatabaseFormat kind, string expectedTrueFlags)

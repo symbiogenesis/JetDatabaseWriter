@@ -1155,13 +1155,13 @@ public sealed class CalculatedColumnWriteTests
     /// (strict) reader then reads every row, and every cached value equals its
     /// expression re-evaluated against the row.
     /// </summary>
-    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit (UseTransactionalWrites) or WriteMode.ExplicitCommit (a committed transaction).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
-    [InlineData("none")]
-    [InlineData("transactional")]
-    [InlineData("explicit")]
-    public async Task AccessAuthoredCalculatedColumns_InsertAndUpdate_StoreEachValueAsItsResultType(string mode)
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task AccessAuthoredCalculatedColumns_InsertAndUpdate_StoreEachValueAsItsResultType(WriteMode mode)
     {
         await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.CalcFieldTestV2010);
 
@@ -1408,13 +1408,13 @@ public sealed class CalculatedColumnWriteTests
     /// for False (the OLE Automation conversion), on insert and when an update
     /// recomputes it.
     /// </summary>
-    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit (UseTransactionalWrites) or WriteMode.ExplicitCommit (a committed transaction).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
-    [InlineData("none")]
-    [InlineData("transactional")]
-    [InlineData("explicit")]
-    public async Task InsertAndUpdate_BooleanExpressionInByteColumn_Stores255(string mode)
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task InsertAndUpdate_BooleanExpressionInByteColumn_Stores255(WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1473,7 +1473,7 @@ public sealed class CalculatedColumnWriteTests
             await writer.InsertRowAsync("CalcOverflow", [1, 2, DBNull.Value], TestContext.Current.CancellationToken);
         }
 
-        await WriteInModeAsync(stream, explicitTransaction ? "explicit" : "none", async writer =>
+        await WriteInModeAsync(stream, explicitTransaction ? WriteMode.ExplicitCommit : WriteMode.Direct, async writer =>
         {
             OverflowException exception = await Assert.ThrowsAsync<OverflowException>(async () =>
                 await writer.InsertRowAsync("CalcOverflow", [2, 5, DBNull.Value], TestContext.Current.CancellationToken));
@@ -1570,13 +1570,13 @@ public sealed class CalculatedColumnWriteTests
     /// General Date form, on insert and when an update recomputes it, whatever the
     /// current culture.
     /// </summary>
-    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit (UseTransactionalWrites) or WriteMode.ExplicitCommit (a committed transaction).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
-    [InlineData("none")]
-    [InlineData("transactional")]
-    [InlineData("explicit")]
-    public async Task InsertAndUpdate_DateInTextExpression_StoresGeneralDate(string mode)
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task InsertAndUpdate_DateInTextExpression_StoresGeneralDate(WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1614,12 +1614,12 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal("Due 12/9/2021 7:05:00 AM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Label"]);
     }
 
-    private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
+    private static async Task WriteInModeAsync(MemoryStream stream, WriteMode mode, Func<AccessWriter, Task> work)
     {
         await using AccessWriter writer = await OpenWriterAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" });
-        if (mode == "explicit")
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit });
+        if (mode == WriteMode.ExplicitCommit)
         {
             await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await work(writer);

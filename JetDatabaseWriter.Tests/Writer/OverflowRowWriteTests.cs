@@ -4,7 +4,6 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -36,31 +35,14 @@ public sealed class OverflowRowWriteTests
     /// <summary>The <c>ParentId</c> of the row the cascade tests move to an overflow slot (<c>Id</c> 1).</summary>
     private const int MovedChildParentId = 2;
 
-    /// <summary>How each test drives the writer.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The change runs inside one explicit transaction that is committed.</summary>
-        ExplicitCommit = 2,
-
-        /// <summary>The change runs inside one explicit transaction that is rolled back.</summary>
-        ExplicitRollback = 3,
-    }
-
     /// <summary>Gets the tables with overflow rows, each in every write mode.</summary>
-    public static TheoryData<string, WriteMode> OverflowSourcesAndModes => Combine(
+    public static TheoryData<string, WriteMode, bool> OverflowSourcesAndModes => Combine(
         nameof(TestDatabases.ExtDateTestV2019),
         nameof(TestDatabases.OverflowTestV2000),
         "SyntheticJet3");
 
     /// <summary>Gets the tables with overflow rows that have a text column to update, each in every write mode.</summary>
-    public static TheoryData<string, WriteMode> UpdateSourcesAndModes => Combine(
+    public static TheoryData<string, WriteMode, bool> UpdateSourcesAndModes => Combine(
         nameof(TestDatabases.ExtDateTestV2019),
         nameof(TestDatabases.OverflowTestV2000),
         "SyntheticJet3");
@@ -83,8 +65,8 @@ public sealed class OverflowRowWriteTests
         }
     }
 
-    /// <summary>Gets every write mode.</summary>
-    public static TheoryData<WriteMode> Modes => [.. Enum.GetValues<WriteMode>()];
+    /// <summary>Gets each shared write mode and a local rollback flag.</summary>
+    public static TheoryData<WriteMode, bool> Modes => new() { { WriteMode.Direct, false }, { WriteMode.AutoCommit, false }, { WriteMode.ExplicitCommit, false }, { WriteMode.ExplicitCommit, true } };
 
     public static TheoryData<DatabaseFormat> Formats =>
     [
@@ -101,9 +83,10 @@ public sealed class OverflowRowWriteTests
     /// </summary>
     /// <param name="source">The table with overflow rows.</param>
     /// <param name="mode">How the writer runs the delete.</param>
+    /// <param name="rollback">Whether to roll back the explicit transaction.</param>
     [Theory]
     [MemberData(nameof(OverflowSourcesAndModes))]
-    public async Task DeleteRows_All_OnOverflowRows_RemovesThemAndTheirIndexEntries(string source, WriteMode mode)
+    public async Task DeleteRows_All_OnOverflowRows_RemovesThemAndTheirIndexEntries(string source, WriteMode mode, bool rollback)
     {
         (byte[] bytes, string table) = await LoadAsync(source);
         List<(long Page, int Row)> headers = await FindOverflowHeadersAsync(bytes, table);
@@ -115,11 +98,11 @@ public sealed class OverflowRowWriteTests
         int deleted = 0;
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            await RunAsync(writer, mode, async () => deleted = await writer.DeleteRowsAsync(table, RowCriteria.All(), Ct));
+            await RunAsync(writer, mode, rollback, async () => deleted = await writer.DeleteRowsAsync(table, RowCriteria.All(), Ct));
         }
 
         byte[] after = ms.ToArray();
-        bool rolledBack = mode == WriteMode.ExplicitRollback;
+        bool rolledBack = rollback;
         Assert.Equal(rowCount, deleted);
         Assert.Equal(rolledBack ? rowCount : 0, await CountRowsAsync(after, table));
         (int pageSize, int rowsStart) = await PageLayoutAsync(after);
@@ -134,9 +117,10 @@ public sealed class OverflowRowWriteTests
     /// Deleting one overflow row by key removes exactly that row and its index entry.
     /// </summary>
     /// <param name="mode">How the writer runs the delete.</param>
+    /// <param name="rollback">Whether to roll back the explicit transaction.</param>
     [Theory]
     [MemberData(nameof(Modes))]
-    public async Task DeleteRows_ByKey_OverflowRow(WriteMode mode)
+    public async Task DeleteRows_ByKey_OverflowRow(WriteMode mode, bool rollback)
     {
         byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.ExtDateTestV2019, Ct);
         Assert.True(await IsOverflowRowAsync(bytes, "Table1", "ID", 7), "ID 7 of extDateTestV2019 should be an overflow row.");
@@ -145,11 +129,11 @@ public sealed class OverflowRowWriteTests
         await ms.WriteAsync(bytes, Ct);
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            await RunAsync(writer, mode, async () => Assert.Equal(1, await writer.DeleteRowsAsync("Table1", "ID", 7, Ct)));
+            await RunAsync(writer, mode, rollback, async () => Assert.Equal(1, await writer.DeleteRowsAsync("Table1", "ID", 7, Ct)));
         }
 
         byte[] after = ms.ToArray();
-        int expected = mode == WriteMode.ExplicitRollback ? 9 : 8;
+        int expected = rollback ? 9 : 8;
         Assert.Equal(expected, await CountRowsAsync(after, "Table1"));
         Assert.Equal(expected, await CountPrimaryKeyEntriesAsync(after, "Table1"));
         await AssertEverySeekHitsOnceAsync(after, "Table1", "ID");
@@ -161,9 +145,10 @@ public sealed class OverflowRowWriteTests
     /// </summary>
     /// <param name="source">The table with overflow rows.</param>
     /// <param name="mode">How the writer runs the update.</param>
+    /// <param name="rollback">Whether to roll back the explicit transaction.</param>
     [Theory]
     [MemberData(nameof(UpdateSourcesAndModes))]
-    public async Task UpdateRows_All_OnOverflowRows_RewritesEveryRow(string source, WriteMode mode)
+    public async Task UpdateRows_All_OnOverflowRows_RewritesEveryRow(string source, WriteMode mode, bool rollback)
     {
         (byte[] bytes, string table) = await LoadAsync(source);
         List<(long Page, int Row)> headers = await FindOverflowHeadersAsync(bytes, table);
@@ -176,20 +161,20 @@ public sealed class OverflowRowWriteTests
         int updated = 0;
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            await RunAsync(writer, mode, async () => updated = await writer.UpdateRowsAsync(table, RowCriteria.All(), RowValues.Create().Set(column, "updated"), Ct));
+            await RunAsync(writer, mode, rollback, async () => updated = await writer.UpdateRowsAsync(table, RowCriteria.All(), RowValues.Create().Set(column, "updated"), Ct));
         }
 
         // An update rewrites each row in a new slot and deletes the old one, so
         // every overflow header ends up flagged deleted.
         byte[] after = ms.ToArray();
         (int pageSize, int rowsStart) = await PageLayoutAsync(after);
-        Assert.All(headers, h => Assert.Equal(mode == WriteMode.ExplicitRollback ? OverflowHeader : OverflowFlags, SyntheticOverflowRows.ReadSlot(after, pageSize, rowsStart, h.Page, h.Row) & OverflowFlags));
+        Assert.All(headers, h => Assert.Equal(rollback ? OverflowHeader : OverflowFlags, SyntheticOverflowRows.ReadSlot(after, pageSize, rowsStart, h.Page, h.Row) & OverflowFlags));
         Assert.Equal(rowCount, updated);
         await using AccessReader reader = await OpenReaderAsync(after);
         using DataTable data = await reader.ReadDataTableAsync(table, cancellationToken: Ct);
         Assert.Equal(rowCount, data.Rows.Count);
         int changed = data.Rows.Cast<DataRow>().Count(row => Equals(row[column], "updated"));
-        Assert.Equal(mode == WriteMode.ExplicitRollback ? 0 : rowCount, changed);
+        Assert.Equal(rollback ? 0 : rowCount, changed);
         if (await CountPrimaryKeyEntriesAsync(after, table) is int entries)
         {
             Assert.Equal(rowCount, entries);
@@ -251,7 +236,7 @@ public sealed class OverflowRowWriteTests
         await ms.WriteAsync(bytes, Ct);
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            await RunAsync(writer, mode, async () => Assert.Equal(1, await writer.DeleteRowsAsync("Parents", "Id", MovedChildParentId, Ct)));
+            await RunAsync(writer, mode, false, async () => Assert.Equal(1, await writer.DeleteRowsAsync("Parents", "Id", MovedChildParentId, Ct)));
         }
 
         byte[] after = ms.ToArray();
@@ -363,9 +348,10 @@ public sealed class OverflowRowWriteTests
     /// through its header slot.
     /// </summary>
     /// <param name="mode">How the writer runs the drop.</param>
+    /// <param name="rollback">Whether to roll back the explicit transaction.</param>
     [Theory]
     [MemberData(nameof(Modes))]
-    public async Task DropTable_TableWithOverflowCatalogRow_RemovesIt(WriteMode mode)
+    public async Task DropTable_TableWithOverflowCatalogRow_RemovesIt(WriteMode mode, bool rollback)
     {
         await using MemoryStream ms = await CopyAsync(TestDatabases.NorthwindTraders);
         byte[] before = ms.ToArray();
@@ -375,11 +361,11 @@ public sealed class OverflowRowWriteTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            await RunAsync(writer, mode, async () => await writer.DropTableAsync("Welcome", Ct));
+            await RunAsync(writer, mode, rollback, async () => await writer.DropTableAsync("Welcome", Ct));
         }
 
         byte[] after = ms.ToArray();
-        bool rolledBack = mode == WriteMode.ExplicitRollback;
+        bool rolledBack = rollback;
         await using AccessReader reader = await OpenReaderAsync(after);
         Assert.Equal(rolledBack, (await reader.ListTablesAsync(Ct)).Contains("Welcome"));
         Assert.Equal(rolledBack ? OverflowHeader : OverflowFlags, await ReadSlotFlagsAsync(after, welcome.PageNumber, welcome.RowIndex));
@@ -632,14 +618,14 @@ public sealed class OverflowRowWriteTests
         return result;
     }
 
-    private static TheoryData<string, WriteMode> Combine(params string[] sources)
+    private static TheoryData<string, WriteMode, bool> Combine(params string[] sources)
     {
-        var data = new TheoryData<string, WriteMode>();
+        var data = new TheoryData<string, WriteMode, bool>();
         foreach (string source in sources)
         {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach ((WriteMode mode, bool rollback) in new[] { (WriteMode.Direct, false), (WriteMode.AutoCommit, false), (WriteMode.ExplicitCommit, false), (WriteMode.ExplicitCommit, true) })
             {
-                data.Add(source, mode);
+                data.Add(source, mode, rollback);
             }
         }
 
@@ -673,7 +659,7 @@ public sealed class OverflowRowWriteTests
         ms.Position = 0;
         return await AccessWriter.OpenAsync(
             ms,
-            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = mode == WriteMode.AutoCommit },
+            WriteModes.WriterOptions(mode),
             leaveOpen: true,
             Ct);
     }
@@ -681,7 +667,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<AccessReader> OpenReaderAsync(byte[] bytes)
         => await AccessReader.OpenAsync(new MemoryStream(bytes, writable: false), new AccessReaderOptions { UseLockFile = false }, leaveOpen: false, Ct);
 
-    private static async Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
+    private static async Task RunAsync(AccessWriter writer, WriteMode mode, bool rollback, Func<Task> work)
     {
         if (mode is WriteMode.Direct or WriteMode.AutoCommit)
         {
@@ -691,7 +677,7 @@ public sealed class OverflowRowWriteTests
 
         await using JetTransaction tx = await writer.BeginTransactionAsync(Ct);
         await work();
-        if (mode == WriteMode.ExplicitCommit)
+        if (!rollback)
         {
             await tx.CommitAsync(Ct);
         }

@@ -44,6 +44,23 @@ internal sealed class CatalogWriter(
     ConstraintRegistry constraints,
     CatalogRowReader catalogRows)
 {
+    private int checkedCatalogGeneration = -1;
+
+    /// <summary>Checks the catalog's indexes once for each catalog generation before DDL writes.</summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask ThrowIfCatalogIndexesUnmaintainableAsync(CancellationToken cancellationToken)
+    {
+        int generation = catalog.Generation;
+        if (this.checkedCatalogGeneration == generation)
+        {
+            return;
+        }
+
+        TableDef definition = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await indexes.ThrowIfIndexesUnmaintainableAsync(2, definition, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        this.checkedCatalogGeneration = generation;
+    }
+
     /// <summary>
     /// Inserts a new row into <c>MSysObjects</c> with the specified flags.
     /// </summary>
@@ -54,6 +71,7 @@ internal sealed class CatalogWriter(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
     {
+        await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, tableName, cancellationToken).ConfigureAwait(false);
 
@@ -84,6 +102,7 @@ internal sealed class CatalogWriter(
     /// <returns>The inserted <c>MSysObjects.Id</c> value.</returns>
     internal async ValueTask<int> InsertCatalogObjectAsync(CatalogObjectArtifact artifact, CancellationToken cancellationToken = default)
     {
+        await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         await this.EnsureCatalogContainerNameAvailableAsync(msys, artifact.ParentId, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
 
@@ -416,6 +435,7 @@ internal sealed class CatalogWriter(
         string? missingMessage,
         CancellationToken cancellationToken)
     {
+        await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var droppedTdefPages = new List<long>();

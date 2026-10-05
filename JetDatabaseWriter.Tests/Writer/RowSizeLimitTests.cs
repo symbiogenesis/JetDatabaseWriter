@@ -39,11 +39,22 @@ public sealed class RowSizeLimitTests
     /// <summary>Gets every format in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
     public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes()
-        => WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
+        => new()
+        {
+            { DatabaseFormat.Jet3Mdb, WriteMode.Direct },
+            { DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit },
+            { DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit },
+            { DatabaseFormat.Jet4Mdb, WriteMode.Direct },
+            { DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit },
+            { DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit },
+            { DatabaseFormat.AceAccdb, WriteMode.Direct },
+            { DatabaseFormat.AceAccdb, WriteMode.AutoCommit },
+            { DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit },
+        };
 
     /// <summary>Gets every write mode.</summary>
     /// <returns>The write modes.</returns>
-    public static TheoryData<WriteMode> Modes() => [.. Enum.GetValues<WriteMode>()];
+    public static TheoryData<WriteMode> Modes() => [.. new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit }];
 
     /// <summary>
     /// The README's "Table and row size" case: a row of <c>Id</c> and
@@ -207,19 +218,19 @@ public sealed class RowSizeLimitTests
     /// (an explicit transaction is committed after the failure).
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "direct")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "direct")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
-    [InlineData(DatabaseFormat.AceAccdb, "direct")]
-    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
-    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
-    public async Task RowLargerThanAPage_ThrowsJetLimitationException_AndWritesNothing(DatabaseFormat format, string mode)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    public async Task RowLargerThanAPage_ThrowsJetLimitationException_AndWritesNothing(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int binaryColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
@@ -239,20 +250,20 @@ public sealed class RowSizeLimitTests
     /// placeholder for the value's LVAL header.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
     /// <param name="freePages">Whether a dropped table has left free pages for the LVAL pages to reuse.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "direct", false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, "direct", true)]
-    [InlineData(DatabaseFormat.Jet3Mdb, "explicit", true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, "direct", false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, "direct", true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, "transactional", false)]
-    [InlineData(DatabaseFormat.AceAccdb, "direct", false)]
-    [InlineData(DatabaseFormat.AceAccdb, "direct", true)]
-    [InlineData(DatabaseFormat.AceAccdb, "explicit", false)]
-    public async Task RowLargerThanAPage_WithAMemoBoundForLvalPages_WritesNothing(DatabaseFormat format, string mode, bool freePages)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit, false)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct, false)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct, true)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit, false)]
+    public async Task RowLargerThanAPage_WithAMemoBoundForLvalPages_WritesNothing(DatabaseFormat format, WriteMode mode, bool freePages)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int binaryColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
@@ -317,19 +328,19 @@ public sealed class RowSizeLimitTests
     /// the failure).
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "direct")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "direct")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
-    [InlineData(DatabaseFormat.AceAccdb, "direct")]
-    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
-    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
-    public async Task UpdateGrowingRowPastAPage_ThrowsJetLimitationException_AndKeepsTheRow(DatabaseFormat format, string mode)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    public async Task UpdateGrowingRowPastAPage_ThrowsJetLimitationException_AndKeepsTheRow(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int binaryColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
@@ -357,19 +368,19 @@ public sealed class RowSizeLimitTests
     /// 250 bytes too.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "direct")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "explicit")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "direct")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "transactional")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "explicit")]
-    [InlineData(DatabaseFormat.AceAccdb, "direct")]
-    [InlineData(DatabaseFormat.AceAccdb, "transactional")]
-    [InlineData(DatabaseFormat.AceAccdb, "explicit")]
-    public async Task UpdateGrowingALaterRowPastAPage_ChangesNoRow(DatabaseFormat format, string mode)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    public async Task UpdateGrowingALaterRowPastAPage_ChangesNoRow(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int binaryColumns = format == DatabaseFormat.Jet3Mdb ? 9 : 17;
@@ -474,7 +485,7 @@ public sealed class RowSizeLimitTests
     /// </summary>
     /// <param name="ms">The database.</param>
     /// <param name="format">The database format.</param>
-    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
     /// <param name="criteria">The rows to update.</param>
     /// <param name="changes">Changes that grow a matching row past a page.</param>
     /// <param name="expectedRows">The table's rows, in table order.</param>
@@ -483,16 +494,16 @@ public sealed class RowSizeLimitTests
     private static async Task AssertOversizedUpdateWritesNothingAsync(
         MemoryStream ms,
         DatabaseFormat format,
-        string mode,
+        WriteMode mode,
         RowCriteria criteria,
         RowValues changes,
         object[][] expectedRows,
         CancellationToken cancellationToken)
     {
         byte[] before = ms.ToArray();
-        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" }, cancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit }, cancellationToken))
         {
-            JetTransaction? transaction = mode == "explicit" ? await writer.BeginTransactionAsync(cancellationToken) : null;
+            JetTransaction? transaction = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(cancellationToken) : null;
             JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.UpdateRowsAsync(TableName, criteria, changes, cancellationToken));
             Assert.Contains($"{MaxRowLength(format)}-byte maximum", ex.Message, StringComparison.Ordinal);
 
@@ -517,16 +528,16 @@ public sealed class RowSizeLimitTests
     /// </summary>
     /// <param name="ms">The database.</param>
     /// <param name="format">The database format.</param>
-    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
     /// <param name="row">A row larger than a page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    private static async Task AssertOversizedInsertWritesNothingAsync(MemoryStream ms, DatabaseFormat format, string mode, object[] row, CancellationToken cancellationToken)
+    private static async Task AssertOversizedInsertWritesNothingAsync(MemoryStream ms, DatabaseFormat format, WriteMode mode, object[] row, CancellationToken cancellationToken)
     {
         byte[] before = ms.ToArray();
-        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" }, cancellationToken))
+        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit }, cancellationToken))
         {
-            JetTransaction? transaction = mode == "explicit" ? await writer.BeginTransactionAsync(cancellationToken) : null;
+            JetTransaction? transaction = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(cancellationToken) : null;
             JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () => await writer.InsertRowAsync(TableName, row, cancellationToken));
             Assert.Contains($"{MaxRowLength(format)}-byte maximum", ex.Message, StringComparison.Ordinal);
 

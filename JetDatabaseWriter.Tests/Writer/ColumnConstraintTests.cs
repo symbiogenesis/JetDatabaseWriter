@@ -517,16 +517,16 @@ public sealed class ColumnConstraintTests
     }
 
     /// <summary>Gets every format, in the declaring and a reopened writer, with each write mode.</summary>
-    public static TheoryData<DatabaseFormat, bool, string> EveryWriterCases
+    public static TheoryData<DatabaseFormat, bool, WriteMode> EveryWriterCases
     {
         get
         {
-            var data = new TheoryData<DatabaseFormat, bool, string>();
+            var data = new TheoryData<DatabaseFormat, bool, WriteMode>();
             foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
             {
                 foreach (bool reopened in new[] { false, true })
                 {
-                    foreach (string mode in new[] { "none", "transactional", "explicit" })
+                    foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
                     {
                         data.Add(format, reopened, mode);
                     }
@@ -546,11 +546,11 @@ public sealed class ColumnConstraintTests
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="reopened">Whether a later writer, which reads the expressions from the file, does the writes.</param>
-    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit (UseTransactionalWrites) or WriteMode.ExplicitCommit (a committed transaction).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(EveryWriterCases))]
-    public async Task DateArithmeticDefaultAndRule_AreApplied_InEveryWriter(DatabaseFormat format, bool reopened, string mode)
+    public async Task DateArithmeticDefaultAndRule_AreApplied_InEveryWriter(DatabaseFormat format, bool reopened, WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "DateRule";
@@ -598,11 +598,11 @@ public sealed class ColumnConstraintTests
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="reopened">Whether a later writer, which reads the expressions from the file, does the writes.</param>
-    /// <param name="mode">"none", "transactional" (UseTransactionalWrites) or "explicit" (a committed transaction).</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit (UseTransactionalWrites) or WriteMode.ExplicitCommit (a committed transaction).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(EveryWriterCases))]
-    public async Task SingleQuotedDefaultAndHexRule_AreApplied_InEveryWriter(DatabaseFormat format, bool reopened, string mode)
+    public async Task SingleQuotedDefaultAndHexRule_AreApplied_InEveryWriter(DatabaseFormat format, bool reopened, WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const string table = "LiteralRule";
@@ -983,16 +983,16 @@ public sealed class ColumnConstraintTests
     /// <see cref="OverflowException"/> on such a row, so CreateTableAsync failed.
     /// </summary>
     /// <param name="defaultCount">The number of defaulted columns.</param>
-    /// <param name="mode">"direct", "transactional" or "explicit".</param>
+    /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
-    [InlineData(4, "direct")]
-    [InlineData(4, "transactional")]
-    [InlineData(4, "explicit")]
-    [InlineData(5, "direct")]
-    [InlineData(5, "transactional")]
-    [InlineData(5, "explicit")]
-    public async Task Jet3ClrDefaults_LongCatalogRow_AreAppliedByALaterWriter(int defaultCount, string mode)
+    [InlineData(4, WriteMode.Direct)]
+    [InlineData(4, WriteMode.AutoCommit)]
+    [InlineData(4, WriteMode.ExplicitCommit)]
+    [InlineData(5, WriteMode.Direct)]
+    [InlineData(5, WriteMode.AutoCommit)]
+    [InlineData(5, WriteMode.ExplicitCommit)]
+    public async Task Jet3ClrDefaults_LongCatalogRow_AreAppliedByALaterWriter(int defaultCount, WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
         const string table = "DateDefaults";
@@ -1295,12 +1295,12 @@ public sealed class ColumnConstraintTests
             TestContext.Current.CancellationToken);
     }
 
-    private static async Task WriteInModeAsync(MemoryStream stream, string mode, Func<AccessWriter, Task> work)
+    private static async Task WriteInModeAsync(MemoryStream stream, WriteMode mode, Func<AccessWriter, Task> work)
     {
         await using AccessWriter writer = await OpenWriterAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == "transactional" });
-        if (mode == "explicit")
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit });
+        if (mode == WriteMode.ExplicitCommit)
         {
             await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
             await work(writer);

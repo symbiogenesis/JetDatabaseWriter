@@ -38,12 +38,12 @@ public sealed class ComplexColumnIndexFixtureTests
     };
 
     /// <summary>Gets the Access-authored tables with complex columns that the update test changes, in every write mode.</summary>
-    public static TheoryData<string, ComplexWriteMode> UpdateCases()
+    public static TheoryData<string, WriteMode> UpdateCases()
     {
-        var data = new TheoryData<string, ComplexWriteMode>();
+        var data = new TheoryData<string, WriteMode>();
         foreach (string fixture in new[] { TestDatabases.NorthwindTraders, TestDatabases.ComplexDataTestV2007, TestDatabases.ComplexDataTestV2010 })
         {
-            foreach (ComplexWriteMode mode in Enum.GetValues<ComplexWriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(fixture, mode);
             }
@@ -83,7 +83,7 @@ public sealed class ComplexColumnIndexFixtureTests
 
     [Theory]
     [MemberData(nameof(UpdateCases))]
-    public async Task UpdateRows_AccessTableWithComplexColumns_Succeeds(string fixture, ComplexWriteMode mode)
+    public async Task UpdateRows_AccessTableWithComplexColumns_Succeeds(string fixture, WriteMode mode)
     {
         (string table, string keyColumn, object key, string column) = fixture == TestDatabases.NorthwindTraders
             ? ("ProductCategories", "ProductCategoryID", (object)1, "ProductCategoryDesc")
@@ -114,7 +114,7 @@ public sealed class ComplexColumnIndexFixtureTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task DeleteRows_AccessTableWithComplexColumns_RemovesRowAndFlatChildren(ComplexWriteMode mode)
+    public async Task DeleteRows_AccessTableWithComplexColumns_RemovesRowAndFlatChildren(WriteMode mode)
     {
         await using MemoryStream ms = await CopyFixtureAsync(TestDatabases.ComplexDataTestV2007);
         RawTable original = await ReadRawTableAsync(ms, "Table1");

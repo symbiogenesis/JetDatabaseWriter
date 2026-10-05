@@ -35,8 +35,9 @@ internal static class IndexPlanner
     /// </summary>
     /// <param name="indexes">Candidate indexes for the table.</param>
     /// <param name="criteria">The pushable necessary conditions extracted from the predicate.</param>
+    /// <param name="canEncode">Optional check that the candidate's seek keys can be encoded.</param>
     /// <returns>The chosen plan, or <see langword="null"/> for a full scan.</returns>
-    public static IndexPlan? TryPlan(IReadOnlyList<IndexMetadata> indexes, RowCriteria criteria)
+    public static IndexPlan? TryPlan(IReadOnlyList<IndexMetadata> indexes, RowCriteria criteria, Func<IndexPlan, bool>? canEncode = null)
     {
         Guard.NotNull(indexes, nameof(indexes));
         Guard.NotNull(criteria, nameof(criteria));
@@ -56,7 +57,7 @@ internal static class IndexPlanner
         foreach (IndexMetadata index in indexes)
         {
             IndexPlan? candidate = TryPlanIndex(index, constraints);
-            if (candidate is not null && IsBetter(candidate, best))
+            if (candidate is not null && (canEncode is null || canEncode(candidate)) && IsBetter(candidate, best))
             {
                 best = candidate;
             }

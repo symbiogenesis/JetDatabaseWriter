@@ -1,0 +1,101 @@
+namespace JetDatabaseWriter.Tests.Pages.Paging;
+
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Tests.Infrastructure;
+using Xunit;
+
+/// <summary>Checks physical-store capabilities, ownership and concurrent I/O.</summary>
+public sealed class PageStoreTests
+{
+    /// <summary>Memory stores expose in-place pages without file durability.</summary>
+    [Fact]
+    public async Task Memory_Capabilities_AndOwnership()
+    {
+        using var stream = new MemoryStream();
+        await using (var store = new MemoryPageStore(stream, leaveOpen: true))
+        {
+            Assert.Equal(new StoreCapabilities(false, false, false, false, false, true), store.Capabilities);
+            await store.WriteAsync(0, new byte[] { 1, 2, 3 }, TestContext.Current.CancellationToken);
+            byte[] page = new byte[3];
+            await store.ReadAsync(0, page, false, TestContext.Current.CancellationToken);
+            Assert.Equal(new byte[] { 1, 2, 3 }, page);
+            await store.SetLengthAsync(2, TestContext.Current.CancellationToken);
+            Assert.Equal(2, store.Length);
+        }
+
+        Assert.True(stream.CanRead);
+    }
+
+    /// <summary>A short read releases the seek gate so the store remains usable.</summary>
+    [Fact]
+    public async Task ShortRead_DoesNotLeakGate()
+    {
+        using var stream = new MemoryStream();
+        await using var store = new MemoryPageStore(stream, leaveOpen: true);
+        _ = await Assert.ThrowsAsync<EndOfStreamException>(async () => await store.ReadAsync(0, new byte[16], false, TestContext.Current.CancellationToken));
+        await store.WriteAsync(0, new byte[16], TestContext.Current.CancellationToken);
+        await store.ReadAsync(0, new byte[16], false, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Seek-based operations cannot corrupt each other's stream position.</summary>
+    [Fact]
+    public async Task ConcurrentReads_UseTheirOwnOffsets()
+    {
+        using var stream = new MemoryStream(new byte[] { 1, 2, 3, 4 });
+        await using var store = new MemoryPageStore(stream, leaveOpen: true);
+        byte[] first = new byte[2];
+        byte[] second = new byte[2];
+        Task one = store.ReadAsync(0, first, false, TestContext.Current.CancellationToken).AsTask();
+        Task two = store.ReadAsync(2, second, false, TestContext.Current.CancellationToken).AsTask();
+        await Task.WhenAll(one, two);
+        Assert.Equal(new byte[] { 1, 2 }, first);
+        Assert.Equal(new byte[] { 3, 4 }, second);
+    }
+
+    /// <summary>File stores advertise durability and preserve position on positional reads.</summary>
+    [Fact]
+    public async Task File_PositionalReads_AndDurableFlush()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"PageStore_{Guid.NewGuid():N}.bin");
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite);
+            await stream.WriteAsync(new byte[] { 1, 2, 3, 4 }, TestContext.Current.CancellationToken);
+            await using var store = new StreamPageStore(stream, leaveOpen: true);
+            store.EnablePositionalReads();
+            Assert.True(store.Capabilities.IsFileBacked);
+            Assert.True(store.Capabilities.DurableFlush);
+            Assert.False(store.Capabilities.AtomicCommit);
+            Assert.Equal(!LibraryTarget.IsNetStandard, store.Capabilities.PositionalReads);
+            stream.Position = 3;
+            byte[] page = new byte[2];
+            await store.ReadAsync(0, page, false, TestContext.Current.CancellationToken);
+            Assert.Equal(new byte[] { 1, 2 }, page);
+            if (!LibraryTarget.IsNetStandard)
+            {
+                Assert.Equal(3, stream.Position);
+            }
+
+            await store.FlushAsync(true, TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Construction cleanup releases synchronization without taking stream ownership.</summary>
+    [Fact]
+    public void ConstructionCleanup_LeavesCallerStreamOpen()
+    {
+        using var stream = new MemoryStream();
+        var store = new MemoryPageStore(stream, leaveOpen: true);
+        store.DisposeManagedResources();
+        store.DisposeManagedResources();
+        Assert.True(stream.CanRead);
+    }
+}

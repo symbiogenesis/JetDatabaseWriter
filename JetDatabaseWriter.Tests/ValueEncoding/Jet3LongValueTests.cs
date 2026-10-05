@@ -47,33 +47,21 @@ public sealed class Jet3LongValueTests
         (6000, 9000),
     ];
 
-    private enum WriteMode
-    {
-        /// <summary>Each write commits on its own.</summary>
-        AutoCommit = 0,
-
-        /// <summary>The writer journals each operation (<see cref="AccessWriterOptions.UseTransactionalWrites"/>).</summary>
-        TransactionalWrites = 1,
-
-        /// <summary>One explicit transaction holds the inserts and an update of the chained row.</summary>
-        ExplicitTransaction = 2,
-    }
-
     [Theory]
-    [InlineData(nameof(WriteMode.AutoCommit))]
-    [InlineData(nameof(WriteMode.TransactionalWrites))]
-    [InlineData(nameof(WriteMode.ExplicitTransaction))]
-    public async Task RoundTrip_EveryStorageForm_ReadsBackThroughEveryReadApi(string mode)
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task RoundTrip_EveryStorageForm_ReadsBackThroughEveryReadApi(WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        WriteMode writeMode = Enum.Parse<WriteMode>(mode);
+        WriteMode writeMode = mode;
         await using MemoryStream ms = await CreateDatabaseAsync(ct);
 
-        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = writeMode == WriteMode.TransactionalWrites };
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = writeMode == WriteMode.AutoCommit };
         string lastNote = "n" + Sizes.Length;
         await using (AccessWriter writer = await OpenWriterAsync(ms, options, ct))
         {
-            JetTransaction? transaction = writeMode == WriteMode.ExplicitTransaction ? await writer.BeginTransactionAsync(ct) : null;
+            JetTransaction? transaction = writeMode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(ct) : null;
             for (int id = 1; id <= Sizes.Length; id++)
             {
                 await writer.InsertRowAsync(TableName, [id, "n" + id, Memo(id), Ole(id)], ct);

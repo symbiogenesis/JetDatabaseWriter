@@ -48,7 +48,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool outerEncryptedLeaveOpen = false,
         AccessEncryptionFormat outerEncryptedFormat = AccessEncryptionFormat.None,
         bool leaveOpen = false)
-        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager))
+        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize))
     {
         this.options = options;
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);

@@ -60,6 +60,14 @@ internal static class General97TextIndexEncoder
     /// <param name="text">The text to encode.</param>
     /// <param name="ascending">The ascending.</param>
     public static byte[] Encode(string? text, bool ascending)
+        => Encode(text, ascending, trimTrailingSpaces: true);
+
+    /// <summary>Encodes text with control over index-key trailing-space trimming.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="ascending">The direction.</param>
+    /// <param name="trimTrailingSpaces">Whether to trim trailing spaces.</param>
+    /// <returns>The encoded entry.</returns>
+    internal static byte[] Encode(string? text, bool ascending, bool trimTrailingSpaces)
     {
         if (text is null)
         {
@@ -71,7 +79,11 @@ internal static class General97TextIndexEncoder
         // Per Jackcess GeneralLegacyIndexCodes.toIndexCharSequence — same
         // truncation/trim rule used for all sort orders (TEXT_FIELD_MAX_LENGTH
         // / TEXT_FIELD_UNIT_SIZE = 127 chars).
-        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength)).TrimEnd(' ');
+        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength));
+        if (trimTrailingSpaces)
+        {
+            chars = chars.TrimEnd(' ');
+        }
         int extraByteCapacity = GetExtraByteCapacity(chars.Length);
 
         var bytes = new List<byte>(chars.Length + extraByteCapacity + 2)

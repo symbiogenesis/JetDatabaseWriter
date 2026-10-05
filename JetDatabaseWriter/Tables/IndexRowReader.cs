@@ -15,6 +15,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -151,6 +152,67 @@ internal sealed class IndexRowReader(
         return this.RowsInferredAsync(tableName, compiled, pushable, progress, cancellationToken);
     }
 
+    /// <summary>Lists indexes whose text columns have a supported Access sort order.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask<IReadOnlyList<IndexMetadata>> ListSeekableIndexesAsync(string tableName, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved is null)
+        {
+            return [];
+        }
+
+        IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
+        var result = new List<IndexMetadata>();
+        foreach (IndexMetadata index in indexes)
+        {
+            bool supported = true;
+            foreach (IndexColumnReference key in index.Columns)
+            {
+                ColumnInfo? column = resolved.Definition.Columns.Find(c => c.ColNum == key.ColumnNumber);
+                if (column is null || (column.Type is TextType or MemoType && !column.TextSortOrder.IsSupported))
+                {
+                    supported = false;
+                    break;
+                }
+            }
+
+            if (supported)
+            {
+                result.Add(index);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Checks every join key before Include chooses an index seek.</summary>
+    /// <param name="tableName">The related table.</param>
+    /// <param name="index">The candidate index.</param>
+    /// <param name="keys">The join keys.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask<bool> CanEncodeKeysAsync(string tableName, IndexMetadata index, IEnumerable<object?[]> keys, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (resolved is null)
+        {
+            return false;
+        }
+
+        foreach (object?[] key in keys)
+        {
+            if (!CanEncodePlan(format, resolved.Definition, tableName, new IndexPlan(index, IndexQueryCriteria.KeyPrefix(key), key.Length)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Drives <see cref="Rows{T}(string, Expression{Func{T, bool}}, IProgress{long}?, CancellationToken)"/>:
     /// plans an index seek from the pushable predicate, streams from the index when
@@ -208,7 +270,7 @@ internal sealed class IndexRowReader(
         RowCriteria pushable,
         CancellationToken cancellationToken)
     {
-        // Index seeks are Jet4/ACE-only; everything else falls back to a scan.
+        // Every supported format can use its own index page layout.
         if (pushable.Count == 0 || !this.CanSeek)
         {
             return null;
@@ -230,7 +292,34 @@ internal sealed class IndexRowReader(
         }
 
         IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
-        return IndexPlanner.TryPlan(indexes, seekable);
+        return IndexPlanner.TryPlan(indexes, seekable, plan => CanEncodePlan(format, resolved.Definition, tableName, plan));
+    }
+
+    private static bool CanEncodePlan(JetFormat format, TableDef definition, string tableName, IndexPlan plan)
+    {
+        try
+        {
+            if (plan.Criteria.Values is not null)
+            {
+                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values, nameof(plan));
+            }
+
+            if (plan.Criteria.Lower is not null)
+            {
+                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values, nameof(plan));
+            }
+
+            if (plan.Criteria.Upper is not null)
+            {
+                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Upper.Values, nameof(plan));
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
+        {
+            return false;
+        }
     }
 
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)
@@ -288,6 +377,7 @@ internal sealed class IndexRowReader(
         }
 
         var cursor = new IndexCursor(
+            format.IndexPage,
             pages.ReadPageAsync,
             format.PageSize);
         List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsForCriteriaAsync(

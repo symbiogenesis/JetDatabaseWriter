@@ -204,7 +204,11 @@ internal sealed class TableDefReader : IDisposable
                 extraFlags,
                 misc,
                 numericPrecision,
-                numericScale));
+                numericScale,
+                new JetDatabaseWriter.Indexes.Collation.TextSortOrder(
+                    checked((ushort)Ru16(td, o + (this.format.IsJet3 ? 9 : 11))),
+                    this.format.IsJet3 ? (byte)0 : td[o + 14],
+                    !this.format.IsJet3)));
         }
 
         // Column names follow directly after all descriptors (in TDEF / descriptor order).
@@ -338,6 +342,7 @@ internal sealed class TableDefReader : IDisposable
     /// <param name="Misc">The 4-byte misc slot.</param>
     /// <param name="NumericPrecision">The Numeric precision, or 0.</param>
     /// <param name="NumericScale">The Numeric scale, or 0.</param>
+    /// <param name="TextSortOrder">The text sort order.</param>
     private readonly record struct ParsedColumnDescriptor(
         ColumnType Type,
         int ColNum,
@@ -348,7 +353,8 @@ internal sealed class TableDefReader : IDisposable
         byte ExtraFlags,
         int Misc,
         byte NumericPrecision,
-        byte NumericScale)
+        byte NumericScale,
+        JetDatabaseWriter.Indexes.Collation.TextSortOrder TextSortOrder)
     {
         internal ColumnInfo ToColumnInfo(string name) => new()
         {
@@ -361,6 +367,7 @@ internal sealed class TableDefReader : IDisposable
             Flags = this.Flags,
             ExtraFlags = this.ExtraFlags,
             Misc = this.Misc,
+            TextSortOrder = this.TextSortOrder,
             NumericPrecision = this.NumericPrecision,
             NumericScale = this.NumericScale,
         };

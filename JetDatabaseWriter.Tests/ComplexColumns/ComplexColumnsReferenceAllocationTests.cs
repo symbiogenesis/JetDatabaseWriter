@@ -42,10 +42,10 @@ public sealed class ComplexColumnsReferenceAllocationTests
     ];
 
     /// <summary>Gets the complexDataTest fixtures with their TDEF complex AutoNumber, in every write mode.</summary>
-    public static TheoryData<string, int, ComplexWriteMode> AccessFixturesAndModes()
+    public static TheoryData<string, int, WriteMode> AccessFixturesAndModes()
     {
-        var data = new TheoryData<string, int, ComplexWriteMode>();
-        foreach (ComplexWriteMode mode in Enum.GetValues<ComplexWriteMode>())
+        var data = new TheoryData<string, int, WriteMode>();
+        foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
         {
             data.Add(TestDatabases.ComplexDataTestV2007, 7, mode);
             data.Add(TestDatabases.ComplexDataTestV2010, 8, mode);
@@ -56,7 +56,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task AddAttachment_AfterDeletingTopParent_DoesNotReuseReference(ComplexWriteMode mode)
+    public async Task AddAttachment_AfterDeletingTopParent_DoesNotReuseReference(WriteMode mode)
     {
         await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(mode);
 
@@ -99,7 +99,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AccessFixturesAndModes))]
-    public async Task AddMultiValue_AccessFixtureRowInsertedByWriter_DoesNotTakeAnotherRowsReference(string fixture, int counter, ComplexWriteMode mode)
+    public async Task AddMultiValue_AccessFixtureRowInsertedByWriter_DoesNotTakeAnotherRowsReference(string fixture, int counter, WriteMode mode)
     {
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
         Assert.Equal(counter, (await ReadRawTableAsync(ms, "Table1")).ComplexAutoNumber);
@@ -142,7 +142,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AccessFixturesAndModes))]
-    public async Task AddMultiValue_AccessFixtureRowWithNullSlots_RebuildsComplexIndexes(string fixture, int counter, ComplexWriteMode mode)
+    public async Task AddMultiValue_AccessFixtureRowWithNullSlots_RebuildsComplexIndexes(string fixture, int counter, WriteMode mode)
     {
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
         await using (AccessWriter writer = await OpenWriterAsync(ms))
@@ -237,9 +237,9 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task SchemaRewrite_AfterDeletingTopRow_KeepsComplexAutoNumber(ComplexWriteMode mode)
+    public async Task SchemaRewrite_AfterDeletingTopRow_KeepsComplexAutoNumber(WriteMode mode)
     {
-        await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(ComplexWriteMode.Direct);
+        await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(WriteMode.Direct);
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
@@ -285,7 +285,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task InsertRows_TableWithComplexColumns_AssignsOneReferencePerRow(ComplexWriteMode mode)
+    public async Task InsertRows_TableWithComplexColumns_AssignsOneReferencePerRow(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
@@ -310,7 +310,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AccessFixturesAndModes))]
-    public async Task InsertRow_AccessFixture_ContinuesFromTdefCounter(string fixture, int counter, ComplexWriteMode mode)
+    public async Task InsertRow_AccessFixture_ContinuesFromTdefCounter(string fixture, int counter, WriteMode mode)
     {
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
@@ -339,7 +339,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task InsertRows_FailedBatch_RewindsComplexCounter(ComplexWriteMode mode)
+    public async Task InsertRows_FailedBatch_RewindsComplexCounter(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
@@ -365,7 +365,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task AddColumn_AttachmentOnTableWithRows_GivesExistingRowsReferences(ComplexWriteMode mode)
+    public async Task AddColumn_AttachmentOnTableWithRows_GivesExistingRowsReferences(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
@@ -386,7 +386,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task AddColumn_ComplexColumnBesideAnother_SharesEachRowsReference(ComplexWriteMode mode)
+    public async Task AddColumn_ComplexColumnBesideAnother_SharesEachRowsReference(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
@@ -414,7 +414,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task AddColumn_ComplexColumn_RowsWithoutOneUniqueReference_GetFreshReferences(ComplexWriteMode mode)
+    public async Task AddColumn_ComplexColumn_RowsWithoutOneUniqueReference_GetFreshReferences(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms))
@@ -455,7 +455,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task InsertRow_SuppliedReference_IsSharedByTheRowsComplexColumns(ComplexWriteMode mode)
+    public async Task InsertRow_SuppliedReference_IsSharedByTheRowsComplexColumns(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms, mode))
@@ -489,10 +489,10 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task UpdateRows_AssigningComplexColumn_IsRejected(ComplexWriteMode mode)
+    public async Task UpdateRows_AssigningComplexColumn_IsRejected(WriteMode mode)
     {
         // Row 1 holds reference 1 (one.txt); row 3 holds 3 (three.txt and the tag 7).
-        await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(ComplexWriteMode.Direct);
+        await using MemoryStream ms = await CreateDeletedTopParentScenarioAsync(WriteMode.Direct);
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
@@ -540,7 +540,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
     public async Task ComplexHighWater_JetMdb_IsNeverWritten(DatabaseFormat format)
     {
         await using var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, WriterOptions(ComplexWriteMode.Direct), leaveOpen: true, cancellationToken: Ct))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, WriterOptions(WriteMode.Direct), leaveOpen: true, cancellationToken: Ct))
         {
             await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], Ct);
         }
@@ -563,7 +563,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
     /// given an attachment and a tag.
     /// </summary>
     /// <param name="mode">The write mode.</param>
-    private static async Task<MemoryStream> CreateDeletedTopParentScenarioAsync(ComplexWriteMode mode)
+    private static async Task<MemoryStream> CreateDeletedTopParentScenarioAsync(WriteMode mode)
     {
         var ms = new MemoryStream();
         await using AccessWriter writer = await CreateWriterAsync(ms, mode);

@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Writer;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -39,20 +38,6 @@ public sealed class LongValueWriteBackTests
         }
     });
 
-    /// <summary>How the update in the long-chain test is driven.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps the update in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The update runs inside an explicit transaction that is committed.</summary>
-        ExplicitCommit = 2,
-    }
-
     private enum OlePayload
     {
         /// <summary>Inline value starting 00 01 followed by the "BM" bitmap signature.</summary>
@@ -83,9 +68,9 @@ public sealed class LongValueWriteBackTests
         DropColumn = 2,
     }
 
-    public static TheoryData<DatabaseFormat, string> FormatsAndPayloads()
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndPayloads()
     {
-        var data = new TheoryData<DatabaseFormat, string>();
+        var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
         {
             foreach (OlePayload payload in Enum.GetValues<OlePayload>())
@@ -119,7 +104,7 @@ public sealed class LongValueWriteBackTests
         var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
         {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(format, mode);
             }

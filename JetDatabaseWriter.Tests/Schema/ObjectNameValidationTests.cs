@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -41,20 +40,6 @@ public sealed class ObjectNameValidationTests
         new('x', 65),
     ];
 
-    /// <summary>How a test drives the writer.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The calls run inside one explicit transaction that is committed.</summary>
-        ExplicitCommit = 2,
-    }
-
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>Gets every writer-created format.</summary>
@@ -63,9 +48,9 @@ public sealed class ObjectNameValidationTests
 
     /// <summary>Gets every writer-created format with every invalid name.</summary>
     /// <returns>The format and name pairs.</returns>
-    public static TheoryData<DatabaseFormat, string> FormatsAndInvalidNames()
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndInvalidNames()
     {
-        var data = new TheoryData<DatabaseFormat, string>();
+        var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in Formats)
         {
             foreach (string name in InvalidNames)
@@ -79,9 +64,9 @@ public sealed class ObjectNameValidationTests
 
     /// <summary>Gets every writer-created format with names at the edge of the rules that Access allows.</summary>
     /// <returns>The format and name pairs.</returns>
-    public static TheoryData<DatabaseFormat, string> FormatsAndBoundaryNames()
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndBoundaryNames()
     {
-        var data = new TheoryData<DatabaseFormat, string>();
+        var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in Formats)
         {
             foreach (string name in new[] { new string('x', 64), "=Eq", "a'b", "a\"b", "Order Details", "Trail ", "#Col", "Café" })
@@ -100,7 +85,7 @@ public sealed class ObjectNameValidationTests
         var data = new TheoryData<DatabaseFormat, WriteMode>();
         foreach (DatabaseFormat format in Formats)
         {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(format, mode);
             }
@@ -546,16 +531,6 @@ public sealed class ObjectNameValidationTests
         return await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
     }
 
-    private static async Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
-    {
-        if (mode != WriteMode.ExplicitCommit)
-        {
-            await work();
-            return;
-        }
-
-        await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
-        await work();
-        await transaction.CommitAsync(Ct);
-    }
+    private static Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
+        => JetDatabaseWriter.Tests.Infrastructure.WriteModes.RunAsync(writer, mode, work, Ct);
 }

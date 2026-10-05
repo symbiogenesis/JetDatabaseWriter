@@ -182,19 +182,19 @@ public sealed class OwnedDataPagesTests
     /// <see cref="AccessWriterOptions.UseTransactionalWrites"/> call.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="transactionalWrites">Whether the rows go in through a <c>UseTransactionalWrites</c> call instead of an explicit transaction.</param>
+    /// <param name="mode">The write mode.</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true)]
-    public async Task WriterOwnedPages_InTransaction_SeeAppendedPages(DatabaseFormat format, bool transactionalWrites)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.Jet4Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.AutoCommit)]
+    public async Task WriterOwnedPages_InTransaction_SeeAppendedPages(DatabaseFormat format, WriteMode mode)
     {
         const int rowCount = 300;
         await using MemoryStream stream = await CreateDatabaseAsync(format);
-        var options = new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites };
+        var options = WriteModes.WriterOptions(mode);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, options, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         long physicalPages = stream.Length / db.Format.PageSize;
@@ -203,7 +203,7 @@ public sealed class OwnedDataPagesTests
         long tdefPage = entry.TDefPage;
 
         object?[][] rows = [.. Enumerable.Range(1, rowCount).Select(id => new object?[] { id, new string('p', 120) })];
-        if (transactionalWrites)
+        if (mode == WriteMode.AutoCommit)
         {
             await harness.Services.Transactions.RunAutoCommitAsync(
                 async token =>

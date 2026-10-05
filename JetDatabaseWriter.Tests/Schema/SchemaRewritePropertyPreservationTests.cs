@@ -28,20 +28,6 @@ public sealed class SchemaRewritePropertyPreservationTests
 {
     private const string NameMap = "NameMap";
 
-    /// <summary>How a test drives the writer.</summary>
-    [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
-    public enum WriteMode
-    {
-        /// <summary>No transaction; every page write goes straight to the stream.</summary>
-        Direct = 0,
-
-        /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
-        AutoCommit = 1,
-
-        /// <summary>The rewrite runs inside an explicit transaction that is committed.</summary>
-        ExplicitCommit = 2,
-    }
-
     /// <summary>The schema rewrite a test runs.</summary>
     [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
     public enum Rewrite
@@ -76,7 +62,7 @@ public sealed class SchemaRewritePropertyPreservationTests
         ];
         foreach ((string fixture, string table, string column) in tables)
         {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(fixture, table, column, mode);
             }
@@ -106,7 +92,7 @@ public sealed class SchemaRewritePropertyPreservationTests
         var data = new TheoryData<Rewrite, WriteMode>();
         foreach (Rewrite rewrite in Enum.GetValues<Rewrite>())
         {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
                 data.Add(rewrite, mode);
             }

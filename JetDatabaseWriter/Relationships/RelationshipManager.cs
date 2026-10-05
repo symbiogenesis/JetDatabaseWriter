@@ -104,6 +104,9 @@ internal sealed class RelationshipManager(
         CatalogEntry foreignEntry = foreignTable.Entry;
         TableDef primaryDef = primaryTable.Definition;
         TableDef foreignDef = foreignTable.Definition;
+        await this.indexes.ThrowIfIndexesUnmaintainableAsync(primaryEntry.TDefPage, primaryDef, relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
+        await this.indexes.ThrowIfIndexesUnmaintainableAsync(foreignEntry.TDefPage, foreignDef, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
+        await this.catalogArtifacts.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < relationship.PrimaryColumns.Count; i++)
         {
@@ -122,6 +125,15 @@ internal sealed class RelationshipManager(
             }
         }
 
+        foreach (string columnName in relationship.PrimaryColumns)
+        {
+            IndexMaintainer.ThrowIfTextCollationUnsupported(primaryDef.Columns[primaryDef.FindColumnIndex(columnName)], relationship.PrimaryTable);
+        }
+
+        foreach (string columnName in relationship.ForeignColumns)
+        {
+            IndexMaintainer.ThrowIfTextCollationUnsupported(foreignDef.Columns[foreignDef.FindColumnIndex(columnName)], relationship.ForeignTable);
+        }
         // Locate MSysRelationships (system table — not in the user-table cache).
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)

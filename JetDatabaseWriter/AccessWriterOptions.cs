@@ -76,6 +76,9 @@ public sealed class AccessWriterOptions : AccessOptions
     /// </summary>
     public int MaxTransactionPageBudget { get; init; } = 16_384;
 
+    /// <summary>Gets the maximum writer page-cache frame count. Default: 256; zero disables caching.</summary>
+    public int PageCacheSize { get; init; } = 256;
+
     /// <summary>
     /// Gets the secure-erase behavior used by destructive writer operations.
     /// The default preserves normal JET behavior: deleted rows are marked
@@ -119,9 +122,16 @@ public sealed class AccessWriterOptions : AccessOptions
     /// <c>CreateDatabaseAsync</c> call it first, so a bad value fails before the
     /// file is opened, created or written and before a lock-file slot is taken.
     /// </summary>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="MaxTransactionPageBudget"/> is zero or negative; the parameter named is <c>options</c>, the public parameter that carries it.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="MaxTransactionPageBudget"/> is zero or negative, or <see cref="PageCacheSize"/> is negative; the parameter named is <c>options</c>, the public parameter that carries it.</exception>
     internal void Validate()
     {
+        if (this.PageCacheSize < 0)
+        {
+#pragma warning disable CA2208 // The public options parameter carries this value.
+            throw new ArgumentOutOfRangeException("options", this.PageCacheSize, "AccessWriterOptions.PageCacheSize must be nonnegative.");
+#pragma warning restore CA2208
+        }
+
         if (this.MaxTransactionPageBudget <= 0)
         {
 #pragma warning disable CA2208 // The value arrives through the public methods' options parameter, which the exception names.

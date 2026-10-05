@@ -285,8 +285,8 @@ public sealed record ColumnDefinition
     /// that uses syntax or a function the engine does not support (for example
     /// <c>DLookUp</c>), or whose evaluation fails, is not enforced by the writer rather than
     /// blocking every write to the table. Microsoft Access still enforces it. Text
-    /// comparisons are ordinal and case-insensitive, which can differ from the database's
-    /// sort order for non-ASCII text.
+    /// comparisons use the database's Access sort order, including accents, punctuation
+    /// and trailing spaces.
     /// </para>
     /// </remarks>
     public string? ValidationRuleExpression { get; init; }
@@ -385,6 +385,9 @@ public sealed record ColumnDefinition
     internal byte? DescriptorExtraFlagsOverride { get; init; }
 
     internal int? DescriptorMiscOverride { get; init; }
+
+    /// <summary>Gets the original text sort order for schema rewrites.</summary>
+    internal JetDatabaseWriter.Indexes.Collation.TextSortOrder? TextSortOrderOverride { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether this column can have a default value. Access

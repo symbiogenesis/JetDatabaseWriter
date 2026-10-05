@@ -157,8 +157,14 @@ JetDatabaseWriter/
 │   ├── Paging/                            (one open file's page I/O)
 │   │   ├── IPageSource.cs                 (read decrypted pages: the interface read-side code depends on)
 │   │   ├── PageBuffers.cs                 (pooled page-buffer return and caller-owned page copies)
-│   │   ├── PageFile.cs                    (read-only page I/O: stream, I/O gate, page cipher, RandomAccess reads)
-│   │   └── Pager.cs                       (the writer's PageFile: writes, appends, flushes, byte-range locks, the transaction journal and its JournalGate)
+│   │   ├── PageFile.cs                    (read-only page I/O over IPageStore and IPageCodec)
+│   │   ├── IPageStore.cs                  (physical storage contract)
+│   │   ├── StreamPageStore.cs             (seek gate, positional reads, page locks and flush)
+│   │   ├── MemoryPageStore.cs             (in-memory images)
+│   │   ├── StoreCapabilities.cs
+│   │   ├── PageReadHint.cs
+│   │   ├── PagerStatistics.cs
+│   │   └── Pager.cs                       (writer frame cache, writes, appends, transaction journal and JournalGate)
 │   └── Models/
 │       ├── DataPageInserterState.cs       (the insert hint, restored on rollback)
 │       ├── LocatedRow.cs                  (a decoded row paired with the location it was read from)
@@ -195,6 +201,8 @@ JetDatabaseWriter/
 │   │   ├── CharHandlerType.cs
 │   │   ├── GeneralTextIndexEncoder.cs
 │   │   ├── GeneralTextIndexEncoder.V2010LongRowSuffix.cs
+│   │   ├── TextSortOrder.cs
+│   │   ├── JetTextCollation.cs             (expression text comparisons)
 │   │   ├── GeneralLegacyTextIndexEncoder.cs
 │   │   └── General97TextIndexEncoder.cs
 │   ├── CodeTables/                        (embedded gzipped collation lookup tables)
@@ -287,14 +295,19 @@ JetDatabaseWriter/
 │   └── JetByteRangeLock.cs                (filesystem byte-range lock primitives)
 │
 ├── Encryption/                            (all cryptographic concerns)
-│   ├── EncryptionManager.cs               (key derivation, page encrypt/decrypt dispatch)
+│   ├── EncryptionManager.cs               (format detection and key derivation)
+│   ├── IPageCodec.cs                      (owned per-page cipher contract)
+│   ├── PageCodecFactory.cs
+│   ├── NoPageCodec.cs
+│   ├── Jet3XorPageCodec.cs
+│   ├── Jet4Rc4PageCodec.cs
+│   ├── AesEcbPageCodec.cs
 │   ├── EncryptionConverter.cs             (format conversion — add/remove/change encryption)
 │   ├── OfficeCryptoAgile.cs               (ECMA-376 Agile encryption — AES-256-CBC, SHA-512)
 │   ├── OfficeCryptoPrimitives.cs          (shared Office Crypto hashing, HMAC, AES helpers)
 │   ├── OfficeCryptoStandard.cs            (MS-OFFCRYPTO §2.3.6 Standard — AES-128-CBC, SHA-1)
 │   └── Models/
-│       ├── OfficeEncryptedPackage.cs
-│       └── PageDecryptionKeys.cs
+│       └── OfficeEncryptedPackage.cs
 │
 ├── Relationships/                         (foreign keys, cascade rules, linked tables)
 │   ├── RelationshipManager.cs             (relationship lifecycle and TDEF FK logical-index mutation)
@@ -411,12 +424,13 @@ Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only wh
 Each facade owns one **`DatabaseFile`**, which owns the file's parts and their lifetime:
 
 - its format profile, `JetFormat` (`DatabaseFile.Format`): the format, page size, code page, byte layouts, text codecs and capability flags, built once from the header. Code outside JetFormat.cs, Encryption/ and the facades asks the profile for a flag (`SupportsNumeric`, `SupportsComplexColumns`, `LegacyNumericIndexKeys`, `WritesTDefFreeSpace`, `SupportsIndexSeeks` and the rest) or a layout instead of comparing `DatabaseFormat` values, which `FormatKnowledgeTests` enforces. The row decoder and its emitted direct delegates receive this immutable `JetFormat` directly, so each column read reaches the format fields without another load through the composite;
-- its page I/O (`DatabaseFile.Pages`): a read-only `PageFile` for the reader, which owns the stream, the I/O gate, the page cipher and the positional reads, and cannot write; or, for the writer, a `Pager`, the `PageFile` that also writes, appends, truncates and flushes pages, encrypts on write, takes the cooperative byte-range locks and holds the transaction journal. `TransactionLifecycle` attaches and detaches that journal only through a `Pager.JournalGate` lease, never through the gate or the journal directly. `DatabaseFile` types it only as the `PageFile` it reads and has no write member: `DatabaseFile.ForWriter` hands the `Pager` to the writer, whose `WriterServices` gives it to the services that write pages, so the reader's object graph neither holds nor names a `Pager`;
+- its page I/O (`DatabaseFile.Pages`): a read-only `PageFile` for the reader, which owns an `IPageStore` and `IPageCodec`, decodes stored pages, and exposes no page-write methods; or, for the writer, a `Pager`, the `PageFile` that also writes, appends, truncates and flushes pages, encodes a scratch copy on write, holds the transaction journal and retains bounded plaintext frames using CLOCK eviction. `TransactionLifecycle` attaches and detaches that journal only through a `Pager.JournalGate` lease, never through the gate or the journal directly. `DatabaseFile` types it only as the `PageFile` it reads and has no write member: `DatabaseFile.ForWriter` hands the `Pager` to the writer, whose `WriterServices` gives it to the services that write pages, so the reader's object graph neither holds nor names a `Pager`;
 - its TDEF parser, `TableDefReader` (`DatabaseFile.TableDefs`), which reads a table's TDEF chain through the page file and parses its columns, so over the writer's `Pager` it sees a transaction's pending TDEF pages. On the read-only file only, it reads each table's TDEF chain once and memoizes its bytes (its constructor refuses to cache over a `Pager`); it still parses a new `TableDef` from them on every call, and `ReadTDefBytesAsync` returns a new copy of them, because callers change what they get. `ReadTDefChainAsync`, which only the writer's in-place write-backs use, always reads the chain. Those write-backs (`WriteChainInPlaceAsync`, `WriteInt32Async`) are the writer's `TDefWriter`, built over the `Pager` and the `TableDefReader`;
 - its owned-page discovery and row enumeration, `OwnedDataPages` (`DatabaseFile.OwnedPages`), which memoizes each table's owned pages, whether its usage map gave them or the whole-file owner index did, only on the read-only file (its constructor refuses to cache over a `Pager`), with the row-directory parsing in the static `DataPageRows` and the scalar and partial column reads in `ScalarColumnReader` and `PartialColumnReader`.
 
 `ServiceGraphTests.Collaborators_TakingDatabaseFile_OnlyShrink` has an empty allow-list: collaborators, static helpers and delegates take the exact file parts they use. `DatabaseFile_ExposesOnlyPartsAndLifetime` prevents new composite forwarders.
 
+`StreamPageStore` serializes seek-based reads, writes, truncation and flushes with its own gate; eligible reader file handles use positional reads. `MemoryPageStore` provides the same storage contract over memory. `StoreCapabilities` describes physical-file backing, positional reads, durable flush, atomic commit, byte-range locks and in-place pages. The page file's `IoGate` protects only the journal and never spans a store operation. Page codecs (`NoPageCodec`, `Jet3XorPageCodec`, `Jet4Rc4PageCodec`, `AesEcbPageCodec`) own cipher state and preserve page 0. The writer's `PageCacheSize` defaults to 256; zero disables frame retention. Cache reads return owned copies, writes update retained frames, and transaction attachment/detachment, failed writes and truncation invalidate them. Whole-file owned-page discovery uses `PageReadHint.NoCache`.
 `IPageSource.PageCount` is the one end of file: inside a transaction the `Pager` includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds the `DatabaseFile`, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the file parts.
 
 `ReaderServices` and `WriterServices` are the **composition roots**. Each builds its facade's collaborators once and passes each one two kinds of dependency through its constructor:
@@ -436,7 +450,7 @@ No collaborator receives a facade, `AccessBase`, or a composition root, and none
 - no collaborator takes or holds `DatabaseFile`; only the facades, composition roots and composite itself may use it; and
 - the facades declare no internal members.
 
-The writer reads its own file through the page source and services owned by its `DatabaseFile`. Workflows that read a table before changing it (update, delete, cascades, index rebuilds, schema rewrites, constraint seeding, and relationship enforcement) decode rows through `TableSnapshotReader`, which `WriterServices` builds from a `RowDecoder` over a capacity-0 `ReaderPageCache` and a `CatalogReader` over the writer's own `TableCatalog`. Every page therefore comes through the writer's `Pager`, which returns an active transaction's pending pages and decrypts the rest with the writer's page keys, and nothing read this way is cached between calls: a `ReaderPageCache` over a `Pager` refuses any capacity but 0. Workflows that then change those rows read them with `TableSnapshotReader.ReadRowsAsync`, which returns each decoded row as a `LocatedRow` paired with the location it came from, and mutate exactly that location; nothing pairs separately read rows and locations by position.
+The writer reads its own file through the page source and services owned by its `DatabaseFile`. Workflows that read a table before changing it (update, delete, cascades, index rebuilds, schema rewrites, constraint seeding, and relationship enforcement) decode rows through `TableSnapshotReader`, which `WriterServices` builds from a `RowDecoder` over a capacity-0 `ReaderPageCache` and a `CatalogReader` over the writer's own `TableCatalog`. Every page therefore comes through the writer's `Pager`, which returns an active transaction's pending pages and decodes the rest through its codec and retains coherent page frames between calls. A `ReaderPageCache` over a `Pager` still refuses any capacity but 0, so the pager alone owns the writer's page cache. Workflows that then change those rows read them with `TableSnapshotReader.ReadRowsAsync`, which returns each decoded row as a `LocatedRow` paired with the location it came from, and mutate exactly that location; nothing pairs separately read rows and locations by position.
 
 Two exceptions are deliberate. The public `JetTransaction` handle calls back into the `TransactionLifecycle` that issued it, the same owner/handle shape as `DbConnection` and `DbTransaction`. `LinkedTableReader` opens a separate `AccessReader` on each Access-file link's source database; it does not receive or hold the reader that owns it.
 

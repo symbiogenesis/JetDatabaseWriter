@@ -230,14 +230,13 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     /// unreachable, and the file grew with each one.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="transactionalWrites">Whether the writer uses <see cref="AccessWriterOptions.UseTransactionalWrites"/>.</param>
-    /// <param name="explicitTransaction">Whether the mutations run inside one explicit transaction.</param>
+    /// <param name="mode">The write mode.</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, false)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false, false)]
-    public async Task SingleMutations_InTableWithForeignKeyEntry_FreeTheTreesTheRebuildReplaces(DatabaseFormat format, bool transactionalWrites, bool explicitTransaction)
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.Direct)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.AutoCommit)]
+    [InlineData(DatabaseFormat.Jet3Mdb, WriteMode.ExplicitCommit)]
+    [InlineData(DatabaseFormat.AceAccdb, WriteMode.Direct)]
+    public async Task SingleMutations_InTableWithForeignKeyEntry_FreeTheTreesTheRebuildReplaces(DatabaseFormat format, WriteMode mode)
     {
         const int seedRows = 1500;
         bool jet3 = format == DatabaseFormat.Jet3Mdb;
@@ -274,9 +273,9 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             unreachableBefore = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
         }
 
-        await using (WriterHarness writer = await OpenHarnessAsync(stream, transactionalWrites))
+        await using (WriterHarness writer = await OpenHarnessAsync(stream, mode))
         {
-            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             for (int id = seedRows + 1; id <= seedRows + 10; id++)
             {
                 await writer.InsertRowAsync(Child, [id, parentIds[id % parentIds.Count]], this.ct);
@@ -532,15 +531,15 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public async Task CreateRelationship_Jet3_InEveryWriteMode_LinksTheEntries(bool transactionalWrites, bool explicitTransaction)
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task CreateRelationship_Jet3_InEveryWriteMode_LinksTheEntries(WriteMode mode)
     {
         await using MemoryStream stream = await this.CopyFixtureAsync();
-        await using (AccessWriter writer = await OpenWriterAsync(stream, transactionalWrites))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
-            await using JetTransaction? tx = explicitTransaction ? await writer.BeginTransactionAsync(this.ct) : null;
+            await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             await CreateChildAsync(writer, this.ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct);
             if (tx is not null)
@@ -662,12 +661,12 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             [],
             cancellationToken);
 
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, bool transactionalWrites = false)
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, WriteMode mode = WriteMode.Direct)
     {
         stream.Position = 0;
         return AccessWriter.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites },
+            WriteModes.WriterOptions(mode),
             leaveOpen: true,
             TestContext.Current.CancellationToken);
     }
@@ -678,11 +677,11 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     /// pages; its mutation helpers run as the facade's do.
     /// </summary>
     /// <param name="stream">The database.</param>
-    /// <param name="transactionalWrites">Whether each call runs in its own transaction.</param>
-    private static ValueTask<WriterHarness> OpenHarnessAsync(MemoryStream stream, bool transactionalWrites = false)
+    /// <param name="mode">The write mode.</param>
+    private static ValueTask<WriterHarness> OpenHarnessAsync(MemoryStream stream, WriteMode mode = WriteMode.Direct)
         => WriterHarness.OpenAsync(
             stream,
-            new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites },
+            WriteModes.WriterOptions(mode),
             cancellationToken: TestContext.Current.CancellationToken);
 
     private async Task<MemoryStream> CopyFixtureAsync()

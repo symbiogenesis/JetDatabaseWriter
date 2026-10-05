@@ -49,10 +49,12 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// session assigns to the table follows it. Optional; when not supplied the
 /// session starts from 1.
 /// </param>
+/// <param name="textCollation">The database text comparison collation.</param>
 internal sealed class ConstraintRegistry(
     Func<string, CancellationToken, ValueTask<ColumnPropertyBlock?>>? readLvPropForTable = null,
     Func<string, TableDef, int, CancellationToken, ValueTask<long>>? readUsedAutoNumberHighWater = null,
-    Func<string, TableDef, CancellationToken, ValueTask<long>>? readComplexReferenceHighWater = null)
+    Func<string, TableDef, CancellationToken, ValueTask<long>>? readComplexReferenceHighWater = null,
+    JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation = null)
 {
     private readonly Dictionary<string, List<ColumnConstraint>> constraints =
         new(StringComparer.OrdinalIgnoreCase);
@@ -279,7 +281,7 @@ internal sealed class ConstraintRegistry(
                     ColumnDefaultValue defaultValue = c.DefaultValuePlan ??= ColumnDefaultValue.Compile(c.DefaultValueExpression);
                     if (defaultValue.TryEvaluate(
                         c.ClrType,
-                        () => defaultContext ??= new CalculatedExpressionEvaluationContext(tableDef, list, values, force: false, tableName),
+                        () => defaultContext ??= new CalculatedExpressionEvaluationContext(tableDef, list, values, force: false, tableName, textCollation),
                         out object evaluated))
                     {
                         value = evaluated;
@@ -312,9 +314,9 @@ internal sealed class ConstraintRegistry(
                 values[i] = value ?? DBNull.Value;
             }
 
-            CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false, tableName);
+            CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false, tableName, textCollation);
             ValidateCalculatedResults(tableName, list, values);
-            CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null);
+            this.CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null);
         }
         catch
         {
@@ -388,9 +390,9 @@ internal sealed class ConstraintRegistry(
             }
         }
 
-        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true, tableName);
+        CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true, tableName, textCollation);
         ValidateCalculatedResults(tableName, list, values);
-        CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned);
+        this.CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned);
     }
 
     /// <summary>
@@ -581,7 +583,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="values">The row, in table-column order.</param>
     /// <param name="assignedColumns">The columns to check, or <see langword="null"/> for all.</param>
     /// <exception cref="ArgumentException">A rule evaluates to False.</exception>
-    private static void CheckValidationRuleExpressions(
+    private void CheckValidationRuleExpressions(
         string tableName,
         TableDef tableDef,
         List<ColumnConstraint> constraints,
@@ -605,7 +607,7 @@ internal sealed class ConstraintRegistry(
                 continue;
             }
 
-            context ??= new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force: false, tableName);
+            context ??= new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force: false, tableName, textCollation);
             if (rule.Accepts(context))
             {
                 continue;

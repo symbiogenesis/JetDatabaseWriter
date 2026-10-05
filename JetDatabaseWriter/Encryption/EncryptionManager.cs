@@ -158,13 +158,18 @@ internal static class EncryptionManager
     /// <param name="password">The password.</param>
     /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
-    internal static PageDecryptionKeys CreatePageDecryptionKeys(
+    internal static IPageCodec OpenPageCodec(
         byte[] header,
         DatabaseFormat format,
         bool isLegacyAesCfb,
         ReadOnlyMemory<char> password,
         string passwordOptionName)
     {
+        if (isLegacyAesCfb && format != DatabaseFormat.AceAccdb)
+        {
+            throw new InvalidDataException("A compound-file encryption header requires an ACE database.");
+        }
+
         uint? rc4DbKey = null;
         byte[]? aesPageKey = null;
 
@@ -251,7 +256,11 @@ internal static class EncryptionManager
 
         try
         {
-            PageDecryptionKeys keys = new(GetJet3PageMask(format, header), rc4DbKey, aesPageKey);
+            byte[]? mask = GetJet3PageMask(format, header);
+            IPageCodec keys = aesPageKey is not null ? new AesEcbPageCodec(aesPageKey)
+                : rc4DbKey.HasValue ? new Jet4Rc4PageCodec(rc4DbKey.Value)
+                : mask is not null ? new Jet3XorPageCodec(mask)
+                : new NoPageCodec();
             aesPageKey = null;
             return keys;
         }
@@ -1251,144 +1260,6 @@ internal static class EncryptionManager
         return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
     }
 
-    /// <summary>
-    /// Applies any active page decryption (Jet3 XOR, Jet4 RC4, ACCDB AES) to
-    /// <paramref name="buf"/> in place. A no-op when no keys are configured or
-    /// when <paramref name="pageNumber"/> is 0 (the unencrypted header page).
-    /// </summary>
-    /// <param name="buf">The page buffer.</param>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="keys">The page encryption keys.</param>
-    public static void DecryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys) =>
-        DecryptPageInPlace(buf, 0, pageNumber, pageSize, keys);
-
-    /// <summary>
-    /// Variant of <see cref="DecryptPageInPlace(byte[],long,int,PageDecryptionKeys)"/>
-    /// that decrypts a page sitting at <paramref name="offset"/> within a larger
-    /// backing array. Lets bulk callers skip per-page slice copies.
-    /// </summary>
-    /// <param name="buf">The page buffer.</param>
-    /// <param name="offset">The offset.</param>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="keys">The page encryption keys.</param>
-    public static void DecryptPageInPlace(byte[] buf, int offset, long pageNumber, int pageSize, PageDecryptionKeys keys)
-    {
-        if (pageNumber < 1 || keys == null)
-        {
-            return;
-        }
-
-        if (keys.HasJet3XorMask)
-        {
-            ApplyJet3Xor(buf, offset, pageNumber, pageSize, keys.Jet3XorMask);
-        }
-
-        if (keys.TryGetRc4DbKey(out uint dbKey))
-        {
-            Span<byte> rc4Key = stackalloc byte[4];
-            try
-            {
-                DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
-                Rc4Transform(buf, offset, pageSize, rc4Key);
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(rc4Key);
-            }
-        }
-
-        if (keys.HasAesPageKey)
-        {
-            keys.AesDecryptInPlace(buf, offset, pageSize);
-        }
-    }
-
-    /// <summary>
-    /// Applies any active page encryption (Jet3 XOR, Jet4 RC4, ACCDB AES) to
-    /// <paramref name="buf"/> in place — the inverse of
-    /// <see cref="DecryptPageInPlace(byte[],long,int,PageDecryptionKeys)"/>.
-    /// A no-op when no keys are configured
-    /// or when <paramref name="pageNumber"/> is 0 (the unencrypted header
-    /// page). Operations are applied in reverse order so a page round-trips
-    /// back to its original ciphertext.
-    /// </summary>
-    /// <param name="buf">The page buffer.</param>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="keys">The page encryption keys.</param>
-    public static void EncryptPageInPlace(byte[] buf, long pageNumber, int pageSize, PageDecryptionKeys keys) =>
-        EncryptPageInPlace(buf, 0, pageNumber, pageSize, keys);
-
-    /// <summary>
-    /// Variant of <see cref="EncryptPageInPlace(byte[],long,int,PageDecryptionKeys)"/>
-    /// that encrypts a page sitting at <paramref name="offset"/> within a larger
-    /// backing array.
-    /// </summary>
-    /// <param name="buf">The page buffer.</param>
-    /// <param name="offset">The offset.</param>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="keys">The page encryption keys.</param>
-    public static void EncryptPageInPlace(byte[] buf, int offset, long pageNumber, int pageSize, PageDecryptionKeys keys)
-    {
-        if (pageNumber < 1 || keys == null)
-        {
-            return;
-        }
-
-        // Inverse order of DecryptPageInPlace: AES → RC4 → Jet3 XOR.
-        if (keys.HasAesPageKey)
-        {
-            keys.AesEncryptInPlace(buf, offset, pageSize);
-        }
-
-        if (keys.TryGetRc4DbKey(out uint dbKey))
-        {
-            // RC4 is symmetric: same operation encrypts and decrypts.
-            Span<byte> rc4Key = stackalloc byte[4];
-            try
-            {
-                DeriveRc4PageKey(dbKey, (uint)pageNumber, rc4Key);
-                Rc4Transform(buf, offset, pageSize, rc4Key);
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(rc4Key);
-            }
-        }
-
-        if (keys.HasJet3XorMask)
-        {
-            // XOR is symmetric.
-            ApplyJet3Xor(buf, offset, pageNumber, pageSize, keys.Jet3XorMask);
-        }
-    }
-
-    /// <summary>
-    /// Applies the Jet3 cyclic XOR mask to a single page in place. Symmetric:
-    /// the same operation encrypts and decrypts.
-    /// </summary>
-    /// <param name="buf">The page buffer.</param>
-    /// <param name="offset">The offset.</param>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="mask">The encryption mask or page bitmask.</param>
-    private static void ApplyJet3Xor(byte[] buf, int offset, long pageNumber, int pageSize, ReadOnlySpan<byte> mask)
-    {
-        long fileOffset = pageNumber * pageSize;
-        for (int b = 0; b < pageSize; b++)
-        {
-            buf[offset + b] ^= mask[(int)((fileOffset + b - pageSize) % mask.Length)];
-        }
-    }
-
-    /// <summary>Returns true when <paramref name="keys"/> has any active page encryption configured.</summary>
-    /// <param name="keys">The page encryption keys.</param>
-    public static bool HasPageEncryption(PageDecryptionKeys keys) =>
-        keys != null && (keys.HasJet3XorMask || keys.HasRc4DbKey || keys.HasAesPageKey);
-
     // ── Crypto primitives ────────────────────────────────────────────
 
     /// <summary>
@@ -1398,7 +1269,7 @@ internal static class EncryptionManager
     /// <param name="pageNumber">The page number.</param>
     /// <param name="destination">The destination.</param>
     /// <exception cref="CryptographicException">Thrown when the MD5 page-key hash cannot be computed.</exception>
-    private static void DeriveRc4PageKey(uint dbKey, uint pageNumber, Span<byte> destination)
+    internal static void DeriveRc4PageKey(uint dbKey, uint pageNumber, Span<byte> destination)
     {
         Span<byte> input = stackalloc byte[8];
         Wu32(input, 0, dbKey);
@@ -1437,7 +1308,7 @@ internal static class EncryptionManager
     /// <param name="offset">The offset.</param>
     /// <param name="length">The length.</param>
     /// <param name="key">The key bytes or index key.</param>
-    private static void Rc4Transform(byte[] data, int offset, int length, ReadOnlySpan<byte> key)
+    internal static void Rc4Transform(byte[] data, int offset, int length, ReadOnlySpan<byte> key)
     {
         Span<byte> s = stackalloc byte[256];
         try

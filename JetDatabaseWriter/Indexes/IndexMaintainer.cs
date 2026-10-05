@@ -438,6 +438,18 @@ internal sealed class IndexMaintainer(
             }
         }
 
+        foreach (int realIdxNum in catalog.RealIdxByNum.Keys)
+        {
+            if (catalog.TryGetKeyColumnInfos(realIdxNum, out List<KeyColumnInfo>? keyColumns))
+            {
+                foreach (KeyColumnInfo keyColumn in keyColumns)
+                {
+                    ColumnInfo column = keyColumn.Col;
+                    ThrowIfTextCollationUnsupported(column, tableName);
+                }
+            }
+        }
+
         return (preamble, catalog);
     }
 
@@ -766,6 +778,17 @@ internal sealed class IndexMaintainer(
     /// <exception cref="JetLimitationException">The index section cannot be parsed or runs past the end of the table definition, or an index names a column the table does not have; the message names the table, and the index when its name can be read.</exception>
     internal async ValueTask ThrowIfIndexesUnmaintainableAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
         => _ = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Refuses a text column before creating an index over its unsupported order.</summary>
+    /// <param name="column">The column descriptor.</param>
+    /// <param name="tableName">The table name.</param>
+    internal static void ThrowIfTextCollationUnsupported(ColumnInfo column, string tableName)
+    {
+        if (column.Type is TextType or MemoType && !column.TextSortOrder.IsSupported)
+        {
+            throw new JetLimitationException($"The indexes of table '{tableName}' cannot be maintained: column '{column.Name}' uses unsupported text sort order 0x{column.TextSortOrder.Value:X4}, version {column.TextSortOrder.Version}.");
+        }
+    }
 
     private static long[][] CreateEmptyPageGroups(int numRealIdx)
     {
@@ -1630,7 +1653,7 @@ internal sealed class IndexMaintainer(
             object? value = cells[k];
             perColumn[k] = col.Type == NumericType
                 ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
-                : IndexKeyEncoder.EncodeEntry(col.Type, value, ascending);
+                : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
             totalLen += perColumn[k].Length;
         }
 
