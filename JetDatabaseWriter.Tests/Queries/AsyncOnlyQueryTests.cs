@@ -65,9 +65,10 @@ public sealed class AsyncOnlyQueryTests(DatabaseCache db) : IClassFixture<Databa
     [InlineData("Max", "MaxAsync")]
     [InlineData("Sum", "SumAsync")]
     [InlineData("Average", "AverageAsync")]
-    [InlineData("All", null)]
-    [InlineData("Contains", null)]
-    [InlineData("Last", null)]
+    [InlineData("All", "AllAsync")]
+    [InlineData("Contains", "ContainsAsync")]
+    [InlineData("Last", "LastAsync")]
+    [InlineData("LastOrDefault", "LastOrDefaultAsync")]
     [InlineData("ElementAt", null)]
     [InlineData("Aggregate", null)]
     public async Task SyncTerminal_Throws_NamingTheAsyncTerminal(string terminal, string? asyncTerminal)
@@ -158,6 +159,7 @@ public sealed class AsyncOnlyQueryTests(DatabaseCache db) : IClassFixture<Databa
         "All" => query.All(i => i.Score > 0),
         "Contains" => query.Contains(new AoItem()),
         "Last" => query.Last(),
+        "LastOrDefault" => query.LastOrDefault(),
         "ElementAt" => query.ElementAt(0),
         "Aggregate" => query.Aggregate((a, _) => a),
         _ => throw new ArgumentOutOfRangeException(nameof(terminal), terminal, "Unknown terminal."),
