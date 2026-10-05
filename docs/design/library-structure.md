@@ -167,7 +167,7 @@ JetDatabaseWriter/
 │   │   ├── StoreCapabilities.cs
 │   │   ├── PageReadHint.cs
 │   │   ├── PagerStatistics.cs
-│   │   └── Pager.cs                       (writer frame cache, per-call write-back, transaction replay and JournalGate)
+│   │   └── Pager.cs                       (writer frame cache, per-call write-back, transaction replay with in-process undo and JournalGate)
 │   └── Models/
 │       ├── DataPageInserterState.cs       (the insert hint, restored on rollback)
 │       ├── LocatedRow.cs                  (a decoded row paired with the location it was read from)
@@ -629,7 +629,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Cursor / Editor** | `IndexCursor`, `IndexBTreeEditor`, `IndexPageCodec` | Keeps streaming read-only B-tree walks and in-place mutation planning separate from TDEF/catalog orchestration |
 | **Strategy via layout structs** | `JetFormat` holding `DataPageLayout`, `LvalPageLayout`, `TDefHeaderLayout`, `ColumnDescriptorLayout`, `RowFieldSizes`, `IndexLayout`, `IndexPageLayout` and the capability flags | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; one immutable profile per open file, built from its header |
-| **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PagerTransaction` | Dedicated page-level I/O: the reader's read-only `PageFile` with its 256-page LRU eviction cache, and the writer's `Pager` with an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
+| **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PagerTransaction` | Dedicated page-level I/O: the reader's read-only `PageFile` with its 256-page LRU eviction cache, and the writer's `Pager` with an in-memory transaction journal. Commit captures raw before-images in memory and restores failed stream writes or flushes; it has no persistent journal or crash recovery |
 | **Allocator** | `PageAllocator`, `ReservedPageRuns` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink; index paths record each run they reserve until a TDEF or usage-map write links it, and give back any run they abandon |
 | **Usage Map Codec** | `UsageMap`, `UsageMapEditor` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization; `UsageMapEditor` grows the writer's rows past one INLINE window by promoting them to REFERENCE and allocating their bitmap pages |
 | **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |

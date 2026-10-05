@@ -269,7 +269,7 @@ public sealed class JetTransactionTests
     }
 
     [Fact]
-    public async Task Commit_WhenReplayWriteFails_LeavesSuccessfulReplayPrefixOnDisk()
+    public async Task Commit_WhenReplayWriteFails_RestoresFileAndRollsBack()
     {
         await using var stream = new FaultInjectingStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -294,12 +294,10 @@ public sealed class JetTransactionTests
 
         byte[] after = stream.ToArray();
 
-        // One page reached the file, so the commit must not claim the file
-        // was left as it was. The transaction has still ended.
-        Assert.False(tx.IsRolledBack);
+        // Replay and flush failures restore every page and the original length.
+        Assert.True(tx.IsRolledBack);
         Assert.False(tx.IsCommitted);
-        Assert.Equal(1, stream.PageWritesAfterArm);
-        Assert.Equal(1, CountChangedPages(before, after));
+        Assert.Equal(before, after);
         Assert.Equal(FormatVersionByte(before), FormatVersionByte(after));
 
         await Assert.ThrowsAsync<JetOperationException>(async () =>
@@ -309,7 +307,7 @@ public sealed class JetTransactionTests
     }
 
     [Fact]
-    public async Task Commit_WhenDurableFlushFails_IsNeitherCommittedNorRolledBack()
+    public async Task Commit_WhenDurableFlushFails_RestoresFileAndRollsBack()
     {
         await using var stream = new FaultInjectingStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -334,10 +332,9 @@ public sealed class JetTransactionTests
 
         byte[] after = stream.ToArray();
 
-        Assert.False(tx.IsRolledBack);
+        Assert.True(tx.IsRolledBack);
         Assert.False(tx.IsCommitted);
-        Assert.Equal(tx.JournaledPageCount, stream.PageWritesAfterArm);
-        Assert.Equal(durableFlushCall - 1, stream.FlushesAfterArm);
+        Assert.Equal(before, after);
         Assert.Equal(FormatVersionByte(before), FormatVersionByte(after));
     }
 
@@ -660,6 +657,7 @@ public sealed class JetTransactionTests
                 int nextFlush = this.FlushesAfterArm + 1;
                 if (this.throwOnFlushCall == nextFlush)
                 {
+                    this.throwOnFlushCall = null;
                     throw new IOException("Injected flush failure.");
                 }
 
@@ -712,6 +710,7 @@ public sealed class JetTransactionTests
 
             if (this.throwBeforePageWrite == this.PageWritesAfterArm + 1)
             {
+                this.throwBeforePageWrite = null;
                 throw new IOException("Injected page-write failure.");
             }
         }

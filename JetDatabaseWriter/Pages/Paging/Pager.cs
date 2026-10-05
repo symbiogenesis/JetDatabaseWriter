@@ -7,6 +7,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
@@ -113,6 +114,9 @@ internal sealed class Pager : PageFile
             }
         }
     }
+
+    /// <summary>Gets a value indicating whether commit undo failed and mutations must stop.</summary>
+    internal bool IsFaulted { get; private set; }
 
     /// <summary>Gets a value indicating whether a transaction journal is attached.</summary>
     internal bool IsJournalActive => this.journal is not null;
@@ -610,26 +614,77 @@ internal sealed class Pager : PageFile
     internal async ValueTask CommitAsync(PagerTransaction transaction, Action beforeFirstWrite, CancellationToken cancellationToken)
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        bool replayStarted = false;
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            beforeFirstWrite();
+            var image = new CommitImage(this.Store.Length);
             foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
             {
+                long offset = checked(entry.Key * this.PageSize);
                 byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
-                await this.Store.WriteAsync(checked(entry.Key * this.PageSize), encoded.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
+                image.AfterImages.Add(new(offset, ReferenceEquals(encoded, entry.Value) ? (byte[])encoded.Clone() : encoded));
+                if (offset < image.OriginalLength)
+                {
+                    byte[] before = new byte[checked((int)Math.Min(this.PageSize, image.OriginalLength - offset))];
+                    await this.Store.ReadAsync(offset, before, false, cancellationToken).ConfigureAwait(false);
+                    image.BeforeImages.Add(new(offset, before));
+                }
+
             }
 
-            await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            beforeFirstWrite();
+            replayStarted = true;
+            try
+            {
+                foreach (KeyValuePair<long, byte[]> entry in image.AfterImages)
+                {
+                    await this.Store.WriteAsync(entry.Key, entry.Value.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
+                }
+
+                await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
+            {
+                try
+                {
+                    foreach (KeyValuePair<long, byte[]> entry in image.BeforeImages)
+                    {
+                        await this.Store.WriteAsync(entry.Key, entry.Value, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    await this.Store.SetLengthAsync(image.OriginalLength, CancellationToken.None).ConfigureAwait(false);
+                    await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+                    replayStarted = false;
+                }
+                catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
+                {
+                    this.IsFaulted = true;
+                    throw new AggregateException("Commit failed and its original database image could not be restored.", ex, undoFailure);
+                }
+
+                throw;
+            }
         }
         catch
         {
+            this.IsFaulted |= replayStarted;
             this.InvalidateAll();
             throw;
         }
         finally
         {
             _ = this.frameGate.Release();
+        }
+    }
+
+    /// <summary>Rejects mutations after an unsuccessful commit undo.</summary>
+    /// <exception cref="JetOperationException">The writer could not restore a failed commit.</exception>
+    internal void ThrowIfFaulted()
+    {
+        if (this.IsFaulted)
+        {
+            throw JetErrors.Operation(JetErrorCode.WriterFaulted, "The writer is faulted because a failed commit could not restore the original database image. Dispose it before reopening the database.");
         }
     }
 
@@ -713,6 +768,15 @@ internal sealed class Pager : PageFile
             this.dirtyPages.Clear();
             this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
         }
+    }
+
+    private sealed class CommitImage(long originalLength)
+    {
+        internal long OriginalLength { get; } = originalLength;
+
+        internal List<KeyValuePair<long, byte[]>> AfterImages { get; } = [];
+
+        internal List<KeyValuePair<long, byte[]>> BeforeImages { get; } = [];
     }
 
     private sealed class Frame(byte[] bytes)

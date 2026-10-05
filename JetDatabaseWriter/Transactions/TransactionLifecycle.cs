@@ -57,6 +57,9 @@ internal sealed class TransactionLifecycle(
     /// </summary>
     private WriterState? stateAtBegin;
 
+    /// <summary>Gets a value indicating whether commit undo failed.</summary>
+    internal bool IsFaulted => pager.IsFaulted;
+
     /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
     internal JetTransaction? ActiveTransaction { get; private set; }
 
@@ -87,7 +90,13 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The asynchronous completion.</returns>
     internal ValueTask<TResult> RunMutationAsync<TResult>(Func<ValueTask<TResult>> work, CancellationToken cancellationToken)
-        => this.RunSerializedAsync(work, cancellationToken);
+        => this.RunSerializedAsync(
+            () =>
+            {
+                pager.ThrowIfFaulted();
+                return work();
+            },
+            cancellationToken);
 
     /// <summary>Begins a serialized explicit transaction.</summary>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -152,6 +161,7 @@ internal sealed class TransactionLifecycle(
     private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken)
     {
         pager.ThrowIfDisposed();
+        pager.ThrowIfFaulted();
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -181,6 +191,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask RunAutoCommitCoreAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
+        pager.ThrowIfFaulted();
         if (this.ActiveTransaction is { } active)
         {
             await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
@@ -230,6 +241,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<TResult> RunAutoCommitCoreAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
+        pager.ThrowIfFaulted();
         if (this.ActiveTransaction is { } active)
         {
             return await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
@@ -275,9 +287,9 @@ internal sealed class TransactionLifecycle(
     /// journal from the writer and replays each buffered page (in ascending
     /// page-number order) in place through the normal page-write pipeline, so
     /// that per-page encryption and cooperative byte-range locks are honoured,
-    /// then flushes. The replay is not crash-atomic: there is no before-image
-    /// or redo log, so a failure partway through leaves the pages written so
-    /// far on disk.
+    /// then flushes. The pager captures raw before-images and restores them
+    /// after a write or flush failure. These images are memory-only, so replay
+    /// is not crash-atomic.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -287,9 +299,9 @@ internal sealed class TransactionLifecycle(
     /// state is restored as for a rollback. Cancellation is honoured only up to
     /// that point; the replay and flush then run to completion, because
     /// stopping them would tear the file. A failure after replay starts (an
-    /// I/O error while writing or flushing) marks the transaction neither
-    /// committed nor rolled back, since the file may hold part of it, and
-    /// discards the writer's cached catalog and insert hint.
+    /// I/O error while writing or flushing) restores the original file and
+    /// writer state. If undo also fails, the transaction is neither committed
+    /// nor rolled back, and the writer rejects further mutations.
     /// </para>
     /// </remarks>
     /// <param name="transaction">The transaction.</param>
@@ -306,6 +318,7 @@ internal sealed class TransactionLifecycle(
         }
 
         pager.ThrowIfDisposed();
+        pager.ThrowIfFaulted();
 
         PagerTransaction journal;
         WriterState? state;
@@ -338,7 +351,7 @@ internal sealed class TransactionLifecycle(
         }
 
         long? commitLockOffset = null;
-        bool replayStarted = false;
+
         try
         {
             commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(format.CommitLockOffset, cancellationToken).ConfigureAwait(false);
@@ -348,15 +361,14 @@ internal sealed class TransactionLifecycle(
             // some of the transaction's pages on disk and the rest lost.
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Set before the first write: a write that fails may already have
-            // changed part of its page.
-            await pager.CommitAsync(journal, () => replayStarted = true, cancellationToken).ConfigureAwait(false);
+            // The pager captures raw undo images before beginning replay.
+            await pager.CommitAsync(journal, () => { }, cancellationToken).ConfigureAwait(false);
             transaction.MarkCommitted();
         }
         catch
         {
             pager.InvalidateAll();
-            if (replayStarted)
+            if (pager.IsFaulted)
             {
                 transaction.MarkCommitFailed();
                 this.DiscardCachesAfterFailedReplay(state);

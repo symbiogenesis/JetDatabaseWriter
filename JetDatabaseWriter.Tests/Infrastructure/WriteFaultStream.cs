@@ -16,6 +16,10 @@ using System.Threading;
 internal sealed class WriteFaultStream : MemoryStream
 {
     private int writesUntilFault;
+    private int readsUntilFault;
+    private bool partialWriteFault;
+    private int flushesUntilFault;
+    private bool persistentWriteFault;
     private int writesUntilCancel;
     private int readsUntilCancel;
     private CancellationTokenSource? cancellation;
@@ -39,6 +43,50 @@ internal sealed class WriteFaultStream : MemoryStream
         this.Faulted = false;
     }
 
+    /// <summary>Arms a one-shot read failure.</summary>
+    /// <param name="nthRead">The read to fail, starting at one.</param>
+    public void FailOnRead(int nthRead)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(nthRead);
+        this.readsUntilFault = nthRead;
+        this.Faulted = false;
+    }
+
+    /// <summary>Arms a write failure after modifying half of its buffer.</summary>
+    /// <param name="nthWrite">The write to fail, starting at one.</param>
+    public void FailDuringWrite(int nthWrite)
+    {
+        this.FailOnWrite(nthWrite);
+        this.partialWriteFault = true;
+    }
+    /// <summary>Arms a one-shot flush failure.</summary>
+    /// <param name="nthFlush">The flush to fail, starting at one.</param>
+    public void FailOnFlush(int nthFlush)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(nthFlush);
+        this.flushesUntilFault = nthFlush;
+        this.Faulted = false;
+    }
+
+    /// <summary>Arms a write failure that also prevents undo writes.</summary>
+    /// <param name="nthWrite">The first write to fail, starting at one.</param>
+    public void FailWritesFrom(int nthWrite)
+    {
+        this.FailOnWrite(nthWrite);
+        this.persistentWriteFault = true;
+    }
+
+    /// <inheritdoc/>
+    public override System.Threading.Tasks.Task FlushAsync(CancellationToken cancellationToken)
+    {
+        if (this.flushesUntilFault > 0 && --this.flushesUntilFault == 0)
+        {
+            this.Faulted = true;
+            throw new IOException("Injected flush fault.");
+        }
+
+        return base.FlushAsync(cancellationToken);
+    }
     /// <summary>
     /// Arms the stream so it cancels <paramref name="source"/> once its
     /// <paramref name="nthWrite"/>-th write from now has reached the stream.
@@ -80,7 +128,17 @@ internal sealed class WriteFaultStream : MemoryStream
     /// </remarks>
     public override void Write(byte[] buffer, int offset, int count)
     {
-        this.CountWrite();
+        try
+        {
+            this.CountWrite();
+        }
+        catch (IOException) when (this.partialWriteFault)
+        {
+            this.partialWriteFault = false;
+            base.Write(buffer, offset, count / 2);
+            throw;
+        }
+
         base.Write(buffer, offset, count);
         this.CancelIfDue(ref this.writesUntilCancel);
     }
@@ -100,6 +158,12 @@ internal sealed class WriteFaultStream : MemoryStream
     /// </remarks>
     public override int Read(byte[] buffer, int offset, int count)
     {
+        if (this.readsUntilFault > 0 && --this.readsUntilFault == 0)
+        {
+            this.Faulted = true;
+            throw new IOException("Injected read fault.");
+        }
+
         int read = base.Read(buffer, offset, count);
         this.ReadCount++;
         this.CancelIfDue(ref this.readsUntilCancel);
@@ -118,7 +182,7 @@ internal sealed class WriteFaultStream : MemoryStream
     private void CountWrite()
     {
         this.WriteCount++;
-        if (this.writesUntilFault > 0 && --this.writesUntilFault == 0)
+        if ((this.persistentWriteFault && this.Faulted) || (this.writesUntilFault > 0 && --this.writesUntilFault == 0))
         {
             this.Faulted = true;
             throw new IOException("Injected write fault.");

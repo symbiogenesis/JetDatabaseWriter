@@ -15,10 +15,10 @@ using JetDatabaseWriter.Infrastructure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Savepoint prior images only rewind the in-memory journal. No commit undo images are kept and
-/// nothing is written to a separate log first, so a commit interrupted by a
-/// crash or I/O error leaves the pages written so far in the file, and there
-/// is no recovery pass.
+/// Savepoint prior images rewind the in-memory journal. Commit captures raw
+/// before-images separately and restores them after a write or flush failure.
+/// Nothing is written to a separate log, so a process crash can still leave
+/// part of the transaction in the file, with no recovery pass.
 /// </para>
 /// <para>
 /// The journal stores **plaintext** page bytes. Page-level encryption is applied

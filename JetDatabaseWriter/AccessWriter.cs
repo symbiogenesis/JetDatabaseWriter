@@ -772,11 +772,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         "opened for writing.");
 
     private ValueTask DisposeCoreAsync()
-        => this.lockFileCoordinator.DisposeAfterAsync(
-            this.services.Transactions.DisposeActiveTransactionAsync,
-            this.services.Transactions.FlushPendingWritesAsync,
-            this.RewrapAndCloseOuterEncryptedStreamAsync,
-            this.Database.DisposeAsync);
+        => this.services.Transactions.IsFaulted
+            ? this.lockFileCoordinator.DisposeAfterAsync(
+                this.CloseOuterEncryptedStreamAsync,
+                this.Database.DisposeAsync)
+            : this.lockFileCoordinator.DisposeAfterAsync(
+                this.services.Transactions.DisposeActiveTransactionAsync,
+                this.services.Transactions.FlushPendingWritesAsync,
+                this.RewrapAndCloseOuterEncryptedStreamAsync,
+                this.Database.DisposeAsync);
 
     /// <summary>
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
@@ -835,6 +839,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 sourceColumns,
                 cancellationToken),
             cancellationToken);
+
+    private async ValueTask CloseOuterEncryptedStreamAsync()
+    {
+        if (this.outerEncryptedStream is not null && !this.outerEncryptedLeaveOpen)
+        {
+            await this.outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
+        }
+    }
 
     private async ValueTask RewrapAndCloseOuterEncryptedStreamAsync()
     {

@@ -96,10 +96,13 @@ CommitTransactionAsync
   ├─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach(); ActiveTransaction = null ──▶ dispose the lease
   ├─ ByteRangeLock commit-lock sentinel  ◀── held across the entire replay
   │     last cancellation check (nothing written yet)
-  │     Pager.CommitAsync takes frameGate for replay:
-  │         foreach buffered page (ascending page order), with CancellationToken.None:
-  │           encode ──▶ ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
-  │         one durable store flush (CancellationToken.None)
+  │     Pager.CommitAsync takes frameGate for capture, replay and recovery:
+  │         prepare encoded after-images and read raw before-images
+  │         final cancellation check, then CancellationToken.None:
+  │           foreach buffered page (ascending page order):
+  │             ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
+  │           one durable store flush
+  │         on a storage failure: restore raw bytes, original length, and flush
   └─ release commit-lock (finally)
 
 RollbackTransactionAsync  (auto-commit calls it when the work throws)
@@ -111,13 +114,16 @@ The commit-lock sentinel is "outer" only in the sense that it spans the replay
 window; it is acquired **after** `IoGate` has been released, so it never nests
 outside an already-held `IoGate`. Capturing and restoring the writer state is
 memory-only, so the leaf `insertPageHintLock` and `ownedMapSetsLock`, one after
-the other, protect those caches; frame invalidation briefly takes `frameSync` there. A commit that fails
-before its first page write restores the same state from its `catch`, after
-`IoGate` has been released, and marks the transaction rolled back. One that
-fails after replay has started only invalidates the catalog, forgets the insert
-hint and the owned-map policy's refusals, and puts the policy's writable set
-back, and leaves the transaction neither committed nor rolled back. The replay is not crash-atomic: there is no
-before-image or redo log, so the pages written before a failure stay written.
+the other, protect those caches; frame invalidation briefly takes `frameSync` there.
+A commit that fails before replay leaves the file unchanged. If a stream write
+or flush fails during replay, the pager restores the raw before-images and
+original file length while holding `frameGate` and the commit sentinel. After
+successful recovery, the lifecycle restores the same writer state as a normal
+rollback and marks the transaction rolled back. If recovery also fails, the
+transaction remains neither committed nor rolled back and the writer rejects
+mutations with `WriterFaulted`. Disposal skips pending writes and container
+rewrap. Before-images exist only in memory, so a process crash or power loss
+still has no recovery path.
 
 ### Failed calls inside an explicit transaction
 
@@ -239,9 +245,9 @@ open:
 | Plaintext page frames, bounded by `PageCacheSize` | `Pager` | CLOCK eviction; transaction attach/detach, failed writes and truncation invalidate all frames. Each write refreshes its retained frame. |
 | Validated owned data pages and usage-map dependencies | `OwnedDataPages` | Data-page ownership changes update the result; TDEF owned-map pointer, owned-map row or REFERENCE bitmap changes discard it; writes to sibling map rows keep it. Rollback, failed replay, truncation and shrink discard all results through the pager observer. |
 | User-table list and calculated result types | `TableCatalog` | `Invalidate`: every catalog write (create, drop or rewrite a table, add a catalog object), a rollback, a failed `UseTransactionalWrites` call and a failed commit. Each call also moves `TableCatalog.Generation` on. |
-| Insert-page hint | `DataPageInserter` | Restored to its state at the transaction or statement savepoint on a rollback; forgotten after a commit that fails during replay. |
-| The TDEF pages whose owned-page maps the writer may extend, and those it found it may not | `CatalogOwnedMapPolicy` | Restored to their state at the transaction or statement savepoint on a rollback. After a commit that fails during replay the writable set is restored and the refusals are forgotten. A table the writer creates drops a refusal for its TDEF page. |
-| Constraint lists, AutoNumber `NextAutoValue` and complex-reference counters | `ConstraintRegistry` | Re-registered by schema changes; restored on a rollback. A commit that fails during replay keeps them, so counters never move back over values that may be on disk. |
+| Insert-page hint | `DataPageInserter` | Restored to its state at the transaction or statement savepoint on a rollback; forgotten if commit recovery also fails. |
+| The TDEF pages whose owned-page maps the writer may extend, and those it found it may not | `CatalogOwnedMapPolicy` | Restored to their state at the transaction or statement savepoint on a rollback. If commit recovery also fails, the writable set is restored and the refusals are forgotten. A table the writer creates drops a refusal for its TDEF page. |
+| Constraint lists, AutoNumber `NextAutoValue` and complex-reference counters | `ConstraintRegistry` | Re-registered by schema changes; restored on a rollback. Successful commit recovery restores them too. If recovery fails, counters stay above values that may be on disk and the writer refuses further mutations. |
 | Enforced relationships, which every insert, update and delete checks | `RelationshipCatalogStore` | Every `MSysRelationships` write through the store (create, drop or rename a relationship, rename a key column), and whenever `TableCatalog.Generation` has moved on since the set was loaded, so a rollback or failed commit reloads it. |
 
 All of these are memory-only, so restoring or dropping them takes no lock

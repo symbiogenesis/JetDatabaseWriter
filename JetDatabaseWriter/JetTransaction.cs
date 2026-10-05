@@ -20,9 +20,9 @@ using JetDatabaseWriter.Transactions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Commit is not crash-atomic. There is no before-image or write-ahead log, so
-/// if the process, stream or device fails after commit has started writing
-/// pages, the file holds part of the transaction and no recovery is attempted.
+/// Commit keeps raw before-images in memory and restores them after a write or
+/// flush failure. It is not crash-atomic: a process or device failure can
+/// leave part of the transaction on disk, with no recovery on reopen.
 /// </para>
 /// <para>
 /// Only one transaction may be active at a time per <see cref="AccessWriter"/>;
@@ -58,12 +58,12 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <summary>
     /// Gets a value indicating whether the transaction has been rolled back,
     /// leaving the database file as it was before the transaction. This is
-    /// also set when <see cref="CommitAsync"/> fails before it starts writing
-    /// the first page.
+    /// also set when <see cref="CommitAsync"/> fails and restores the original
+    /// page images and file length.
     /// When <see cref="CommitAsync"/> throws and both this and
     /// <see cref="IsCommitted"/> are <see langword="false"/>, the commit failed
-    /// after it had started writing pages, and the file may hold part of the
-    /// transaction.
+    /// and its undo failed. The writer then rejects further mutations; the
+    /// file may hold part of the transaction.
     /// </summary>
     public bool IsRolledBack { get; private set; }
 
@@ -94,11 +94,12 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <para>
     /// Once the first page write starts, cancellation is ignored and the
     /// commit runs to completion, because stopping partway would leave the
-    /// file holding only part of the transaction. If an I/O error or a
-    /// page-lock timeout stops it instead, the exception propagates, neither
-    /// <see cref="IsCommitted"/> nor <see cref="IsRolledBack"/> is set, and the
-    /// file may hold part of the transaction; restore it from a copy taken
-    /// before the commit.
+    /// file holding only part of the transaction. A write or flush failure
+    /// restores the raw original page images and file length, marks the
+    /// transaction rolled back, and propagates the original exception. If
+    /// restoration also fails, an <see cref="AggregateException"/> carries both
+    /// failures and the writer rejects further mutations. Dispose then only
+    /// releases handles; restore the database from a known good copy.
     /// </para>
     /// </remarks>
     /// <param name="cancellationToken">A token used to cancel the commit before it starts writing pages.</param>

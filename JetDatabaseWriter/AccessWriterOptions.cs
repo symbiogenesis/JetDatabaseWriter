@@ -96,22 +96,21 @@ public sealed class AccessWriterOptions : AccessOptions
     /// When <see langword="true"/>, each call to <c>CreateTableAsync</c>,
     /// <c>InsertRowsAsync</c>, <c>UpdateRowsAsync</c>, etc. begins a private
     /// transaction at entry, commits it on success, and rolls it back on
-    /// exception before commit replay &#8212; so validation and write-preparation
-    /// failures leave the database in its pre-call state instead of in whatever
-    /// partially-flushed state the page-write pipeline had reached. Calls made
+    /// an exception before commit replay, or restores the file if a commit write or
+    /// flush fails. Validation and write-preparation failures leave the database in its
+    /// pre-call state. Calls made
     /// inside an explicit transaction are unaffected.
     /// <para>
     /// This is an in-memory page journal, not a durable write-ahead log. Commit
-    /// writes the buffered pages over the file in place; cancellation is ignored
-    /// once that has started, but if the process, stream, or device fails
-    /// partway through, pages already written remain on disk and no recovery
-    /// pass is attempted.
+    /// keeps raw before-images to restore the original bytes and length after
+    /// a stream write or flush fails. Cancellation is ignored once replay starts.
+    /// If restoration also fails, the writer rejects further mutations with
+    /// <c>WriterFaulted</c>. Process loss or power loss during replay can still
+    /// leave a partial transaction on disk; there is no crash recovery.
     /// </para>
     /// <para>
-    /// Default: <see langword="false"/> (preserves the flush-per-page
-    /// behaviour). The flag is intentionally opt-in for the first release;
-    /// the plan is to flip the default in a later major version once it has
-    /// bake time.
+    /// Default: <see langword="false"/>. Calls then use per-call write-back
+    /// buffering, which does not provide statement rollback on failure.
     /// </para>
     /// </summary>
     public bool UseTransactionalWrites { get; init; }
