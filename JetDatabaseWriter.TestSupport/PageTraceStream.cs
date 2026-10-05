@@ -16,7 +16,11 @@ using System.Threading.Tasks;
 /// <param name="pageSize">The page size used for the type histogram.</param>
 internal class PageTraceStream(Stream inner, int pageSize = 4096) : Stream
 {
+#if NET9_0_OR_GREATER
+    private readonly System.Threading.Lock gate = new();
+#else
     private readonly object gate = new();
+#endif
     private readonly List<(long Offset, int Length)> reads = [];
     private readonly List<(long Offset, int Length)> writes = [];
     private readonly Dictionary<byte, long> pageTypes = [];
@@ -256,7 +260,8 @@ internal class PageTraceStream(Stream inner, int pageSize = 4096) : Stream
             this.writes.Add((offset, length));
         }
     }
-    private IReadOnlyDictionary<long, long> CountPages(List<(long Offset, int Length)> operations, int size)
+
+    private Dictionary<long, long> CountPages(List<(long Offset, int Length)> operations, int size)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(size);
         var counts = new Dictionary<long, long>();

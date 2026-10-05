@@ -134,6 +134,7 @@ internal sealed class RelationshipManager(
         {
             IndexMaintainer.ThrowIfTextCollationUnsupported(foreignDef.Columns[foreignDef.FindColumnIndex(columnName)], relationship.ForeignTable);
         }
+
         // Locate MSysRelationships (system table — not in the user-table cache).
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
@@ -1869,6 +1870,7 @@ internal sealed class RelationshipManager(
         {
             return -1;
         }
+
 
         // Locate the matching logical-idx entry, then walk the names list to
         // the same index to find its variable-length name record.

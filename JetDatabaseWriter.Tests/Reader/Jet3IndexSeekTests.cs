@@ -135,7 +135,8 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
         List<Shippers> result = await reader.Query<Shippers>("Shippers").Where(row => row.ShipperID == id).Include(row => row.Orders).ToListAsync(ct);
         Shippers found = Assert.Single(result);
         Assert.Equal(shipper["CompanyName"], found.CompanyName);
-        Assert.Equal(orders.Rows.Cast<DataRow>().Where(row => row["ShipVia"] is int value && value == id).Select(row => (int)row["OrderID"]).Order(),
+        Assert.Equal(
+            orders.Rows.Cast<DataRow>().Where(row => row["ShipVia"] is int value && value == id).Select(row => (int)row["OrderID"]).Order(),
             found.Orders.Select(row => row.OrderID).Order());
     }
 

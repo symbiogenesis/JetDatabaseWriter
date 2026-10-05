@@ -206,7 +206,7 @@ internal sealed class TableDefReader : IDisposable
                 numericPrecision,
                 numericScale,
                 new JetDatabaseWriter.Indexes.Collation.TextSortOrder(
-                    checked((ushort)Ru16(td, o + (this.format.IsJet3 ? 9 : 11))),
+                    Ru16(td, o + (this.format.IsJet3 ? 9 : 11)),
                     this.format.IsJet3 ? (byte)0 : td[o + 14],
                     !this.format.IsJet3)));
         }

@@ -42,10 +42,13 @@ internal sealed class JetTextCollation(TextSortOrder sortOrder)
             throw new NotSupportedException($"Text sort order 0x{sortOrder.Value:X4}, version {sortOrder.Version}, is not supported.");
         }
 
-        return sortOrder.Value == 0 || (sortOrder.HasVersion && sortOrder.Version == 0)
-            ? GeneralLegacyTextIndexEncoder.Encode(text, true, trimTrailingSpaces: false)
-            : !sortOrder.HasVersion
-                ? General97TextIndexEncoder.Encode(text, true, trimTrailingSpaces: false)
-                : GeneralTextIndexEncoder.EncodeComparisonWindow(text);
+        if (sortOrder.Value == 0 || (sortOrder.HasVersion && sortOrder.Version == 0))
+        {
+            return GeneralLegacyTextIndexEncoder.Encode(text, true, trimTrailingSpaces: false);
+        }
+
+        return !sortOrder.HasVersion
+            ? General97TextIndexEncoder.Encode(text, true, trimTrailingSpaces: false)
+            : GeneralTextIndexEncoder.EncodeComparisonWindow(text);
     }
 }

@@ -45,6 +45,33 @@ internal sealed class IndexRowReader(
     TableReader tables,
     AsyncReentrantOperationGate operations)
 {
+    private static bool CanEncodePlan(JetFormat format, TableDef definition, string tableName, IndexPlan plan)
+    {
+        try
+        {
+            if (plan.Criteria.Values is not null)
+            {
+                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values, nameof(plan));
+            }
+
+            if (plan.Criteria.Lower is not null)
+            {
+                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values, nameof(plan));
+            }
+
+            if (plan.Criteria.Upper is not null)
+            {
+                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Upper.Values, nameof(plan));
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>Gets a value indicating whether the database format uses index seeks (<see cref="JetFormat.SupportsIndexSeeks"/>).</summary>
     internal bool CanSeek => format.SupportsIndexSeeks;
 
@@ -293,33 +320,6 @@ internal sealed class IndexRowReader(
 
         IReadOnlyList<IndexMetadata> indexes = await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
         return IndexPlanner.TryPlan(indexes, seekable, plan => CanEncodePlan(format, resolved.Definition, tableName, plan));
-    }
-
-    private static bool CanEncodePlan(JetFormat format, TableDef definition, string tableName, IndexPlan plan)
-    {
-        try
-        {
-            if (plan.Criteria.Values is not null)
-            {
-                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Values, nameof(plan));
-            }
-
-            if (plan.Criteria.Lower is not null)
-            {
-                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Lower.Values, nameof(plan));
-            }
-
-            if (plan.Criteria.Upper is not null)
-            {
-                _ = IndexKeyEncoder.EncodeIndexKeyPrefix(format, tableName, plan.Index, definition, plan.Criteria.Upper.Values, nameof(plan));
-            }
-
-            return true;
-        }
-        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
-        {
-            return false;
-        }
     }
 
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)

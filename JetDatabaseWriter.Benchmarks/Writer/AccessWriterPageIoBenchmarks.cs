@@ -32,6 +32,7 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     public bool Transactional { get; set; }
 
     /// <summary>Creates unmeasured database images for each workload.</summary>
+    /// <returns>The setup completion.</returns>
     [GlobalSetup]
     public async Task Setup()
     {
@@ -112,17 +113,6 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     public Task Northwind_SecondInsert()
         => this.RunAsync(async writer => await writer.InsertRowAsync("PageIo", [2, "second"]));
 
-    private AccessWriterOptions Options() => new()
-    {
-        PageCacheSize = this.PageCacheSize,
-        UseTransactionalWrites = this.Transactional,
-        UseLockFile = false,
-        UseByteRangeLocks = false,
-    };
-
-    private Task RunAsync(Func<AccessWriter, Task> operation)
-        => operation(this.writer ?? throw new InvalidOperationException("The iteration writer is not open."));
-
     /// <summary>Opens an unmeasured fresh image for the new-database workloads.</summary>
     /// <returns>The setup completion.</returns>
     [IterationSetup(Targets = [nameof(NewAccdb_Bulk999), nameof(NewAccdb_Single), nameof(NewAccdb_Update), nameof(NewAccdb_Delete), nameof(NewAccdb_AddColumn)])]
@@ -170,8 +160,20 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
             this.trace = null;
             this.iterationImage?.Dispose();
             this.iterationImage = null;
+            GC.SuppressFinalize(this);
         }
     }
+
+    private AccessWriterOptions Options() => new()
+    {
+        PageCacheSize = this.PageCacheSize,
+        UseTransactionalWrites = this.Transactional,
+        UseLockFile = false,
+        UseByteRangeLocks = false,
+    };
+
+    private Task RunAsync(Func<AccessWriter, Task> operation)
+        => operation(this.writer ?? throw new InvalidOperationException("The iteration writer is not open."));
 
     private async Task PrepareIterationAsync(byte[] image, bool warmInsert)
     {

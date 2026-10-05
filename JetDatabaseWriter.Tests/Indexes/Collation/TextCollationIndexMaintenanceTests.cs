@@ -108,8 +108,10 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
         {
             await WriteModes.RunAsync(writer, mode, async () =>
             {
-                await writer.CreateTableAsync("CollatedKeys",
-                    [new ColumnDefinition("Code", typeof(string), 40) { IsPrimaryKey = true }, new ColumnDefinition("Value", typeof(int))], ct);
+                await writer.CreateTableAsync(
+                    "CollatedKeys",
+                    [new ColumnDefinition("Code", typeof(string), 40) { IsPrimaryKey = true }, new ColumnDefinition("Value", typeof(int))],
+                    ct);
                 await writer.InsertRowsAsync("CollatedKeys", [["\u0152uvre", 1], ["caf\u00e9", 2], ["stra\u00dfe", 3]], ct);
                 Assert.Equal(1, await writer.UpdateRowsAsync("CollatedKeys", "Code", "caf\u00e9", new RowValues { ["Code"] = "r\u00e9sum\u00e9" }, ct));
                 Assert.Equal(1, await writer.DeleteRowsAsync("CollatedKeys", "Code", "stra\u00dfe", ct));
@@ -153,6 +155,7 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
             Assert.True(await cursor.ContainsKeyAsync(primary.FirstDp, expected, ct), "The stored key must match the independently selected fixture-family encoder.");
         }
     }
+
     [Fact]
     public async Task UnencodableGeneralSeekBound_QueryAndIncludeFallBackToScan()
     {
@@ -163,9 +166,11 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), leaveOpen: true, ct))
         {
             await writer.CreateTableAsync("UnencodableParent", [new ColumnDefinition("Code", typeof(string), 255)], ct);
-            await writer.CreateTableAsync("UnencodableChild",
+            await writer.CreateTableAsync(
+                "UnencodableChild",
                 [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("ParentCode", typeof(string), 255)],
-                [new IndexDefinition("IX_ParentCode", "ParentCode")], ct);
+                [new IndexDefinition("IX_ParentCode", "ParentCode")],
+                ct);
             await writer.InsertRowAsync("UnencodableParent", [longKey], ct);
             var rows = new List<object[]>();
             for (int id = 1; id <= 100; id++)

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Schema;
+using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader tableDefs, TableCatalog tableCatalog)

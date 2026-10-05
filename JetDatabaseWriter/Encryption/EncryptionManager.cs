@@ -158,6 +158,7 @@ internal static class EncryptionManager
     /// <param name="password">The password.</param>
     /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
+    /// <exception cref="InvalidDataException">CFB magic appears on a non-ACE header.</exception>
     internal static IPageCodec OpenPageCodec(
         byte[] header,
         DatabaseFormat format,
@@ -257,10 +258,24 @@ internal static class EncryptionManager
         try
         {
             byte[]? mask = GetJet3PageMask(format, header);
-            IPageCodec keys = aesPageKey is not null ? new AesEcbPageCodec(aesPageKey)
-                : rc4DbKey.HasValue ? new Jet4Rc4PageCodec(rc4DbKey.Value)
-                : mask is not null ? new Jet3XorPageCodec(mask)
-                : new NoPageCodec();
+            IPageCodec keys;
+            if (aesPageKey is not null)
+            {
+                keys = new AesEcbPageCodec(aesPageKey);
+            }
+            else if (rc4DbKey.HasValue)
+            {
+                keys = new Jet4Rc4PageCodec(rc4DbKey.Value);
+            }
+            else if (mask is not null)
+            {
+                keys = new Jet3XorPageCodec(mask);
+            }
+            else
+            {
+                keys = new NoPageCodec();
+            }
+
             aesPageKey = null;
             return keys;
         }

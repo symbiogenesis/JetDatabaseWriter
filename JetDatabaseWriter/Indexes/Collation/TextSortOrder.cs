@@ -6,6 +6,6 @@ namespace JetDatabaseWriter.Indexes.Collation;
 /// <param name="HasVersion">Whether the descriptor has a version slot.</param>
 internal readonly record struct TextSortOrder(ushort Value, byte Version, bool HasVersion)
 {
-    /// <summary>Gets whether an encoder supports this sort order.</summary>
+    /// <summary>Gets a value indicating whether an encoder supports this sort order.</summary>
     internal bool IsSupported => this.Value == 0 || (this.Value == 0x0409 && (!this.HasVersion || this.Version <= 1));
 }

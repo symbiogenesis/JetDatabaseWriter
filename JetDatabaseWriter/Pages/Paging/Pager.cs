@@ -29,13 +29,13 @@ internal sealed class Pager : PageFile
     private readonly Dictionary<long, Frame> frames = [];
     private readonly List<long> clock = [];
     private readonly int cacheSize;
+
     /// <summary>
     /// The journal of the active explicit transaction, or <see langword="null"/>.
     /// Attached and detached only through a <see cref="JournalGate"/>, which
     /// holds the I/O gate, or by <see cref="ForceDetachJournal"/> at dispose.
     /// </summary>
     private PageJournal? journal;
-    private JetByteRangeLock byteRangeLock = JetByteRangeLock.Disabled;
     private int clockHand;
     private long generation;
     private long storeReads;
@@ -51,6 +51,7 @@ internal sealed class Pager : PageFile
     /// <param name="leaveOpen">When <see langword="true"/>, the caller keeps ownership of <paramref name="stream"/> and it is not disposed.</param>
     /// <param name="ownerType">The public type that owns the file, named by <see cref="ObjectDisposedException"/>s raised after disposal.</param>
     /// <param name="cacheSize">The maximum cached frame count; zero disables caching.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The cache size is negative.</exception>
     internal Pager(Stream stream, int pageSize, IPageCodec pageKeys, bool leaveOpen, Type ownerType, int cacheSize = 256)
         : this(stream is MemoryStream memory ? new MemoryPageStore(memory, leaveOpen) : new StreamPageStore(stream, leaveOpen), pageSize, pageKeys, ownerType, cacheSize)
     {
@@ -62,13 +63,18 @@ internal sealed class Pager : PageFile
     /// <param name="pageKeys">The owned page codec.</param>
     /// <param name="ownerType">The disposal exception owner.</param>
     /// <param name="cacheSize">The maximum frame count.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The cache size is negative.</exception>
     internal Pager(IPageStore store, int pageSize, IPageCodec pageKeys, Type ownerType, int cacheSize = 256)
         : base(store, pageSize, pageKeys, ownerType)
     {
+#if NET8_0_OR_GREATER
+        ArgumentOutOfRangeException.ThrowIfNegative(cacheSize);
+#else
         if (cacheSize < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(cacheSize));
         }
+#endif
 
         this.cacheSize = cacheSize;
     }
@@ -91,13 +97,13 @@ internal sealed class Pager : PageFile
     /// </summary>
     internal JetByteRangeLock ByteRangeLock
     {
-        get => this.byteRangeLock;
+        get;
         set
         {
-            this.byteRangeLock = value;
+            field = value;
             ((StreamPageStore)this.Store).AcquireWriteLock = value.IsEnabled ? value.AcquirePageLockAsync : null;
         }
-    }
+    } = JetByteRangeLock.Disabled;
 
     /// <summary>Gets a value indicating whether a transaction journal is attached.</summary>
     internal bool IsJournalActive => this.journal is not null;
@@ -203,6 +209,7 @@ internal sealed class Pager : PageFile
     /// <returns>The completion.</returns>
     internal ValueTask TruncateAsync(long pageCount, CancellationToken cancellationToken = default)
         => this.SetLengthAsync(checked(pageCount * this.PageSize), cancellationToken);
+
     /// <summary>
     /// Flushes the backing stream; with <paramref name="toDisk"/> a
     /// <see cref="FileStream"/> is flushed through the OS cache to the device.
@@ -213,9 +220,10 @@ internal sealed class Pager : PageFile
     internal ValueTask FlushAsync(bool toDisk, CancellationToken cancellationToken) => this.Store.FlushAsync(toDisk, cancellationToken);
 
     /// <summary>
-    /// Takes the I/O gate and returns a lease through which a transaction
+    /// Takes the frame gate and then the journal gate, waiting for in-flight
+    /// page I/O, and returns a lease through which a transaction
     /// attaches or detaches its journal. Dispose the lease to release the
-    /// gate. Never hold it across a page read or write call: those take the
+    /// gates. Never hold it across a page read or write call: those take the
     /// gate themselves, and it is not reentrant, so the call would wait on
     /// itself forever.
     /// </summary>
@@ -223,8 +231,17 @@ internal sealed class Pager : PageFile
     /// <returns>The lease, holding the gate.</returns>
     internal async ValueTask<JournalGate> EnterJournalGateAsync(CancellationToken cancellationToken)
     {
-        await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return new JournalGate(this);
+        await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return new JournalGate(this);
+        }
+        catch
+        {
+            _ = this.frameGate.Release();
+            throw;
+        }
     }
 
     /// <summary>
@@ -473,6 +490,7 @@ internal sealed class Pager : PageFile
 
             this.owner = null;
             _ = pager.IoGate.Release();
+            _ = pager.frameGate.Release();
         }
 
         /// <summary>Attaches <paramref name="journal"/>, so later writes and appends are buffered in it.</summary>

@@ -565,11 +565,16 @@ internal static class IndexHelpers
         byte numericScale,
         bool legacyNumeric,
         JetDatabaseWriter.Indexes.Collation.TextSortOrder textSortOrder)
-        => columnType is TextType or MemoType
-            ? IndexKeyEncoder.EncodeTextEntry(textSortOrder, value, ascending)
-            : columnType == NumericType
+    {
+        if (columnType is TextType or MemoType)
+        {
+            return IndexKeyEncoder.EncodeTextEntry(textSortOrder, value, ascending);
+        }
+
+        return columnType == NumericType
             ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, numericScale, legacyNumeric)
             : IndexKeyEncoder.EncodeEntry(columnType, value, ascending);
+    }
 
     /// <summary>
     /// Lexicographic byte-array compare matching the JET index-key sort order

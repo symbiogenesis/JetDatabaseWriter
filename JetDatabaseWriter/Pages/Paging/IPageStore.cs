@@ -39,6 +39,7 @@ internal interface IPageStore : IAsyncDisposable
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The completion.</returns>
     public ValueTask FlushAsync(bool toDisk, CancellationToken cancellationToken);
+
     /// <summary>Disposes owned synchronization resources without closing the stream.</summary>
     public void DisposeManagedResources();
 }

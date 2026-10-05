@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Encryption;
 
-using System;
 using System.Security.Cryptography;
 
 /// <summary>Jet3's cyclic XOR page mask.</summary>

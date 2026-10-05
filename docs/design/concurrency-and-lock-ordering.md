@@ -29,7 +29,7 @@ its transaction journal and plaintext frame cache.
 |---|---|---|
 | `operationGate` | `ReaderServices.Operations` | Reentrant reader-operation leases and disposal drain |
 | `IoGate` | `PageFile`, used by `Pager.JournalGate` | Journal reads, attach and detach; never held across a store operation |
-| `frameGate` | `Pager` | Serializes cache fills and page writes, including append-page allocation |
+| `frameGate` | `Pager` | Serializes cache fills, writes, append allocation, truncation and journal transitions |
 | `frameSync` | `Pager` | Frame dictionary, CLOCK bookkeeping, counters and invalidation generation; memory only |
 | `ioGate` | `StreamPageStore` | Seek-based reads, writes, length changes and flushes; positional reads bypass it |
 | Per-page and commit locks | `JetByteRangeLock` | Advisory cross-process page writes and transaction replay |
@@ -56,10 +56,12 @@ calls while holding them. Invalidation takes only `frameSync`, increments a
 generation and drops every frame. A load that began under an older generation
 cannot retain its bytes after invalidation.
 
-A `Pager.JournalGate` lease holds `IoGate` and must never span a page read, page
-write, append, cache fill or store call. Transaction attach and detach invalidate
-frames while under this lease; they do not acquire `frameGate`. The commit path
-disposes its lease before replaying pages through normal page writes.
+A `Pager.JournalGate` lease holds `frameGate` and then `IoGate`. It waits for
+physical writes to finish before capturing transaction state and must never
+span a page read, write, append, cache fill or store call. Transaction attach
+and detach invalidate frames while under this lease; disposal releases
+`IoGate` and then `frameGate`. The commit path disposes its lease before
+replaying pages through normal page writes.
 
 The reader operation lease and owned-page index initializer can span reads, but
 neither can be acquired while holding a store or pager gate. Positional reader
@@ -76,7 +78,7 @@ spans the open database lifetime.
 
 ```
 BeginTransactionAsync
-  └─ JournalGate lease (IoGate) ──▶ capture writer state (insertPageHintLock, ownedMapSetsLock briefly)
+  └─ JournalGate lease (frameGate, then IoGate) ──▶ capture writer state (insertPageHintLock, ownedMapSetsLock briefly)
               ──▶ gate.Attach(journal); set ActiveTransaction ──▶ dispose the lease
 
 work phase (row encode, index maintenance, page allocation)
@@ -89,7 +91,7 @@ work phase (row encode, index maintenance, page allocation)
      or tdefBytesCacheLock.
 
 CommitTransactionAsync
-  ├─ JournalGate lease (IoGate) ──▶ gate.Detach(); ActiveTransaction = null ──▶ dispose the lease
+  ├─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach(); ActiveTransaction = null ──▶ dispose the lease
   ├─ ByteRangeLock commit-lock sentinel  ◀── held across the entire replay
   │     last cancellation check (nothing written yet)
   │     foreach buffered page (ascending page order), with CancellationToken.None:
@@ -99,7 +101,7 @@ CommitTransactionAsync
   └─ release commit-lock (finally)
 
 RollbackTransactionAsync  (auto-commit calls it when the work throws)
-  └─ JournalGate lease (IoGate) ──▶ gate.Detach() ──▶ restore writer state (catalog invalidated,
+  └─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach() ──▶ restore writer state (catalog invalidated,
                 insertPageHintLock and ownedMapSetsLock briefly, constraint registry) ──▶ dispose the lease
 ```
 

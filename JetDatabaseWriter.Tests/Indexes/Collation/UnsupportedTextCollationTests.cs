@@ -44,9 +44,11 @@ public sealed class UnsupportedTextCollationTests(DatabaseCache cache) : IClassF
         stream.Position = 0;
         await using (AccessWriter seed = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), leaveOpen: true, ct))
         {
-            await seed.CreateTableAsync("Bad",
+            await seed.CreateTableAsync(
+                "Bad",
                 [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int)), new ColumnDefinition("Note", typeof(string), 40), new ColumnDefinition("Extra", typeof(int))],
-                [new IndexDefinition("IX_Note", "Note")], ct);
+                [new IndexDefinition("IX_Note", "Note")],
+                ct);
             await seed.InsertRowAsync("Bad", [1, 1, "caf\u00e9", 9], ct);
             if (operation != "relationship")
             {

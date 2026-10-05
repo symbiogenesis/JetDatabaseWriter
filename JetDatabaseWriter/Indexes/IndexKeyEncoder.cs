@@ -61,6 +61,7 @@ internal static class IndexKeyEncoder
     /// <param name="value">The value.</param>
     /// <param name="ascending">The direction.</param>
     /// <returns>The encoded entry.</returns>
+    /// <exception cref="NotSupportedException">The text sort order is unsupported.</exception>
     internal static byte[] EncodeTextEntry(TextSortOrder sortOrder, object? value, bool ascending = true)
     {
         if (value is null or DBNull)
@@ -74,11 +75,14 @@ internal static class IndexKeyEncoder
         }
 
         string text = ToText(value);
-        return sortOrder.Value == 0 ? GeneralLegacyTextIndexEncoder.Encode(text, ascending) : !sortOrder.HasVersion
+        if (sortOrder.Value == 0 || (sortOrder.HasVersion && sortOrder.Version == 0))
+        {
+            return GeneralLegacyTextIndexEncoder.Encode(text, ascending);
+        }
+
+        return !sortOrder.HasVersion
             ? General97TextIndexEncoder.Encode(text, ascending)
-            : sortOrder.Version == 0
-                ? GeneralLegacyTextIndexEncoder.Encode(text, ascending)
-                : GeneralTextIndexEncoder.Encode(text, ascending);
+            : GeneralTextIndexEncoder.Encode(text, ascending);
     }
 
     /// <summary>Encodes a value with its column's declared collation and numeric scale.</summary>
@@ -88,11 +92,16 @@ internal static class IndexKeyEncoder
     /// <param name="ascending">The direction.</param>
     /// <returns>The encoded entry.</returns>
     internal static byte[] EncodeColumnEntry(JetFormat format, ColumnInfo column, object? value, bool ascending = true)
-        => column.Type is TextType or MemoType
-            ? EncodeTextEntry(column.TextSortOrder, value, ascending)
-            : column.Type == NumericType
-                ? EncodeNumericEntryAtDeclaredScale(value, ascending, column.NumericScale, format.LegacyNumericIndexKeys)
-                : EncodeEntry(column.Type, value, ascending);
+    {
+        if (column.Type is TextType or MemoType)
+        {
+            return EncodeTextEntry(column.TextSortOrder, value, ascending);
+        }
+
+        return column.Type == NumericType
+            ? EncodeNumericEntryAtDeclaredScale(value, ascending, column.NumericScale, format.LegacyNumericIndexKeys)
+            : EncodeEntry(column.Type, value, ascending);
+    }
 
     // Column type codes are imported via `using static JetDatabaseWriter.ColumnTypes;`.
 

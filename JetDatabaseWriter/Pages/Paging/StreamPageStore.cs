@@ -36,7 +36,7 @@ internal class StreamPageStore : IPageStore
     /// <summary>Gets the backing stream for container maintenance.</summary>
     internal Stream Stream { get; }
 
-    /// <summary>Gets whether positional reads are enabled.</summary>
+    /// <summary>Gets a value indicating whether positional reads are enabled.</summary>
     internal bool PositionalReads { get; private set; }
 
     /// <summary>Gets or sets the writer's cooperative lock acquisition.</summary>
@@ -51,6 +51,8 @@ internal class StreamPageStore : IPageStore
             this.handle = file.SafeFileHandle;
             this.PositionalReads = !this.handle.IsInvalid && !this.handle.IsClosed;
         }
+#else
+        this.PositionalReads = false;
 #endif
     }
 

@@ -316,7 +316,7 @@ internal sealed class ConstraintRegistry(
 
             CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false, tableName, textCollation);
             ValidateCalculatedResults(tableName, list, values);
-            this.CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null);
+            CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null, textCollation);
         }
         catch
         {
@@ -392,7 +392,7 @@ internal sealed class ConstraintRegistry(
 
         CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true, tableName, textCollation);
         ValidateCalculatedResults(tableName, list, values);
-        this.CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned);
+        CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned, textCollation);
     }
 
     /// <summary>
@@ -582,13 +582,15 @@ internal sealed class ConstraintRegistry(
     /// <param name="constraints">The column constraints, in table-column order.</param>
     /// <param name="values">The row, in table-column order.</param>
     /// <param name="assignedColumns">The columns to check, or <see langword="null"/> for all.</param>
+    /// <param name="textCollation">The database's text comparison collation.</param>
     /// <exception cref="ArgumentException">A rule evaluates to False.</exception>
-    private void CheckValidationRuleExpressions(
+    private static void CheckValidationRuleExpressions(
         string tableName,
         TableDef tableDef,
         List<ColumnConstraint> constraints,
         object[] values,
-        List<int>? assignedColumns)
+        List<int>? assignedColumns,
+        JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation)
     {
         CalculatedExpressionEvaluationContext? context = null;
         int count = assignedColumns?.Count ?? constraints.Count;

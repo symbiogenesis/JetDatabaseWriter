@@ -53,12 +53,14 @@ public sealed class TextCollationSchemaTests(DatabaseCache cache) : IClassFixtur
         {
             await WriteModes.RunAsync(writer, mode, async () =>
             {
-                await writer.CreateTableAsync("CollationSchema",
+                await writer.CreateTableAsync(
+                    "CollationSchema",
                     [
                         new ColumnDefinition("Id", typeof(int)),
                         new ColumnDefinition("Text", typeof(string), 40) { TextSortOrderOverride = stored },
                         new ColumnDefinition("Discard", typeof(int)),
-                    ], ct);
+                    ],
+                    ct);
                 await writer.InsertRowAsync("CollationSchema", [1, "caf\u00e9", 9], ct);
                 await writer.AddColumnAsync("CollationSchema", new ColumnDefinition("AddedText", typeof(string), 40), ct);
                 await writer.DropColumnAsync("CollationSchema", "Discard", ct);
@@ -73,6 +75,7 @@ public sealed class TextCollationSchemaTests(DatabaseCache cache) : IClassFixtur
         using System.Data.DataTable rows = await reader.ReadDataTableAsync("CollationSchema", cancellationToken: ct);
         Assert.Equal("caf\u00e9", Assert.Single(rows.Rows.Cast<System.Data.DataRow>())["RenamedText"]);
     }
+
     [Fact]
     public async Task NewJet3Descriptors_StampSortCodePageAndColumnNumberCopy()
     {

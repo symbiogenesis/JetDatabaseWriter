@@ -188,6 +188,7 @@ internal sealed class CatalogArtifactWriter(
             TableDef definition = TDefPageBuilder.BuildTableDefinition(artifact.Columns, format);
             _ = IndexHelpers.ResolveIndexes(artifact.Indexes, definition);
         }
+
         long[] tablePages = new long[plan.TableArtifacts.Count];
         for (int artifactIndex = 0; artifactIndex < plan.TableArtifacts.Count; artifactIndex++)
         {

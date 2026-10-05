@@ -429,7 +429,6 @@ internal static class GeneralLegacyTextIndexEncoder
             bout[508] = (byte)(suffix >> 8);
             bout[509] = unchecked((byte)suffix);
         }
-
         else
         {
             throw new NotSupportedException("The General text index key requires a long-row suffix that is not supported.");

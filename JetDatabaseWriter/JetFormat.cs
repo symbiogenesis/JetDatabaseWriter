@@ -275,6 +275,7 @@ internal sealed class JetFormat
             System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(unmasked.AsSpan(offset, 2)),
             jet3 ? (byte)0 : unmasked[0x71],
             !jet3);
+
         // Zero in the database header names General Legacy. New Jet3
         // columns use General 97, matching the Access 97 descriptor shape.
         if (order.Value == 0)

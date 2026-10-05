@@ -16,11 +16,12 @@ public sealed class TextSortOrderTests
     public void EncodeTextEntry_UsesDeclaredSortOrder(bool hasVersion, byte version)
     {
         var order = new TextSortOrder(0x0409, version, hasVersion);
-        byte[] expected = !hasVersion
-            ? General97TextIndexEncoder.Encode("Éléphant!", true)
-            : version == 0
-                ? GeneralLegacyTextIndexEncoder.Encode("Éléphant!", true)
-                : GeneralTextIndexEncoder.Encode("Éléphant!", true);
+        byte[] expected = (hasVersion, version) switch
+        {
+            (false, _) => General97TextIndexEncoder.Encode("Éléphant!", true),
+            (true, 0) => GeneralLegacyTextIndexEncoder.Encode("Éléphant!", true),
+            _ => GeneralTextIndexEncoder.Encode("Éléphant!", true),
+        };
         Assert.Equal(expected, IndexKeyEncoder.EncodeTextEntry(order, "Éléphant!", true));
     }
 

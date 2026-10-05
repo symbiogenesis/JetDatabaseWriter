@@ -84,6 +84,7 @@ internal static class General97TextIndexEncoder
         {
             chars = chars.TrimEnd(' ');
         }
+
         int extraByteCapacity = GetExtraByteCapacity(chars.Length);
 
         var bytes = new List<byte>(chars.Length + extraByteCapacity + 2)

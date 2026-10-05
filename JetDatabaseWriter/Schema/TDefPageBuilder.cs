@@ -325,6 +325,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 }
             }
 
+
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : format.EncodeAnsiText(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
@@ -846,6 +847,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 Wu16(db, o + 9, 0x0409);
                 Wu16(db, o + 11, 1252);
             }
+
             db[o + descriptor.FlagsOff] = col.Flags;
             Wu16(db, o + descriptor.FixedOff, col.FixedOff);
             Wu16(db, o + descriptor.SzOff, col.Size);

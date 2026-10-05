@@ -4,8 +4,8 @@ namespace JetDatabaseWriter.Pages.Paging;
 internal enum PageReadHint
 {
     /// <summary>Use the frame cache.</summary>
-    Normal,
+    Normal = 0,
 
     /// <summary>Read without retaining a frame.</summary>
-    NoCache,
+    NoCache = 1,
 }

@@ -20,7 +20,6 @@ using JetDatabaseWriter.Infrastructure;
 /// </summary>
 internal class PageFile : IPageSource, IAsyncDisposable
 {
-    private readonly IPageStore store;
     private readonly Type ownerType;
 
     /// <summary>
@@ -43,7 +42,7 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// <param name="ownerType">The disposal exception owner.</param>
     internal PageFile(IPageStore store, int pageSize, IPageCodec pageKeys, Type ownerType)
     {
-        this.store = store;
+        this.Store = store;
         this.PageSize = pageSize;
         this.PageKeys = pageKeys;
         this.ownerType = ownerType;
@@ -60,13 +59,13 @@ internal class PageFile : IPageSource, IAsyncDisposable
     public bool IsDisposed { get; private set; }
 
     /// <summary>Gets the backing stream.</summary>
-    internal Stream Stream => ((StreamPageStore)this.store).Stream;
+    internal Stream Stream => ((StreamPageStore)this.Store).Stream;
 
     /// <summary>
     /// Gets the page count of the backing stream alone, ignoring any pages a
     /// writer's transaction has appended.
     /// </summary>
-    internal long PhysicalPageCount => this.store.Length / this.PageSize;
+    internal long PhysicalPageCount => this.Store.Length / this.PageSize;
 
     /// <summary>
     /// Gets the length of the backing stream. Inside a writer's transaction
@@ -74,16 +73,16 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// stay in the journal until commit; use <see cref="PageCount"/> for page
     /// bounds.
     /// </summary>
-    internal long LengthBytes => this.store.Length;
+    internal long LengthBytes => this.Store.Length;
 
     /// <summary>Gets a value indicating whether the backing stream is a <see cref="FileStream"/>.</summary>
-    internal bool IsFileBacked => this.store.Capabilities.IsFileBacked;
+    internal bool IsFileBacked => this.Store.Capabilities.IsFileBacked;
 
     /// <summary>
     /// Gets a value indicating whether <see cref="EnableRandomAccessPageReadsIfSupported"/>
     /// switched page reads to positional <c>RandomAccess</c> reads.
     /// </summary>
-    internal bool UsesRandomAccessPageReads => this.store.Capabilities.PositionalReads;
+    internal bool UsesRandomAccessPageReads => this.Store.Capabilities.PositionalReads;
 
     /// <summary>
     /// Gets or sets a value indicating whether a page read that starts on a
@@ -109,13 +108,15 @@ internal class PageFile : IPageSource, IAsyncDisposable
     private protected IPageCodec PageKeys { get; }
 
     /// <summary>Gets the owned physical page store.</summary>
-    private protected IPageStore Store => this.store;
+    private protected IPageStore Store { get; }
 
-    /// <summary>Gets whether the writer may have pending journal pages.</summary>
+    /// <summary>Gets a value indicating whether the writer may have pending journal pages.</summary>
     private protected virtual bool HasPendingPages => false;
 
     /// <summary>Records a physical store read.</summary>
-    private protected virtual void OnStoreRead() { }
+    private protected virtual void OnStoreRead()
+    {
+    }
 
     /// <summary>
     /// Asynchronously reads the fixed-size JET header (first 0x80 bytes) from page 0.
@@ -171,7 +172,7 @@ internal class PageFile : IPageSource, IAsyncDisposable
             if (!pending)
             {
                 this.OnStoreRead();
-                await this.store.ReadAsync(pageNumber * this.PageSize, buffer.AsMemory(0, this.PageSize), this.CanReadInline(), cancellationToken).ConfigureAwait(false);
+                await this.Store.ReadAsync(pageNumber * this.PageSize, buffer.AsMemory(0, this.PageSize), this.CanReadInline(), cancellationToken).ConfigureAwait(false);
                 this.PageKeys.Decode(buffer, 0, pageNumber, this.PageSize);
             }
 
@@ -211,7 +212,7 @@ internal class PageFile : IPageSource, IAsyncDisposable
         this.IsDisposed = true;
         try
         {
-            await this.store.DisposeAsync().ConfigureAwait(false);
+            await this.Store.DisposeAsync().ConfigureAwait(false);
         }
         finally
         {
@@ -225,7 +226,7 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// and the shared stream position. Does nothing for other streams and in
     /// the netstandard2.1 build, which has no <c>RandomAccess</c>.
     /// </summary>
-    internal void EnableRandomAccessPageReadsIfSupported() => ((StreamPageStore)this.store).EnablePositionalReads();
+    internal void EnableRandomAccessPageReadsIfSupported() => ((StreamPageStore)this.Store).EnablePositionalReads();
 
     /// <summary>
     /// Disposes the I/O gate and the page cipher, but not the backing stream.
@@ -234,7 +235,7 @@ internal class PageFile : IPageSource, IAsyncDisposable
     /// </summary>
     internal virtual void DisposeManagedResources()
     {
-        this.store.DisposeManagedResources();
+        this.Store.DisposeManagedResources();
         this.IoGate.Dispose();
         this.PageKeys.Dispose();
     }

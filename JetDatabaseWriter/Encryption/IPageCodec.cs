@@ -5,7 +5,7 @@ using System;
 /// <summary>Thread-safe page encryption with page-zero bypass.</summary>
 internal interface IPageCodec : IDisposable
 {
-    /// <summary>Gets whether pages are encrypted.</summary>
+    /// <summary>Gets a value indicating whether pages are encrypted.</summary>
     public bool HasEncryption { get; }
 
     /// <summary>Decodes one page in an owned buffer.</summary>

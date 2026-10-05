@@ -152,6 +152,21 @@ public sealed class PagerFrameCacheTests
         Assert.Equal(secondPage, await pager.ReadPageCopyAsync(2));
     }
 
+    /// <summary>Journal attachment waits for physical appends before capturing their length.</summary>
+    [Fact]
+    public async Task JournalGate_WaitsForPhysicalAppend()
+    {
+        var store = new ControlledStore(16) { HoldWrite = true };
+        await using var pager = new Pager(store, 16, new NoPageCodec(), typeof(AccessWriter), cacheSize: 2);
+        Task<long> append = pager.AppendPageAsync(new byte[16]).AsTask();
+        await store.WriteCaptured.Task;
+        Task<Pager.JournalGate> entering = pager.EnterJournalGateAsync(TestContext.Current.CancellationToken).AsTask();
+        Assert.False(entering.IsCompleted);
+        store.ReleaseWrite.SetResult();
+        Assert.Equal(1, await append);
+        using Pager.JournalGate gate = await entering;
+        Assert.Equal(32, gate.PhysicalLengthBytes);
+    }
     /// <summary>CLOCK eviction bounds frames; NoCache scans never displace them.</summary>
     [Fact]
     public async Task Clock_BoundsFrames_AndNoCachePreservesHotPages()
