@@ -7,8 +7,10 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -112,6 +114,7 @@ public sealed class ComplexColumnsFallbackOwnershipTests
             : 0;
         int complexId = Assert.IsType<ColumnInfo>(parent.Definition.FindColumn("Files")).Misc;
         TableDef definition = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(tdefPage, ComplexColumnTestSupport.Ct));
+
         // Also clear ComplexID so the descriptor join cannot bypass the ownership fallback.
         string[] fields = damage switch
         {
