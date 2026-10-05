@@ -201,6 +201,14 @@ public interface IAccessReader : IAccessBase
     /// terminals are extension methods in <see cref="JetDatabaseWriter.Linq.AccessQueryExtensions"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The results are async-only: enumerating the query synchronously (<c>foreach</c>,
+    /// <c>ToList()</c>) or calling a synchronous LINQ terminal on it (<c>Count()</c>,
+    /// <c>First()</c>, <c>Sum(...)</c>, …) throws <see cref="System.NotSupportedException"/>
+    /// naming <c>ToListAsync</c>, and the matching async terminal when there is one, before
+    /// anything is read.
+    /// </para>
+    /// <para>
     /// <c>Include</c> / <c>ThenInclude</c> resolve the related table from the navigation's
     /// target type by name, ignoring case and non-alphanumeric separators (so an
     /// <c>OrderLine</c> type binds to an <c>Order_Line</c> table). Annotate the type with
@@ -213,6 +221,7 @@ public interface IAccessReader : IAccessBase
     /// property to a differently named column for materialization, <c>Where</c> index
     /// inference, index-ordered <c>OrderBy</c>, and <c>Include</c> join keys, and
     /// <c>[NotMapped]</c> excludes a property.
+    /// </para>
     /// </remarks>
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>

@@ -182,12 +182,11 @@ Each of these needs structural work rather than a local fix; the bugs above are 
 - **Failures are not modeled.** `JetLimitationException` is the only custom exception type, so callers tell a refusal, an unenforceable constraint, a corrupt page, an unreadable long value and a torn commit apart only by exception type and message text, and `LastDiagnostics` is typed only internally. Planned in wave 2: failure-model-a, encryption-flat-agile, failure-model-b1 and failure-model-b2.
 - **The LINQ layer has no query plan.** `EntityMap` is the one property-to-column mapping and `ValueCoercer` the one value conversion, but:
   - read materializers are compiled on every call, not cached per table definition or row shape: `RowMapper<T>.Build` runs in `TableReader.EnumerateMappedRowsAsync`, `IndexRowReader.ReadIndexRowsAsync` and `LinkedTableReader`, and `DirectRowDecoderBuilder.TryBuild` compiles again; only the insert delegate is cached (`RowMapper.WriteCache`);
-  - the `IQueryable` surface runs sync-over-async (`AccessQueryProvider` blocks on `Task.Run(...).GetAwaiter().GetResult()`);
   - index walks do not stream: `IndexCursor.FindRowLocationsForCriteriaAsync` builds a `List` of every matching row location before the first row is materialized;
   - `MinAsync`, `MaxAsync`, `SumAsync` and `AverageAsync` take `Func` selectors and aggregate the result of `ToListAsync` in memory, so memory grows with the row count;
   - nothing is annotated for AOT or trimming: there is no `DynamicallyAccessedMembers`, `RequiresUnreferencedCode`, `RequiresDynamicCode` or `IsAotCompatible` in the repository.
 
-  Planned in wave 2: linq-b (async-only `Query<T>`, streaming aggregates), linq-c (cached materializers, streaming index walks), linq-plan-cache and linq-aot.
+  Planned in wave 2: linq-b (streaming aggregates), linq-c (cached materializers, streaming index walks), linq-plan-cache and linq-aot.
 
 ## Unchecked against Access
 

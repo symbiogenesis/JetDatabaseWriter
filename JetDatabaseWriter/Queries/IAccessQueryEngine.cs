@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Queries;
 
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Threading;
@@ -9,13 +8,11 @@ using System.Threading.Tasks;
 /// <summary>
 /// Non-generic execution surface a query provider exposes so an
 /// <see cref="AccessQueryable{T}"/> can run its expression without naming the
-/// provider's entity type.
+/// provider's entity type. It is async-only, like the query results it serves.
 /// </summary>
 internal interface IAccessQueryEngine
 {
     public IAsyncEnumerable<object> ExecuteStreamAsync(Expression expression, CancellationToken cancellationToken);
-
-    public IEnumerable ExecuteSyncList(Expression expression);
 
     /// <summary>
     /// Counts the rows <paramref name="expression"/> produces. Counting the whole

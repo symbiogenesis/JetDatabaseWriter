@@ -13,7 +13,10 @@ using JetDatabaseWriter.Queries;
 /// <summary>
 /// LINQ extensions for the entity queries returned by
 /// <see cref="AccessReader.Query{T}(string)"/>: relationship-inferred eager loading
-/// (<see cref="Include{T, TProperty}"/>) and async terminal operators.
+/// (<see cref="Include{T, TProperty}"/>) and async terminal operators. Query results are
+/// async-only, so these terminals and <see cref="AsAsyncEnumerable{T}(IQueryable{T})"/> are
+/// the ways to run a query: synchronous enumeration and the synchronous LINQ terminals throw
+/// <see cref="NotSupportedException"/>.
 /// </summary>
 public static class AccessQueryExtensions
 {
