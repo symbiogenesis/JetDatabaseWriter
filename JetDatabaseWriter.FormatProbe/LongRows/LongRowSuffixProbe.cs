@@ -6063,7 +6063,6 @@ internal static class LongRowSuffixProbe
             ascending,
             codes,
             extCodes,
-            GeneralLegacyTextIndexEncoder.LongRowSeparatorGeneral,
             maxEntryLength: int.MaxValue);
 
     private static byte[] BuildTrimmedFullV2010Entry(string text, bool ascending)

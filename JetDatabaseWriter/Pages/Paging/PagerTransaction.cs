@@ -7,7 +7,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
-/// In-memory journal of dirty pages produced inside an explicit
+/// In-memory journal of dirty pages produced inside a private statement or explicit
 /// <see cref="JetTransaction"/>. Each entry is the page's new contents (an
 /// after-image), buffered in plaintext instead of written to disk. At
 /// <c>CommitAsync</c> the entries are written over the file in place, page by

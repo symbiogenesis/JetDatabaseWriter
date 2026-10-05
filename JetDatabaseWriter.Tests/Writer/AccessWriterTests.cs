@@ -184,18 +184,16 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     }
 
     /// <summary>
-    /// Cancelling a batch insert while its rows are being written rolls back
-    /// every row the batch wrote. The rollback used to run on the cancelled
-    /// token, so it threw on its first page write and left those rows live on
-    /// disk with no primary-key index entries.
+    /// Cancellation after physical statement replay starts is ignored, so
+    /// every row, index entry and counter reaches the completed batch state.
     /// </summary>
     /// <param name="pageWritesBeforeCancel">How many page writes the batch makes before the token is cancelled.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
-    [InlineData(1)] // during the first spill of the batch's distinct dirty pages
-    [InlineData(2)] // during the same spill, before the next row
+    [InlineData(1)]
+    [InlineData(2)]
     [InlineData(7)]
-    public async Task InsertRows_CancelledWhileWritingRows_RollsBackBatch(int pageWritesBeforeCancel)
+    public async Task InsertRows_CancelledDuringPhysicalReplay_CompletesBatch(int pageWritesBeforeCancel)
     {
         await using var stream = new CancelAfterWritesStream();
         using var cts = new CancellationTokenSource();
@@ -203,25 +201,60 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using (AccessWriter writer = await CreateCancellationTestTableAsync(stream, wideRows: true))
         {
             stream.CancelAfterWrites(pageWritesBeforeCancel, cts);
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                await writer.InsertRowsAsync("T", Enumerable.Range(1, 100).Select(id => Enumerable.Repeat<object?>(new string('Ж', 200), 8).Prepend(id).ToArray()), cts.Token));
+            int inserted = await writer.InsertRowsAsync("T", WideCancellationTestBatch(), cts.Token);
+            Assert.True(cts.IsCancellationRequested);
+            Assert.Equal(100, inserted);
             stream.Disarm();
         }
 
-        await AssertCancellationTestTableAsync(stream, expectedIds: [0]);
+        await AssertCancellationTestTableAsync(stream, expectedIds: [.. Enumerable.Range(0, 101)], expectedPadding: new string('Ж', 200));
+    }
+
+    /// <summary>Cancellation during commit preparation discards every pending row and restores writer state.</summary>
+    /// <returns>The test completion.</returns>
+    [Fact]
+    public async Task InsertRows_CancelledBeforePhysicalReplay_RollsBackBatch()
+    {
+        int batchReads;
+        await using (var twin = new WriteFaultStream())
+        await using (AccessWriter writer = await CreateCancellationTestTableAsync(twin, wideRows: true))
+        {
+            int initialReads = twin.ReadCount;
+            Assert.Equal(100, await writer.InsertRowsAsync("T", WideCancellationTestBatch(), TestContext.Current.CancellationToken));
+            batchReads = twin.ReadCount - initialReads;
+        }
+
+        Assert.True(batchReads > 0);
+        await using var stream = new WriteFaultStream();
+        using var cancellation = new CancellationTokenSource();
+        await using (AccessWriter writer = await CreateCancellationTestTableAsync(stream, wideRows: true))
+        {
+            byte[] original = stream.ToArray();
+            int initialWrites = stream.WriteCount;
+
+            // The final read prepares commit undo images after all logical row and index writes.
+            stream.CancelAfterReads(batchReads, cancellation);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await writer.InsertRowsAsync("T", WideCancellationTestBatch(), cancellation.Token));
+            Assert.True(cancellation.IsCancellationRequested);
+            Assert.Equal(initialWrites, stream.WriteCount);
+            Assert.Equal(original, stream.ToArray());
+            await writer.InsertRowAsync("T", Enumerable.Repeat<object?>(string.Empty, 8).Prepend(101).ToArray(), TestContext.Current.CancellationToken);
+        }
+
+        await AssertCancellationTestTableAsync(stream, expectedIds: [0, 101], expectedPadding: string.Empty);
     }
 
     /// <summary>
-    /// Cancelling a batch insert after all of its rows are written, while the
-    /// indexes are being updated, completes the batch: abandoning index
-    /// maintenance halfway would leave the indexes out of step with the rows.
+    /// Cancellation near the end of physical replay completes every row,
+    /// index entry and table-definition counter in the batch.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task InsertRows_CancelledDuringIndexMaintenance_CompletesBatch()
+    public async Task InsertRows_CancelledNearEndOfPhysicalReplay_CompletesBatch()
     {
         // Measure the batch's page writes on an identical database, then cancel
-        // the real batch one write before its last, which is an index write.
+        // the real batch one physical write before its last.
         int batchPageWrites;
         await using (var twin = new CancelAfterWritesStream())
         await using (AccessWriter writer = await CreateCancellationTestTableAsync(twin))
@@ -2160,7 +2193,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// with a primary key on <c>Id</c> and one row, <c>Id = 0</c>.
     /// </summary>
     /// <param name="stream">The stream to create the database in.</param>
-    /// <param name="wideRows">Whether to add padding columns and spill after 64 distinct pages.</param>
+    /// <param name="wideRows">Whether to add padding columns and disable page caching.</param>
     private static async Task<AccessWriter> CreateCancellationTestTableAsync(Stream stream, bool wideRows = false)
     {
         AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -2192,6 +2225,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         }
     }
 
+    private static IEnumerable<object?[]> WideCancellationTestBatch()
+        => Enumerable.Range(1, 100).Select(id => Enumerable.Repeat<object?>(new string('Ж', 200), 8).Prepend(id).ToArray());
+
     private static List<object?[]> CancellationTestBatch() => [.. Enumerable.Range(1, 50).Select(i => new object?[] { i })];
 
     /// <summary>
@@ -2200,7 +2236,8 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// </summary>
     /// <param name="stream">The stream holding the database.</param>
     /// <param name="expectedIds">The <c>Id</c> values expected, in ascending order.</param>
-    private static async Task AssertCancellationTestTableAsync(Stream stream, int[] expectedIds)
+    /// <param name="expectedPadding">The padding value expected for inserted rows, or null for narrow rows.</param>
+    private static async Task AssertCancellationTestTableAsync(Stream stream, int[] expectedIds, string? expectedPadding = null)
     {
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -2212,7 +2249,12 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         var tableIds = new List<int>();
         await foreach (object[] row in reader.Rows("T", cancellationToken: TestContext.Current.CancellationToken))
         {
-            tableIds.Add((int)row[0]);
+            int id = (int)row[0];
+            tableIds.Add(id);
+            if (expectedPadding is not null)
+            {
+                Assert.All(row.Skip(1), value => Assert.Equal(id == 0 ? string.Empty : expectedPadding, value));
+            }
         }
 
         var indexIds = new List<int>();

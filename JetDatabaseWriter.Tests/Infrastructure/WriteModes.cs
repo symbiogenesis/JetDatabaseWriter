@@ -75,10 +75,10 @@ internal static class WriteModes
 [SuppressMessage("Design", "CA1515:Consider making public types internal", Justification = "Theory parameters of public xUnit test methods must be public.")]
 public enum WriteMode
 {
-    /// <summary>No transaction; every page write goes straight to the stream.</summary>
+    /// <summary>Default atomic statements, with no device flush requested.</summary>
     Direct = 0,
 
-    /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> wraps each call in its own transaction.</summary>
+    /// <summary><see cref="AccessWriterOptions.UseTransactionalWrites"/> requests a durable flush for each atomic statement.</summary>
     AutoCommit = 1,
 
     /// <summary>The mutations run inside one explicit transaction that is committed.</summary>
