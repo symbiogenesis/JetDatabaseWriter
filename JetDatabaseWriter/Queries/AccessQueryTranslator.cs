@@ -14,10 +14,10 @@ using JetDatabaseWriter.Linq;
 /// natively against the table — the longest innermost run of supported operators that
 /// still yields the entity type (collected into an <see cref="AccessQueryPlan"/>) — and
 /// the <em>tail</em> above it (projection and anything after it). The boundary between
-/// the two is returned so the provider can replay the tail with LINQ-to-Objects over the
-/// materialized rows. Operators in the engine boundary keep their index-inference fast
-/// path; the tail handles <c>Select</c>, post-projection operators, and any operator the
-/// engine does not translate.
+/// the two is returned so the provider can run the tail through <see cref="InMemoryTail"/>
+/// over the rows the engine streams. Operators in the engine boundary keep their
+/// index-inference fast path; the tail handles <c>Select</c>, post-projection operators, and
+/// any operator the engine does not translate.
 /// </summary>
 internal static class AccessQueryTranslator
 {
@@ -46,7 +46,10 @@ internal static class AccessQueryTranslator
     /// sub-expression that consists solely of supported operators. The walk stops at the
     /// first operator the engine cannot translate (for example <c>Select</c>, an indexed
     /// <c>Where</c>, an ordering with a custom comparer, or a scalar terminal); that
-    /// operator and everything outside it form the in-memory tail.
+    /// operator and everything outside it form the in-memory tail. A <c>ThenBy</c> the engine
+    /// cannot translate refines the ordering below it, which the tail would not see, so the
+    /// boundary then drops below the <c>OrderBy</c> that starts that ordering and the tail
+    /// sorts by every key.
     /// </summary>
     /// <param name="expression">The sub-expression to examine.</param>
     /// <returns>The largest engine-evaluable sub-expression.</returns>
@@ -58,16 +61,42 @@ internal static class AccessQueryTranslator
 
             // Only extend the boundary through this call when nothing below it was cut
             // (the inner part is fully engine-evaluable) and this operator is supported.
-            if (ReferenceEquals(innerBoundary, call.Arguments[0]) && IsEngineSupported(call))
+            if (!ReferenceEquals(innerBoundary, call.Arguments[0]))
+            {
+                return innerBoundary;
+            }
+
+            if (IsEngineSupported(call))
             {
                 return call;
             }
 
-            return innerBoundary;
+            return IsThenBy(call) ? OrderingSource(call.Arguments[0]) : innerBoundary;
         }
 
         // The innermost source (a ConstantExpression wrapping the queryable) is the floor.
         return expression;
+    }
+
+    private static bool IsThenBy(MethodCallExpression call) =>
+        call.Method.DeclaringType == typeof(Queryable) && call.Method.Name is "ThenBy" or "ThenByDescending";
+
+    /// <summary>
+    /// Returns the source of the ordering that <paramref name="ordered"/> ends: below its
+    /// <c>ThenBy</c> calls and the <c>OrderBy</c> or <c>OrderByDescending</c> that starts it.
+    /// </summary>
+    /// <param name="ordered">An engine-evaluable expression that ends in an ordering.</param>
+    /// <returns>The expression the ordering sorts.</returns>
+    private static Expression OrderingSource(Expression ordered)
+    {
+        while (ordered is MethodCallExpression call && IsThenBy(call))
+        {
+            ordered = call.Arguments[0];
+        }
+
+        return ordered is MethodCallExpression { Method.Name: "OrderBy" or "OrderByDescending" } orderBy
+            ? orderBy.Arguments[0]
+            : ordered;
     }
 
     /// <summary>
@@ -98,7 +127,7 @@ internal static class AccessQueryTranslator
             // A trailing IComparer<TKey> argument would be ignored by the engine's sort,
             // so only the two-argument ordering forms stay in the engine.
             "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" => call.Arguments.Count == 2,
-            "Skip" or "Take" => call.Arguments.Count == 2,
+            "Skip" or "Take" => call.Arguments.Count == 2 && call.Arguments[1].Type == typeof(int),
             _ => false,
         };
     }
@@ -147,7 +176,7 @@ internal static class AccessQueryTranslator
             return;
         }
 
-        throw NotSupported(call.Method.Name);
+        throw InMemoryTail.UnsupportedOperator(call.Method.Name);
     }
 
     private static void ApplyQueryableOperator(MethodCallExpression call, AccessQueryPlan plan)
@@ -176,7 +205,7 @@ internal static class AccessQueryTranslator
                 plan.Stages.Add(new TakeStage(Convert.ToInt32(EvaluateConstant(call.Arguments[1]), CultureInfo.InvariantCulture)));
                 break;
             default:
-                throw NotSupported(call.Method.Name);
+                throw InMemoryTail.UnsupportedOperator(call.Method.Name);
         }
     }
 
@@ -303,7 +332,7 @@ internal static class AccessQueryTranslator
                     operations.Add(new IncludeTakeOperation(ToCount(call.Arguments[1])));
                     break;
                 default:
-                    throw NotSupported(call.Method.Name);
+                    throw InMemoryTail.UnsupportedOperator(call.Method.Name);
             }
         }
 
@@ -355,7 +384,4 @@ internal static class AccessQueryTranslator
             + "OrderByDescending / ThenBy / ThenByDescending / Skip / Take on a collection navigation, "
             + "for example o => o.Customer, c => c.Orders, or c => c.Orders.Where(o => o.Open).Take(5).");
     }
-
-    private static NotSupportedException NotSupported(string operatorName) =>
-        new($"The query operator '{operatorName}' is not supported. Materialize with ToListAsync(...) and use LINQ-to-Objects for it.");
 }

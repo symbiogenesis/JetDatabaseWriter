@@ -119,7 +119,7 @@ public sealed class EntityColumnMappingTests(DatabaseCache db) : IClassFixture<D
         await using MemoryStream ms = await CreateSeededPeopleAsync(format, ct);
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
 
-        Assert.Equal(1, reader.Query<Person>(Table).Where(p => p.LastName == "Smith").Count());
+        Assert.Equal(1, await reader.Query<Person>(Table).Where(p => p.LastName == "Smith").CountAsync(ct));
 
         List<Person> viaQuery = await reader.Query<Person>(Table).Where(p => p.LastName == "Jones").ToListAsync(ct);
         Assert.Equal(2, Assert.Single(viaQuery).PersonId);

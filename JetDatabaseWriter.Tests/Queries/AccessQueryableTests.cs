@@ -270,13 +270,13 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     [Fact]
-    public async Task Select_Count_ReducesProjection()
+    public async Task Select_CountAsync_ReducesProjection()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        Assert.Equal(6, reader.Query<JdwItem>("JdwItem").Select(i => i.Name).Count());
+        Assert.Equal(6, await reader.Query<JdwItem>("JdwItem").Select(i => i.Name).CountAsync(ct));
     }
 
     [Fact]
@@ -358,143 +358,48 @@ public sealed class AccessQueryableTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     [Fact]
-    public async Task Count_CountsAllRows()
+    public async Task Where_CountAsync_AppliesLeadingEqualityFilter()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        Assert.Equal(6, reader.Query<JdwItem>("JdwItem").Count());
+        Assert.Equal(2, await reader.Query<JdwItem>("JdwItem").Where(i => i.Score == 30).CountAsync(ct));
     }
 
     [Fact]
-    public async Task Count_WithPredicate_CountsMatches()
+    public async Task FirstAsync_AfterDescendingOrdering_ReturnsTop()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        Assert.Equal(4, reader.Query<JdwItem>("JdwItem").Count(i => i.Score >= 30));
-    }
-
-    [Fact]
-    public async Task Where_Count_AppliesLeadingFilter()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        Assert.Equal(2, reader.Query<JdwItem>("JdwItem").Where(i => i.Score == 30).Count());
-    }
-
-    [Fact]
-    public async Task Any_ReflectsExistence()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        Assert.True(reader.Query<JdwItem>("JdwItem").Any());
-        Assert.True(reader.Query<JdwItem>("JdwItem").Any(i => i.Score == 50));
-        Assert.False(reader.Query<JdwItem>("JdwItem").Any(i => i.Score > 1000));
-    }
-
-    [Fact]
-    public async Task First_AfterOrdering_ReturnsTop()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        JdwItem top = reader.Query<JdwItem>("JdwItem").OrderByDescending(i => i.Score).First();
+        JdwItem top = await reader.Query<JdwItem>("JdwItem").OrderByDescending(i => i.Score).FirstAsync(ct);
 
         Assert.Equal(3, top.Id);
     }
 
     [Fact]
-    public async Task First_WithPredicate_ReturnsMatch()
+    public async Task FirstAsync_WithPredicate_OnEmptyResult_Throws()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        Assert.Equal(5, reader.Query<JdwItem>("JdwItem").First(i => i.Score == 40).Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.Query<JdwItem>("JdwItem").FirstAsync(i => i.Score > 1000, ct));
     }
 
     [Fact]
-    public async Task First_OnEmptyResult_Throws()
+    public async Task SingleOrDefaultAsync_WhenMultipleMatch_Throws()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream temp = await this.BuildAsync(ct);
         await using AccessReader reader = await OpenReaderAsync(temp, ct);
 
-        Assert.Throws<InvalidOperationException>(() =>
-            reader.Query<JdwItem>("JdwItem").First(i => i.Score > 1000));
-    }
-
-    [Fact]
-    public async Task Single_WithPredicate_ReturnsMatch()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        Assert.Equal(3, reader.Query<JdwItem>("JdwItem").Single(i => i.Id == 3).Id);
-    }
-
-    [Fact]
-    public async Task SingleOrDefault_WhenMultipleMatch_Throws()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        // Ids 1 and 6 both score 30, so SingleOrDefault must throw rather than pick one.
-        Assert.Throws<InvalidOperationException>(() =>
-            reader.Query<JdwItem>("JdwItem").SingleOrDefault(i => i.Score == 30));
-    }
-
-    [Fact]
-    public async Task Sum_Selector_AddsScores()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        Assert.Equal(180, reader.Query<JdwItem>("JdwItem").Sum(i => i.Score));
-    }
-
-    [Fact]
-    public async Task MinMax_Selectors_ReturnExtremes()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        Assert.Equal(10, reader.Query<JdwItem>("JdwItem").Min(i => i.Score));
-        Assert.Equal(50, reader.Query<JdwItem>("JdwItem").Max(i => i.Score));
-    }
-
-    [Fact]
-    public async Task Average_Selector_ReturnsMean()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        Assert.Equal(30.0, reader.Query<JdwItem>("JdwItem").Average(i => i.Score));
-    }
-
-    [Fact]
-    public async Task ToList_SyncMaterializesAllRows()
-    {
-        CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream temp = await this.BuildAsync(ct);
-        await using AccessReader reader = await OpenReaderAsync(temp, ct);
-
-        var rows = reader.Query<JdwItem>("JdwItem").OrderBy(i => i.Id).ToList();
-
-        Assert.Equal([1, 2, 3, 4, 5, 6], rows.Select(i => i.Id).ToArray());
+        // Ids 1 and 6 both score 30, so SingleOrDefaultAsync must throw rather than pick one.
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await reader.Query<JdwItem>("JdwItem").SingleOrDefaultAsync(i => i.Score == 30, ct));
     }
 
     [Fact]

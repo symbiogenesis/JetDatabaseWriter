@@ -13,7 +13,8 @@ using JetDatabaseWriter.Linq;
 /// <see cref="AccessQueryable{TEntity}"/>) to <see cref="IAccessIncludableQueryable{TEntity, TProperty}"/>
 /// so an <c>Include</c> / <c>ThenInclude</c> chain can carry the most recently
 /// included property type. Every member delegates to the wrapped query, including
-/// async enumeration, so the public async terminals keep working on the result.
+/// async enumeration, so the public async terminals keep working on the result and
+/// synchronous enumeration throws as it does there.
 /// </summary>
 /// <typeparam name="TEntity">The query element type.</typeparam>
 /// <typeparam name="TProperty">The most recently included navigation type.</typeparam>

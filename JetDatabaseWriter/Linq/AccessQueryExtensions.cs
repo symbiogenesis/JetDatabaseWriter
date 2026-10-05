@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
@@ -13,7 +14,13 @@ using JetDatabaseWriter.Queries;
 /// <summary>
 /// LINQ extensions for the entity queries returned by
 /// <see cref="AccessReader.Query{T}(string)"/>: relationship-inferred eager loading
-/// (<see cref="Include{T, TProperty}"/>) and async terminal operators.
+/// (<see cref="Include{T, TProperty}"/>) and async terminal operators. Query results are
+/// async-only, so these terminals and <see cref="AsAsyncEnumerable{T}(IQueryable{T})"/> are
+/// the ways to run a query: synchronous enumeration and the synchronous LINQ terminals throw
+/// <see cref="NotSupportedException"/>. The aggregates (<c>SumAsync</c>, <c>AverageAsync</c>,
+/// <c>MinAsync</c> and <c>MaxAsync</c>) take expression selectors, as <see cref="Queryable"/>'s
+/// do, and fold the rows as the read returns them, with LINQ to Objects' rules for overflow,
+/// nulls and empty queries.
 /// </summary>
 public static class AccessQueryExtensions
 {
@@ -166,7 +173,7 @@ public static class AccessQueryExtensions
             return item;
         }
 
-        throw new InvalidOperationException("The sequence contains no elements.");
+        throw NoElements();
     }
 
     /// <summary>Returns the first entity matching <paramref name="predicate"/>, or throws when none match.</summary>
@@ -208,7 +215,7 @@ public static class AccessQueryExtensions
         await using IAsyncEnumerator<T> enumerator = AsAsyncEnumerable(source).GetAsyncEnumerator(cancellationToken);
         if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
         {
-            throw new InvalidOperationException("The sequence contains no elements.");
+            throw NoElements();
         }
 
         T single = enumerator.Current;
@@ -297,6 +304,126 @@ public static class AccessQueryExtensions
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(predicate, nameof(predicate));
         return source.Where(predicate).AnyAsync(cancellationToken);
+    }
+
+    /// <summary>Determines whether every row satisfies <paramref name="predicate"/>, reading rows only until one does not.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to test.</param>
+    /// <param name="predicate">The condition each row must meet; it runs on each row as the read returns it.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns><see langword="true"/> when every row satisfies <paramref name="predicate"/> or the query produces no rows.</returns>
+    public static async ValueTask<bool> AllAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        await foreach (bool satisfied in Project(source, predicate, cancellationToken).ConfigureAwait(false))
+        {
+            if (!satisfied)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Returns the last entity the query produces, or throws when it produces no rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The last entity.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    public static async ValueTask<T> LastAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        bool any = false;
+        T last = default!;
+        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            any = true;
+            last = item;
+        }
+
+        return any ? last : throw NoElements();
+    }
+
+    /// <summary>Returns the last entity matching <paramref name="predicate"/>, or throws when none match.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The last matching entity.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no row matches.</exception>
+    public static ValueTask<T> LastAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).LastAsync(cancellationToken);
+    }
+
+    /// <summary>Returns the last entity the query produces, or <see langword="default"/> when it produces no rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The last entity or <see langword="default"/>.</returns>
+    public static async ValueTask<T?> LastOrDefaultAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        T? last = default;
+        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            last = item;
+        }
+
+        return last;
+    }
+
+    /// <summary>Returns the last entity matching <paramref name="predicate"/>, or <see langword="default"/> when none match.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="predicate">The row predicate; pushed through the query so an index can be inferred.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The last matching entity or <see langword="default"/>.</returns>
+    public static ValueTask<T?> LastOrDefaultAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(predicate, nameof(predicate));
+        return source.Where(predicate).LastOrDefaultAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Determines whether the query produces <paramref name="item"/>, comparing with
+    /// <see cref="EqualityComparer{T}.Default"/> and reading rows only until one matches.
+    /// </summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to search.</param>
+    /// <param name="item">The value to look for.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns><see langword="true"/> when a row equals <paramref name="item"/>.</returns>
+    public static ValueTask<bool> ContainsAsync<T>(this IQueryable<T> source, T item, CancellationToken cancellationToken = default)
+        => ContainsAsync(source, item, comparer: null, cancellationToken);
+
+    /// <summary>
+    /// Determines whether the query produces <paramref name="item"/>, comparing with
+    /// <paramref name="comparer"/> and reading rows only until one matches.
+    /// </summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to search.</param>
+    /// <param name="item">The value to look for.</param>
+    /// <param name="comparer">The equality comparer, or <see langword="null"/> for <see cref="EqualityComparer{T}.Default"/>.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns><see langword="true"/> when a row equals <paramref name="item"/>.</returns>
+    public static async ValueTask<bool> ContainsAsync<T>(this IQueryable<T> source, T item, IEqualityComparer<T>? comparer, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(source, nameof(source));
+        comparer ??= EqualityComparer<T>.Default;
+        await foreach (T candidate in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            if (comparer.Equals(candidate, item))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Materializes the query into an array, applying every operator and include.</summary>
@@ -398,174 +525,424 @@ public static class AccessQueryExtensions
         return result;
     }
 
-    /// <summary>Returns the minimum projected value, ignoring nulls.</summary>
+    /// <summary>
+    /// Returns the smallest projected value, folding the rows as the read returns them. As in
+    /// LINQ to Objects, values compare through <see cref="Comparer{T}.Default"/> and nulls are
+    /// skipped.
+    /// </summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <typeparam name="TResult">The projected value type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being compared.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The minimum projected value, or <see langword="default"/> for an empty sequence of a nullable type.</returns>
-    public static async ValueTask<TResult?> MinAsync<T, TResult>(this IQueryable<T> source, Func<T, TResult> selector, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Min(selector);
-    }
+    /// <returns>The smallest value, or <see langword="null"/> when there is none and <typeparamref name="TResult"/> is a reference or nullable type.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
+    public static ValueTask<TResult?> MinAsync<T, TResult>(this IQueryable<T> source, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken = default)
+        => ExtremeAsync(source, selector, keepGreater: false, cancellationToken);
 
-    /// <summary>Returns the maximum projected value, ignoring nulls.</summary>
+    /// <summary>
+    /// Returns the largest projected value, folding the rows as the read returns them. As in
+    /// LINQ to Objects, values compare through <see cref="Comparer{T}.Default"/> and nulls are
+    /// skipped.
+    /// </summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <typeparam name="TResult">The projected value type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being compared.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The maximum projected value, or <see langword="default"/> for an empty sequence of a nullable type.</returns>
-    public static async ValueTask<TResult?> MaxAsync<T, TResult>(this IQueryable<T> source, Func<T, TResult> selector, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Max(selector);
-    }
+    /// <returns>The largest value, or <see langword="null"/> when there is none and <typeparamref name="TResult"/> is a reference or nullable type.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
+    public static ValueTask<TResult?> MaxAsync<T, TResult>(this IQueryable<T> source, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken = default)
+        => ExtremeAsync(source, selector, keepGreater: true, cancellationToken);
 
-    /// <summary>Sums the projected <see cref="int"/> values.</summary>
+    /// <summary>Sums the projected <see cref="int"/> values as the read returns the rows, in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being summed.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The sum of the projected values.</returns>
-    public static async ValueTask<int> SumAsync<T>(this IQueryable<T> source, Func<T, int> selector, CancellationToken cancellationToken = default)
+    /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="int"/>.</exception>
+    public static async ValueTask<int> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, int>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Sum(selector);
+        int sum = 0;
+        await foreach (int value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = checked(sum + value);
+        }
+
+        return sum;
     }
 
-    /// <summary>Sums the projected <see cref="long"/> values.</summary>
+    /// <summary>Sums the projected <see cref="int"/> values that are not null as the read returns the rows, in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being summed.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The sum of the projected values.</returns>
-    public static async ValueTask<long> SumAsync<T>(this IQueryable<T> source, Func<T, long> selector, CancellationToken cancellationToken = default)
+    /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="int"/>.</exception>
+    public static async ValueTask<int?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, int?>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Sum(selector);
+        int sum = 0;
+        await foreach (int? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = checked(sum + value.GetValueOrDefault());
+        }
+
+        return sum;
     }
 
-    /// <summary>Sums the projected <see cref="float"/> values.</summary>
+    /// <summary>Sums the projected <see cref="long"/> values as the read returns the rows, in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being summed.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The sum of the projected values.</returns>
-    public static async ValueTask<float> SumAsync<T>(this IQueryable<T> source, Func<T, float> selector, CancellationToken cancellationToken = default)
+    /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="long"/>.</exception>
+    public static async ValueTask<long> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, long>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Sum(selector);
+        long sum = 0;
+        await foreach (long value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = checked(sum + value);
+        }
+
+        return sum;
     }
 
-    /// <summary>Sums the projected <see cref="double"/> values.</summary>
+    /// <summary>Sums the projected <see cref="long"/> values that are not null as the read returns the rows, in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being summed.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The sum of the projected values.</returns>
-    public static async ValueTask<double> SumAsync<T>(this IQueryable<T> source, Func<T, double> selector, CancellationToken cancellationToken = default)
+    /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="long"/>.</exception>
+    public static async ValueTask<long?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, long?>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Sum(selector);
+        long sum = 0;
+        await foreach (long? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = checked(sum + value.GetValueOrDefault());
+        }
+
+        return sum;
     }
 
-    /// <summary>Sums the projected <see cref="decimal"/> values.</summary>
+    /// <summary>Sums the projected <see cref="float"/> values as the read returns the rows, accumulating in <see cref="double"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being summed.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The sum of the projected values.</returns>
-    public static async ValueTask<decimal> SumAsync<T>(this IQueryable<T> source, Func<T, decimal> selector, CancellationToken cancellationToken = default)
+    /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
+    public static async ValueTask<float> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, float>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Sum(selector);
+        double sum = 0;
+        await foreach (float value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum += value;
+        }
+
+        return (float)sum;
     }
 
-    /// <summary>Averages the projected <see cref="int"/> values.</summary>
+    /// <summary>Sums the projected <see cref="float"/> values that are not null as the read returns the rows, accumulating in <see cref="double"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
+    public static async ValueTask<float?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, float?>> selector, CancellationToken cancellationToken = default)
+    {
+        double sum = 0;
+        await foreach (float? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum += value.GetValueOrDefault();
+        }
+
+        return (float)sum;
+    }
+
+    /// <summary>Sums the projected <see cref="double"/> values as the read returns the rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
+    public static async ValueTask<double> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, double>> selector, CancellationToken cancellationToken = default)
+    {
+        double sum = 0;
+        await foreach (double value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum += value;
+        }
+
+        return sum;
+    }
+
+    /// <summary>Sums the projected <see cref="double"/> values that are not null as the read returns the rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
+    public static async ValueTask<double?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, double?>> selector, CancellationToken cancellationToken = default)
+    {
+        double sum = 0;
+        await foreach (double? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum += value.GetValueOrDefault();
+        }
+
+        return sum;
+    }
+
+    /// <summary>Sums the projected <see cref="decimal"/> values as the read returns the rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="decimal"/>.</exception>
+    public static async ValueTask<decimal> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal>> selector, CancellationToken cancellationToken = default)
+    {
+        decimal sum = 0;
+        await foreach (decimal value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum += value;
+        }
+
+        return sum;
+    }
+
+    /// <summary>Sums the projected <see cref="decimal"/> values that are not null as the read returns the rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being summed.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="decimal"/>.</exception>
+    public static async ValueTask<decimal?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal?>> selector, CancellationToken cancellationToken = default)
+    {
+        decimal sum = 0;
+        await foreach (decimal? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum += value.GetValueOrDefault();
+        }
+
+        return sum;
+    }
+
+    /// <summary>Averages the projected <see cref="int"/> values as the read returns the rows, summing them as a <see cref="long"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Func<T, int> selector, CancellationToken cancellationToken = default)
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, int>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Average(selector);
+        long sum = 0;
+        long count = 0;
+        await foreach (int value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = checked(sum + value);
+            count++;
+        }
+
+        return count == 0 ? throw NoElements() : (double)sum / count;
     }
 
-    /// <summary>Averages the projected <see cref="long"/> values.</summary>
+    /// <summary>Averages the projected <see cref="int"/> values that are not null as the read returns the rows, summing them as a <see cref="long"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
+    public static async ValueTask<double?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, int?>> selector, CancellationToken cancellationToken = default)
+    {
+        long sum = 0;
+        long count = 0;
+        await foreach (int? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            if (value is int present)
+            {
+                sum = checked(sum + present);
+                count++;
+            }
+        }
+
+        return count == 0 ? null : (double)sum / count;
+    }
+
+    /// <summary>Averages the projected <see cref="long"/> values as the read returns the rows, summing them in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Func<T, long> selector, CancellationToken cancellationToken = default)
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="long"/>.</exception>
+    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, long>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Average(selector);
+        long sum = 0;
+        long count = 0;
+        await foreach (long value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = checked(sum + value);
+            count++;
+        }
+
+        return count == 0 ? throw NoElements() : (double)sum / count;
     }
 
-    /// <summary>Averages the projected <see cref="float"/> values.</summary>
+    /// <summary>Averages the projected <see cref="long"/> values that are not null as the read returns the rows, summing them in checked arithmetic.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="long"/>.</exception>
+    public static async ValueTask<double?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, long?>> selector, CancellationToken cancellationToken = default)
+    {
+        long sum = 0;
+        long count = 0;
+        await foreach (long? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            if (value is long present)
+            {
+                sum = checked(sum + present);
+                count++;
+            }
+        }
+
+        return count == 0 ? null : (double)sum / count;
+    }
+
+    /// <summary>Averages the projected <see cref="float"/> values as the read returns the rows, accumulating in <see cref="double"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    public static async ValueTask<float> AverageAsync<T>(this IQueryable<T> source, Func<T, float> selector, CancellationToken cancellationToken = default)
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    public static async ValueTask<float> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, float>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Average(selector);
+        double sum = 0;
+        long count = 0;
+        await foreach (float value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = count == 0 ? value : sum + value;
+            count++;
+        }
+
+        return count == 0 ? throw NoElements() : (float)(sum / count);
     }
 
-    /// <summary>Averages the projected <see cref="double"/> values.</summary>
+    /// <summary>Averages the projected <see cref="float"/> values that are not null as the read returns the rows, accumulating in <see cref="double"/>.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
+    public static async ValueTask<float?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, float?>> selector, CancellationToken cancellationToken = default)
+    {
+        double sum = 0;
+        long count = 0;
+        await foreach (float? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            if (value is float present)
+            {
+                sum = count == 0 ? present : sum + present;
+                count++;
+            }
+        }
+
+        return count == 0 ? null : (float)(sum / count);
+    }
+
+    /// <summary>Averages the projected <see cref="double"/> values as the read returns the rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Func<T, double> selector, CancellationToken cancellationToken = default)
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, double>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Average(selector);
+        double sum = 0;
+        long count = 0;
+        await foreach (double value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum = count == 0 ? value : sum + value;
+            count++;
+        }
+
+        return count == 0 ? throw NoElements() : sum / count;
     }
 
-    /// <summary>Averages the projected <see cref="decimal"/> values.</summary>
+    /// <summary>Averages the projected <see cref="double"/> values that are not null as the read returns the rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
+    public static async ValueTask<double?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, double?>> selector, CancellationToken cancellationToken = default)
+    {
+        double sum = 0;
+        long count = 0;
+        await foreach (double? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            if (value is double present)
+            {
+                sum = count == 0 ? present : sum + present;
+                count++;
+            }
+        }
+
+        return count == 0 ? null : sum / count;
+    }
+
+    /// <summary>Averages the projected <see cref="decimal"/> values as the read returns the rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to the value being averaged.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the projected values.</returns>
-    public static async ValueTask<decimal> AverageAsync<T>(this IQueryable<T> source, Func<T, decimal> selector, CancellationToken cancellationToken = default)
+    /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
+    /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="decimal"/>.</exception>
+    public static async ValueTask<decimal> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal>> selector, CancellationToken cancellationToken = default)
     {
-        Guard.NotNull(source, nameof(source));
-        Guard.NotNull(selector, nameof(selector));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return list.Average(selector);
+        decimal sum = 0;
+        long count = 0;
+        await foreach (decimal value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            sum += value;
+            count++;
+        }
+
+        return count == 0 ? throw NoElements() : sum / count;
+    }
+
+    /// <summary>Averages the projected <see cref="decimal"/> values that are not null as the read returns the rows.</summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being averaged.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
+    /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="decimal"/>.</exception>
+    public static async ValueTask<decimal?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal?>> selector, CancellationToken cancellationToken = default)
+    {
+        decimal sum = 0;
+        long count = 0;
+        await foreach (decimal? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            if (value is decimal present)
+            {
+                sum += present;
+                count++;
+            }
+        }
+
+        return count == 0 ? null : sum / count;
     }
 
     internal static bool IsIncludeMethod(MethodInfo method) =>
@@ -632,5 +1009,81 @@ public static class AccessQueryExtensions
         }
 
         return count;
+    }
+
+    private static InvalidOperationException NoElements() => new("The sequence contains no elements.");
+
+    /// <summary>
+    /// Streams <paramref name="selector"/>'s value for each row the query produces. The selector
+    /// is compiled once and applied to each entity as the read returns it, so an aggregate folds
+    /// the values one at a time: no row is buffered and no value is boxed.
+    /// </summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TResult">The projected value type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to its value.</param>
+    /// <param name="cancellationToken">A token used to cancel the enumeration.</param>
+    /// <returns>The projected values, in the order the query produces the rows.</returns>
+    private static IAsyncEnumerable<TResult> Project<T, TResult>(IQueryable<T> source, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(source, nameof(source));
+        Guard.NotNull(selector, nameof(selector));
+        return ProjectAsync(AsAsyncEnumerable(source), selector.Compile(), cancellationToken);
+    }
+
+    private static async IAsyncEnumerable<TResult> ProjectAsync<T, TResult>(
+        IAsyncEnumerable<T> rows,
+        Func<T, TResult> selector,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (T row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            yield return selector(row);
+        }
+    }
+
+    /// <summary>
+    /// Returns the smallest or largest projected value by LINQ to Objects' rules: values compare
+    /// through <see cref="Comparer{T}.Default"/>, nulls are skipped, and when no value is left a
+    /// reference or nullable result is <see langword="null"/> while any other throws.
+    /// </summary>
+    /// <typeparam name="T">The query element type.</typeparam>
+    /// <typeparam name="TResult">The projected value type.</typeparam>
+    /// <param name="source">The query to read.</param>
+    /// <param name="selector">Projects each entity to the value being compared.</param>
+    /// <param name="keepGreater"><see langword="true"/> for the largest value, <see langword="false"/> for the smallest.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The smallest or largest value, or <see langword="null"/> when there is none and the result type admits it.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when there is no value and <typeparamref name="TResult"/> is a non-nullable value type.</exception>
+    private static async ValueTask<TResult?> ExtremeAsync<T, TResult>(
+        IQueryable<T> source,
+        Expression<Func<T, TResult>> selector,
+        bool keepGreater,
+        CancellationToken cancellationToken)
+    {
+        bool any = false;
+        TResult extreme = default!;
+        await foreach (TResult value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        {
+            if (value is null)
+            {
+                continue;
+            }
+
+            int order = any ? Comparer<TResult>.Default.Compare(value, extreme) : 0;
+            if (!any || (keepGreater ? order > 0 : order < 0))
+            {
+                extreme = value;
+                any = true;
+            }
+        }
+
+        // A non-nullable value type has no null to stand for "no value", so it throws instead.
+        if (!any && typeof(TResult).IsValueType && Nullable.GetUnderlyingType(typeof(TResult)) is null)
+        {
+            throw NoElements();
+        }
+
+        return extreme;
     }
 }

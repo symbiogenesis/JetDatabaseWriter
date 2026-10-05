@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -181,7 +182,7 @@ public sealed class CatalogCompletenessTests
         int rows = await CountAsync(reader.Rows("Table", cancellationToken: this.ct));
         int stringRows = await CountAsync(reader.RowsAsStrings("Table", cancellationToken: this.ct));
         long realCount = await reader.GetRealRowCountAsync("Table", this.ct);
-        int queryCount = reader.Query<EmptyRow>("Table").Count();
+        int queryCount = (await reader.Query<EmptyRow>("Table").ToListAsync(this.ct)).Count;
 
         Assert.Equal(2, data.Rows.Count);
         Assert.Equal(2, rows);

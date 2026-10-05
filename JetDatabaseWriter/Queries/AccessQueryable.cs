@@ -11,8 +11,9 @@ using System.Threading.Tasks;
 /// <summary>
 /// An <see cref="IQueryable{T}"/> over a single Access table that is also
 /// async-enumerable. Composition builds an expression tree through the provider;
-/// enumeration (sync or async) delegates to the provider's
-/// <see cref="IAccessQueryEngine"/>. The provider surfaces the ordered sibling
+/// async enumeration delegates to the provider's <see cref="IAccessQueryEngine"/>, and
+/// synchronous enumeration throws, because query results are async-only (see
+/// <see cref="AsyncOnlyQuery"/>). The provider surfaces the ordered sibling
 /// <see cref="AccessOrderedQueryable{T}"/> only for the result of an ordering operator,
 /// so this type deliberately does <em>not</em> implement <see cref="IOrderedQueryable{T}"/>:
 /// <c>ThenBy</c> / <c>ThenByDescending</c> stay reachable only after <c>OrderBy</c> /
@@ -39,21 +40,15 @@ internal class AccessQueryable<T> : IQueryable<T>, IAsyncEnumerable<T>
 
     public IQueryProvider Provider { get; }
 
-    public IEnumerator<T> GetEnumerator()
-    {
-        foreach (object item in ((IAccessQueryEngine)this.Provider).ExecuteSyncList(this.Expression))
-        {
-            yield return (T)item;
-        }
-    }
+    public IEnumerator<T> GetEnumerator() => throw AsyncOnlyQuery.EnumerationNotSupported();
 
     IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
 
     public async IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
-        await foreach (object item in ((IAccessQueryEngine)this.Provider).ExecuteStreamAsync(this.Expression, cancellationToken).ConfigureAwait(false))
+        await foreach (object? item in ((IAccessQueryEngine)this.Provider).ExecuteStreamAsync(this.Expression, cancellationToken).ConfigureAwait(false))
         {
-            yield return (T)item;
+            yield return (T)item!;
         }
     }
 }

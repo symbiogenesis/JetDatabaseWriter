@@ -162,7 +162,7 @@ This file lists only open work: bugs, design gaps, behaviour not yet checked aga
 - **Why `FileOptions.SequentialScan` on a synchronous handle defeats the OS read-ahead is not understood.** In the page-I/O investigation, 9,800 sequential 4 KB page reads of a copy the OS had not cached took 47 ms with `FileOptions.None` and 654 ms with `SequentialScan` on a synchronous handle (584 ms with `RandomAccess`, 965-1,040 ms on overlapped handles). Repro: make an uncached copy as `AccessReaderColdScanBenchmarks` does (Windows only: `FILE_FLAG_NO_BUFFERING` and write-through), then time the same sequential reads through a `FileStream` opened with each option. read-performance-bottlenecks.md records it as not understood. Not planned yet.
 - **Why core-split-a slowed the 40-column table's warm first row, while one page read per call was handed to the pool, is not known.** `AccessReaderTableScanReadAheadBenchmarks.FirstRow` with `Shape=Wide` and `Temperature=WarmRepeatScan` read the table's TDEF page raw on every call both at 8288373d, before core-split-a, and at bb191440, after it, and BenchmarkDotNet's main thread, which is not a pool thread, hands that read to the pool and waits to be woken. Run back to back on one runner, in both orders, `Enabled` took 28.9 and 32.2 µs per call at 8288373d against 35.4 and 59.4 µs at bb191440, `Auto` 34.3 and 46.0 µs against 34.8 and 58.9 µs, and `Disabled` 35.0 and 58.6 µs against 35.5 and 59.8 µs; an earlier run had every mode 3-6 µs slower at bb191440. The per-call costs that a read of the code found the split adding on that path are sub-microsecond (page-read delegates bound to `IPageSource.ReadPageAsync`, a virtual `CanReadPositionally`, format reads through the profile); the cause was not investigated. The reader's TDEF and owned-page memos take every read off that warm call, so the benchmark no longer shows it, but a cost the split added per hand-off would stay on every read that is still handed off, such as a page-cache miss or a cold read on a thread that cannot read inline. Repro: that benchmark at 8288373d against bb191440 in both run orders (`scripts/ci-gate.ps1 -Benchmarks "*AccessReaderTableScanReadAheadBenchmarks.FirstRow*"` with `-Sha` and `-Baseline` swapped between the two runs), then one offloaded `DatabaseFile.ReadPageAsync` per call from a thread that is not a pool thread, at 8288373d against the current code. Not planned yet.
 - **AddColumn, DropColumn and RenameColumn copy every row into a new table.** `TableSchemaEditor.RewriteTableAsync` reads every row into a `DataTable` snapshot, writes them into a new `~tmp_<13 hex digits>` table, and drops the original and renames the copy (or, when the table has complex columns and the edit drops or renames none of them, moves the copy onto the original's TDEF page with `TransplantTempTableToOriginalAsync`), so even a rename costs time and space in proportion to the table. Jackcess's `TableUpdater` adds a column by editing the TDEF in place. Not planned yet: deferred from wave 2, as a separate design that changes the bytes a schema edit leaves.
-- **`MinAsync` and `MaxAsync` read every row even when an index orders the column.** They aggregate all the rows the query returns (today through `ToListAsync`; linq-b streams them), although the first or last entry of an index on the column would answer them; `IndexCursor.TryReadLastEntryAsync`, which `AutoNumberMaintainer` uses, already reads a last entry. Not planned yet: deferred from wave 2.
+- **`MinAsync` and `MaxAsync` read every row even when an index orders the column.** They fold every row the query returns as the read streams it, although the first or last entry of an index on the column would answer them; `IndexCursor.TryReadLastEntryAsync`, which `AutoNumberMaintainer` uses, already reads a last entry. Not planned yet: deferred from wave 2.
 - **Creating an encrypted database writes it in plaintext first and then re-encrypts the whole file.** `CreateDatabaseAsync` takes no encryption settings, so an encrypted file is created unencrypted and then passed to `EncryptAsync`, which writes the whole file again to `<db>.reenc-<guid>.tmp` and renames it over the original. A `CreateDatabaseAsync` overload that writes the encryption descriptor up front is cheap once wave 2's encryption-flat-agile adds the flat Agile page codec. Not planned yet: deferred from wave 2.
 
 ## Design flaws
@@ -182,12 +182,10 @@ Each of these needs structural work rather than a local fix; the bugs above are 
 - **Failures are not modeled.** `JetLimitationException` is the only custom exception type, so callers tell a refusal, an unenforceable constraint, a corrupt page, an unreadable long value and a torn commit apart only by exception type and message text, and `LastDiagnostics` is typed only internally. Planned in wave 2: failure-model-a, encryption-flat-agile, failure-model-b1 and failure-model-b2.
 - **The LINQ layer has no query plan.** `EntityMap` is the one property-to-column mapping and `ValueCoercer` the one value conversion, but:
   - read materializers are compiled on every call, not cached per table definition or row shape: `RowMapper<T>.Build` runs in `TableReader.EnumerateMappedRowsAsync`, `IndexRowReader.ReadIndexRowsAsync` and `LinkedTableReader`, and `DirectRowDecoderBuilder.TryBuild` compiles again; only the insert delegate is cached (`RowMapper.WriteCache`);
-  - the `IQueryable` surface runs sync-over-async (`AccessQueryProvider` blocks on `Task.Run(...).GetAwaiter().GetResult()`);
   - index walks do not stream: `IndexCursor.FindRowLocationsForCriteriaAsync` builds a `List` of every matching row location before the first row is materialized;
-  - `MinAsync`, `MaxAsync`, `SumAsync` and `AverageAsync` take `Func` selectors and aggregate the result of `ToListAsync` in memory, so memory grows with the row count;
   - nothing is annotated for AOT or trimming: there is no `DynamicallyAccessedMembers`, `RequiresUnreferencedCode`, `RequiresDynamicCode` or `IsAotCompatible` in the repository.
 
-  Planned in wave 2: linq-b (async-only `Query<T>`, streaming aggregates), linq-c (cached materializers, streaming index walks), linq-plan-cache and linq-aot.
+  Planned in wave 2: linq-c (cached materializers, streaming index walks), linq-plan-cache and linq-aot.
 
 ## Unchecked against Access
 
@@ -257,7 +255,7 @@ Wave 2 fixes most of the items above in 35 packages over 17 stages. Stage 1 is d
 | Stage | Packages (∥ = in parallel) |
 |---|---|
 | 1 | core-split-a, encryption-prep, value-fidelity, index-preflight and linq-a, all on main |
-| 2 | core-split-b ∥ linq-b |
+| 2 | core-split-b |
 | 3 | pager-a ∥ collation |
 | 4 | pager-b ∥ failure-model-a |
 | 5 | atomicity-a ∥ linq-c |
@@ -301,7 +299,7 @@ Wave 2 fixes most of the items above in 35 packages over 17 stages. Stage 1 is d
 - LINQ: async-only `Query<T>`; unsupported operators throw, pointing to `AsAsyncEnumerable()`; aggregates take expressions only; a static materializer cache of 64 shapes per T.
 - Repair: only an explicit `RepairAsync` with a dry run; it fixes stray bytes b=1..4, chain headers and the Jet3 header, and refuses a table whose index settings are lost {RepairRefused}.
 
-#### core-split-b (stage 2; needs core-split-a, on main; ∥ linq-b)
+#### core-split-b (stage 2; needs core-split-a, on main)
 
 Closes **The facade is the engine** (with core-split-a) and the capability-flag half of **Format knowledge is scattered**.
 1. `refactor: give page writes only to the writer's services`: inject `Pager`; new `Schema/TDefWriter(Pager, TableDefReader)`; delete DatabaseFile's write and journal forwarders. Tests: ServiceGraphTests (no write capability or Pager in the reader graph).
@@ -312,15 +310,6 @@ Closes **The facade is the engine** (with core-split-a) and the capability-flag 
 6. `refactor: DatabaseFile becomes a thin composite`: `Profile` becomes `Format`, replacing today's `DatabaseFormat Format` forwarder; only Format, Pages, TableDefs, OwnedPages, DatabasePath and disposal remain. The row-format copies go too, so by then `RowDecodePlan` and the direct decoder take the `JetFormat` itself rather than reading the row format through `DatabaseFile` per column (see "Unprojected wide-row decode" in read-performance-bottlenecks.md). Deletes **The facade is the engine**.
 
 Done when: core-split-a's ratchet (`Collaborators_TakingDatabaseFile_OnlyShrink`) allow-list is empty; the reader graph holds no Pager, PageJournal, JetByteRangeLock or TDefWriter; reader, writer and index-seek benchmarks are within noise. Update `LegacyDamageInjector` as #1 and #6 remove what it uses.
-
-#### linq-b (stage 2; needs linq-a, on main; ∥ core-split-b)
-
-Closes the sync-over-async and in-memory-aggregate bullets of **The LINQ layer has no query plan**.
-1. `refactor!: make Query<T> results async-only`: synchronous execution and enumeration throw NotSupportedException naming ToListAsync, with no opt-in. Tests: AsyncOnlyQueryTests.
-2. `refactor: run Query<T> tails natively instead of through EnumerableQuery`: `Queries/InMemoryTail` takes the streamed rows; delete BuildTail and `rows.AsQueryable()`; GroupBy, SelectMany, Join and the indexed Select throw, naming the operator and `AsAsyncEnumerable()`. Tests: QueryTailTests (formats, against LINQ to Objects).
-3. `feat!: stream Expression-based async aggregates and add the missing async terminals`: Min, Max, Sum and Average take Expressions only (no Func wrappers: CS0121), with Enumerable semantics (checked Sum, empty-sequence rules); add AllAsync, LastAsync, LastOrDefaultAsync, ContainsAsync. Tests: QueryAggregateTests.
-
-Done when: sync use throws; no EnumerableQuery or AsQueryable is left in the library; Query_SumAsync_Large allocations do not grow with the row count.
 
 #### pager-a (stage 3; needs core-split-b; ∥ collation)
 
@@ -373,7 +362,7 @@ Closes the savepoint part of **Transactions are not atomic**.
 
 Done when: a failed call inside an explicit transaction leaves no trace, the allocator's free set included, and the transaction stays usable. Savepoints stay internal.
 
-#### linq-c (stage 5; needs linq-b, core-split-b, failure-model-a; ∥ atomicity-a)
+#### linq-c (stage 5; needs core-split-b, failure-model-a; ∥ atomicity-a)
 
 Closes the materializer and index-walk bullets of **The LINQ layer has no query plan** and the materializer half of **`Rows<T>(predicate)` compiles its predicate and lists the table's indexes on every call**.
 1. `perf: cache typed materializers per entity type and row shape`: `RowShape` (a lazy `TableDef.Shape`, which schema-model-core keeps) and a static `MaterializerCache` (64 shapes per T) used by table, index and linked reads and by `RowMapper.ToRow` for typed inserts; the shape `RowMapper.ToRow` keys on includes each column's AutoNumber flag (`ColumnInfo.IsAutoNumber`), since its delegate turns a non-nullable property left at 0 into `DbDefault.Value` only on an AutoNumber column. Tests: MaterializerCacheTests (reuse across opens; same names in another layout; a new shape after AddColumn or rename; concurrent first use; eviction); TypedInsertShapeTests (two tables with the same column names and types, one with an AutoNumber `Id` and one without, share no delegate).
@@ -464,7 +453,7 @@ Closes **A unique index that is not the primary key refuses a second Null key**,
 
 Done when: IndexInvariants Strict holds on writer-maintained trees; the ladder is gone; the batch and 10k-insert benchmarks are within 10%. Must not touch WriterServices.cs (constraints-a's in this stage). Needs atomicity-b #2's removal of CatalogWriter's compensation. The rest of **Replaced index trees stay allocated** is not planned.
 
-#### read-composition-b (stage 9; needs read-composition-a, failure-model-a, linq-b, encryption-flat-agile; ∥ write-pipeline-b, constraints-a)
+#### read-composition-b (stage 9; needs read-composition-a, failure-model-a, encryption-flat-agile; ∥ write-pipeline-b, constraints-a)
 
 #6 deletes **The read API does not compose**.
 1. `feat: read indexes and complex columns of linked Access tables from their source database`: through OpenLinkedSourceAsync; text links list no indexes and their seeks throw {LinkedTableHasNoIndexes}; planners list only local indexes. Tests: LinkedTableIndexReadTests.
@@ -594,7 +583,7 @@ Done when: non-1252 Jet3 LvProp text round-trips; one handler table answers ever
 
 #### linq-aot (stage 17; needs format-profile-b, linq-plan-cache)
 
-#2 deletes **The LINQ layer has no query plan**, whose other bullets linq-b and linq-c close.
+#2 deletes **The LINQ layer has no query plan**, whose other bullets linq-c closes.
 1. `build: trimming polyfills and DynamicallyAccessedMembers on the generic entity paths`: `[DynamicallyAccessedMembers(PublicProperties | PublicParameterlessConstructor)]` on every T that reaches EntityMap or `new T()`.
 2. `build!: Include requires unreferenced and dynamic code; IsAotCompatible on net8.0+`: both attributes on Include, ThenInclude, IncludeLoader and RuntimeRowMapper; no `MakeGenericMethod`; `<IsAotCompatible>` only on net8.0-compatible TFMs; commit the regenerated `packages.lock.json`; delete **The LINQ layer has no query plan**.
 
