@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -40,7 +41,7 @@ public sealed class DropTableReadTests(ITestOutputHelper output)
         var indexPointers = new (int Offset, UsageMapPointer Pointer)[indexCount];
         for (int index = 0; index < indexCount; index++)
         {
-            Assert.True(format.Index.TryReadRealIdxSlot(tdef, descriptorStart, index, out var slot));
+            Assert.True(format.Index.TryReadRealIdxSlot(tdef, descriptorStart, index, out RealIdxSlot slot));
             int offset = slot.FirstDpOffset - 4;
             Assert.True(UsageMap.TryReadPointer(tdef, offset, out UsageMapPointer pointer));
             Assert.Equal(ownedMap.PageNumber, pointer.PageNumber);
