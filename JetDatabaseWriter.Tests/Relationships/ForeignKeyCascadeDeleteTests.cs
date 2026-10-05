@@ -51,13 +51,14 @@ public sealed class ForeignKeyCascadeDeleteTests(DatabaseCache db) : IClassFixtu
 
         Assert.True(ms.ToArray().AsSpan().IndexOf(marker) >= 0);
         ms.Position = 0;
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions
+        var options = new AccessWriterOptions
         {
             UseLockFile = false,
             UseByteRangeLocks = false,
             UseTransactionalWrites = mode == WriteMode.AutoCommit,
             SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages,
-        }, leaveOpen: true, Ct))
+        };
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, options, leaveOpen: true, Ct))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
                 Assert.Equal(1, await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct)));

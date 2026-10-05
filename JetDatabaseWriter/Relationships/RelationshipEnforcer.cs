@@ -744,8 +744,8 @@ internal sealed class RelationshipEnforcer(
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="depth">How many cascades lead to this delete.</param>
     /// <param name="cascades">The cascading deletes found so far, in delete order.</param>
-    /// <param name="ownRows">The rows the caller deletes.</param>
     /// <param name="cascaded">The rows <paramref name="cascades"/> deletes.</param>
+    /// <param name="ownRows">The rows the caller deletes.</param>
     /// <param name="complexChildren">A group of the statement's flat rows, from which each cascade's own, still empty, group is made.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="JetOperationException">

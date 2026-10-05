@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
@@ -12,6 +13,8 @@ using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
 /// <summary>Checks physical index entries and row counts after complex-column deletes.</summary>
 public sealed class ComplexColumnDeleteIndexIntegrityTests
 {
+    private static readonly int[] ParentIds = [1, 2];
+
     /// <summary>Gets every writer mode.</summary>
     public static TheoryData<WriteMode> Modes => AllModes;
 
@@ -20,7 +23,11 @@ public sealed class ComplexColumnDeleteIndexIntegrityTests
     {
         await using var stream = new MemoryStream();
         byte[] payload = new byte[20_000];
-        new Random(7919).NextBytes(payload);
+        for (int index = 0; index < payload.Length; index++)
+        {
+            payload[index] = (byte)((index * 73 + (index / 251)) & 0xFF);
+        }
+
         var options = new AccessWriterOptions { UseLockFile = false, SecureEraseMode = JetDatabaseWriter.Enums.SecureEraseMode.DeletedRowsAndFreedPages };
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, JetDatabaseWriter.Enums.DatabaseFormat.AceAccdb, options, leaveOpen: true, cancellationToken: Ct))
         {
@@ -87,7 +94,7 @@ public sealed class ComplexColumnDeleteIndexIntegrityTests
             {
                 await writer.CreateTableAsync("Docs", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }, new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }], Ct);
                 await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, DBNull.Value], [2, DBNull.Value, DBNull.Value]], Ct);
-                foreach (int id in new[] { 1, 2 })
+                foreach (int id in ParentIds)
                 {
                     var key = new Dictionary<string, object?> { ["Id"] = id };
                     await writer.AddAttachmentAsync("Docs", "Files", key, new AttachmentInput($"{id}.txt", [1, 2, 3]), Ct);

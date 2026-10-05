@@ -163,10 +163,8 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
-            {
                 _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
-                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct));
-            });
+                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct)));
         }
 
         Assert.Equal(before, ms.ToArray());
@@ -198,10 +196,8 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
-            {
                 _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
-                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct));
-            });
+                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct)));
         }
 
         Assert.Equal(before, ms.ToArray());

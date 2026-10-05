@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -34,7 +35,7 @@ public sealed class BinaryCriteriaTests
 
     private static async Task VerifyMutationAsync(DatabaseFormat format, WriteMode mode, bool ole, string operation, bool delete)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] value = Enumerable.Repeat((byte)128, ole ? 600 : 3).ToArray();
         value[0] = 255;
         byte[] unequal = (byte[])value.Clone();
@@ -50,43 +51,48 @@ public sealed class BinaryCriteriaTests
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, WriteModes.WriterOptions(mode), leaveOpen: true, cancellationToken: ct))
         {
             await writer.CreateTableAsync("Bytes", [new("Id", typeof(int)), new("Value", typeof(byte[]), ole ? 0 : 20), new("Changed", typeof(bool))], ct);
-            await writer.InsertRowsAsync("Bytes", new object?[][]
-            {
+            object?[][] rows =
+            [
                 [1, value, false],
                 [2, unequal, false],
                 [3, value[..^1], false],
                 [4, Array.Empty<byte>(), false],
                 [5, null, false],
-            }, ct);
+            ];
+            await writer.InsertRowsAsync("Bytes", rows, ct);
 
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                // Each operand is a different array instance from the inserted value.
-                byte[] operand = (byte[])value.Clone();
-                var updated = new RowValues { ["Changed"] = true };
-                int changed;
-                if (operation == "SingleColumn")
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
                 {
-                    changed = delete
-                        ? await writer.DeleteRowsAsync("Bytes", "Value", operand, ct)
-                        : await writer.UpdateRowsAsync("Bytes", "Value", operand, new Dictionary<string, object?> { ["Changed"] = true }, ct);
-                }
-                else
-                {
-                    ColumnPredicate predicate = operation switch
+                    // Each operand is a different array instance from the inserted value.
+                    byte[] operand = (byte[])value.Clone();
+                    var updated = new RowValues { ["Changed"] = true };
+                    int changed;
+                    if (operation == "SingleColumn")
                     {
-                        "NotEqual" => ColumnPredicate.NotEqualTo("Value", operand),
-                        "In" => ColumnPredicate.In("Value", operand, Array.Empty<byte>()),
-                        _ => ColumnPredicate.EqualTo("Value", operand),
-                    };
-                    RowCriteria criteria = RowCriteria.Where(predicate);
-                    changed = delete
-                        ? await writer.DeleteRowsAsync("Bytes", criteria, ct)
-                        : await writer.UpdateRowsAsync("Bytes", criteria, updated, ct);
-                }
+                        changed = delete
+                            ? await writer.DeleteRowsAsync("Bytes", "Value", operand, ct)
+                            : await writer.UpdateRowsAsync("Bytes", "Value", operand, new Dictionary<string, object?> { ["Changed"] = true }, ct);
+                    }
+                    else
+                    {
+                        ColumnPredicate predicate = operation switch
+                        {
+                            "NotEqual" => ColumnPredicate.NotEqualTo("Value", operand),
+                            "In" => ColumnPredicate.In("Value", operand, Array.Empty<byte>()),
+                            _ => ColumnPredicate.EqualTo("Value", operand),
+                        };
+                        var criteria = RowCriteria.Where(predicate);
+                        changed = delete
+                            ? await writer.DeleteRowsAsync("Bytes", criteria, ct)
+                            : await writer.UpdateRowsAsync("Bytes", criteria, updated, ct);
+                    }
 
-                Assert.Equal(expected.Length, changed);
-            }, ct);
+                    Assert.Equal(expected.Length, changed);
+                },
+                ct);
         }
 
         stream.Position = 0;
