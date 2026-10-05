@@ -167,7 +167,7 @@ public sealed class RowSizeLimitTests
             options,
             new LongValueEncoder(db, harness.Pager, harness.Services.PageAllocator, options),
             new RowEncoder(db),
-            new DataPageInserter(db, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps),
+            new DataPageInserter(db, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps, new UsageMapEditor(db.Profile, harness.Pager, harness.Services.PageAllocator)),
             new TDefPageBuilder(db, harness.Pager));
 
         int[] lengths = [900, 1_000, 1_000, 950, 1_000];

@@ -1041,9 +1041,9 @@ internal sealed class IndexMaintainer(
 
     /// <summary>
     /// Writes the index usage-map rows collected by
-    /// <see cref="TryCollectIncrementalIndexPageGroupsAsync"/>. Does nothing
-    /// for an empty array. A usage-map row the writer cannot rewrite
-    /// (<see cref="NotSupportedException"/>) is left as it is.
+    /// <see cref="TryCollectIncrementalIndexPageGroupsAsync"/>, as REFERENCE
+    /// rows where a tree spans more than one INLINE window. Does nothing for
+    /// an empty array.
     /// </summary>
     /// <param name="tdefBuffer">The logical TDEF bytes, which name the table's usage-map page.</param>
     /// <param name="indexPageGroups">The pages of each real index's tree, by real-index number.</param>
@@ -1055,14 +1055,7 @@ internal sealed class IndexMaintainer(
             return;
         }
 
-        try
-        {
-            await dataPages.UpdateTableIndexUsageMapRowsAsync(this.ReadTableUsageMapPage(tdefBuffer), indexPageGroups, cancellationToken).ConfigureAwait(false);
-        }
-        catch (NotSupportedException)
-        {
-            // Left as it is, as before.
-        }
+        await dataPages.UpdateTableIndexUsageMapRowsAsync(this.ReadTableUsageMapPage(tdefBuffer), indexPageGroups, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<long[]?> TryCollectIndexTreePagesAsync(

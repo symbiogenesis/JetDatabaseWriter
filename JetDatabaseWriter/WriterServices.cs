@@ -62,7 +62,8 @@ internal sealed class WriterServices
         var tdefPageBuilder = new TDefPageBuilder(db, pager);
         var longValueEncoder = new LongValueEncoder(db, pager, this.PageAllocator, options);
         this.OwnedMaps = new CatalogOwnedMapPolicy(db.Profile, db.TableDefs, this.CatalogRows);
-        var dataPages = new DataPageInserter(db, pager, this.PageAllocator, this.OwnedMaps);
+        var usageMaps = new UsageMapEditor(db.Profile, pager, this.PageAllocator);
+        var dataPages = new DataPageInserter(db, pager, this.PageAllocator, this.OwnedMaps, usageMaps);
         var tableRows = new TableRowStore(db, pager, options, longValueEncoder, new RowEncoder(db), dataPages, tdefPageBuilder);
         var autoNumbers = new AutoNumberMaintainer(db, pager);
         CatalogRowReader catalogRows = this.CatalogRows;

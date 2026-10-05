@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -14,8 +15,10 @@ internal static class PageAudit
 {
     /// <summary>
     /// Returns every page from 3 up to the end of file that the global usage
-    /// map does not list as free, except reference usage-map pages: releasing
-    /// a page can promote the global map and add one, which is not a leak.
+    /// map does not list as free, except the bitmap pages of the global map
+    /// itself: releasing a page can promote that map and add one, which is not
+    /// a leak. The bitmap pages of a table's or an index's REFERENCE usage-map
+    /// rows count, so a drop that leaves them allocated shows.
     /// </summary>
     /// <param name="db">The database file to read, a writer's when a transaction is active.</param>
     /// <param name="allocator">The allocator that reads the global usage map.</param>
@@ -23,17 +26,12 @@ internal static class PageAudit
     /// <returns>The allocated page numbers, ascending.</returns>
     public static async ValueTask<SortedSet<long>> FindAllocatedPagesAsync(DatabaseFile db, PageAllocator allocator, CancellationToken cancellationToken)
     {
+        HashSet<long> globalMapPages = await ReadGlobalMapBitmapPagesAsync(db, cancellationToken);
         var allocated = new SortedSet<long>();
         long pageCount = db.PageCount;
         for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
         {
-            if (await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
-            {
-                continue;
-            }
-
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
-            if (page[0] != Constants.PageTypes.UsageMap)
+            if (!globalMapPages.Contains(pageNumber) && !await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
             {
                 _ = allocated.Add(pageNumber);
             }
@@ -109,6 +107,22 @@ internal static class PageAudit
         }
 
         return unreachable;
+    }
+
+    /// <summary>Returns the bitmap pages that the global usage map, the first row of page 1, points at when it is REFERENCE.</summary>
+    /// <param name="db">The database file to read.</param>
+    /// <param name="cancellationToken">A token used to cancel the reads.</param>
+    /// <returns>The bitmap page numbers; empty while the global map is INLINE.</returns>
+    private static async ValueTask<HashSet<long>> ReadGlobalMapBitmapPagesAsync(DatabaseFile db, CancellationToken cancellationToken)
+    {
+        var bitmapPages = new HashSet<long>();
+        byte[] globalPage = await db.ReadPageCopyAsync(1, cancellationToken);
+        if (UsageMap.TryGetFirstRowBound(globalPage, db.DataPage, db.PageSizeBytes, out RowBound rowBound))
+        {
+            await UsageMap.CollectReferenceBitmapPagesAsync(globalPage, rowBound, db.PageCount, db.ReadPageAsync, DatabaseFile.ReturnPage, bitmapPages, cancellationToken);
+        }
+
+        return bitmapPages;
     }
 
     private static bool IsAllZero(byte[] page)

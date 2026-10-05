@@ -3,7 +3,8 @@
 How a data page (page type `0x01`) lays out its rows, and the Access
 behaviours that the library got wrong until the catalog-lookup fix (deleted
 slots that share a live row's offset, and overflow rows) and the
-jet3-long-rows fix (the Jet3 jump table). The page layout is the same in
+jet3-long-rows fix (the Jet3 jump table), and the usage-map rows that list a
+table's and an index's pages. The page layout is the same in
 Jet3, Jet4 and ACE apart from the header offsets. The reference is
 [Jackcess](https://github.com/jahlborn/jackcess) `TableImpl` (`findRowStart`,
 `findRowEnd`, `positionAtRowData`, `deleteRow`, `updateRow`), checked against
@@ -224,3 +225,75 @@ back to a whole-file scan.
   snapshot path.
 - `DropTableAsync` and schema rewrites free the long values of overflow rows
   too (`TableSchemaEditor.ReclaimTableStoragePagesAsync`).
+
+## Usage-map rows
+
+A TDEF names two usage-map rows, each by a 1-byte row index and a 3-byte page
+number: `used_pages`, the table's data pages, and `free_pages`, those with room
+for a row. Each real index's descriptor names a third (`used_pages`, its
+tree's pages). The rows sit on a usage-map page, a data page whose rows are
+maps. The writer gives each Jet4 and ACE table one, with the owned-pages and
+free-space rows at rows 0 and 1 and real index `n` at row `n + 2`, 69 bytes
+each (`CatalogArtifactWriter`, `DataPageInserter`); it keeps no Jet3 table or
+index usage maps. A row's first byte is its type:
+
+| Type | Layout |
+|---|---|
+| `0x00` INLINE | `start_page` (4 bytes), then a bitmap whose bit `k` is page `start_page + k`: 64 bytes, so 512 pages, in a 69-byte row |
+| `0x01` REFERENCE | 4-byte pointers, 17 in a 69-byte row; pointer `i` names a bitmap page or is 0 |
+
+A REFERENCE bitmap page has page type `0x05`, then `01 00 00`, then a bitmap
+whose bit `k` is page `i * (pageSize - 4) * 8 + k`. Each pointer covers 32,736
+pages of 4 KB, so 17 reach page 556,511, past the 524,288 pages of a 2 GB file.
+
+`UsageMapEditor` keeps the writer's rows complete:
+
+- `DataPageInserter.MarkPageInOwnedMapAsync` marks every data page the writer
+  appends in the owned-pages and free-space rows (`MarkPageAsync`). The bit is
+  set when the INLINE window holds the page. A row that lists no page yet
+  moves its window to the page (`start_page` 0 for a page below 512, otherwise
+  the page rounded down to a multiple of 8); a row that lists pages is promoted
+  to REFERENCE, keeping them, with a bitmap page for each window it needs.
+  Jackcess's `UsageMap` promotes the same way, but first moves a window whose
+  pages, the new one included, still fit one. Before, a page outside the
+  window was left out, so both maps of a table past 512 pages lost pages and
+  the reader fell back to the whole-file owned-page pass; and when the window
+  started at page 0, the first page past it moved the window without moving
+  the bits already set, so they named other pages.
+- An index row is written from the pages of a rebuilt tree (`WriteRowAsync`):
+  INLINE when one window holds them, REFERENCE otherwise. A row that is
+  REFERENCE already stays REFERENCE and keeps its bitmap pages, so rebuilding
+  an index again takes no new page. Before, a tree spread over two windows
+  threw `NotSupportedException`.
+- `DropTableAsync` and the schema rewrites free the bitmap pages of the table's
+  REFERENCE rows with its other pages
+  (`TableSchemaEditor.ReclaimTableStoragePagesAsync`).
+
+The writer never clears a bit in the free-space row, where Access lists only
+the pages with room (binIdxTestV2010's free-space row lists only the last of
+its table's four pages).
+
+### What Access writes
+
+The owned-pages rows of the Access-authored fixtures, read raw with PowerShell
+(92 files, the encrypted ones skipped; 1,689 table definitions):
+
+- 1,653 are INLINE, 33 TDEFs name no usage map, and 3 rows are REFERENCE. In
+  binIdxTestV2010.accdb and testEmoticonsV2010.accdb, row 0 of usage-map page
+  85, the owned-pages row of the table at TDEF page 84, has type `0x01` and
+  pointer 0 naming page 87, which starts `05 01 00 00` and lists that table's
+  data pages (86, 88, 89 and 90 in binIdxTestV2010.accdb); in
+  testRefGlobalV2000.mdb an empty table's REFERENCE row has no pointer. Their
+  free-space rows are INLINE. The writer's REFERENCE rows and bitmap pages
+  follow this layout.
+- Every page that an owned-pages row lists, 6,937 in all, is a data page whose
+  owner field names that table. None of the 7,953 LVAL pages in those files is
+  listed: Access keeps a table's LVAL pages out of its owned-pages map, and so
+  does the writer. Access lists them in each long-value column's own usage maps
+  (calculated-columns-format-notes.md), which the writer does not keep.
+- INLINE rows run to the next row, and the bitmap takes the whole row: 1,507 of
+  the 1,525 Jet4 and ACE ones are 69 bytes, the rest 85 to 381; the Jet3 ones
+  are 133 bytes or more (a 128-byte bitmap, 1,024 pages).
+
+Whether Access reads the writer's REFERENCE rows is unchecked (under
+"Unchecked against Access" in docs/todo.md).

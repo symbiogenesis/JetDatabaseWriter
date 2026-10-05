@@ -23,7 +23,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="pager">The writer's page file, through which data and usage-map pages are written.</param>
 /// <param name="pageAllocator">The page allocator.</param>
 /// <param name="ownedMaps">Decides whether a table's owned-page usage map may be extended.</param>
-internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocator pageAllocator, IOwnedMapPolicy ownedMaps)
+/// <param name="usageMaps">Edits and promotes table and index usage-map rows.</param>
+internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocator pageAllocator, IOwnedMapPolicy ownedMaps, UsageMapEditor usageMaps)
 {
 #if NET9_0_OR_GREATER
     private readonly Lock insertPageHintLock = new();
@@ -183,14 +184,15 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
     }
 
     /// <summary>
-    /// Sets the owned-pages usage-map bit for <paramref name="dataPageNumber"/> in the
-    /// per-table usage map referenced by the TDEF's <see cref="TDefHeaderLayout.UsedPages"/> pointer (1 byte row + 3 byte page).
-    /// The map row is the INLINE form (type byte 0x00): startPage at bytes 1..4 (int32 LE),
-    /// then a 64-byte bitmap covering 512 consecutive pages from startPage. On first use
-    /// the startPage remains zero for low page numbers and is otherwise initialized to
-    /// <c>(dataPageNumber / 8) * 8</c> so the bit fits in the bitmap. If the page is already
-    /// outside the existing INLINE window, the row is left untouched; this append-only
-    /// path does not rewrite REFERENCE-form maps.
+    /// Marks <paramref name="dataPageNumber"/> in the table's owned-pages usage
+    /// map, the row the TDEF's <see cref="TDefHeaderLayout.UsedPages"/> pointer
+    /// names (1-byte row + 3-byte page), and in its free-space map
+    /// (<see cref="TDefHeaderLayout.FreePages"/>), through
+    /// <see cref="UsageMapEditor.MarkPageAsync"/>, which reads and writes the
+    /// usage-map pages. An INLINE row whose 512-page window does not hold the
+    /// page moves the window while it lists no page, and is otherwise promoted
+    /// to REFERENCE, so both maps keep every data page the writer appends
+    /// however far apart the pages lie.
     /// </summary>
     /// <param name="tdefPageNumber">The TDEF page number.</param>
     /// <param name="dataPageNumber">The data page number.</param>
@@ -209,68 +211,19 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
                 return;
             }
 
-            byte[] umPage = await db.ReadPageAsync(ownedPage, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                bool changed = this.TrySetUsageMapBit(umPage, ownedRow, dataPageNumber);
-                if (freePage == ownedPage && freeRow != ownedRow)
-                {
-                    changed |= this.TrySetUsageMapBit(umPage, freeRow, dataPageNumber);
-                }
-
-                if (!changed)
-                {
-                    return;
-                }
-
-                await pager.WritePageAsync(ownedPage, umPage, cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                ReturnPage(umPage);
-            }
-
+            // Both rows on one page, as the writer puts them, take one read and
+            // one write of it.
+            int[] ownedPageRows = freePage == ownedPage && freeRow != ownedRow ? [ownedRow, freeRow] : [ownedRow];
+            await usageMaps.MarkPageAsync(ownedPage, ownedPageRows, dataPageNumber, cancellationToken).ConfigureAwait(false);
             if (freePage != ownedPage && freePage != 0)
             {
-                byte[] freeUmPage = await db.ReadPageAsync(freePage, cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    if (this.TrySetUsageMapBit(freeUmPage, freeRow, dataPageNumber))
-                    {
-                        await pager.WritePageAsync(freePage, freeUmPage, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    ReturnPage(freeUmPage);
-                }
+                await usageMaps.MarkPageAsync(freePage, [freeRow], dataPageNumber, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
             ReturnPage(tdef);
         }
-    }
-
-    private bool TrySetUsageMapBit(byte[] umPage, int rowIndex, long pageNumber)
-    {
-        if (!UsageMap.TryGetRowBound(umPage, db.DataPage, db.PageSizeBytes, rowIndex, out RowBound rowBound))
-        {
-            return false;
-        }
-
-        if (umPage[rowBound.RowStart] != Constants.UsageMap.InlineMapType)
-        {
-            return false;
-        }
-
-        return UsageMap.TrySetInlinePageState(
-            umPage,
-            rowBound.RowStart,
-            rowBound.RowSize,
-            pageNumber,
-            isMarked: true,
-            initializeBaseForPage: true);
     }
 
     internal bool CanInsertRow(byte[] page, int rowLength)
@@ -357,8 +310,9 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
 
     /// <summary>
     /// Matches the DAO-observed shape for a real-index usage-map page: table rows
-    /// 0/1 first, then one 69-byte usage-map row per real index. Each usage-map
-    /// row stores a page-aligned base in bytes 1..4 and a bitmap starting at byte 5.
+    /// 0/1 first, then one 69-byte usage-map row per real index, INLINE when one
+    /// window holds the index's pages and REFERENCE otherwise
+    /// (<see cref="UsageMapEditor.WriteRowAsync"/>).
     /// </summary>
     /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is stored in a separate usage-map row at index i+2.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
@@ -384,7 +338,7 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
                 continue;
             }
 
-            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[rowIndex - 2]);
+            await usageMaps.WriteRowAsync(page, rowStart, Constants.UsageMap.RowSize, indexPageGroups[rowIndex - 2], keepReferencePages: false, cancellationToken).ConfigureAwait(false);
         }
 
         Wi32(page, db.DataPage.TDefOff, 0);
@@ -405,7 +359,12 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
         for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
         {
             rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, db.DataPage.RowsStart + (rowIndex * 2), rowStart);
+            int slotOffset = db.DataPage.RowsStart + (rowIndex * 2);
+
+            // Only a row that already sat at this offset is the index's own, so
+            // only its REFERENCE bitmap pages may be reused.
+            bool existingRow = rowIndex < existingRowCount && Ru16(page, slotOffset) == rowStart;
+            Wu16(page, slotOffset, rowStart);
 
             if (rowIndex < 2)
             {
@@ -418,7 +377,7 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
                 continue;
             }
 
-            UsageMap.WriteInlineRow(page, rowStart, indexPageGroups[groupIndex]);
+            await usageMaps.WriteRowAsync(page, rowStart, Constants.UsageMap.RowSize, indexPageGroups[groupIndex], existingRow, cancellationToken).ConfigureAwait(false);
         }
 
         Wi32(page, db.DataPage.TDefOff, 0);

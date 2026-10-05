@@ -1391,7 +1391,7 @@ internal sealed class TableSchemaEditor(
     /// Frees a table's storage: its data pages, the LVAL rows its rows' long values
     /// point to, the pages its usage maps list after the first two (index pages, and
     /// in an Access-authored table each long-value column's LVAL pages), its usage-map
-    /// page, and its TDEF pages.
+    /// page with the bitmap pages of its REFERENCE rows, and its TDEF pages.
     /// </summary>
     /// <param name="tdefPage">The table's first TDEF page.</param>
     /// <param name="tableDef">
@@ -1502,6 +1502,9 @@ internal sealed class TableSchemaEditor(
 
             foreach (RowBound rowBound in db.EnumerateLiveRowBounds(page))
             {
+                // A REFERENCE row's bitmap pages go with the table, the owned
+                // and free-space rows' included.
+                await UsageMap.CollectReferenceBitmapPagesAsync(page, rowBound, totalPages, db.ReadPageAsync, ReturnPage, pagesToFree, cancellationToken).ConfigureAwait(false);
                 if (rowBound.RowIndex < 2)
                 {
                     continue;
