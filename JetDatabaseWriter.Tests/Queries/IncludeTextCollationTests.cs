@@ -115,8 +115,14 @@ public sealed class IncludeTextCollationTests(DatabaseCache cache) : IClassFixtu
             foreach (string table in new[] { "TextJoinParent", "TextJoinChild" })
             {
                 string column = table == "TextJoinParent" ? "Code" : "PCode";
-                IndexMetadata index = Assert.Single(await harness.Services.Indexes.ListSeekableIndexesAsync(table, ct), value => value.Columns.Count == 1 && value.Columns[0].Name == column);
-                Assert.False(await harness.Services.Indexes.CanSeekJoinKeysAsync(table, index, [new object?[] { "ABC" }], ct));
+                IndexMetadata[] candidates = (await harness.Services.Indexes.ListSeekableIndexesAsync(table, ct))
+                    .Where(value => value.Columns.Count == 1 && value.Columns[0].Name == column)
+                    .ToArray();
+                Assert.NotEmpty(candidates);
+                foreach (IndexMetadata index in candidates)
+                {
+                    Assert.False(await harness.Services.Indexes.CanSeekJoinKeysAsync(table, index, [["ABC"]], ct));
+                }
             }
         }
 

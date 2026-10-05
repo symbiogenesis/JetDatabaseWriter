@@ -97,7 +97,7 @@ public sealed class TextSortOrderTests
     {
         var order = new TextSortOrder(0x0409, version, hasVersion);
         var collation = new JetTextCollation(order);
-        string[] corpus = ["", "a", "a ", "ab", "a-b", "a'b", "a\rb", "a\tb", "é", "e", "Æ", "AE", "\u06D7", "\u0001", "a\u0001b"];
+        string[] corpus = [string.Empty, "a", "a ", "ab", "a-b", "a'b", "a\rb", "a\tb", "é", "e", "Æ", "AE", "\u06D7", "\u0001", "a\u0001b"];
         foreach (string left in corpus)
         {
             foreach (string right in corpus)

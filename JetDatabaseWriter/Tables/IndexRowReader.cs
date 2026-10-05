@@ -247,7 +247,7 @@ internal sealed class IndexRowReader(
             for (int ordinal = 0; ordinal < key.Length && ordinal < index.Columns.Count; ordinal++)
             {
                 ColumnInfo? column = resolved.Definition.Columns.Find(value => string.Equals(value.Name, index.Columns[ordinal].Name, StringComparison.OrdinalIgnoreCase));
-                if (column is not null && column.Type is TextType or MemoType
+                if (column?.Type is TextType or MemoType
                     && TextCollationFamily(column.TextSortOrder) != TextCollationFamily(format.DefaultTextSortOrder))
                 {
                     // Include matches by database collation. A differently collated
