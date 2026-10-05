@@ -569,6 +569,11 @@ internal sealed class IndexMaintainer(
         // Every populated real-idx slot, with IsUnique already promoted for
         // any slot backing a PK logical-idx, and its key columns resolved.
         Dictionary<int, RealIdxEntry> realIdxByNum = catalog.RealIdxByNum;
+        var indexPointers = new UsageMapPointer[numRealIdx];
+        foreach ((int realIdxNum, RealIdxEntry entry) in realIdxByNum)
+        {
+            _ = UsageMap.TryReadPointer(tdefBuffer, entry.FirstDpOffset - 4, out indexPointers[realIdxNum]);
+        }
 
         if (realIdxByNum.Count == 0)
         {
@@ -599,8 +604,7 @@ internal sealed class IndexMaintainer(
             oldIndexPageGroups = jet3
                 ? await this.CollectJet3ReplacedTreePagesAsync(tdefPage, tdefBuffer, leafLayout, realIdxByNum, numRealIdx, cancellationToken).ConfigureAwait(false)
                 : await this.ReadIndexPageGroupsFromUsageMapAsync(
-                    this.ReadTableUsageMapPage(tdefBuffer),
-                    numRealIdx,
+                    indexPointers,
                     cancellationToken).ConfigureAwait(false);
         }
 
@@ -704,7 +708,7 @@ internal sealed class IndexMaintainer(
         if (!jet3 && HasAnyIndexPageGroup(rebuiltIndexPageGroups))
         {
             long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
-            await dataPages.UpdateTableIndexUsageMapRowsAsync(usageMapPage, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
+            indexPointers = await dataPages.UpdateTableIndexUsageMapRowsAsync(usageMapPage, indexPointers, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
             for (int realIdxNum = 0; realIdxNum < rebuiltIndexPageGroups.Length; realIdxNum++)
             {
                 if (rebuiltIndexPageGroups[realIdxNum].Length == 0)
@@ -717,7 +721,8 @@ internal sealed class IndexMaintainer(
                     continue;
                 }
 
-                WriteIndexUsageMapPointer(tdefBuffer, rebuiltEntry.FirstDpOffset - 4, realIdxNum + 2, usageMapPage);
+                UsageMapPointer pointer = indexPointers[realIdxNum];
+                WriteIndexUsageMapPointer(tdefBuffer, rebuiltEntry.FirstDpOffset - 4, pointer.RowIndex, pointer.PageNumber);
             }
 
             tdefDirty = true;
@@ -806,33 +811,29 @@ internal sealed class IndexMaintainer(
     }
 
     private async ValueTask<long[][]?> ReadIndexPageGroupsFromUsageMapAsync(
-        long usageMapPageNumber,
-        int numRealIdx,
+        UsageMapPointer[] indexPointers,
         CancellationToken cancellationToken)
     {
-        if (usageMapPageNumber <= 0 || usageMapPageNumber >= pager.PageCount)
-        {
-            return null;
-        }
-
-        byte[] page = await pager.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        var mapPages = new Dictionary<int, byte[]>();
         try
         {
-            if (page[0] != Constants.PageTypes.Data)
+            long[][] result = CreateEmptyPageGroups(indexPointers.Length);
+            for (int realIdxNum = 0; realIdxNum < indexPointers.Length; realIdxNum++)
             {
-                return null;
-            }
+                UsageMapPointer pointer = indexPointers[realIdxNum];
+                if (pointer.PageNumber <= 0 || pointer.PageNumber >= pager.PageCount)
+                {
+                    continue;
+                }
 
-            long[][] result = new long[numRealIdx][];
-            for (int i = 0; i < result.Length; i++)
-            {
-                result[i] = [];
-            }
+                if (!mapPages.TryGetValue(pointer.PageNumber, out byte[]? page))
+                {
+                    page = await pager.ReadPageAsync(pointer.PageNumber, cancellationToken).ConfigureAwait(false);
+                    mapPages.Add(pointer.PageNumber, page);
+                }
 
-            foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(format, page))
-            {
-                int realIdxNum = rowBound.RowIndex - 2;
-                if (realIdxNum < 0 || realIdxNum >= numRealIdx)
+                if (page[0] != Constants.PageTypes.Data
+                    || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound rowBound))
                 {
                     continue;
                 }
@@ -860,7 +861,10 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            PageBuffers.Return(page);
+            foreach (byte[] page in mapPages.Values)
+            {
+                PageBuffers.Return(page);
+            }
         }
     }
 
@@ -1037,7 +1041,6 @@ internal sealed class IndexMaintainer(
             }
 
             indexPageGroups[realIdxNum] = pageGroup;
-            WriteIndexUsageMapPointer(tdefBuffer, entry.FirstDpOffset - 4, realIdxNum + 2, usageMapPage);
         }
 
         return indexPageGroups;
@@ -1050,16 +1053,32 @@ internal sealed class IndexMaintainer(
     /// an empty array.
     /// </summary>
     /// <param name="tdefBuffer">The logical TDEF bytes, which name the table's usage-map page.</param>
+    /// <param name="slots">The maintained real-index descriptors.</param>
     /// <param name="indexPageGroups">The pages of each real index's tree, by real-index number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask WriteIncrementalIndexUsageMapsAsync(byte[] tdefBuffer, long[][] indexPageGroups, CancellationToken cancellationToken)
+    private async ValueTask WriteIncrementalIndexUsageMapsAsync(byte[] tdefBuffer, List<(int RealIdxNum, RealIdxEntry Entry)> slots, long[][] indexPageGroups, CancellationToken cancellationToken)
     {
         if (indexPageGroups.Length == 0)
         {
             return;
         }
 
-        await dataPages.UpdateTableIndexUsageMapRowsAsync(this.ReadTableUsageMapPage(tdefBuffer), indexPageGroups, cancellationToken).ConfigureAwait(false);
+        var indexPointers = new UsageMapPointer[indexPageGroups.Length];
+        foreach ((int realIdxNum, RealIdxEntry entry) in slots)
+        {
+            _ = UsageMap.TryReadPointer(tdefBuffer, entry.FirstDpOffset - 4, out indexPointers[realIdxNum]);
+        }
+
+        indexPointers = await dataPages.UpdateTableIndexUsageMapRowsAsync(
+            this.ReadTableUsageMapPage(tdefBuffer), indexPointers, indexPageGroups, cancellationToken).ConfigureAwait(false);
+        foreach ((int realIdxNum, RealIdxEntry entry) in slots)
+        {
+            if (indexPageGroups[realIdxNum].Length > 0)
+            {
+                UsageMapPointer pointer = indexPointers[realIdxNum];
+                WriteIndexUsageMapPointer(tdefBuffer, entry.FirstDpOffset - 4, pointer.RowIndex, pointer.PageNumber);
+            }
+        }
     }
 
     private async ValueTask<long[]?> TryCollectIndexTreePagesAsync(
@@ -1574,7 +1593,7 @@ internal sealed class IndexMaintainer(
         // The usage-map rows and the TDEF write below link every tree
         // rebuilt since the last TDEF write.
         runs.MarkLinked();
-        await this.WriteIncrementalIndexUsageMapsAsync(tdefBuffer, indexPageGroups, cancellationToken).ConfigureAwait(false);
+        await this.WriteIncrementalIndexUsageMapsAsync(tdefBuffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
 
         if (!format.IsJet3)
         {

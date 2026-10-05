@@ -131,11 +131,7 @@ internal sealed class CatalogArtifactWriter(
             tdefPageBuilder.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
         }
 
-        long usageMapPageNumber = await dataPages.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
-        await dataPages.UpdateTableIndexUsageMapRowsAsync(
-            usageMapPageNumber,
-            DataPageInserter.ToSinglePageGroups(leafPageNumbers),
-            cancellationToken).ConfigureAwait(false);
+        long usageMapPageNumber = await dataPages.AppendIndexUsageMapPageAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
         {
@@ -308,15 +304,12 @@ internal sealed class CatalogArtifactWriter(
         // docs/design/round-trip-openrecordset-hypothesis.md.
         if (tableArtifact.EmitUsageMap && !format.IsJet3)
         {
-            long usageMapPageNumber = await dataPages.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+            long usageMapPageNumber = leafPageNumbers is null
+                ? await dataPages.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false)
+                : await dataPages.AppendIndexUsageMapPageAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
 
             if (leafPageNumbers is not null)
             {
-                await dataPages.UpdateTableIndexUsageMapRowsAsync(
-                    usageMapPageNumber,
-                    DataPageInserter.ToSinglePageGroups(leafPageNumbers),
-                    cancellationToken).ConfigureAwait(false);
-
                 for (int usedPagesIndex = 0; usedPagesIndex < usedPagesLogicalOffsets.Length; usedPagesIndex++)
                 {
                     tdefPageBuilder.WriteLogicalUsedPagesPointer(

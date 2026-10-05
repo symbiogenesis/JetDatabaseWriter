@@ -349,41 +349,95 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         return await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask UpdateTableIndexUsageMapRowsAsync(long usageMapPageNumber, IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
+    internal async ValueTask<UsageMapPointer[]> UpdateTableIndexUsageMapRowsAsync(
+        long fallbackUsageMapPageNumber,
+        IReadOnlyList<UsageMapPointer> indexPointers,
+        IReadOnlyList<long[]> indexPageGroups,
+        CancellationToken cancellationToken)
     {
-        byte[] page = await pager.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
-
-        int existingRowCount = Ru16(page, format.DataPage.NumRows);
-        int rowCount = Math.Max(existingRowCount, indexPageGroups.Count + 2);
-        int rowStart = format.PageSize;
-        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        var result = new UsageMapPointer[indexPointers.Count];
+        var groupsByPage = new Dictionary<long, List<int>>();
+        for (int index = 0; index < indexPointers.Count; index++)
         {
-            rowStart -= Constants.UsageMap.RowSize;
-            int slotOffset = format.DataPage.RowsStart + (rowIndex * 2);
-
-            // Only a row that already sat at this offset is the index's own, so
-            // only its REFERENCE bitmap pages may be reused.
-            bool existingRow = rowIndex < existingRowCount && Ru16(page, slotOffset) == rowStart;
-            Wu16(page, slotOffset, rowStart);
-
-            if (rowIndex < 2)
+            result[index] = indexPointers[index];
+            if (indexPageGroups[index].Length == 0)
             {
                 continue;
             }
 
-            int groupIndex = rowIndex - 2;
-            if (groupIndex >= indexPageGroups.Count || indexPageGroups[groupIndex].Length == 0)
+            long pageNumber = indexPointers[index].PageNumber > 0 ? indexPointers[index].PageNumber : fallbackUsageMapPageNumber;
+            if (!groupsByPage.TryGetValue(pageNumber, out List<int>? groups))
             {
-                continue;
+                groups = [];
+                groupsByPage.Add(pageNumber, groups);
             }
 
-            await usageMaps.WriteRowAsync(page, rowStart, Constants.UsageMap.RowSize, indexPageGroups[groupIndex], existingRow, cancellationToken).ConfigureAwait(false);
+            groups.Add(index);
         }
 
-        Wi32(page, format.DataPage.TDefOff, 0);
-        Wu16(page, format.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (format.DataPage.RowsStart + (rowCount * 2));
-        Wu16(page, 2, freeSpace);
-        await pager.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
+        foreach ((long pageNumber, List<int> groups) in groupsByPage)
+        {
+            byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                int existingRowCount = Ru16(page, format.DataPage.NumRows);
+                int rowCount = existingRowCount;
+                int rowStart = this.GetFirstRowStart(page, existingRowCount);
+                var rows = new RowBound[groups.Count];
+                for (int group = 0; group < groups.Count; group++)
+                {
+                    UsageMapPointer pointer = indexPointers[groups[group]];
+                    if (pointer.PageNumber > 0)
+                    {
+                        if (!UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, pointer.RowIndex, out rows[group]))
+                        {
+                            throw new InvalidDataException("The index usage-map row has invalid bounds.");
+                        }
+                    }
+                    else
+                    {
+                        rowStart -= Constants.UsageMap.RowSize;
+                        rows[group] = new RowBound(rowCount++, rowStart, Constants.UsageMap.RowSize);
+                    }
+                }
+
+                int slotTableEnd = format.DataPage.RowsStart + (rowCount * 2);
+                if (page[0] != Constants.PageTypes.Data || rowCount > byte.MaxValue + 1 || rowStart < slotTableEnd)
+                {
+                    throw new InvalidDataException("The usage-map page has no room for the index rows.");
+                }
+
+                // Access-authored rows need not be 69 bytes or sit at index+2.
+                // Other maps can share this page. Keep their slots and bytes,
+                // and reuse each existing index row's own REFERENCE bitmaps.
+                for (int group = 0; group < groups.Count; group++)
+                {
+                    int index = groups[group];
+                    RowBound row = rows[group];
+                    bool existingRow = indexPointers[index].PageNumber > 0;
+                    if (!existingRow)
+                    {
+                        Wu16(page, format.DataPage.RowsStart + (row.RowIndex * 2), row.RowStart);
+                    }
+
+                    await usageMaps.WriteRowAsync(page, row.RowStart, row.RowSize, indexPageGroups[index], existingRow, cancellationToken).ConfigureAwait(false);
+                    result[index] = new UsageMapPointer(row.RowIndex, checked((int)pageNumber));
+                }
+
+                if (rowCount != existingRowCount)
+                {
+                    Wu16(page, format.DataPage.NumRows, rowCount);
+                    Wu16(page, 2, rowStart - slotTableEnd);
+                }
+
+                await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        return result;
     }
 }
