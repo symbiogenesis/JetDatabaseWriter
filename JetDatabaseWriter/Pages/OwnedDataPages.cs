@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Pages;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
@@ -77,6 +78,9 @@ internal sealed class OwnedDataPages : IDisposable
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns><see langword="false"/> to stop.</returns>
     internal delegate ValueTask<bool> DataPageVisitor(long pageNumber, byte[] page, CancellationToken cancellationToken);
+
+    /// <summary>Gets or sets a value indicating whether corrupt row skips are traced.</summary>
+    internal bool DiagnosticsEnabled { get; set; }
 
     /// <inheritdoc/>
     public void Dispose()
@@ -245,13 +249,15 @@ internal sealed class OwnedDataPages : IDisposable
     /// the returned target is not released: the caller owns it.
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="intermediateSlots">Optional collector for validated intermediate pointer slots.</param>
     /// <returns>The target slot and its page, or <see langword="null"/>.</returns>
     internal async ValueTask<OverflowRowTarget?> TryResolveOverflowRowAsync(
         byte[] headerPage,
         RowBound header,
         Func<long, CancellationToken, ValueTask<byte[]>> readPage,
         Action<byte[]>? returnPage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        List<(long PageNumber, RowBound Bound)>? intermediateSlots = null)
     {
         int owner = Ri32(headerPage, this.format.DataPage.TDefOff);
         long totalPages = this.pages.PageCount;
@@ -263,7 +269,7 @@ internal sealed class OwnedDataPages : IDisposable
             {
                 if (pointer.RowSize < Constants.DataPage.OverflowPointerSize)
                 {
-                    return null;
+                    return Skip("pointer is shorter than four bytes");
                 }
 
                 int targetRow = page[pointer.RowStart];
@@ -272,7 +278,7 @@ internal sealed class OwnedDataPages : IDisposable
                     | (page[pointer.RowStart + 3] << 16);
                 if (targetPageNumber <= 0 || targetPageNumber >= totalPages)
                 {
-                    return null;
+                    return Skip($"target page {targetPageNumber} is outside the database");
                 }
 
                 byte[] target = await readPage(targetPageNumber, cancellationToken).ConfigureAwait(false);
@@ -283,7 +289,7 @@ internal sealed class OwnedDataPages : IDisposable
                     || Ri32(target, this.format.DataPage.TDefOff) != owner
                     || !DataPageRows.TryGetSlotBound(this.format, target, targetRow, out RowBound bound))
                 {
-                    return null;
+                    return Skip($"target page {targetPageNumber}, slot {targetRow} is not a row of this table");
                 }
 
                 int raw = Ru16(target, this.format.DataPage.RowsStart + (targetRow * 2));
@@ -293,14 +299,25 @@ internal sealed class OwnedDataPages : IDisposable
                     return new OverflowRowTarget(targetPageNumber, targetRow, target, bound);
                 }
 
+                intermediateSlots?.Add((targetPageNumber, bound));
                 pointer = bound;
             }
 
-            return null;
+            return Skip("overflow hop limit exceeded");
         }
         finally
         {
             ReleaseIntermediate(page);
+        }
+
+        OverflowRowTarget? Skip(string reason)
+        {
+            if (this.DiagnosticsEnabled)
+            {
+                Trace.WriteLine($"[AccessReader] Skipped corrupt overflow row in table definition page {owner}, header slot {header.RowIndex} at offset {header.RowStart}: {reason}.");
+            }
+
+            return null;
         }
 
         void ReleaseIntermediate(byte[] buffer)

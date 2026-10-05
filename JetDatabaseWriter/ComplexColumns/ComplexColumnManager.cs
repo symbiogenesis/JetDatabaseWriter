@@ -1314,10 +1314,12 @@ internal sealed class ComplexColumnManager(
     /// attachment / multi-value column. Returns silently if no matching row is
     /// found (idempotent).
     /// </summary>
+    /// <param name="parentTdefPage">The owning parent TDEF page.</param>
     /// <param name="columnName">The column name.</param>
     /// <param name="complexId">The complex id.</param>
+    /// <param name="reclaimStorage">Releases the flat table storage using its captured definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public async ValueTask DropSingleComplexChildAsync(string columnName, int complexId, CancellationToken cancellationToken)
+    public async ValueTask DropSingleComplexChildAsync(long parentTdefPage, string columnName, int complexId, Func<long, TableDef, CancellationToken, ValueTask> reclaimStorage, CancellationToken cancellationToken)
     {
         long msysCxPg = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysCxPg == 0)
@@ -1329,7 +1331,8 @@ internal sealed class ComplexColumnManager(
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
-        if (nameCol == null || flatIdCol == null || cxIdCol == null)
+        ColumnInfo? parentIdCol = msysCxDef.FindColumn("ConceptualTableID");
+        if (nameCol == null || flatIdCol == null || cxIdCol == null || parentIdCol == null)
         {
             return;
         }
@@ -1341,6 +1344,12 @@ internal sealed class ComplexColumnManager(
             msysCxPg,
             (row, _) =>
             {
+                string parentText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, parentIdCol);
+                if (!CatalogValueReader.TryParseInt64(parentText, out long parentId) || CatalogValueReader.TdefPageFromId(parentId) != parentTdefPage)
+                {
+                    return new ValueTask<bool>(true);
+                }
+
                 string rowName = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
                 if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1364,6 +1373,8 @@ internal sealed class ComplexColumnManager(
             },
             cancellationToken).ConfigureAwait(false);
 
+        Dictionary<long, TableDef> definitions = await this.ReadFlatDefinitionsBeforeDropAsync([flatTdefPage], deletedRows, msysCxPg, msysCxDef, cancellationToken).ConfigureAwait(false);
+
         foreach ((long pg, int ri) in deletedRows)
         {
             await tableRows.MarkRowDeletedAsync(pg, ri, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
@@ -1380,7 +1391,7 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        await catalogArtifacts.DeleteCatalogRowsByTdefPagesAsync([flatTdefPage], cancellationToken).ConfigureAwait(false);
+        await this.DropFlatStorageAsync(definitions, reclaimStorage, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1535,8 +1546,9 @@ internal sealed class ComplexColumnManager(
     /// flat table (already removed) by silently skipping.
     /// </summary>
     /// <param name="parentTdefPage">The parent TDEF page.</param>
+    /// <param name="reclaimStorage">Releases each flat table storage using its captured definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, CancellationToken cancellationToken)
+    public async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, Func<long, TableDef, CancellationToken, ValueTask> reclaimStorage, CancellationToken cancellationToken)
     {
         TableDef? parentDef = await this.tableDefs.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
         if (parentDef == null)
@@ -1568,7 +1580,8 @@ internal sealed class ComplexColumnManager(
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
-        if (nameCol == null || flatIdCol == null || cxIdCol == null)
+        ColumnInfo? parentIdCol = msysCxDef.FindColumn("ConceptualTableID");
+        if (nameCol == null || flatIdCol == null || cxIdCol == null || parentIdCol == null)
         {
             return;
         }
@@ -1592,6 +1605,12 @@ internal sealed class ComplexColumnManager(
             msysCxPg,
             (row, _) =>
             {
+                string parentText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, parentIdCol);
+                if (!CatalogValueReader.TryParseInt64(parentText, out long parentId) || CatalogValueReader.TdefPageFromId(parentId) != parentTdefPage)
+                {
+                    return new ValueTask<bool>(true);
+                }
+
                 string rowName = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
                 string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
                 if (!CatalogValueReader.TryParseInt32(idText, out int rid))
@@ -1615,6 +1634,8 @@ internal sealed class ComplexColumnManager(
             },
             cancellationToken).ConfigureAwait(false);
 
+        Dictionary<long, TableDef> definitions = await this.ReadFlatDefinitionsBeforeDropAsync(flatTdefPages, cxRowsToDelete, msysCxPg, msysCxDef, cancellationToken).ConfigureAwait(false);
+
         foreach ((long pg, int ri) in cxRowsToDelete)
         {
             await tableRows.MarkRowDeletedAsync(pg, ri, msysCxDef, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
@@ -1631,6 +1652,53 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        await catalogArtifacts.DeleteCatalogRowsByTdefPagesAsync(flatTdefPages, cancellationToken).ConfigureAwait(false);
+        await this.DropFlatStorageAsync(definitions, reclaimStorage, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<Dictionary<long, TableDef>> ReadFlatDefinitionsBeforeDropAsync(IEnumerable<long> flatPages, List<(long PageNumber, int RowIndex)> droppedRows, long complexTablePage, TableDef complexTableDef, CancellationToken cancellationToken)
+    {
+        var definitions = new Dictionary<long, TableDef>();
+        var candidates = new HashSet<long>(flatPages);
+        ColumnInfo flatId = complexTableDef.FindColumn("FlatTableID")!;
+        var dropping = new HashSet<(long PageNumber, int RowIndex)>(droppedRows);
+        await this.ownedPages.ForEachLiveTableRowAsync(
+            complexTablePage,
+            (row, _) =>
+            {
+                string flatText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, flatId);
+                if (CatalogValueReader.TryParseInt64(flatText, out long flat)
+                    && !dropping.Contains((row.Location.PageNumber, row.Location.RowIndex)))
+                {
+                    // Do not follow a corrupted row into a sibling's flat table.
+                    _ = candidates.Remove(CatalogValueReader.TdefPageFromId(flat));
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
+        TableDef msys = await this.tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        foreach (CatalogRow row in await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false))
+        {
+            // A corrupt FlatTableID must never release an ordinary user's table.
+            if (candidates.Contains(row.TDefPage) && row.TDefPage > 2 && row.IsDecoded
+                && row.ObjectType == Constants.SystemObjects.UserTableType
+                && (row.Flags & Constants.SystemObjects.ComplexFlatTableFlags) == Constants.SystemObjects.ComplexFlatTableFlags)
+            {
+                definitions[row.TDefPage] = await this.tableDefs.ReadRequiredTableDefAsync(row.TDefPage, row.Name, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return definitions;
+    }
+
+    private async ValueTask DropFlatStorageAsync(Dictionary<long, TableDef> definitions, Func<long, TableDef, CancellationToken, ValueTask> reclaimStorage, CancellationToken cancellationToken)
+    {
+        await catalogArtifacts.DeleteCatalogRowsByTdefPagesAsync(definitions.Keys, cancellationToken).ConfigureAwait(false);
+        foreach ((long page, TableDef definition) in definitions)
+        {
+            await reclaimStorage(page, definition, cancellationToken).ConfigureAwait(false);
+        }
+
+        this.catalog.Invalidate();
     }
 }

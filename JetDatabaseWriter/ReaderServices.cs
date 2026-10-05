@@ -30,6 +30,8 @@ internal sealed class ReaderServices : IDisposable
     {
         Guard.NotNull(options, nameof(options));
 
+        db.OwnedPages.DiagnosticsEnabled = options.DiagnosticsEnabled;
+
         var linkedSources = new LinkedSourcePolicy(
             LinkedTableManager.CreateLinkedSourceOpenOptions(options, db.DatabasePath),
             db.DatabasePath);

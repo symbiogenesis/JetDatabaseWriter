@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Pages;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -177,6 +178,49 @@ public sealed class OverflowRowTests
         List<int> ids = await this.ReadIdsAsync(bytes, readMode);
         Assert.Equal(originalIds.Skip(1), ids);
         Assert.All(await this.CountThroughReadApisAsync(bytes, readMode), pair => Assert.True(pair.Value == ids.Count, $"{pair.Key} returned {pair.Value} rows; expected {ids.Count}."));
+    }
+
+    /// <summary>Diagnostics expose a skipped overflow row only when enabled.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="layout">The corrupt pointer layout.</param>
+    /// <param name="readMode">The scan read mode.</param>
+    [Theory(DisableParallelization = true)]
+    [MemberData(nameof(CorruptLayouts))]
+    public async Task CorruptOverflowPointer_TracesOnlyWithDiagnostics(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
+    {
+        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, TableName, MinimumRows, primaryKey: false, this.ct);
+        int originalCount = (await this.ReadIdsAsync(bytes, readMode)).Count;
+        _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, layout, this.ct);
+        using var messages = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        using var listener = new TextWriterTraceListener(messages);
+        Trace.Listeners.Add(listener);
+        try
+        {
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool enabled = pass != 0;
+                messages.GetStringBuilder().Clear();
+                await using var stream = new MemoryStream(bytes, writable: false);
+                await using AccessReader reader = await AccessReader.OpenAsync(
+                    stream,
+                    new AccessReaderOptions { UseLockFile = false, DiagnosticsEnabled = enabled, PageReadOptimizationMode = readMode },
+                    leaveOpen: true,
+                    this.ct);
+                using DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: this.ct);
+                Assert.Equal(originalCount - 1, rows.Rows.Count);
+                listener.Flush();
+                Assert.Equal(enabled, messages.ToString().Contains("Skipped corrupt overflow row", StringComparison.Ordinal));
+                if (enabled)
+                {
+                    Assert.Contains("table definition page", messages.ToString(), StringComparison.Ordinal);
+                    Assert.Contains("header slot", messages.ToString(), StringComparison.Ordinal);
+                }
+            }
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
     }
 
     private static TheoryData<DatabaseFormat, OverflowRowLayout, PageReadOptimizationMode> Combine(params OverflowRowLayout[] layouts)

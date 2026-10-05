@@ -14,8 +14,11 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueEncoding;
 using Xunit;
 
 /// <summary>
@@ -68,6 +71,49 @@ public sealed class OverflowRowWriteTests
 
     /// <summary>Gets each shared write mode and a local rollback flag.</summary>
     public static TheoryData<WriteMode, bool> Modes => new() { { WriteMode.Direct, false }, { WriteMode.AutoCommit, false }, { WriteMode.ExplicitCommit, false }, { WriteMode.ExplicitCommit, true } };
+
+    /// <summary>Gets every overflow layout and format in each committed write mode.</summary>
+    public static TheoryData<DatabaseFormat, WriteMode, OverflowRowLayout> EraseLayouts
+    {
+        get
+        {
+            var data = new TheoryData<DatabaseFormat, WriteMode, OverflowRowLayout>();
+            foreach (DatabaseFormat format in Enum.GetValues<DatabaseFormat>())
+            {
+                if (format is not (DatabaseFormat.Jet3Mdb or DatabaseFormat.Jet4Mdb or DatabaseFormat.AceAccdb))
+                {
+                    continue;
+                }
+
+                foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+                {
+                    data.Add(format, mode, OverflowRowLayout.CrossPage);
+                    data.Add(format, mode, OverflowRowLayout.SamePage);
+                    data.Add(format, mode, OverflowRowLayout.TwoHop);
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>Gets clearing modes for valid chains and pointers into another table.</summary>
+    public static TheoryData<WriteMode, bool, OverflowRowLayout, bool> ClearingModes
+    {
+        get
+        {
+            var data = new TheoryData<WriteMode, bool, OverflowRowLayout, bool>();
+            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            {
+                data.Add(mode, false, OverflowRowLayout.TwoHop, false);
+                data.Add(mode, false, OverflowRowLayout.PointerToOtherTable, false);
+                data.Add(mode, false, OverflowRowLayout.PointerToOtherTable, true);
+            }
+
+            data.Add(WriteMode.ExplicitCommit, true, OverflowRowLayout.TwoHop, false);
+            return data;
+        }
+    }
 
     public static TheoryData<DatabaseFormat> Formats =>
     [
@@ -189,12 +235,15 @@ public sealed class OverflowRowWriteTests
     /// the header slot.
     /// </summary>
     /// <param name="format">The database format.</param>
+    /// <param name="mode">The transaction mode.</param>
+    /// <param name="layout">The overflow layout.</param>
     [Theory]
-    [MemberData(nameof(Formats))]
-    public async Task SecureErase_DeleteOverflowRow_ClearsMovedRowBytes(DatabaseFormat format)
+    [MemberData(nameof(EraseLayouts))]
+    public async Task SecureErase_DeleteOverflowRow_ClearsMovedRowBytes(DatabaseFormat format, WriteMode mode, OverflowRowLayout layout)
     {
         byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, SyntheticTable, 300, primaryKey: true, Ct);
-        SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, SyntheticTable, OverflowRowLayout.CrossPage, Ct);
+        SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, SyntheticTable, layout, Ct);
+        int movedId = await ReadOverflowIdAsync(bytes);
         (int pageSize, int rowsStart) = await PageLayoutAsync(bytes);
         int headerStart = SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.HeaderPage, moved.HeaderRow) & 0x1FFF;
         Assert.False(IsZero(bytes, moved.DataPage, pageSize, moved.DataStart, moved.DataSize));
@@ -204,18 +253,110 @@ public sealed class OverflowRowWriteTests
         ms.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             ms,
-            new AccessWriterOptions { UseLockFile = false, SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages },
+            new AccessWriterOptions { UseLockFile = false, SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages, UseTransactionalWrites = mode == WriteMode.AutoCommit },
             leaveOpen: true,
             Ct))
         {
-            Assert.Equal(1, await writer.DeleteRowsAsync(SyntheticTable, "Id", 1, Ct));
+            await RunAsync(writer, mode, false, async () => Assert.Equal(1, await writer.DeleteRowsAsync(SyntheticTable, "Id", movedId, Ct)));
         }
 
         byte[] after = ms.ToArray();
+        if (layout == OverflowRowLayout.TwoHop)
+        {
+            int middleStart = SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.DataPage, moved.DataRow + 1) & 0x1FFF;
+            Assert.True(IsZero(after, moved.DataPage, pageSize, middleStart, 4), "The middle pointer was not erased.");
+        }
+
         Assert.True(IsZero(after, moved.DataPage, pageSize, moved.DataStart, moved.DataSize), "The moved row's bytes were not erased.");
         Assert.True(IsZero(after, moved.HeaderPage, pageSize, headerStart, 4), "The header's pointer was not erased.");
         Assert.Equal(OverflowFlags, SyntheticOverflowRows.ReadSlot(after, pageSize, rowsStart, moved.HeaderPage, moved.HeaderRow) & OverflowFlags);
         Assert.Equal(await CountRowsAsync(bytes, SyntheticTable) - 1, await CountRowsAsync(after, SyntheticTable));
+    }
+
+    /// <summary>Explicit row clearing scrubs a two-hop chain and rolls back with the transaction.</summary>
+    /// <param name="mode">The transaction mode.</param>
+    /// <param name="rollback">Whether to roll back.</param>
+    /// <param name="layout">The pointer layout.</param>
+    /// <param name="secureErase">Whether secure erase is enabled.</param>
+    [Theory]
+    [MemberData(nameof(ClearingModes))]
+    public async Task Clear_DeleteTwoHopOverflowRow_ClearsAllSlots(WriteMode mode, bool rollback, OverflowRowLayout layout, bool secureErase)
+    {
+        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(DatabaseFormat.Jet4Mdb, SyntheticTable, 300, primaryKey: true, Ct);
+        SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, SyntheticTable, layout, Ct);
+        (int pageSize, int rowsStart) = await PageLayoutAsync(bytes);
+        int headerStart = SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.HeaderPage, moved.HeaderRow) & 0x1FFF;
+        int middleStart = layout == OverflowRowLayout.TwoHop
+            ? SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.DataPage, moved.DataRow + 1) & 0x1FFF
+            : 0;
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(bytes, Ct);
+        stream.Position = 0;
+        var options = new AccessWriterOptions
+        {
+            UseLockFile = false,
+            UseByteRangeLocks = false,
+            UseTransactionalWrites = mode == WriteMode.AutoCommit,
+            SecureEraseMode = secureErase ? SecureEraseMode.DeletedRowsAndFreedPages : SecureEraseMode.None,
+        };
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, options, cancellationToken: Ct))
+        {
+            DatabaseFile db = harness.Database;
+            CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(SyntheticTable, Ct));
+            TableDef tableDef = await db.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, SyntheticTable, Ct);
+            var store = new TableRowStore(
+                db.Format,
+                db.OwnedPages,
+                harness.Pager,
+                options,
+                new LongValueEncoder(db.Format, harness.Pager, harness.Services.PageAllocator, options),
+                new RowEncoder(db.Format),
+                new DataPageInserter(db.Format, db.OwnedPages, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps, new UsageMapEditor(db.Format, harness.Pager, harness.Services.PageAllocator)),
+                new TDefPageBuilder(db.Format, harness.Pager));
+            if (mode == WriteMode.ExplicitCommit)
+            {
+                await using JetTransaction transaction = await harness.BeginTransactionAsync(Ct);
+                await store.MarkRowDeletedAsync(moved.HeaderPage, moved.HeaderRow, tableDef, DeletedRowDataMode.Clear, Ct);
+                if (rollback)
+                {
+                    await transaction.RollbackAsync(Ct);
+                }
+                else
+                {
+                    await transaction.CommitAsync(Ct);
+                }
+            }
+            else
+            {
+                await harness.Services.Transactions.RunAutoCommitAsync(
+                    _ => store.MarkRowDeletedAsync(moved.HeaderPage, moved.HeaderRow, tableDef, DeletedRowDataMode.Clear, Ct), Ct);
+            }
+        }
+
+        byte[] after = stream.ToArray();
+        if (rollback)
+        {
+            Assert.Equal(bytes, after);
+        }
+        else
+        {
+            Assert.True(IsZero(after, moved.HeaderPage, pageSize, headerStart, 4));
+            if (layout == OverflowRowLayout.TwoHop)
+            {
+                Assert.True(IsZero(after, moved.DataPage, pageSize, middleStart, 4));
+                Assert.True(IsZero(after, moved.DataPage, pageSize, moved.DataStart, moved.DataSize));
+            }
+            else
+            {
+                for (int pageNumber = 0; pageNumber < bytes.Length / pageSize; pageNumber++)
+                {
+                    if (pageNumber != moved.HeaderPage)
+                    {
+                        Assert.Equal(bytes.AsSpan(pageNumber * pageSize, pageSize).ToArray(), after.AsSpan(pageNumber * pageSize, pageSize).ToArray());
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -760,6 +901,35 @@ public sealed class OverflowRowWriteTests
 
         await IndexLeafChain.AssertCoversLiveRowsAsync(db, entry.TDefPage, primaryKey.FirstDp, Ct);
         return (await IndexLeafChain.ReadEntriesAsync(db, entry.TDefPage, primaryKey.FirstDp, Ct)).Count;
+    }
+
+    /// <summary>Reads the key of the synthetic table's only overflow row.</summary>
+    /// <param name="bytes">The database image.</param>
+    /// <returns>The moved row's Id.</returns>
+    private static async ValueTask<int> ReadOverflowIdAsync(byte[] bytes)
+    {
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(SyntheticTable, Ct));
+        TableDef tableDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, SyntheticTable, Ct);
+        int keyOrdinal = tableDef.FindColumnIndex("Id");
+        int movedId = 0;
+        await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
+            entry.TDefPage,
+            async (row, token) =>
+            {
+                if (!row.Location.IsOverflow)
+                {
+                    return true;
+                }
+
+                object?[]? values = await PartialColumnReader.TryReadColumnValuesTypedAsync(harness.Database.Format, harness.Database.Pages, row.Location, tableDef, [keyOrdinal], token);
+                movedId = Assert.IsType<int>(Assert.Single(Assert.IsType<object?[]>(values)));
+                return false;
+            },
+            Ct);
+        Assert.True(movedId > 0);
+        return movedId;
     }
 
     /// <summary>Returns every row-offset slot of <paramref name="table"/> flagged as an overflow header.</summary>

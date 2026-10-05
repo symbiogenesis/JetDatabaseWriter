@@ -270,8 +270,11 @@ internal sealed class TableRowStore(
             bool secureErase = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
             if ((dataMode == DeletedRowDataMode.Clear || secureErase) && DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound header))
             {
-                if (await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, PageBuffers.Return, cancellationToken).ConfigureAwait(false) is { } target)
+                bool resolved = false;
+                var intermediateSlots = new List<(long PageNumber, RowBound Bound)>();
+                if (await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, PageBuffers.Return, cancellationToken, intermediateSlots).ConfigureAwait(false) is { } target)
                 {
+                    resolved = true;
                     try
                     {
                         if (secureErase)
@@ -291,6 +294,33 @@ internal sealed class TableRowStore(
                     finally
                     {
                         PageBuffers.Return(target.Page);
+                    }
+                }
+
+                // Read after clearing the target: pointer slots can share its page.
+                // Only a fully resolved chain authorizes clearing its intermediate slots.
+                if (resolved)
+                {
+                    foreach ((long pointerPageNumber, RowBound pointerBound) in intermediateSlots)
+                    {
+                        byte[] pointerPage = pointerPageNumber == pageNumber
+                            ? page
+                            : await pager.ReadPageAsync(pointerPageNumber, cancellationToken).ConfigureAwait(false);
+                        try
+                        {
+                            Array.Clear(pointerPage, pointerBound.RowStart, pointerBound.RowSize);
+                            if (pointerPageNumber != pageNumber)
+                            {
+                                await pager.WritePageAsync(pointerPageNumber, pointerPage, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            if (pointerPageNumber != pageNumber)
+                            {
+                                PageBuffers.Return(pointerPage);
+                            }
+                        }
                     }
                 }
 

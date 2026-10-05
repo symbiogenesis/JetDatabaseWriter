@@ -192,7 +192,7 @@ header to the row data, up to `Constants.DataPage.MaxOverflowHops` (8) hops, and
 requires the target to be a data page of the same table and a slot the page
 has. A pointer that cannot be resolved (shorter than four bytes, past the end of
 the file, into another table, or a cycle) skips the row without throwing, as an
-undecodable row is skipped. `StrictParsing` governs value parsing only.
+undecodable row is skipped. With `DiagnosticsEnabled`, the reader traces the table-definition page, header slot and offset, and the reason it could not resolve the pointer. `StrictParsing` governs value parsing only.
 
 Every read path uses the directory: the `TableReader` scans,
 `RowDecoder` (catalog and flat-table scans), the index seek in `IndexRowReader`,
@@ -211,7 +211,7 @@ back to a whole-file scan.
 - **Delete** (`TableRowStore.MarkRowDeletedAsync`) flags the header `0xC000`, as
   Jackcess `deleteRow` does. With `DeletedRowDataMode.Clear` or
   `SecureEraseMode.DeletedRowsAndFreedPages` it also zeroes the moved bytes and
-  the header's pointer, and under secure erase frees the row's long values.
+  the header's pointer and every validated intermediate pointer slot, and under secure erase frees the row's long values. Intermediate slots are cleared only after the entire chain resolves to a row of the same table; invalid pointers never authorize clearing another table's bytes.
 - **Update** is a delete plus an insert, so the rewritten row is written fresh
   and the old header is flagged `0xC000`. The writer never creates overflow rows.
 - Index entries and row identity use the header (`RowLocation.PageNumber` /

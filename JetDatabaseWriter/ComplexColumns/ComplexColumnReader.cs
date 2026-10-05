@@ -154,7 +154,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
         return byComplexId.Count == 0
             ? []
-            : await this.JoinComplexColumnsAsync(byComplexId, cancellationToken).ConfigureAwait(false);
+            : await this.JoinComplexColumnsAsync(byComplexId, resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -266,7 +266,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     {
         if (targetTdefPage <= 0)
         {
-            return true;
+            return false;
         }
 
         if (CatalogValueReader.TryParseInt64(tableIdStr, out long tableId))
@@ -473,6 +473,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
     private async ValueTask<IReadOnlyList<ComplexColumnInfo>> JoinComplexColumnsAsync(
         Dictionary<int, (string Name, ColumnType Type)> byComplexId,
+        long parentTdefPage,
         CancellationToken cancellationToken)
     {
         long msysTdef = await catalog.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -493,7 +494,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         int idxConceptualTable = msys.FindColumnIndex("ConceptualTableID");
         int idxComplexType = msys.FindColumnIndex("ComplexTypeObjectID");
 
-        if (idxComplexId < 0)
+        if (idxComplexId < 0 || idxConceptualTable < 0)
         {
             return [];
         }
@@ -501,6 +502,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
+        var seenIds = new HashSet<int>();
         await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, msys, ComplexColumnJoinColumns, cancellationToken).ConfigureAwait(false))
         {
             if (!CatalogValueReader.TryParseInt32(row, idxComplexId, out int complexId))
@@ -508,8 +510,15 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 continue;
             }
 
-            if (!byComplexId.TryGetValue(complexId, out (string Name, ColumnType Type) parent))
+            if (!byComplexId.TryGetValue(complexId, out (string Name, ColumnType Type) parent)
+                || !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), parentTdefPage, tableName: null))
             {
+                continue;
+            }
+
+            if (!seenIds.Add(complexId))
+            {
+                result.RemoveAll(column => column.ComplexId == complexId);
                 continue;
             }
 
@@ -641,13 +650,19 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             int idxConceptualTable = td.FindColumnIndex("ConceptualTableID");
             int idxFlatTable = td.FindColumnIndex("FlatTableID");
 
-            if (idxCol < 0 || idxFlatTable < 0)
+            if (idxCol < 0 || idxFlatTable < 0 || idxConceptualTable < 0)
             {
                 return 0;
             }
 
             ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
+            if (targetTdefPage <= 0)
+            {
+                return 0;
+            }
+
+            long matchedPage = 0;
 
             await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, td, FlatTableLookupColumns, cancellationToken).ConfigureAwait(false))
             {
@@ -657,8 +672,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                     continue;
                 }
 
-                if (idxConceptualTable >= 0 &&
-                    !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName: null))
+                if (!ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName: null))
                 {
                     continue;
                 }
@@ -668,10 +682,17 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                     long flatTdef = CatalogValueReader.TdefPageFromId(flatId);
                     if (flatTdef > 0)
                     {
-                        return flatTdef;
+                        if (matchedPage != 0)
+                        {
+                            return 0;
+                        }
+
+                        matchedPage = flatTdef;
                     }
                 }
             }
+
+            return matchedPage;
         }
         catch (InvalidDataException ex)
         {
@@ -685,7 +706,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// Best-effort <see cref="GetComplexColumnsAsync"/> for table scans: a damaged
     /// parent TDEF, <c>MSysComplexColumns</c> or <c>MSysObjects</c> is traced and
     /// yields no descriptors, so <see cref="LoadColumnCellsAsync"/> falls back to
-    /// finding each flat table by name instead of failing the whole read.
+    /// finding each flat table through its parent/column catalog mapping instead of failing the whole read.
     /// </summary>
     /// <param name="tableName">The parent table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -800,11 +821,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     private async ValueTask<FlatTable?> FindFlatTableFallbackAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
         long tdefPage = await this.GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
-        if (tdefPage <= 0)
-        {
-            tdefPage = await this.FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
-        }
-
         TableDef? td = tdefPage > 0 ? await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
         return td == null ? null : new FlatTable(tdefPage, td);
     }
@@ -900,11 +916,6 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
         return result;
     }
-
-    private ValueTask<long> FindSystemTablePageBySuffixAsync(string nameSuffix, CancellationToken cancellationToken)
-        => catalog.FindSystemTablePageAsync(
-            name => name.EndsWith(nameSuffix, StringComparison.OrdinalIgnoreCase),
-            cancellationToken);
 
     private void TraceBestEffortFallback(string operation, Exception exception)
     {

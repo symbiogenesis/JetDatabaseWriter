@@ -1017,7 +1017,7 @@ internal sealed class TableSchemaEditor(
 
             foreach ((string colName, int complexId) in droppedComplex)
             {
-                await complexColumns.DropSingleComplexChildAsync(colName, complexId, cancellationToken).ConfigureAwait(false);
+                await complexColumns.DropSingleComplexChildAsync(entry.TDefPage, colName, complexId, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
             }
 
             foreach ((string oldColName, string newColName, int complexId) in renamedComplex)
@@ -1386,7 +1386,7 @@ internal sealed class TableSchemaEditor(
 
             foreach (long parentTdefPage in deleted.TDefPages)
             {
-                await complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
+                await complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
             }
         }
 
