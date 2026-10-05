@@ -107,7 +107,7 @@ public sealed class ComplexColumnsFallbackOwnershipTests
             return;
         }
 
-        var parent = await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", ComplexColumnTestSupport.Ct);
+        ResolvedTable parent = await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", ComplexColumnTestSupport.Ct);
         long parentPage = parent.Entry.TDefPage;
         long mailPage = damage == "WrongParent"
             ? (await harness.Services.Catalog.ResolveRequiredTableAsync("Mail", ComplexColumnTestSupport.Ct)).Entry.TDefPage

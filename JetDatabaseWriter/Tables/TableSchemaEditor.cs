@@ -1001,6 +1001,19 @@ internal sealed class TableSchemaEditor(
                 tempEntry.TDefPage,
                 persistedLvProp,
                 cancellationToken).ConfigureAwait(false);
+
+            // New complex columns were emitted under the temporary parent.
+            // Their catalog ownership must follow the transplanted TDEF too.
+            foreach (ColumnInfo column in tempDef.Columns)
+            {
+                if ((column.Type is ComplexType or AttachmentType) && column.Misc > 0)
+                {
+                    await complexColumns.UpdateComplexColumnParentTableIdAsync(
+                        column.Misc,
+                        checked((int)entry.TDefPage),
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
         }
         else
         {

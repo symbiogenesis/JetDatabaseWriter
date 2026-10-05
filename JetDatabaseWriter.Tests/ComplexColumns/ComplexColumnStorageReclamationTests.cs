@@ -7,9 +7,11 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -169,13 +171,14 @@ public sealed class ComplexColumnStorageReclamationTests
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
         {
             long complexPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", Ct);
-            var definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(complexPage, "MSysComplexColumns", Ct);
+            TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(complexPage, "MSysComplexColumns", Ct);
             int idOffset = definition.FindColumn("ComplexID")!.FixedOff;
             int flatOffset = definition.FindColumn("FlatTableID")!.FixedOff;
             bool patched = false;
-            foreach (var location in await harness.Database.GetLiveRowLocationsAsync(complexPage, Ct))
+            foreach (RowLocation location in await harness.Database.GetLiveRowLocationsAsync(complexPage, Ct))
             {
                 byte[] page = await harness.Database.Pages.ReadPageCopyAsync(location.DataPageNumber, Ct);
+
                 // ACE rows begin with a two-byte column count, then the fixed area.
                 if (BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(location.RowStart + 2 + idOffset)) == dropping.ComplexId)
                 {

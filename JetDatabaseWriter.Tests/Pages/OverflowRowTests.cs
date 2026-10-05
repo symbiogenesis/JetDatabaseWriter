@@ -191,7 +191,7 @@ public sealed class OverflowRowTests
         byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, TableName, MinimumRows, primaryKey: false, this.ct);
         int originalCount = (await this.ReadIdsAsync(bytes, readMode)).Count;
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, layout, this.ct);
-        using var messages = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        await using var messages = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
         Trace.Listeners.Add(listener);
         try

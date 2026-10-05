@@ -6,10 +6,12 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -407,6 +409,17 @@ public sealed class ComplexColumnsReferenceAllocationTests
         RawTable docs = await ReadRawTableAsync(ms, "Docs");
         Assert.Equal(["1|1|1", "2|2|2", "3|3|3"], docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
         Assert.Equal(3, docs.ComplexAutoNumber);
+
+        ms.Position = 0;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        {
+            long parentPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", Ct)).Entry.TDefPage;
+            long complexPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", Ct);
+            TableDef complexDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(complexPage, "MSysComplexColumns", Ct);
+            List<LocatedRow> metadata = await harness.Services.Snapshots.ReadRowsAsync(complexPage, Ct);
+            Assert.Equal(2, metadata.Count);
+            Assert.All(metadata, row => Assert.Equal(parentPage, Convert.ToInt64(row.Values[complexDef.FindColumnIndex("ConceptualTableID")], System.Globalization.CultureInfo.InvariantCulture)));
+        }
 
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal(["2:two.txt"], (await reader.GetAttachmentsAsync("Docs", "Files", Ct)).Select(a => $"{a.ConceptualTableId}:{a.FileName}"));
