@@ -34,7 +34,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     private readonly object ownedDataPagesCacheLock = new();
 #endif
     private readonly Dictionary<long, long[]> ownedDataPagesByTdef = [];
-    private readonly Dictionary<long, Dictionary<long, int>> mapDependencies = [];
+    private readonly Dictionary<long, Dictionary<long, int>>? mapDependencies;
     private long cacheEpoch;
 
     /// <summary>
@@ -61,6 +61,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         this.ownerIndex = new OwnedPageIndex(pages, format);
         if (pages is Pager pager)
         {
+            this.mapDependencies = [];
             pager.AddWriteObserver(this.ownerIndex);
             pager.AddWriteObserver(this);
         }
@@ -123,10 +124,13 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
             return cachedPages;
         }
 
-        long loadedEpoch;
-        lock (this.ownedDataPagesCacheLock)
+        long loadedEpoch = 0;
+        if (this.mapDependencies is not null)
         {
-            loadedEpoch = this.cacheEpoch;
+            lock (this.ownedDataPagesCacheLock)
+            {
+                loadedEpoch = this.cacheEpoch;
+            }
         }
 
         Dictionary<long, int>? dependencies = this.pages is Pager ? [] : null;
@@ -388,13 +392,18 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         {
             this.cacheEpoch++;
             this.ownedDataPagesByTdef.Clear();
-            this.mapDependencies.Clear();
+            this.mapDependencies?.Clear();
         }
     }
 
     /// <inheritdoc/>
     public void OnPageWritten(long pageNumber, ReadOnlySpan<byte> before, ReadOnlySpan<byte> after)
     {
+        if (this.mapDependencies is null)
+        {
+            return;
+        }
+
         long oldOwner = !before.IsEmpty && before[0] == Constants.PageTypes.Data ? Ri32(before, this.format.DataPage.TDefOff) : 0;
         long newOwner = after[0] == Constants.PageTypes.Data ? Ri32(after, this.format.DataPage.TDefOff) : 0;
         lock (this.ownedDataPagesCacheLock)
@@ -484,7 +493,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
                 this.ownedDataPagesByTdef[tdefPage] = pageNumbers;
                 if (dependencies is not null)
                 {
-                    this.mapDependencies[tdefPage] = dependencies;
+                    this.mapDependencies![tdefPage] = dependencies;
                 }
             }
         }
@@ -552,15 +561,9 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
             }
 
             var mappedPages = new List<long>();
-            Func<long, CancellationToken, ValueTask<byte[]>> readMapPage = this.pages.ReadPageAsync;
-            if (dependencies is not null)
-            {
-                readMapPage = async (number, token) =>
-                {
-                    dependencies[number] = -1;
-                    return await this.pages.ReadPageAsync(number, token).ConfigureAwait(false);
-                };
-            }
+            Func<long, CancellationToken, ValueTask<byte[]>> readMapPage = dependencies is null
+                ? this.pages.ReadPageAsync
+                : this.CreateMapPageReader(dependencies);
 
             bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
                 usageMapPage,
@@ -592,6 +595,14 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
             PageBuffers.Return(usageMapPage);
         }
     }
+
+    // Isolate the closure so read-only map validation never allocates writer tracking.
+    private Func<long, CancellationToken, ValueTask<byte[]>> CreateMapPageReader(Dictionary<long, int> dependencies)
+        => (number, token) =>
+        {
+            dependencies[number] = -1;
+            return this.pages.ReadPageAsync(number, token);
+        };
 
     private async ValueTask<bool> ValidateOwnedDataPagesAsync(
         long tdefPage,
