@@ -15,6 +15,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
@@ -30,7 +31,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="LinkedTableReader"/> for names that are linked tables. Each
 /// operation enters the reader's operation gate so disposal waits for it.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="pageSource">The database's page source.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pages">The reader's page cache.</param>
 /// <param name="rows">Decodes rows from cached pages.</param>
 /// <param name="catalog">Resolves user and system tables by name.</param>
@@ -39,7 +42,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="operations">The reader's operation gate.</param>
 /// <param name="options">The reader options; supply the read-ahead mode (<see cref="AccessReaderOptions.PageReadOptimizationMode"/>).</param>
 internal sealed class TableReader(
-    DatabaseFile db,
+    JetFormat format,
+    PageFile pageSource,
+    OwnedDataPages ownedPages,
     ReaderPageCache pages,
     RowDecoder rows,
     CatalogReader catalog,
@@ -158,7 +163,7 @@ internal sealed class TableReader(
 
         long count = 0;
         TableDef td = resolved.Definition;
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
 
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
@@ -179,8 +184,8 @@ internal sealed class TableReader(
                     (rowPage, rb) = (target.Page, target.Bound);
                 }
 
-                if (rb.RowSize >= db.RowFields.NumCols
-                    && decodePlan.CanDecodeRow(db, rowPage, rb.RowStart, rb.RowSize))
+                if (rb.RowSize >= format.RowFields.NumCols
+                    && decodePlan.CanDecodeRow(format, rowPage, rb.RowStart, rb.RowSize))
                 {
                     count++;
                 }
@@ -284,7 +289,7 @@ internal sealed class TableReader(
         Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
             ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
             : null;
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
 
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
@@ -399,7 +404,7 @@ internal sealed class TableReader(
             Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
                 ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
                 : null;
-            IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
 
             await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
@@ -579,7 +584,7 @@ internal sealed class TableReader(
             Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
                 ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
                 : null;
-            IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
             int minimumCapacity = ResolveDataTableMinimumCapacity(td.RowCount, maxRows);
             if (minimumCapacity > 0)
@@ -618,7 +623,7 @@ internal sealed class TableReader(
                             (rowPage, rb) = (target.Page, target.Bound);
                         }
 
-                        if (rb.RowSize < db.RowFields.NumCols)
+                        if (rb.RowSize < format.RowFields.NumCols)
                         {
                             continue;
                         }
@@ -772,7 +777,7 @@ internal sealed class TableReader(
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
             ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
             : null;
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
         int colCount = td.Columns.Count;
@@ -797,7 +802,7 @@ internal sealed class TableReader(
                         (rowPage, rb) = (target.Page, target.Bound);
                     }
 
-                    if (rb.RowSize < db.RowFields.NumCols)
+                    if (rb.RowSize < format.RowFields.NumCols)
                     {
                         continue;
                     }
@@ -869,7 +874,7 @@ internal sealed class TableReader(
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass
             ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns, cancellationToken).ConfigureAwait(false)
             : null;
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns, rows.StrictParsing);
 
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
@@ -890,7 +895,7 @@ internal sealed class TableReader(
                     (rowPage, rb) = (target.Page, target.Bound);
                 }
 
-                if (rb.RowSize < db.RowFields.NumCols)
+                if (rb.RowSize < format.RowFields.NumCols)
                 {
                     continue;
                 }
@@ -943,7 +948,7 @@ internal sealed class TableReader(
         where T : class, new()
     {
         long rowCount = 0;
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
 
         await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
@@ -964,13 +969,13 @@ internal sealed class TableReader(
                     (rowPage, rb) = (overflow.Page, overflow.Bound);
                 }
 
-                if (rb.RowSize < db.RowFields.NumCols)
+                if (rb.RowSize < format.RowFields.NumCols)
                 {
                     continue;
                 }
 
                 T target = new();
-                if (!decodePlan.TryDecodeDirect(db, rowPage, rb.RowStart, rb.RowSize, directDecoder, target))
+                if (!decodePlan.TryDecodeDirect(format, rowPage, rb.RowStart, rb.RowSize, directDecoder, target))
                 {
                     continue;
                 }
@@ -1079,7 +1084,7 @@ internal sealed class TableReader(
     private bool HasEligibleTableScanReadAheadPageCount(IReadOnlyList<long> pageNumbers) =>
         options.PageReadOptimizationMode switch
         {
-            PageReadOptimizationMode.Auto => db.Pages.IsFileBacked && pageNumbers.Count >= MinimumAutoTableScanReadAheadPages,
+            PageReadOptimizationMode.Auto => pageSource.IsFileBacked && pageNumbers.Count >= MinimumAutoTableScanReadAheadPages,
             PageReadOptimizationMode.Disabled => false,
             PageReadOptimizationMode.Enabled => pageNumbers.Count > 1,
             _ => false,

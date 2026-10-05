@@ -20,9 +20,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Builds table-definition (TDEF) pages and the bootstrap bytes for a new,
 /// empty database file.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
 /// <param name="pager">The writer's page file, through which a TDEF's row count is written.</param>
-internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
+internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 {
     /// <summary>
     /// Checks that <paramref name="format"/> can hold <paramref name="definition"/>
@@ -193,45 +193,45 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
 
     public (byte[][] Pages, int[] FirstDpLogicalOffsets, int[] UsedPagesLogicalOffsets) BuildTDefPagesWithIndexOffsets(TableDef tableDef, IReadOnlyList<ResolvedIndex> indexes)
     {
-        int logicalCapacity = Math.Max(db.PageSizeBytes * 32, db.PageSizeBytes);
+        int logicalCapacity = Math.Max(format.PageSize * 32, format.PageSize);
         byte[] page = new byte[logicalCapacity];
         int numCols = tableDef.Columns.Count;
         int numIdx = indexes.Count;
-        bool jet4 = !db.Profile.IsJet3;
-        bool formatMagic = db.Profile.WritesTDefFormatMagic;
+        bool jet4 = !format.IsJet3;
+        bool formatMagic = format.WritesTDefFormatMagic;
         int numRealIdx = numIdx;
 
-        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-        int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
+        int colStart = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
+        int namePos = colStart + (numCols * format.ColumnDescriptor.Size);
         int nameLenSize = jet4 ? 2 : 1;
 
         page[0] = Constants.PageTypes.TableDefinition;
         page[1] = 0x01;
-        page[db.TDef.TableType] = Constants.TableDefinition.UserTableType;
-        Wu16(page, db.TDef.MaxCols, numCols);
-        Wu16(page, db.TDef.NumCols, numCols);
-        Wi32(page, db.TDef.NumIdx, numIdx);
-        Wi32(page, db.TDef.NumRealIdx, numRealIdx);
+        page[format.TDef.TableType] = Constants.TableDefinition.UserTableType;
+        Wu16(page, format.TDef.MaxCols, numCols);
+        Wu16(page, format.TDef.NumCols, numCols);
+        Wi32(page, format.TDef.NumIdx, numIdx);
+        Wi32(page, format.TDef.NumRealIdx, numRealIdx);
 
         int numVarCols = 0;
         for (int i = 0; i < numCols; i++)
         {
             ColumnInfo col = tableDef.Columns[i];
-            int o = colStart + (i * db.ColumnDescriptor.Size);
+            int o = colStart + (i * format.ColumnDescriptor.Size);
 
             if (!col.IsFixed)
             {
                 numVarCols++;
             }
 
-            page[o + db.ColumnDescriptor.TypeOff] = (byte)col.Type;
+            page[o + format.ColumnDescriptor.TypeOff] = (byte)col.Type;
             if (formatMagic)
             {
                 Wi32(page, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
             }
 
-            Wu16(page, o + db.ColumnDescriptor.NumOff, col.ColNum);
-            Wu16(page, o + db.ColumnDescriptor.VarOff, col.VarIdx);
+            Wu16(page, o + format.ColumnDescriptor.NumOff, col.ColNum);
+            Wu16(page, o + format.ColumnDescriptor.VarOff, col.VarIdx);
 
             if (jet4)
             {
@@ -244,27 +244,27 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
                 Wu16(page, o + 9, col.ColNum);
             }
 
-            page[o + db.ColumnDescriptor.FlagsOff] = col.Flags;
-            Wu16(page, o + db.ColumnDescriptor.FixedOff, col.FixedOff);
-            Wu16(page, o + db.ColumnDescriptor.SzOff, col.Size);
+            page[o + format.ColumnDescriptor.FlagsOff] = col.Flags;
+            Wu16(page, o + format.ColumnDescriptor.FixedOff, col.FixedOff);
+            Wu16(page, o + format.ColumnDescriptor.SzOff, col.Size);
 
             if (col.Type is AttachmentType or ComplexType)
             {
-                Wi32(page, o + db.ColumnDescriptor.MiscOff, col.Misc);
+                Wi32(page, o + format.ColumnDescriptor.MiscOff, col.Misc);
             }
-            else if (col.Type == NumericType && db.Profile.SupportsNumeric)
+            else if (col.Type == NumericType && format.SupportsNumeric)
             {
                 // Jet3 has no Numeric type: a decimal column there is created as
                 // Currency, and a Jet3 Numeric column an earlier build wrote keeps
                 // its zero precision and scale through a schema rewrite.
                 if (!col.IsCalculated)
                 {
-                    page[o + db.ColumnDescriptor.MiscOff] = col.NumericPrecision;
-                    page[o + db.ColumnDescriptor.MiscOff + 1] = col.NumericScale;
+                    page[o + format.ColumnDescriptor.MiscOff] = col.NumericPrecision;
+                    page[o + format.ColumnDescriptor.MiscOff + 1] = col.NumericScale;
                 }
                 else
                 {
-                    page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                    page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
                 }
             }
             else if (jet4 && (col.Type == TextType || col.Type == MemoType))
@@ -285,27 +285,27 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
                 //                     here through ColumnInfo.ExtraFlags. The reader
                 //                     decodes the FF FE compressed marker regardless of
                 //                     the bit.
-                Wi32(page, o + db.ColumnDescriptor.MiscOff, 0x00000409);
-                page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                Wi32(page, o + format.ColumnDescriptor.MiscOff, 0x00000409);
+                page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
             }
             else if (jet4 && col.IsCalculated)
             {
-                page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
             }
             else if (jet4)
             {
                 if (col.Misc != 0)
                 {
-                    Wi32(page, o + db.ColumnDescriptor.MiscOff, col.Misc);
+                    Wi32(page, o + format.ColumnDescriptor.MiscOff, col.Misc);
                 }
 
                 if (col.ExtraFlags != 0)
                 {
-                    page[o + db.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                    page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
                 }
             }
 
-            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : db.EncodeAnsiText(col.Name);
+            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : format.EncodeAnsiText(col.Name);
             if (namePos + nameLenSize + nameBytes.Length > page.Length)
             {
                 throw new NotSupportedException(
@@ -327,14 +327,14 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             namePos += nameBytes.Length;
         }
 
-        Wu16(page, db.TDef.NumVarCols, numVarCols);
+        Wu16(page, format.TDef.NumVarCols, numVarCols);
 
         int[] firstDpOffsets = numIdx > 0 ? new int[numIdx] : [];
         int[] usedPagesOffsets = numIdx > 0 ? new int[numIdx] : [];
         if (numIdx > 0)
         {
             int realIdxPhysStart = namePos;
-            IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
+            IndexSectionAnchors anchors = format.Index.GetIndexSection(realIdxPhysStart, numRealIdx, numIdx);
             int totalIdxBytesLowerBound = anchors.LogIdxNamesStart - realIdxPhysStart;
             if (realIdxPhysStart + totalIdxBytesLowerBound > page.Length)
             {
@@ -346,7 +346,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             for (int i = 0; i < numIdx; i++)
             {
                 ResolvedIndex ri = indexes[i];
-                int phys = db.IndexLayoutInfo.RealIdxPhysOffset(realIdxPhysStart, i);
+                int phys = format.Index.RealIdxPhysOffset(realIdxPhysStart, i);
                 if (formatMagic)
                 {
                     Wi32(page, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
@@ -354,7 +354,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
 
                 for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
                 {
-                    int so = db.IndexLayoutInfo.ColMapSlotOffset(phys, slot);
+                    int so = format.Index.ColMapSlotOffset(phys, slot);
                     if (slot < ri.ColumnNumbers.Count)
                     {
                         Wu16(page, so, ri.ColumnNumbers[slot]);
@@ -389,18 +389,18 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
                     flagsByte |= Constants.TableDefinition.RequiredIndexFlag;
                 }
 
-                page[db.IndexLayoutInfo.FlagsAbsoluteOffset(phys)] = flagsByte;
+                page[format.Index.FlagsAbsoluteOffset(phys)] = flagsByte;
                 if (jet4)
                 {
-                    usedPagesOffsets[i] = db.IndexLayoutInfo.FirstDpAbsoluteOffset(phys) - 4;
+                    usedPagesOffsets[i] = format.Index.FirstDpAbsoluteOffset(phys) - 4;
                 }
 
-                firstDpOffsets[i] = db.IndexLayoutInfo.FirstDpAbsoluteOffset(phys);
+                firstDpOffsets[i] = format.Index.FirstDpAbsoluteOffset(phys);
 
-                int log = db.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, i);
+                int log = format.Index.LogicalIdxFieldsOffset(anchors.LogIdxStart, i);
                 if (formatMagic)
                 {
-                    Wi32(page, log - db.IndexLayoutInfo.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
+                    Wi32(page, log - format.Index.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
                 }
 
                 Wi32(page, log + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset, i);
@@ -420,7 +420,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             int npos = anchors.LogIdxNamesStart;
             for (int i = 0; i < numIdx; i++)
             {
-                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : db.EncodeAnsiText(indexes[i].Name);
+                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : format.EncodeAnsiText(indexes[i].Name);
                 if (npos + nameLenSize + nameBytes.Length > page.Length)
                 {
                     throw new NotSupportedException(
@@ -470,10 +470,10 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             Wi32(page, 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
         }
 
-        if (db.Profile.WritesTDefFreeSpace)
+        if (format.WritesTDefFreeSpace)
         {
             int tdefLen = Math.Max(0, namePos - 8);
-            Wu16(page, 2, Math.Max(0, db.PageSizeBytes - tdefLen - 8));
+            Wu16(page, 2, Math.Max(0, format.PageSize - tdefLen - 8));
         }
 
         (byte[][]? pages, int[]? logicalFirstDpOffsets) = this.SplitLogicalTDefIntoPages(page, namePos, firstDpOffsets);
@@ -550,14 +550,14 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             return;
         }
 
-        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         long updated;
 
         try
         {
-            uint current = Ru32(page, db.TDef.NumRows);
+            uint current = Ru32(page, format.TDef.NumRows);
             updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
-            Wi32(page, db.TDef.NumRows, unchecked((int)(uint)updated));
+            Wi32(page, format.TDef.NumRows, unchecked((int)(uint)updated));
 
             // Mirror the change into the per-real-idx `num_idx_rows` counter
             // (offset +4 of each 12-byte/8-byte slot in the leading real-idx
@@ -568,15 +568,15 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             // MSysObjects; if they disagree it aborts compact with
             // "could not find the object 'MSysDb'" — see
             // docs/design/round-trip-openrecordset-hypothesis.md.
-            int numRealIdx = Ri32(page, db.TDef.NumRealIdx);
+            int numRealIdx = Ri32(page, format.TDef.NumRealIdx);
             if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
             {
-                int slotEnd = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+                int slotEnd = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
                 if (slotEnd <= page.Length)
                 {
                     for (int i = 0; i < numRealIdx; i++)
                     {
-                        int countOff = db.TDef.BlockEnd + (i * db.TDef.RealIdxEntrySz) + 4;
+                        int countOff = format.TDef.BlockEnd + (i * format.TDef.RealIdxEntrySz) + 4;
                         uint cur = Ru32(page, countOff);
                         long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
                         Wi32(page, countOff, unchecked((int)(uint)next));
@@ -588,12 +588,12 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
     public (int PageIndex, int PageOffset) LogicalToPhysicalTDefOffset(int logicalOffset)
-        => LogicalTDefChain.LogicalToPhysicalOffset(db.PageSizeBytes, logicalOffset);
+        => LogicalTDefChain.LogicalToPhysicalOffset(format.PageSize, logicalOffset);
 
     /// <summary>
     /// Builds a minimal, empty JET database as a byte array.
@@ -647,7 +647,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
     /// is unencrypted and has no password. The 2 bytes at 0x56, which vary from
     /// file to file and whose meaning is unknown, stay zero.
     /// </summary>
-    /// <param name="db">The database image, page 0 unmasked.</param>
+    /// <param name="format">The database's immutable format profile.</param>
     private static void WriteJet3HeaderDefaults(byte[] db)
     {
         db[0x19] = 0x01;
@@ -897,5 +897,5 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         byte Flags);
 
     private (byte[][] Pages, int[] FirstDpLogicalOffsets) SplitLogicalTDefIntoPages(byte[] logical, int usedLength, int[] firstDpLogicalOffsets)
-        => (LogicalTDefChain.MaterializePages(logical, usedLength, db.PageSizeBytes), firstDpLogicalOffsets);
+        => (LogicalTDefChain.MaterializePages(logical, usedLength, format.PageSize), firstDpLogicalOffsets);
 }

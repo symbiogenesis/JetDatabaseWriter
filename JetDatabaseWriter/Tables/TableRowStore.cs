@@ -15,7 +15,6 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 using JetDatabaseWriter.ValueEncoding.Models;
-using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -25,7 +24,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// scrubbing its payload), and keeps the TDEF row count in step. Index
 /// maintenance and referential integrity are the caller's responsibility.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pager">The writer's page file, through which deleted rows are written.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for deleted rows.</param>
 /// <param name="longValueEncoder">Moves oversized long values to LVAL chains and deallocates them.</param>
@@ -33,7 +33,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="dataPages">Finds or allocates the data page that receives a row.</param>
 /// <param name="tdefPageBuilder">Owns the TDEF row-count byte layout.</param>
 internal sealed class TableRowStore(
-    DatabaseFile db,
+    JetFormat format,
+    OwnedDataPages ownedPages,
     Pager pager,
     AccessWriterOptions options,
     LongValueEncoder longValueEncoder,
@@ -86,13 +87,13 @@ internal sealed class TableRowStore(
         int rowStart;
         try
         {
-            rowIndex = Ru16(target.Page, db.DataPage.NumRows);
+            rowIndex = Ru16(target.Page, format.DataPage.NumRows);
             rowStart = dataPages.GetFirstRowStart(target.Page, rowIndex) - rowBytes.Length;
             await dataPages.WriteRowToPageAsync(target.PageNumber, target.Page, rowBytes, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            ReturnPage(target.Page);
+            PageBuffers.Return(target.Page);
         }
 
         if (updateTDefRowCount)
@@ -207,9 +208,9 @@ internal sealed class TableRowStore(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask MarkRowDeletedAsync(long pageNumber, int rowIndex, TableDef? tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
     {
-        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         List<LongValueDescriptor>? longValueRoots = null;
-        int offsetPos = db.DataPage.RowsStart + (rowIndex * 2);
+        int offsetPos = format.DataPage.RowsStart + (rowIndex * 2);
         int raw = Ru16(page, offsetPos);
         if ((raw & Constants.DataPage.NonLiveRowFlags) == Constants.DataPage.OverflowRowFlag)
         {
@@ -219,13 +220,13 @@ internal sealed class TableRowStore(
 
         if ((raw & Constants.DataPage.NonLiveRowFlags) != 0)
         {
-            ReturnPage(page);
+            PageBuffers.Return(page);
             return;
         }
 
         if (dataMode == DeletedRowDataMode.Clear || options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
         {
-            foreach (RowBound rowBound in db.EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(format, page))
             {
                 if (rowBound.RowIndex != rowIndex)
                 {
@@ -244,7 +245,7 @@ internal sealed class TableRowStore(
 
         Wu16(page, offsetPos, raw | Constants.DataPage.DeletedRowFlag);
         await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
-        ReturnPage(page);
+        PageBuffers.Return(page);
 
         if (longValueRoots is null)
         {
@@ -273,9 +274,9 @@ internal sealed class TableRowStore(
         try
         {
             bool secureErase = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
-            if ((dataMode == DeletedRowDataMode.Clear || secureErase) && db.TryGetSlotBound(page, rowIndex, out RowBound header))
+            if ((dataMode == DeletedRowDataMode.Clear || secureErase) && DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound header))
             {
-                if (await db.TryResolveOverflowRowAsync(page, header, db.ReadPageAsync, ReturnPage, cancellationToken).ConfigureAwait(false) is { } target)
+                if (await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, ReturnPage, cancellationToken).ConfigureAwait(false) is { } target)
                 {
                     try
                     {
@@ -295,20 +296,20 @@ internal sealed class TableRowStore(
                     }
                     finally
                     {
-                        ReturnPage(target.Page);
+                        PageBuffers.Return(target.Page);
                     }
                 }
 
                 Array.Clear(page, header.RowStart, header.RowSize);
             }
 
-            int offsetPos = db.DataPage.RowsStart + (rowIndex * 2);
+            int offsetPos = format.DataPage.RowsStart + (rowIndex * 2);
             Wu16(page, offsetPos, Ru16(page, offsetPos) | Constants.DataPage.DeletedRowFlag);
             await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            ReturnPage(page);
+            PageBuffers.Return(page);
         }
 
         if (longValueRoots is null)

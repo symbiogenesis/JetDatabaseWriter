@@ -15,6 +15,7 @@ using JetDatabaseWriter.DelimitedText;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
@@ -353,7 +354,8 @@ internal static class LinkedTableManager
     /// Creates a linked-table entry (MSysObjects type 6) that references a table
     /// in another Access database. No row data is stored locally.
     /// </summary>
-    /// <param name="db">The database page I/O and format context.</param>
+    /// <param name="format">The database's immutable format profile.</param>
+    /// <param name="pageSource">The database's page source.</param>
     /// <param name="catalogArtifacts">Emits the catalog object row.</param>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="sourceDatabasePath">Path to the source Access database file (.mdb / .accdb).</param>
@@ -361,7 +363,8 @@ internal static class LinkedTableManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     internal static async ValueTask CreateLinkedTableAsync(
-        DatabaseFile db,
+        JetFormat format,
+        IPageSource pageSource,
         CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string sourceDatabasePath,
@@ -371,10 +374,10 @@ internal static class LinkedTableManager
         AccessObjectName.ThrowIfInvalid(linkedTableName, nameof(linkedTableName), "table");
         Guard.NotNullOrEmpty(sourceDatabasePath, nameof(sourceDatabasePath));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
-        AccessObjectName.ThrowIfNotStorable(db, linkedTableName, nameof(linkedTableName), "table");
-        ThrowIfNotStorable(db, sourceDatabasePath, nameof(sourceDatabasePath));
-        ThrowIfNotStorable(db, foreignTableName, nameof(foreignTableName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        AccessObjectName.ThrowIfNotStorable(format, linkedTableName, nameof(linkedTableName), "table");
+        ThrowIfNotStorable(format, sourceDatabasePath, nameof(sourceDatabasePath));
+        ThrowIfNotStorable(format, foreignTableName, nameof(foreignTableName));
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
@@ -394,7 +397,8 @@ internal static class LinkedTableManager
     /// otherwise a cached-schema <c>LvProp</c> block is generated, column-level
     /// when <paramref name="sourceColumns"/> is supplied and table-level otherwise.
     /// </summary>
-    /// <param name="db">The database page I/O and format context.</param>
+    /// <param name="format">The database's immutable format profile.</param>
+    /// <param name="pageSource">The database's page source.</param>
     /// <param name="catalogArtifacts">Emits the catalog object row.</param>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="connectionString">ODBC connection string. The <c>"ODBC;"</c> prefix is added automatically when omitted.</param>
@@ -404,7 +408,8 @@ internal static class LinkedTableManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     internal static async ValueTask CreateLinkedOdbcTableAsync(
-        DatabaseFile db,
+        JetFormat format,
+        IPageSource pageSource,
         CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string connectionString,
@@ -416,10 +421,10 @@ internal static class LinkedTableManager
         AccessObjectName.ThrowIfInvalid(linkedTableName, nameof(linkedTableName), "table");
         Guard.NotNullOrEmpty(connectionString, nameof(connectionString));
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
-        AccessObjectName.ThrowIfNotStorable(db, linkedTableName, nameof(linkedTableName), "table");
-        ThrowIfNotStorable(db, connectionString, nameof(connectionString));
-        ThrowIfNotStorable(db, foreignTableName, nameof(foreignTableName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        AccessObjectName.ThrowIfNotStorable(format, linkedTableName, nameof(linkedTableName), "table");
+        ThrowIfNotStorable(format, connectionString, nameof(connectionString));
+        ThrowIfNotStorable(format, foreignTableName, nameof(foreignTableName));
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         string normalizedConnect = connectionString.StartsWith("ODBC;", StringComparison.OrdinalIgnoreCase)
             ? connectionString
@@ -430,7 +435,7 @@ internal static class LinkedTableManager
             LinkedOdbcLvPropBuilder.ValidateSourceColumns(sourceColumns, nameof(sourceColumns));
         }
 
-        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, db.Format);
+        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, format.Kind);
 
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
@@ -449,7 +454,8 @@ internal static class LinkedTableManager
     /// Creates a linked-text/CSV table entry (MSysObjects type 6) that references a
     /// text or CSV file in a directory.
     /// </summary>
-    /// <param name="db">The database page I/O and format context.</param>
+    /// <param name="format">The database's immutable format profile.</param>
+    /// <param name="pageSource">The database's page source.</param>
     /// <param name="catalogArtifacts">Emits the catalog object row.</param>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database.</param>
     /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>
@@ -458,7 +464,8 @@ internal static class LinkedTableManager
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     internal static async ValueTask CreateLinkedTextTableAsync(
-        DatabaseFile db,
+        JetFormat format,
+        IPageSource pageSource,
         CatalogArtifactWriter catalogArtifacts,
         string linkedTableName,
         string sourceDirectoryPath,
@@ -470,11 +477,11 @@ internal static class LinkedTableManager
         Guard.NotNullOrEmpty(sourceDirectoryPath, nameof(sourceDirectoryPath));
         Guard.NotNullOrEmpty(foreignFileName, nameof(foreignFileName));
         Guard.NotNullOrEmpty(connectString, nameof(connectString));
-        AccessObjectName.ThrowIfNotStorable(db, linkedTableName, nameof(linkedTableName), "table");
-        ThrowIfNotStorable(db, sourceDirectoryPath, nameof(sourceDirectoryPath));
-        ThrowIfNotStorable(db, foreignFileName, nameof(foreignFileName));
-        ThrowIfNotStorable(db, connectString, nameof(connectString));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        AccessObjectName.ThrowIfNotStorable(format, linkedTableName, nameof(linkedTableName), "table");
+        ThrowIfNotStorable(format, sourceDirectoryPath, nameof(sourceDirectoryPath));
+        ThrowIfNotStorable(format, foreignFileName, nameof(foreignFileName));
+        ThrowIfNotStorable(format, connectString, nameof(connectString));
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
@@ -530,15 +537,15 @@ internal static class LinkedTableManager
     /// Jet3 <c>MSysObjects</c> row holds the foreign name, path and connect
     /// string in the database's code page (<see cref="JetFormat.DescribeUnstorableCharacter"/>).
     /// </summary>
-    /// <param name="db">The database the link is written to.</param>
+    /// <param name="format">The database's immutable format profile.</param>
     /// <param name="value">The argument.</param>
     /// <param name="paramName">The public parameter that carries it.</param>
     /// <exception cref="ArgumentException"><paramref name="value"/> holds a character the database's code page does not have.</exception>
-    private static void ThrowIfNotStorable(DatabaseFile db, string value, string paramName)
+    private static void ThrowIfNotStorable(JetFormat format, string value, string paramName)
     {
-        if (db.DescribeUnstorableCharacter(value) is { } character)
+        if (format.DescribeUnstorableCharacter(value) is { } character)
         {
-            throw new ArgumentException(db.UnstorableTextMessage($"The {paramName} '{value}'", character), paramName);
+            throw new ArgumentException(format.UnstorableTextMessage($"The {paramName} '{value}'", character), paramName);
         }
     }
 

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
@@ -32,9 +33,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// complex reference handed out to the table's complex columns. Owned by
 /// <see cref="AccessWriter"/>.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pager">The writer's page file, through which a raised counter is written.</param>
-internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
+internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tableDefs, OwnedDataPages ownedPages, Pager pager)
 {
     /// <summary>
     /// Returns the largest value <paramref name="row"/> holds in any AutoNumber
@@ -111,14 +114,14 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
             return 0;
         }
 
-        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            return page[0] == Constants.PageTypes.TableDefinition ? Ru32(page, db.TDef.AutoNumber) : 0;
+            return page[0] == Constants.PageTypes.TableDefinition ? Ru32(page, format.TDef.AutoNumber) : 0;
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
@@ -155,7 +158,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
 
         long counter;
         uint declaredRows;
-        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
             if (page[0] != Constants.PageTypes.TableDefinition)
@@ -163,12 +166,12 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
                 return 0;
             }
 
-            counter = Ru32(page, db.TDef.AutoNumber);
-            declaredRows = Ru32(page, db.TDef.NumRows);
+            counter = Ru32(page, format.TDef.AutoNumber);
+            declaredRows = Ru32(page, format.TDef.NumRows);
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
 
         if (columnIndex < 0 || columnIndex >= tableDef.Columns.Count)
@@ -212,7 +215,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
     /// <param name="highWater">The value the counter must be at least.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask RaiseHighWaterAsync(long tdefPage, long highWater, CancellationToken cancellationToken)
-        => this.RaiseCounterAsync(tdefPage, db.TDef.AutoNumber, highWater, cancellationToken);
+        => this.RaiseCounterAsync(tdefPage, format.TDef.AutoNumber, highWater, cancellationToken);
 
     /// <summary>
     /// Reads the complex AutoNumber (the last per-row complex reference handed
@@ -225,20 +228,20 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<long> ReadComplexHighWaterAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        int offset = db.TDef.ComplexAutoNumber;
+        int offset = format.TDef.ComplexAutoNumber;
         if (offset < 0 || tdefPage <= 0)
         {
             return 0;
         }
 
-        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
             return page[0] == Constants.PageTypes.TableDefinition ? Ru32(page, offset) : 0;
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
@@ -251,9 +254,9 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
     /// <param name="highWater">The value the counter must be at least.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask RaiseComplexHighWaterAsync(long tdefPage, long highWater, CancellationToken cancellationToken)
-        => db.TDef.ComplexAutoNumber < 0
+        => format.TDef.ComplexAutoNumber < 0
             ? default
-            : this.RaiseCounterAsync(tdefPage, db.TDef.ComplexAutoNumber, highWater, cancellationToken);
+            : this.RaiseCounterAsync(tdefPage, format.TDef.ComplexAutoNumber, highWater, cancellationToken);
 
     /// <summary>
     /// Raises the TDEF complex AutoNumber at <paramref name="tdefPage"/> to the
@@ -345,8 +348,8 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
             return null;
         }
 
-        byte[]? tdefBytes = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (tdefBytes is null || tdefBytes.Length < db.TDef.BlockEnd)
+        byte[]? tdefBytes = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (tdefBytes is null || tdefBytes.Length < format.TDef.BlockEnd)
         {
             return null;
         }
@@ -354,7 +357,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
         List<IndexMetadata> indexes;
         try
         {
-            indexes = IndexCatalogReader.ReadMetadata(db.Profile, tdefBytes, tableDef.Columns);
+            indexes = IndexCatalogReader.ReadMetadata(format, tdefBytes, tableDef.Columns);
         }
         catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
         {
@@ -370,7 +373,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
             return null;
         }
 
-        var cursor = new IndexCursor(db.Profile.IndexPage, db.ReadPageCopyAsync, db.PageSizeBytes);
+        var cursor = new IndexCursor(format.IndexPage, pager.ReadPageCopyAsync, format.PageSize);
         IndexEntry? last = await cursor.TryReadLastEntryAsync(index.FirstDp, cancellationToken).ConfigureAwait(false);
         if (last is null)
         {
@@ -394,12 +397,12 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
         var plan = RowDecodePlan.CreatePartial(tableDef, [columnIndex]);
         object?[] cell = new object?[1];
         long max = 0;
-        await db.ForEachLiveTableRowAsync(
+        await ownedPages.ForEachLiveTableRowAsync(
             tdefPage,
             (row, _) =>
             {
-                if (row.Location.RowSize >= db.RowFields.NumCols
-                    && plan.TryDecodePartialColumns(db, row.Page, row.Location.RowStart, row.Location.RowSize, cell)
+                if (row.Location.RowSize >= format.RowFields.NumCols
+                    && plan.TryDecodePartialColumns(format, row.Page, row.Location.RowStart, row.Location.RowSize, cell)
                     && cell[0] is { } boxed
                     && TryGetAutoNumberCandidate(boxed, out long value)
                     && value > max)
@@ -421,7 +424,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
             return;
         }
 
-        byte[] page = await db.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
             uint current = Ru32(page, offset);
@@ -436,7 +439,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 }

@@ -13,6 +13,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -528,7 +529,7 @@ public sealed class IndexIncrementalMaintenanceTests
         }
         finally
         {
-            DatabaseFile.ReturnPage(tdef);
+            PageBuffers.Return(tdef);
         }
     }
 

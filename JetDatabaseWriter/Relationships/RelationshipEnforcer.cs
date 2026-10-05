@@ -12,15 +12,22 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>
 /// Runtime foreign-key enforcement for insert, update, and delete, including
 /// cascade-update and cascade-delete of dependent rows.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="pageSource">The database's page source.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="tableCatalog">Resolves child tables by name.</param>
 /// <param name="tableRows">Encodes, deletes and rewrites cascaded child rows.</param>
 /// <param name="indexes">Rebuilds child-table indexes after cascades.</param>
@@ -28,7 +35,10 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
 /// <param name="snapshots">Reads decoded parent and child rows when no seekable index exists.</param>
 internal sealed class RelationshipEnforcer(
-    DatabaseFile db,
+    JetFormat format,
+    IPageSource pageSource,
+    TableDefReader tableDefs,
+    OwnedDataPages ownedPages,
     TableCatalog tableCatalog,
     TableRowStore tableRows,
     IndexMaintainer indexes,
@@ -36,8 +46,8 @@ internal sealed class RelationshipEnforcer(
     ComplexColumnManager complexColumns,
     TableSnapshotReader snapshots)
 {
-    private readonly RelationshipSeekPlanner seekPlanner = new(db, tableCatalog);
-    private readonly RelationshipChildRowLocator childRowLocator = new(db);
+    private readonly RelationshipSeekPlanner seekPlanner = new(format, tableDefs, tableCatalog);
+    private readonly RelationshipChildRowLocator childRowLocator = new(format, pageSource, ownedPages);
 
     /// <summary>
     /// Records the key of a row just inserted into <paramref name="tableName"/>
@@ -585,8 +595,8 @@ internal sealed class RelationshipEnforcer(
             if (encodedKey != null)
             {
                 var cursor = new IndexCursor(
-                    (page, token) => RelationshipPageReader.ReadOwnedAsync(db, page, token),
-                    db.PageSizeBytes);
+                    (page, token) => RelationshipPageReader.ReadOwnedAsync(pageSource, page, token),
+                    format.PageSize);
                 bool found = await cursor.ContainsKeyAsync(
                     seekIndex.RootPage,
                     encodedKey,
@@ -847,7 +857,7 @@ internal sealed class RelationshipEnforcer(
         var rows = new List<LocatedRow>(locations.Count);
         foreach (RowLocation location in locations)
         {
-            object?[]? values = await db.TryReadColumnValuesTypedAsync(location, def, allColumnOrdinals, cancellationToken).ConfigureAwait(false);
+            object?[]? values = await PartialColumnReader.TryReadColumnValuesTypedAsync(format, pageSource, location, def, allColumnOrdinals, cancellationToken).ConfigureAwait(false);
             if (values == null)
             {
                 return null;

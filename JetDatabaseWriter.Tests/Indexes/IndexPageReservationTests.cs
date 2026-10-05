@@ -56,7 +56,7 @@ public sealed class IndexPageReservationTests
 
         int calls = 0;
         var runs = new ReservedPageRuns(allocator);
-        IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+        IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db.Profile, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage => ++calls == 2
                 ? throw new ArgumentOutOfRangeException(nameof(firstPage), "Injected relocation failure.")
                 : IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, firstPage),
@@ -106,7 +106,7 @@ public sealed class IndexPageReservationTests
         // fault on the second page write of the tree.
         long relocatedTo = -1;
         var runs = new ReservedPageRuns(allocator);
-        _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+        _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db.Profile, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage =>
             {
                 if (firstPage != db.PageCount)
@@ -152,7 +152,7 @@ public sealed class IndexPageReservationTests
 
             JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(this.ct);
             int calls = 0;
-            _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+            _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db.Profile, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
                 firstPage => ++calls == 2
                     ? throw new IOException("Injected failure after the reservation.")
                     : IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, firstPage),

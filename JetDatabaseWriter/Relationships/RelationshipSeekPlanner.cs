@@ -9,9 +9,10 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tableCatalog)
+internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader tableDefs, TableCatalog tableCatalog)
 {
     private readonly record struct SeekIndexCore(
         long FirstDp,
@@ -48,7 +49,7 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
                 return null;
             }
 
-            TableDef foreignDef = await db.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
+            TableDef foreignDef = await tableDefs.ReadRequiredTableDefAsync(foreignEntry.TDefPage, rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             int[] foreignRowIndexes = new int[rel.ForeignColumns.Count];
             for (int index = 0; index < rel.ForeignColumns.Count; index++)
             {
@@ -125,7 +126,7 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
         IReadOnlyList<string> columnNames,
         CancellationToken cancellationToken)
     {
-        if (!db.Profile.SupportsIndexSeeks)
+        if (!format.SupportsIndexSeeks)
         {
             return null;
         }
@@ -136,7 +137,7 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
             return null;
         }
 
-        TableDef definition = await db.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        TableDef definition = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
 
         int[] columnNumbers = new int[columnNames.Count];
         var columnTypes = new ColumnType[columnNames.Count];
@@ -176,7 +177,7 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
             columnTypes,
             numericScales,
             hit.Value.AscendingFlags,
-            db.Profile.LegacyNumericIndexKeys);
+            format.LegacyNumericIndexKeys);
     }
 
     private async ValueTask<(long FirstDp, IReadOnlyList<bool> AscendingFlags)?> TryFindCoveringRealIdxAsync(
@@ -186,27 +187,27 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
     {
         // Read the whole TDEF chain: a wide table's real-idx descriptors sit
         // on a continuation page.
-        byte[]? tableDefinition = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[]? tableDefinition = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (tableDefinition is null)
         {
             return null;
         }
 
-        int numColumns = Ru16(tableDefinition, db.TDef.NumCols);
-        int numRealIndexes = Ri32(tableDefinition, db.TDef.NumRealIdx);
+        int numColumns = Ru16(tableDefinition, format.TDef.NumCols);
+        int numRealIndexes = Ri32(tableDefinition, format.TDef.NumRealIdx);
         if (numColumns < 0 || numColumns > Constants.TableDefinition.MaxColumns
             || numRealIndexes <= 0 || numRealIndexes > Constants.TableDefinition.MaxIndexes)
         {
             return null;
         }
 
-        int realIndexDescriptorStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tableDefinition, numColumns, numRealIndexes);
+        int realIndexDescriptorStart = IndexCatalogReader.LocateRealIdxDescStart(format, tableDefinition, numColumns, numRealIndexes);
         if (realIndexDescriptorStart < 0)
         {
             return null;
         }
 
-        IndexLayout layout = db.IndexLayoutInfo;
+        IndexLayout layout = format.Index;
         for (int realIndex = 0; realIndex < numRealIndexes; realIndex++)
         {
             int physicalDescriptorOffset = layout.RealIdxPhysOffset(realIndexDescriptorStart, realIndex);

@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>
 /// Opens a database through the library's internal read layers — the
@@ -44,7 +45,7 @@ internal sealed class ReaderHarness : IAsyncDisposable
     {
         options ??= new AccessReaderOptions { UseLockFile = false };
 #pragma warning disable CA2000 // The stream overload owns the stream once the file is open (leaveOpen: false), and the catch disposes it when the open throws.
-        FileStream stream = DatabaseFile.OpenFileStream(path, options.FileAccess, options.FileShare, FileOptions.None);
+        FileStream stream = PageFile.OpenFileStream(path, options.FileAccess, options.FileShare, FileOptions.None);
 #pragma warning restore CA2000 // The stream overload owns the stream once the file is open (leaveOpen: false), and the catch disposes it when the open throws.
         ReaderHarness harness;
         try
@@ -75,7 +76,7 @@ internal sealed class ReaderHarness : IAsyncDisposable
     {
         options ??= new AccessReaderOptions { UseLockFile = false };
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-        byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
+        byte[] header = await PageFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
         var database = DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen);
         try
         {

@@ -17,11 +17,12 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// Decodes the rows of a cached data page into typed values or strings,
 /// following MEMO / OLE long-value chains when a row needs them.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pages">The reader's page cache.</param>
 /// <param name="longValues">Resolves MEMO / OLE long-value chains.</param>
 /// <param name="strictParsing">Whether malformed values throw instead of decoding to a fallback.</param>
-internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongValueDecoder longValues, bool strictParsing)
+internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, ReaderPageCache pages, LongValueDecoder longValues, bool strictParsing)
 {
     /// <summary>Gets a value indicating whether malformed values throw instead of decoding to a fallback.</summary>
     internal bool StrictParsing => strictParsing;
@@ -82,7 +83,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
         IReadOnlyCollection<string>? wantedColumnNames,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateStrings(td, strictParsing, SelectColumns(td, wantedColumnNames));
         foreach (long pageNumber in pageNumbers)
         {
@@ -138,7 +139,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
         }
 
         var decodePlan = RowDecodePlan.CreateTyped(td, mask, strictParsing);
-        IReadOnlyList<long> pageNumbers = await db.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -158,7 +159,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
                     (page, rb) = (target.Page, target.Bound);
                 }
 
-                if (rb.RowSize < db.RowFields.NumCols)
+                if (rb.RowSize < format.RowFields.NumCols)
                 {
                     continue;
                 }
@@ -206,12 +207,12 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
                 (rowPage, rb) = (target.Page, target.Bound);
             }
 
-            if (rb.RowSize < db.RowFields.NumCols)
+            if (rb.RowSize < format.RowFields.NumCols)
             {
                 continue;
             }
 
-            string[]? values = await decodePlan.TryDecodeStringRowAsync(db, rowPage, rb.RowStart, rb.RowSize, longValues, cancellationToken).ConfigureAwait(false);
+            string[]? values = await decodePlan.TryDecodeStringRowAsync(format, rowPage, rb.RowStart, rb.RowSize, longValues, cancellationToken).ConfigureAwait(false);
             if (values != null)
             {
                 yield return values;
@@ -229,7 +230,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     /// <param name="header">The header's directory entry.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<OverflowRowTarget?> ResolveOverflowAsync(byte[] page, RowBound header, CancellationToken cancellationToken)
-        => db.TryResolveOverflowRowAsync(page, header, pages.ReadPageAsync, returnPage: null, cancellationToken);
+        => ownedPages.TryResolveOverflowRowAsync(page, header, pages.ReadPageAsync, returnPage: null, cancellationToken);
 
     // ── Typed row cracker ────────────────────────────────────
     //
@@ -376,7 +377,7 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
             return new UnreadableLongValue(columnName, ex.Message);
         }
 
-        return isOle ? bytes : db.DecodeTextForFormat(bytes, 0, bytes.Length);
+        return isOle ? bytes : format.DecodeText(bytes, 0, bytes.Length);
     }
 
     /// <summary>
@@ -464,5 +465,5 @@ internal sealed class RowDecoder(DatabaseFile db, ReaderPageCache pages, LongVal
     /// <param name="buffer">The buffer.</param>
     /// <param name="needsLongValue">The needs long value.</param>
     private bool TryCrackRowSyncIntoBuffer(byte[] page, int rowStart, int rowSize, RowDecodePlan decodePlan, object?[] buffer, out bool needsLongValue)
-        => decodePlan.TryDecodeTypedIntoBuffer(db, page, rowStart, rowSize, longValues, buffer, out needsLongValue);
+        => decodePlan.TryDecodeTypedIntoBuffer(format, page, rowStart, rowSize, longValues, buffer, out needsLongValue);
 }

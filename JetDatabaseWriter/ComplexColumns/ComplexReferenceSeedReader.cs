@@ -7,8 +7,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -24,10 +26,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// read goes through <see cref="DatabaseFile"/>, so an active transaction's
 /// pending writes are visible.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="catalogRows">Locates <c>MSysComplexColumns</c>.</param>
 /// <param name="autoNumbers">Reads the TDEF complex AutoNumber.</param>
-internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowReader catalogRows, AutoNumberMaintainer autoNumbers)
+internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReader tableDefs, OwnedDataPages ownedPages, CatalogRowReader catalogRows, AutoNumberMaintainer autoNumbers)
 {
     /// <summary>
     /// Reads the reference held in <paramref name="column"/>'s slot of the row
@@ -35,17 +39,17 @@ internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowRead
     /// slot is null (its null-mask bit is clear), holds 0 or a negative value,
     /// or lies outside the row.
     /// </summary>
-    /// <param name="db">The database format context.</param>
+    /// <param name="format">The database's immutable format profile.</param>
     /// <param name="page">The data page holding the row.</param>
     /// <param name="rowStart">The row's offset on the page.</param>
     /// <param name="rowSize">The row's size.</param>
     /// <param name="column">The complex column.</param>
     /// <param name="reference">The reference, when one is set.</param>
-    internal static bool TryReadSlot(DatabaseFile db, byte[] page, int rowStart, int rowSize, ColumnInfo column, out int reference)
+    internal static bool TryReadSlot(JetFormat format, byte[] page, int rowStart, int rowSize, ColumnInfo column, out int reference)
     {
         reference = 0;
-        int nullMaskSize = GetNullMaskSizeBytes(db.ReadRowColumnCount(page, rowStart));
-        int slotOffset = rowStart + db.RowFields.NumCols + column.FixedOff;
+        int nullMaskSize = GetNullMaskSizeBytes(format.ReadRowColumnCount(page, rowStart));
+        int slotOffset = rowStart + format.RowFields.NumCols + column.FixedOff;
         if (nullMaskSize > rowSize
             || !IsNullMaskBitSet(page.AsSpan(rowStart + rowSize - nullMaskSize, nullMaskSize), column.ColNum)
             || slotOffset + 4 > rowStart + rowSize)
@@ -62,17 +66,17 @@ internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowRead
     /// of the row at <paramref name="rowStart"/> and marks the slot non-null.
     /// The caller writes the page back.
     /// </summary>
-    /// <param name="db">The database format context.</param>
+    /// <param name="format">The database's immutable format profile.</param>
     /// <param name="page">The data page holding the row.</param>
     /// <param name="rowStart">The row's offset on the page.</param>
     /// <param name="rowSize">The row's size.</param>
     /// <param name="column">The complex column.</param>
     /// <param name="reference">The reference to store.</param>
     /// <exception cref="InvalidDataException">The slot lies outside the row.</exception>
-    internal static void WriteSlot(DatabaseFile db, byte[] page, int rowStart, int rowSize, ColumnInfo column, int reference)
+    internal static void WriteSlot(JetFormat format, byte[] page, int rowStart, int rowSize, ColumnInfo column, int reference)
     {
-        int nullMaskSize = GetNullMaskSizeBytes(db.ReadRowColumnCount(page, rowStart));
-        int slotOffset = rowStart + db.RowFields.NumCols + column.FixedOff;
+        int nullMaskSize = GetNullMaskSizeBytes(format.ReadRowColumnCount(page, rowStart));
+        int slotOffset = rowStart + format.RowFields.NumCols + column.FixedOff;
         if (slotOffset + 4 > rowStart + rowSize)
         {
             throw new InvalidDataException("Complex column slot is out of row bounds.");
@@ -100,13 +104,13 @@ internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowRead
             return seed;
         }
 
-        await db.ForEachLiveTableRowAsync(
+        await ownedPages.ForEachLiveTableRowAsync(
             parentTdefPage,
             (row, _) =>
             {
                 foreach (ColumnInfo column in complexColumns)
                 {
-                    if (TryReadSlot(db, row.Page, row.Location.RowStart, row.Location.RowSize, column, out int reference))
+                    if (TryReadSlot(format, row.Page, row.Location.RowStart, row.Location.RowSize, column, out int reference))
                     {
                         seed = Math.Max(seed, reference);
                     }
@@ -120,7 +124,7 @@ internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowRead
         {
             long flatTdefPage = await this.ResolveFlatTableTdefPageAsync(column.Name, column.Misc, cancellationToken).ConfigureAwait(false);
             TableDef? flatDef = flatTdefPage > 0
-                ? await db.ReadTableDefAsync(flatTdefPage, cancellationToken).ConfigureAwait(false)
+                ? await tableDefs.ReadTableDefAsync(flatTdefPage, cancellationToken).ConfigureAwait(false)
                 : null;
             ColumnInfo? foreignKey = flatDef?.FindColumn("_" + column.Name)
                 ?? flatDef?.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'));
@@ -129,11 +133,11 @@ internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowRead
                 continue;
             }
 
-            await db.ForEachLiveTableRowAsync(
+            await ownedPages.ForEachLiveTableRowAsync(
                 flatTdefPage,
                 (row, _) =>
                 {
-                    string text = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, foreignKey);
+                    string text = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, row.Location.RowStart, row.Location.RowSize, foreignKey);
                     if (CatalogValueReader.TryParseInt32(text, out int reference))
                     {
                         seed = Math.Max(seed, reference);
@@ -164,7 +168,7 @@ internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowRead
             return 0;
         }
 
-        TableDef msys = await db.ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msys = await tableDefs.ReadRequiredTableDefAsync(msysPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msys.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msys.FindColumn("FlatTableID");
         ColumnInfo? complexIdCol = msys.FindColumn("ComplexID");
@@ -174,23 +178,23 @@ internal sealed class ComplexReferenceSeedReader(DatabaseFile db, CatalogRowRead
         }
 
         long flatTdefPage = 0;
-        await db.ForEachLiveTableRowAsync(
+        await ownedPages.ForEachLiveTableRowAsync(
             msysPg,
             (row, _) =>
             {
-                string rowName = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                string rowName = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
                 if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
                     return new ValueTask<bool>(true);
                 }
 
-                string idText = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, complexIdCol);
+                string idText = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, row.Location.RowStart, row.Location.RowSize, complexIdCol);
                 if (complexId != 0 && (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId))
                 {
                     return new ValueTask<bool>(true);
                 }
 
-                string flatText = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
+                string flatText = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
                 if (!CatalogValueReader.TryParseInt64(flatText, out long flatId))
                 {
                     return new ValueTask<bool>(true);

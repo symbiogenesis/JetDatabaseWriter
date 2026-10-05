@@ -152,7 +152,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                     var inner = new MemoryStream();
                     await inner.WriteAsync(decryptedPackage.AsMemory(), cancellationToken).ConfigureAwait(false);
                     inner.Position = 0;
-                    byte[] innerHeader = await DatabaseFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
+                    byte[] innerHeader = await PageFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
 
                     return new AccessWriter(
                         path,
@@ -526,7 +526,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTableAsync(this.Database, this.services.CatalogArtifacts, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTableAsync(this.Database.Profile, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
@@ -607,7 +607,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTextTableAsync(this.Database, this.services.CatalogArtifacts, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTextTableAsync(this.Database.Profile, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
 
     // ════════════════════════════════════════════════════════════════
     // Foreign-key relationships — thin forwarders to RelationshipManager
@@ -723,7 +723,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     private static FileStream CreateStream(string path) =>
-        DatabaseFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
+        PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
     private static NotSupportedException FlatAgileNotSupported() => new(
         "This .accdb file uses Access-native Agile encryption (AccessEncryptionFormat.AccdbAgile), " +
@@ -778,7 +778,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
         => this.RunAutoCommitAsync(
             _ => LinkedTableManager.CreateLinkedOdbcTableAsync(
-                this.Database,
+                this.Database.Profile, this.Database.Pages,
                 this.services.CatalogArtifacts,
                 linkedTableName,
                 connectionString,

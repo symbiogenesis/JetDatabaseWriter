@@ -29,7 +29,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// (<see cref="InsertSystemRowAndMaintainAsync"/>,
 /// <see cref="RewriteSystemTableRowsAsync"/>).
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pager">The writer's page file, through which index and data pages are written.</param>
 /// <param name="tdefWriter">Writes index roots and usage-map pointers back into TDEF chains.</param>
 /// <param name="pageAllocator">Reserves and frees index pages.</param>
@@ -37,7 +39,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="dataPages">Owns usage-map rows and empty data pages.</param>
 /// <param name="snapshots">Reads decoded table rows for full index rebuilds.</param>
 internal sealed class IndexMaintainer(
-    DatabaseFile db,
+    JetFormat format,
+    TableDefReader tableDefs,
+    OwnedDataPages ownedPages,
     Pager pager,
     TDefWriter tdefWriter,
     PageAllocator pageAllocator,
@@ -45,7 +49,7 @@ internal sealed class IndexMaintainer(
     DataPageInserter dataPages,
     TableSnapshotReader snapshots)
 {
-    private readonly IndexBTreeEditor btreeEditor = new(db, pager, tdefWriter, pageAllocator);
+    private readonly IndexBTreeEditor btreeEditor = new(format, pager, tdefWriter, pageAllocator);
 
     /// <summary>
     /// Gets the most recent reason
@@ -122,7 +126,7 @@ internal sealed class IndexMaintainer(
         }
 
         var dataPageNumbers = new List<long>();
-        await db.ForEachOwnedDataPageAsync(
+        await ownedPages.ForEachOwnedDataPageAsync(
             tdefPage,
             (pageNumber, _, _) =>
             {
@@ -224,7 +228,7 @@ internal sealed class IndexMaintainer(
         => new($"The indexes of table '{tableName}' cannot be maintained: {reason}.");
 
     private int ReadTableUsageMapPage(byte[] tdefBuffer)
-        => UsageMap.ReadUInt24(tdefBuffer, db.TDef.UsedPagesPage);
+        => UsageMap.ReadUInt24(tdefBuffer, format.TDef.UsedPagesPage);
 
     private InvalidOperationException CreateSystemTableIndexMaintenanceException(string tableName, Exception? inner = null)
     {
@@ -249,29 +253,29 @@ internal sealed class IndexMaintainer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> SystemTableHasMaintainableIndexesAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        byte[]? td = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        byte[]? td = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (td is null)
         {
             return false;
         }
 
-        int numCols = Ru16(td, db.TDef.NumCols);
-        int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
+        int numCols = Ru16(td, format.TDef.NumCols);
+        int numRealIdx = Ri32(td, format.TDef.NumRealIdx);
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             return false;
         }
 
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(format, td, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
             return false;
         }
 
-        long totalPages = db.PageCount;
+        long totalPages = pager.PageCount;
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            if (!db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, ri, out RealIdxSlot slot))
+            if (!format.Index.TryReadRealIdxSlot(td, realIdxDescStart, ri, out RealIdxSlot slot))
             {
                 return false;
             }
@@ -296,14 +300,14 @@ internal sealed class IndexMaintainer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] pageBytes = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] pageBytes = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return (byte[])pageBytes.Clone();
         }
         finally
         {
-            DatabaseFile.ReturnPage(pageBytes);
+            PageBuffers.Return(pageBytes);
         }
     }
 
@@ -348,12 +352,12 @@ internal sealed class IndexMaintainer(
         long tdefPage,
         CancellationToken cancellationToken)
     {
-        LogicalTDefChain chain = await db.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] buffer = chain.Bytes;
 
-        int numCols = Ru16(buffer, db.TDef.NumCols);
-        int numIdx = Ri32(buffer, db.TDef.NumIdx);
-        int numRealIdx = Ri32(buffer, db.TDef.NumRealIdx);
+        int numCols = Ru16(buffer, format.TDef.NumCols);
+        int numIdx = Ri32(buffer, format.TDef.NumIdx);
+        int numRealIdx = Ri32(buffer, format.TDef.NumRealIdx);
 
         if (numIdx <= 0 || numRealIdx <= 0)
         {
@@ -365,7 +369,7 @@ internal sealed class IndexMaintainer(
             return (TdefPreambleStatus.TooMany, new TdefPreamble(chain, numCols, numIdx, numRealIdx, 0));
         }
 
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, buffer, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(format, buffer, numCols, numRealIdx);
         return realIdxDescStart < 0
             ? (TdefPreambleStatus.ColumnNameWalkFailed, new TdefPreamble(chain, numCols, numIdx, numRealIdx, 0))
             : (TdefPreambleStatus.Ok, new TdefPreamble(chain, numCols, numIdx, numRealIdx, realIdxDescStart));
@@ -411,12 +415,12 @@ internal sealed class IndexMaintainer(
             throw CreateUnmaintainableIndexesException(tableName, reason);
         }
 
-        IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(preamble.RealIdxDescStart, preamble.NumRealIdx, preamble.NumIdx);
-        List<string> logicalIndexNames = IndexCatalogReader.ReadLogicalIdxNames(db.Profile, preamble.Buffer, anchors.LogIdxNamesStart, preamble.NumIdx);
+        IndexSectionAnchors anchors = format.Index.GetIndexSection(preamble.RealIdxDescStart, preamble.NumRealIdx, preamble.NumIdx);
+        List<string> logicalIndexNames = IndexCatalogReader.ReadLogicalIdxNames(format, preamble.Buffer, anchors.LogIdxNamesStart, preamble.NumIdx);
         this.ThrowIfIndexSectionCutShort(tableName, preamble, anchors, logicalIndexNames.Count);
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             preamble.Buffer,
-            db.IndexLayoutInfo,
+            format.Index,
             anchors,
             tableDef.Columns,
             logicalIndexNames);
@@ -453,7 +457,7 @@ internal sealed class IndexMaintainer(
     /// <exception cref="JetLimitationException">A real-index descriptor, a logical index entry or a logical index name lies past the end of the table definition.</exception>
     private void ThrowIfIndexSectionCutShort(string tableName, TdefPreamble preamble, IndexSectionAnchors anchors, int logicalIndexNameCount)
     {
-        IndexLayout layout = db.IndexLayoutInfo;
+        IndexLayout layout = format.Index;
         int length = preamble.Buffer.Length;
         for (int realIdxNum = 0; realIdxNum < preamble.NumRealIdx; realIdxNum++)
         {
@@ -560,7 +564,7 @@ internal sealed class IndexMaintainer(
         byte[] tdefBuffer = preamble.Buffer;
         int numRealIdx = preamble.NumRealIdx;
 
-        IndexPageLayout leafLayout = db.Profile.IndexPage;
+        IndexPageLayout leafLayout = format.IndexPage;
 
         // Every populated real-idx slot, with IsUnique already promoted for
         // any slot backing a PK logical-idx, and its key columns resolved.
@@ -577,7 +581,7 @@ internal sealed class IndexMaintainer(
             ?? await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         bool tdefDirty = false;
-        bool jet3 = db.Profile.IsJet3;
+        bool jet3 = format.IsJet3;
         long[][] rebuiltIndexPageGroups = CreateEmptyPageGroups(numRealIdx);
 
         // The trees this rebuild replaces go back to the global usage map
@@ -651,7 +655,7 @@ internal sealed class IndexMaintainer(
                     }
                 }
 
-                IndexBTreeBuildResult build = IndexBTreeBuilder.Build(leafLayout, db.PageSizeBytes, tdefPage, entries, db.PageCount);
+                IndexBTreeBuildResult build = IndexBTreeBuilder.Build(leafLayout, format.PageSize, tdefPage, entries, pager.PageCount);
                 long rootPageNumber;
                 long[] pageNumbers;
 
@@ -666,7 +670,7 @@ internal sealed class IndexMaintainer(
                 {
                     IndexBTreeBuildResult? placed = await this.btreeEditor.PlaceBuiltTreeAsync(
                         build,
-                        firstPage => IndexBTreeBuilder.Build(leafLayout, db.PageSizeBytes, tdefPage, entries, firstPage),
+                        firstPage => IndexBTreeBuilder.Build(leafLayout, format.PageSize, tdefPage, entries, firstPage),
                         runs,
                         cancellationToken).ConfigureAwait(false);
                     build = placed ?? throw new ArgumentOutOfRangeException(
@@ -806,12 +810,12 @@ internal sealed class IndexMaintainer(
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (usageMapPageNumber <= 0 || usageMapPageNumber >= db.PageCount)
+        if (usageMapPageNumber <= 0 || usageMapPageNumber >= pager.PageCount)
         {
             return null;
         }
 
-        byte[] page = await db.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (page[0] != Constants.PageTypes.Data)
@@ -825,7 +829,7 @@ internal sealed class IndexMaintainer(
                 result[i] = [];
             }
 
-            foreach (RowBound rowBound in db.EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(format, page))
             {
                 int realIdxNum = rowBound.RowIndex - 2;
                 if (realIdxNum < 0 || realIdxNum >= numRealIdx)
@@ -837,12 +841,12 @@ internal sealed class IndexMaintainer(
                 if (!await UsageMap.TryEnumeratePagesAsync(
                     page,
                     rowBound,
-                    db.PageSizeBytes,
-                    db.PageCount,
+                    format.PageSize,
+                    pager.PageCount,
                     minimumPageNumber: 0,
                     strict: false,
-                    db.ReadPageAsync,
-                    DatabaseFile.ReturnPage,
+                    pager.ReadPageAsync,
+                    PageBuffers.Return,
                     pageNumbers,
                     cancellationToken).ConfigureAwait(false))
                 {
@@ -856,7 +860,7 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
@@ -938,12 +942,12 @@ internal sealed class IndexMaintainer(
 
     private async ValueTask<bool> IsReplacedIndexPageAsync(long pageNumber, long tdefPage, CancellationToken cancellationToken)
     {
-        if (pageNumber <= 0 || pageNumber >= db.PageCount)
+        if (pageNumber <= 0 || pageNumber >= pager.PageCount)
         {
             return false;
         }
 
-        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf
@@ -951,25 +955,25 @@ internal sealed class IndexMaintainer(
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
     private async ValueTask<bool> CanReuseSingleLeafPageAsync(int pageNumber, long tdefPage, CancellationToken cancellationToken)
     {
-        if (pageNumber <= 0 || pageNumber >= db.PageCount)
+        if (pageNumber <= 0 || pageNumber >= pager.PageCount)
         {
             return false;
         }
 
-        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return page[0] == Constants.PageTypes.IndexLeaf && Ri32(page, 4) == tdefPage;
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
@@ -996,13 +1000,13 @@ internal sealed class IndexMaintainer(
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (db.Profile.IsJet3 || slots.Count == 0)
+        if (format.IsJet3 || slots.Count == 0)
         {
             return [];
         }
 
         long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
-        if (usageMapPage <= 0 || usageMapPage >= db.PageCount)
+        if (usageMapPage <= 0 || usageMapPage >= pager.PageCount)
         {
             return null;
         }
@@ -1064,7 +1068,7 @@ internal sealed class IndexMaintainer(
         long rootPage,
         CancellationToken cancellationToken)
     {
-        long pageCount = db.PageCount;
+        long pageCount = pager.PageCount;
         var pages = new List<long>();
         var seen = new HashSet<long>();
         var stack = new Stack<long>();
@@ -1101,7 +1105,7 @@ internal sealed class IndexMaintainer(
                 return null;
             }
 
-            List<DecodedIntermediateEntry> entries = IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes);
+            List<DecodedIntermediateEntry> entries = IndexPageCodec.DecodeIntermediateEntries(layout, page, format.PageSize);
             if (entries.Count == 0)
             {
                 return null;
@@ -1246,8 +1250,8 @@ internal sealed class IndexMaintainer(
         // calls fork on `jet3`. Same disposal model as Jet4 — old leaf /
         // intermediate pages are orphaned and reclaimed by Access on
         // Compact & Repair.
-        IndexLayout idxLayout = db.IndexLayoutInfo;
-        IndexPageLayout layout = db.Profile.IndexPage;
+        IndexLayout idxLayout = format.Index;
+        IndexPageLayout layout = format.IndexPage;
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
@@ -1467,7 +1471,7 @@ internal sealed class IndexMaintainer(
                 {
                     // The editor may have patched this index's first_dp on
                     // disk; pick up the chain it wrote.
-                    tdefChain = await db.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                    tdefChain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
                     tdefBuffer = tdefChain.Bytes;
                     continue;
                 }
@@ -1499,7 +1503,7 @@ internal sealed class IndexMaintainer(
                         return false;
                     }
 
-                    allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes));
+                    allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize));
                     walkPage = IndexPageCodec.ReadNextPage(layout, leaf);
                 }
 
@@ -1528,7 +1532,7 @@ internal sealed class IndexMaintainer(
                 continue;
             }
 
-            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, rootPage, db.PageSizeBytes);
+            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, rootPage, format.PageSize);
             List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
@@ -1536,7 +1540,7 @@ internal sealed class IndexMaintainer(
                 return false;
             }
 
-            byte[]? newLeaf = IndexPageCodec.TryBuildLeafPage(layout, db.PageSizeBytes, tdefPage, spliced);
+            byte[]? newLeaf = IndexPageCodec.TryBuildLeafPage(layout, format.PageSize, tdefPage, spliced);
             if (newLeaf is null)
             {
                 // The root leaf overflows: grow the index into a multi-level
@@ -1572,7 +1576,7 @@ internal sealed class IndexMaintainer(
         runs.MarkLinked();
         await this.WriteIncrementalIndexUsageMapsAsync(tdefBuffer, indexPageGroups, cancellationToken).ConfigureAwait(false);
 
-        if (!db.Profile.IsJet3)
+        if (!format.IsJet3)
         {
             tdefDirty = true;
         }
@@ -1598,7 +1602,7 @@ internal sealed class IndexMaintainer(
     /// <param name="cells">The cells.</param>
     private byte[] EncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object?[] cells)
     {
-        bool legacyNumeric = db.Profile.LegacyNumericIndexKeys;
+        bool legacyNumeric = format.LegacyNumericIndexKeys;
 
         byte[][] perColumn = new byte[keyColInfos.Count][];
         int totalLen = 0;
@@ -1754,7 +1758,7 @@ internal sealed class IndexMaintainer(
         object[] newRowValues,
         CancellationToken cancellationToken)
     {
-        IndexPageLayout layout = db.Profile.IndexPage;
+        IndexPageLayout layout = format.IndexPage;
 
         this.LastIncrementalBail = null;
 
@@ -1785,8 +1789,8 @@ internal sealed class IndexMaintainer(
         // doesn't gate on IsUnique); names are unused so we skip them.
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             tdefBuf,
-            db.IndexLayoutInfo,
-            db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
+            format.Index,
+            format.Index.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
             tableDef.Columns);
 
         foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
@@ -1862,7 +1866,7 @@ internal sealed class IndexMaintainer(
                     break;
                 }
 
-                List<IndexEntry> probe = IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes);
+                List<IndexEntry> probe = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
                 if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[^1].Key) <= 0)
                 {
                     // composite belongs in this leaf (or earlier).
@@ -1890,7 +1894,7 @@ internal sealed class IndexMaintainer(
             long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
             int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
 
-            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes);
+            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
 
             var addEntries = new List<IndexEntry>(1)
             {
@@ -1912,7 +1916,7 @@ internal sealed class IndexMaintainer(
             {
                 rewritten = IndexPageCodec.BuildLeafPage(
                     layout,
-                    db.PageSizeBytes,
+                    format.PageSize,
                     tdefPage,
                     spliced,
                     prevPage: leafPrev,
@@ -1925,7 +1929,7 @@ internal sealed class IndexMaintainer(
             {
                 // Leaf overflow → N-way split.
                 SplitPages? splitPages = this.btreeEditor.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
-                    ?? IndexHelpers.TryGreedySplitLeafInN(layout, db.PageSizeBytes, spliced);
+                    ?? IndexHelpers.TryGreedySplitLeafInN(layout, format.PageSize, spliced);
                 if (splitPages is null)
                 {
                     this.LastIncrementalBail = $"S12 ri={ri} split failed";
@@ -1940,7 +1944,7 @@ internal sealed class IndexMaintainer(
                 int splitCount = splitPages.Count;
                 bool canSplitInPlace = hasCleanPath && descentPath.Count > 0;
                 CatalogLeafSplitPlan? plan = this.TryPlanCatalogLeafSplit(
-                    layout, tdefPage, splitPages, targetLeafPage, db.PageCount, leafPrev, leafNext, originalPrefLen, canSplitInPlace ? descentPath : null);
+                    layout, tdefPage, splitPages, targetLeafPage, pager.PageCount, leafPrev, leafNext, originalPrefLen, canSplitInPlace ? descentPath : null);
                 if (plan is null)
                 {
                     this.LastIncrementalBail = $"S12b ri={ri} split build failed";

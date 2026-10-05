@@ -25,7 +25,6 @@ using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
-using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -49,7 +48,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// is left naming the freed TDEF page. The public facade owns the
 /// auto-commit scope around each call.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pager">The writer's page file, through which a transplanted TDEF and re-owned data pages are written.</param>
 /// <param name="catalog">Resolves table names and is invalidated after a rename.</param>
 /// <param name="tableRows">Copies rows into the rebuilt table.</param>
@@ -64,7 +65,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="snapshots">Reads rows, index metadata, and persisted column properties before a rebuild.</param>
 /// <param name="autoNumbers">Carries the AutoNumber high-water value over to the rebuilt TDEF.</param>
 internal sealed class TableSchemaEditor(
-    DatabaseFile db,
+    JetFormat format,
+    TableDefReader tableDefs,
+    OwnedDataPages ownedPages,
     Pager pager,
     TableCatalog catalog,
     TableRowStore tableRows,
@@ -99,18 +102,18 @@ internal sealed class TableSchemaEditor(
     internal ValueTask CreateDeclaredTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken)
     {
         AccessObjectName.ThrowIfInvalid(tableName, nameof(tableName), "table");
-        AccessObjectName.ThrowIfNotStorable(db, tableName, nameof(tableName), "table");
+        AccessObjectName.ThrowIfNotStorable(format, tableName, nameof(tableName), "table");
         Guard.NotNull(columns, nameof(columns));
         Guard.NotNull(indexes, nameof(indexes));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
 
-        ValidateDeclaredNames(db, columns, indexes);
+        ValidateDeclaredNames(format, columns, indexes);
 
         for (int i = 0; i < columns.Count; i++)
         {
             if (columns[i] is { } column)
             {
-                _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Profile, nameof(columns));
+                _ = TDefPageBuilder.ValidateColumnForFormat(column, format, nameof(columns));
             }
         }
 
@@ -151,7 +154,7 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(columns, nameof(columns));
         Guard.NotNull(indexes, nameof(indexes));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
 
         if (columns.Count == 0)
         {
@@ -233,7 +236,7 @@ internal sealed class TableSchemaEditor(
     internal async ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
 
         // A missing table still reports "does not exist" from the drop below,
         // even when MSysRelationships has rows left that name it.
@@ -253,13 +256,13 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(column, nameof(column));
         AccessObjectName.ThrowIfInvalidMember(column.Name, nameof(column), "column");
-        AccessObjectName.ThrowIfNotStorable(db, column.Name, nameof(column), "column");
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        AccessObjectName.ThrowIfNotStorable(format, column.Name, nameof(column), "column");
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
 
         // Argument checks before the table is read: the name, then the format,
         // so a calculated column on an .mdb reports that, then the expression,
         // then the default.
-        _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Profile, nameof(column));
+        _ = TDefPageBuilder.ValidateColumnForFormat(column, format, nameof(column));
         ValidateDeclaredCalculatedExpression(column, nameof(column));
         ValidateDeclaredDefault(column, nameof(column));
 
@@ -289,7 +292,7 @@ internal sealed class TableSchemaEditor(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
 
         int dropIndex = -1;
         return this.RewriteTableAsync(
@@ -336,8 +339,8 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(oldColumnName, nameof(oldColumnName));
         AccessObjectName.ThrowIfInvalid(newColumnName, nameof(newColumnName), "column");
-        AccessObjectName.ThrowIfNotStorable(db, newColumnName, nameof(newColumnName), "column");
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        AccessObjectName.ThrowIfNotStorable(format, newColumnName, nameof(newColumnName), "column");
+        pager.ThrowIfDisposedOrCancelled(cancellationToken);
 
         // A rename to the name the column already has, spelled as stored,
         // changes nothing, so the table is not rewritten once the table and
@@ -400,11 +403,11 @@ internal sealed class TableSchemaEditor(
     /// two columns share a name, which Access compares ignoring case.
     /// <see cref="IndexHelpers.ResolveIndexes"/> rejects duplicate index names.
     /// </summary>
-    /// <param name="db">The database the table is created in.</param>
+    /// <param name="format">The database's immutable format profile.</param>
     /// <param name="columns">The declared columns.</param>
     /// <param name="indexes">The declared indexes.</param>
     /// <exception cref="ArgumentException">A definition is <see langword="null"/>, a name is missing, breaks a rule or is not in a Jet3 database's code page, or two columns share a name.</exception>
-    private static void ValidateDeclaredNames(DatabaseFile db, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes)
+    private static void ValidateDeclaredNames(JetFormat format, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes)
     {
         var columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < columns.Count; i++)
@@ -415,7 +418,7 @@ internal sealed class TableSchemaEditor(
             }
 
             AccessObjectName.ThrowIfInvalidMember(column.Name, nameof(columns), "column", i);
-            AccessObjectName.ThrowIfNotStorable(db, column.Name, nameof(columns), "column", i);
+            AccessObjectName.ThrowIfNotStorable(format, column.Name, nameof(columns), "column", i);
             if (!columnNames.Add(column.Name))
             {
                 throw new ArgumentException(
@@ -432,7 +435,7 @@ internal sealed class TableSchemaEditor(
             }
 
             AccessObjectName.ThrowIfInvalidMember(index.Name, nameof(indexes), "index", i);
-            AccessObjectName.ThrowIfNotStorable(db, index.Name, nameof(indexes), "index", i);
+            AccessObjectName.ThrowIfNotStorable(format, index.Name, nameof(indexes), "index", i);
         }
     }
 
@@ -714,7 +717,7 @@ internal sealed class TableSchemaEditor(
     /// <exception cref="JetLimitationException">The database is Jet3 and <paramref name="columnCount"/> is over 255.</exception>
     private void ThrowIfTooManyColumns(string tableName, int columnCount)
     {
-        if (db.Profile.IsJet3 && columnCount > Constants.TableDefinition.MaxJet3Columns)
+        if (format.IsJet3 && columnCount > Constants.TableDefinition.MaxJet3Columns)
         {
             throw new JetLimitationException(
                 $"Table '{tableName}' would have {columnCount} columns; a Jet3 (Access 97) table holds at most {Constants.TableDefinition.MaxJet3Columns}.");
@@ -787,13 +790,13 @@ internal sealed class TableSchemaEditor(
             {
                 baseDef = baseDef with
                 {
-                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, db.Format)
+                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format.Kind)
                         ?? baseDef.DefaultValueExpression,
-                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, db.Format)
+                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format.Kind)
                         ?? baseDef.ValidationRuleExpression,
-                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, db.Format)
+                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format.Kind)
                         ?? baseDef.ValidationText,
-                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, db.Format)
+                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, format.Kind)
                         ?? baseDef.Description,
                 };
             }
@@ -817,8 +820,8 @@ internal sealed class TableSchemaEditor(
         // Project the stored properties onto the new columns, and serialize them,
         // before anything is written: the rebuilt table's catalog row carries them.
         ColumnPropertyBlock persistedProperties =
-            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, db.Format);
-        byte[]? persistedLvProp = persistedProperties.ToBytes(db.Format);
+            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format.Kind);
+        byte[]? persistedLvProp = persistedProperties.ToBytes(format.Kind);
 
         // Capture the table's relationship state, and refuse to drop a
         // relationship key column, before anything is written.
@@ -918,7 +921,7 @@ internal sealed class TableSchemaEditor(
             cancellationToken).ConfigureAwait(false);
         if (fkIndexNumbers.Count > 0)
         {
-            tempDef = await db.ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
+            tempDef = await tableDefs.ReadRequiredTableDefAsync(tempEntry.TDefPage, tempName, cancellationToken).ConfigureAwait(false);
         }
 
         // The temp TDEF starts with its AutoNumber and complex AutoNumber
@@ -1101,7 +1104,7 @@ internal sealed class TableSchemaEditor(
         byte[]? lvProp,
         CancellationToken cancellationToken)
     {
-        byte[] tempTdef = await db.ReadPageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
+        byte[] tempTdef = await pager.ReadPageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
             if (tempTdef[0] != Constants.PageTypes.TableDefinition || Ri32(tempTdef, 4) != 0)
@@ -1115,7 +1118,7 @@ internal sealed class TableSchemaEditor(
         }
         finally
         {
-            ReturnPage(tempTdef);
+            PageBuffers.Return(tempTdef);
         }
 
         await catalogArtifacts.ExecutePlanAsync(
@@ -1153,28 +1156,28 @@ internal sealed class TableSchemaEditor(
 
     private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)
     {
-        long totalPages = db.PageCount;
+        long totalPages = pager.PageCount;
         for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                bool patchDataPage = page[0] == Constants.PageTypes.Data && Ri32(page, db.DataPage.TDefOff) == fromTdefPage;
+                bool patchDataPage = page[0] == Constants.PageTypes.Data && Ri32(page, format.DataPage.TDefOff) == fromTdefPage;
                 bool patchIndexPage = page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf && Ri32(page, 4) == fromTdefPage;
                 if (!patchDataPage && !patchIndexPage)
                 {
                     continue;
                 }
 
-                int ownerOffset = patchDataPage ? db.DataPage.TDefOff : 4;
+                int ownerOffset = patchDataPage ? format.DataPage.TDefOff : 4;
                 Wi32(page, ownerOffset, checked((int)toTdefPage));
                 await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
-                ReturnPage(page);
+                PageBuffers.Return(page);
             }
         }
     }
@@ -1192,7 +1195,7 @@ internal sealed class TableSchemaEditor(
         {
             case TextType:
                 int textSize = column.IsCalculated ? CalculatedPayloadSize(column, sizedByDescriptor, Constants.CalculatedColumn.MaxTextResultBytes) : column.Size;
-                int charLen = db.Profile.IsJet3 ? Math.Max(1, textSize) : Math.Max(1, textSize / 2);
+                int charLen = format.IsJet3 ? Math.Max(1, textSize) : Math.Max(1, textSize / 2);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
             case BinaryType:
@@ -1299,7 +1302,7 @@ internal sealed class TableSchemaEditor(
             def = def with
             {
                 IsCalculated = true,
-                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, db.Format),
+                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format.Kind),
                 CalculatedResultType = resultType,
                 IsCompressedUnicode = false,
             };
@@ -1407,18 +1410,18 @@ internal sealed class TableSchemaEditor(
         var pagesToFree = new SortedSet<long>();
         var longValueRoots = new List<LongValueDescriptor>();
 
-        tableDef ??= await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        long totalPages = db.PageCount;
+        tableDef ??= await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        long totalPages = pager.PageCount;
         if (tableDef is not null)
         {
             // Overflow rows are followed to their moved bytes, so their long
             // values are freed too.
-            await db.ForEachOwnedDataPageAsync(
+            await ownedPages.ForEachOwnedDataPageAsync(
                 tdefPage,
                 (pageNumber, page, token) =>
                 {
                     pagesToFree.Add(pageNumber);
-                    return db.ForEachRowOnPageAsync(
+                    return ownedPages.ForEachRowOnPageAsync(
                         pageNumber,
                         page,
                         (row, _) =>
@@ -1438,7 +1441,7 @@ internal sealed class TableSchemaEditor(
         while (currentTdefPage > 0 && currentTdefPage < totalPages && seenTdefPages.Add(currentTdefPage))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await db.ReadPageAsync(currentTdefPage, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pager.ReadPageAsync(currentTdefPage, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] != Constants.PageTypes.TableDefinition)
@@ -1456,13 +1459,13 @@ internal sealed class TableSchemaEditor(
             }
             finally
             {
-                ReturnPage(page);
+                PageBuffers.Return(page);
             }
         }
 
-        if (firstTdefPage is not null && !db.Profile.IsJet3)
+        if (firstTdefPage is not null && !format.IsJet3)
         {
-            int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, db.TDef.UsedPagesPage);
+            int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, format.TDef.UsedPagesPage);
             if (usageMapPage > 0)
             {
                 _ = pagesToFree.Add(usageMapPage);
@@ -1486,13 +1489,13 @@ internal sealed class TableSchemaEditor(
 
     private async ValueTask CollectIndexPagesFromUsageMapAsync(long usageMapPageNumber, SortedSet<long> pagesToFree, CancellationToken cancellationToken)
     {
-        long totalPages = db.PageCount;
+        long totalPages = pager.PageCount;
         if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
         {
             return;
         }
 
-        byte[] page = await db.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (page[0] != Constants.PageTypes.Data)
@@ -1500,11 +1503,11 @@ internal sealed class TableSchemaEditor(
                 return;
             }
 
-            foreach (RowBound rowBound in db.EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(format, page))
             {
                 // A REFERENCE row's bitmap pages go with the table, the owned
                 // and free-space rows' included.
-                await UsageMap.CollectReferenceBitmapPagesAsync(page, rowBound, totalPages, db.ReadPageAsync, ReturnPage, pagesToFree, cancellationToken).ConfigureAwait(false);
+                await UsageMap.CollectReferenceBitmapPagesAsync(page, rowBound, totalPages, pager.ReadPageAsync, PageBuffers.Return, pagesToFree, cancellationToken).ConfigureAwait(false);
                 if (rowBound.RowIndex < 2)
                 {
                     continue;
@@ -1514,11 +1517,11 @@ internal sealed class TableSchemaEditor(
                 if (!await UsageMap.TryEnumeratePagesAsync(
                     page,
                     rowBound,
-                    db.PageSizeBytes,
+                    format.PageSize,
                     totalPages,
                     minimumPageNumber: 3,
                     strict: false,
-                    db.ReadPageAsync,
+                    pager.ReadPageAsync,
                     ReturnPage,
                     indexPages,
                     cancellationToken).ConfigureAwait(false))
@@ -1534,7 +1537,7 @@ internal sealed class TableSchemaEditor(
         }
         finally
         {
-            ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 }

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>
 /// The format probe's view of a database: the library's internal page and
@@ -55,12 +56,12 @@ internal sealed class ProbeDatabase : IAsyncDisposable
     {
         options ??= new AccessReaderOptions { UseLockFile = false };
 #pragma warning disable CA2000 // The database file owns the stream once it is open, and the catch disposes the stream when the open throws first.
-        FileStream stream = DatabaseFile.OpenFileStream(path, FileAccess.Read, FileShare.ReadWrite, FileOptions.Asynchronous | FileOptions.RandomAccess);
+        FileStream stream = PageFile.OpenFileStream(path, FileAccess.Read, FileShare.ReadWrite, FileOptions.Asynchronous | FileOptions.RandomAccess);
 #pragma warning restore CA2000 // The database file owns the stream once it is open, and the catch disposes the stream when the open throws first.
         DatabaseFile? db = null;
         try
         {
-            byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
+            byte[] header = await PageFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
             db = DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen: false);
             return new ProbeDatabase(db, new ReaderServices(db, options));
         }

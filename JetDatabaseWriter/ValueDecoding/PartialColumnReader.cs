@@ -26,25 +26,22 @@ internal static class PartialColumnReader
     /// need existing-row values; OLE / Attachment / Complex columns are
     /// rejected by <see cref="Indexes.Helpers.IndexHelpers.ResolveIndexes"/>.
     /// </summary>
-    /// <param name="db">
-    /// The open database file, whose pages are read and which supplies the
-    /// format to <see cref="RowDecodePlan"/>; core-split-b narrows this to the
-    /// page source and the format profile together with
-    /// <see cref="RowDecodePlan"/>.
-    /// </param>
+    /// <param name="format">The database format.</param>
+    /// <param name="pageSource">The page source to read.</param>
     /// <param name="loc">The row location; its bytes are read from <see cref="RowLocation.DataPageNumber"/>.</param>
     /// <param name="tableDef">The table def.</param>
     /// <param name="columnOrdinals">The column ordinals.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The values, or <see langword="null"/>.</returns>
     internal static async ValueTask<object?[]?> TryReadColumnValuesTypedAsync(
-        DatabaseFile db,
+        JetFormat format,
+        IPageSource pageSource,
         RowLocation loc,
         TableDef tableDef,
         int[] columnOrdinals,
         CancellationToken cancellationToken)
     {
-        byte[] pageBytes = await db.Pages.ReadPageAsync(loc.DataPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] pageBytes = await pageSource.ReadPageAsync(loc.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (pageBytes[0] != Constants.PageTypes.Data)
@@ -54,7 +51,7 @@ internal static class PartialColumnReader
 
             var decodePlan = RowDecodePlan.CreatePartial(tableDef, columnOrdinals);
             object?[] result = new object?[columnOrdinals.Length];
-            return decodePlan.TryDecodePartialColumns(db, pageBytes, loc.RowStart, loc.RowSize, result)
+            return decodePlan.TryDecodePartialColumns(format, pageBytes, loc.RowStart, loc.RowSize, result)
                 ? result
                 : null;
         }

@@ -80,7 +80,7 @@ public sealed class CatalogScanProjectionTests
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("T", Ct));
         TableDef td = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, Ct));
-        var decoder = new RowDecoder(harness.Database, harness.Services.PageCache, new LongValueDecoder(harness.Database.Profile, harness.Services.PageCache), strictParsing: true);
+        var decoder = new RowDecoder(harness.Database.Profile, harness.Database.OwnedPages, harness.Services.PageCache, new LongValueDecoder(harness.Database.Profile, harness.Services.PageCache), strictParsing: true);
 
         var rows = new List<string[]>();
         await foreach (string[] row in decoder.EnumerateRowsForTdefAsync(entry.TDefPage, td, ["Id", "note"], Ct))

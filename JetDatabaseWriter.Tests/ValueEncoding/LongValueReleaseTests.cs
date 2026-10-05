@@ -9,6 +9,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueEncoding;
 using Xunit;
@@ -39,7 +40,7 @@ public sealed class LongValueReleaseTests
         await using MemoryStream ms = await CreateDatabaseAsync(format, ct);
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
-        var encoder = new LongValueEncoder(db, harness.Pager, harness.Services.PageAllocator, options);
+        var encoder = new LongValueEncoder(db.Profile, harness.Pager, harness.Services.PageAllocator, options);
 
         // Two single-page values packed at the end of one LVAL page, as Access writes them.
         int pageSize = db.PageSizeBytes;
@@ -90,7 +91,7 @@ public sealed class LongValueReleaseTests
         await using MemoryStream ms = await CreateDatabaseAsync(format, ct);
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
-        var encoder = new LongValueEncoder(db, harness.Pager, harness.Services.PageAllocator, options);
+        var encoder = new LongValueEncoder(db.Profile, harness.Pager, harness.Services.PageAllocator, options);
         CatalogEntry table = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("T", ct));
         byte[] tdefBefore = await ReadPageCopyAsync(db, table.TDefPage, ct);
 
@@ -148,7 +149,7 @@ public sealed class LongValueReleaseTests
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 

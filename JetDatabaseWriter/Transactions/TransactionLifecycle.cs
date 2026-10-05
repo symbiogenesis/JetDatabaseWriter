@@ -28,7 +28,7 @@ using JetDatabaseWriter.Schema.Models;
 /// registry. A rollback restores or invalidates each of them, so the writer
 /// behaves as if the transaction had never run.
 /// </remarks>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
 /// <param name="pager">The writer's page file, which holds the journal and through which a commit writes and flushes.</param>
 /// <param name="options">The writer options; supplies the auto-commit switch and journal page budget.</param>
 /// <param name="byteRangeLock">The cooperative JET byte-range lock used for the commit-lock sentinel.</param>
@@ -37,7 +37,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="ownedMaps">Decides whose owned-page usage maps the writer may extend; its decisions are restored on rollback.</param>
 /// <param name="constraints">The writer's constraint registry, restored on rollback.</param>
 internal sealed class TransactionLifecycle(
-    DatabaseFile db,
+    JetFormat format,
     Pager pager,
     AccessWriterOptions options,
     JetByteRangeLock byteRangeLock,
@@ -63,7 +63,7 @@ internal sealed class TransactionLifecycle(
     /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
     internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
     {
-        db.ThrowIfDisposed();
+        pager.ThrowIfDisposed();
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -74,7 +74,7 @@ internal sealed class TransactionLifecycle(
                 "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
         }
 
-        var journal = new PageJournal(gate.PhysicalLengthBytes, db.PageSizeBytes, options.MaxTransactionPageBudget);
+        var journal = new PageJournal(gate.PhysicalLengthBytes, format.PageSize, options.MaxTransactionPageBudget);
         var tx = new JetTransaction(this, journal);
         this.stateAtBegin = new WriterState(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
         gate.Attach(journal);
@@ -92,7 +92,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
-        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || db.IsDisposed)
+        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || pager.IsDisposed)
         {
             await work(cancellationToken).ConfigureAwait(false);
             return;
@@ -134,7 +134,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
-        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || db.IsDisposed)
+        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || pager.IsDisposed)
         {
             return await work(cancellationToken).ConfigureAwait(false);
         }
@@ -198,7 +198,7 @@ internal sealed class TransactionLifecycle(
     {
         Guard.NotNull(transaction, nameof(transaction));
 
-        db.ThrowIfDisposed();
+        pager.ThrowIfDisposed();
 
         PageJournal journal;
         WriterState? state;
@@ -234,7 +234,7 @@ internal sealed class TransactionLifecycle(
         bool replayStarted = false;
         try
         {
-            commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(db.Profile.CommitLockOffset, cancellationToken).ConfigureAwait(false);
+            commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(format.CommitLockOffset, cancellationToken).ConfigureAwait(false);
 
             // Last point at which cancellation is honoured: nothing has
             // reached the file yet. Stopping the replay partway would leave

@@ -10,6 +10,8 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -19,9 +21,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Pre-write unique-index enforcement: detects duplicate keys before any
 /// disk page is mutated. Owned by <see cref="AccessWriter"/>.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="pageSource">The database's page source.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
 /// <param name="snapshots">Reads decoded table rows when index pages cannot answer a uniqueness probe.</param>
-internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader snapshots)
+internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSource, TableDefReader tableDefs, TableSnapshotReader snapshots)
 {
     /// <summary>
     /// Loads all unique / primary-key index descriptors for the table whose
@@ -41,12 +45,12 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
     {
         var result = new List<UniqueIndexDescriptor>();
 
-        byte[] tdefBuffer = await db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
+        byte[] tdefBuffer = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"The table definition of '{tableName}' at page {tdefPage} could not be read.");
 
-        int numCols = Ru16(tdefBuffer, db.TDef.NumCols);
-        int numIdx = Ri32(tdefBuffer, db.TDef.NumIdx);
-        int numRealIdx = Ri32(tdefBuffer, db.TDef.NumRealIdx);
+        int numCols = Ru16(tdefBuffer, format.TDef.NumCols);
+        int numIdx = Ri32(tdefBuffer, format.TDef.NumIdx);
+        int numRealIdx = Ri32(tdefBuffer, format.TDef.NumRealIdx);
         if (numIdx <= 0 || numRealIdx <= 0)
         {
             return result;
@@ -57,17 +61,17 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
             throw CreateUnenforceableException(tableName, $"its table definition declares {numIdx} logical and {numRealIdx} real indexes");
         }
 
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tdefBuffer, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(format, tdefBuffer, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
             throw CreateUnenforceableException(tableName, "the column-name section of its table definition could not be walked");
         }
 
-        IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> logIdxNames = IndexCatalogReader.ReadLogicalIdxNames(db.Profile, tdefBuffer, anchors.LogIdxNamesStart, numIdx);
+        IndexSectionAnchors anchors = format.Index.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        List<string> logIdxNames = IndexCatalogReader.ReadLogicalIdxNames(format, tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
-            tdefBuffer, db.IndexLayoutInfo, anchors, tableDef.Columns, logIdxNames);
+            tdefBuffer, format.Index, anchors, tableDef.Columns, logIdxNames);
 
         foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
         {
@@ -105,7 +109,7 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
         object[] row,
         int[] numericTargetScales)
     {
-        bool legacyNumeric = db.Profile.LegacyNumericIndexKeys;
+        bool legacyNumeric = format.LegacyNumericIndexKeys;
         int keyCount = descriptor.KeyColumns.Count;
 
         // Single-column fast path: avoid the per-column array + copy.
@@ -203,9 +207,9 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
         CancellationToken cancellationToken)
     {
         var cursor = new IndexCursor(
-            db.Profile.IndexPage,
+            format.IndexPage,
             this.ReadIndexPageOwnedAsync,
-            db.PageSizeBytes);
+            format.PageSize);
 
         int[][] numericScales = new int[descriptors.Count][];
         var seenSets = new HashSet<byte[]>[descriptors.Count];
@@ -237,14 +241,14 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
 
     private async ValueTask<byte[]> ReadIndexPageOwnedAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pageSource.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return (byte[])page.Clone();
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 

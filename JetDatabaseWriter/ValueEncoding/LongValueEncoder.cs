@@ -20,7 +20,6 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding.Models;
-using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -29,11 +28,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Owned by <see cref="AccessWriter"/>; the writer delegates long-value
 /// pre-encoding through this class.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
 /// <param name="pager">The writer's page file, through which released LVAL pages are written.</param>
 /// <param name="pageAllocator">The page allocator.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for released LVAL rows.</param>
-internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocator pageAllocator, AccessWriterOptions options)
+internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAllocator pageAllocator, AccessWriterOptions options)
 {
     /// <summary>Throws when <paramref name="data"/> is too long for an LVAL descriptor's 24-bit length.</summary>
     /// <param name="data">The long value's payload.</param>
@@ -158,7 +157,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
             return false;
         }
 
-        data = db.EncodeTextForFormat(text, col.IsCompressedUnicode);
+        data = format.EncodeText(text, col.IsCompressedUnicode);
         if (col.IsCalculated)
         {
             data = CalculatedColumnUtil.Wrap(data);
@@ -201,7 +200,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
             return null;
         }
 
-        byte[] data = db.EncodeTextForFormat(text, compress);
+        byte[] data = format.EncodeText(text, compress);
         byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0, packRowsAtEnd: true).ConfigureAwait(false);
         return new PreEncodedLongValue(header);
     }
@@ -225,8 +224,8 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
         bool packRowsAtEnd = false)
     {
         ThrowIfLongerThanLvalLimit(data);
-        int pgSz = db.PageSizeBytes;
-        LvalPageLayout layout = db.LvalPage;
+        int pgSz = format.PageSize;
+        LvalPageLayout layout = format.LvalPage;
 
         // Jet3 LVAL pages have no room for a token, and Access 97 leaves the
         // descriptor's token bytes zero.
@@ -291,7 +290,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
             }
         }
 
-        if (!RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
+        if (!RowDecodePlan.TryParseRowLayout(format.RowFields, page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
         {
             return roots;
         }
@@ -303,7 +302,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
                 continue;
             }
 
-            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, page, rowBound.RowStart, rowBound.RowSize, layout, column);
+            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(format.RowFields, page, rowBound.RowStart, rowBound.RowSize, layout, column);
             if (slice.Kind is not (ColumnSliceKind.Fixed or ColumnSliceKind.Var) || slice.DataLen < Constants.LongValue.HeaderSize)
             {
                 continue;
@@ -350,12 +349,12 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
     {
         long pageNumber = LongValueStore.PageNumber(lvalDp);
         int rowIndex = LongValueStore.RowIndex(lvalDp);
-        if (pageNumber <= 1 || pageNumber >= db.PageCount)
+        if (pageNumber <= 1 || pageNumber >= pager.PageCount)
         {
             return 0;
         }
 
-        byte[] lvalPage = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] lvalPage = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (!LongValueStore.IsLvalPage(lvalPage))
@@ -365,7 +364,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
 
             RowBound? released = null;
             bool otherLiveRows = false;
-            foreach (RowBound rowBound in db.EnumerateLiveRowBounds(lvalPage))
+            foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(format, lvalPage))
             {
                 if (rowBound.RowIndex == rowIndex)
                 {
@@ -390,7 +389,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
                     Array.Clear(lvalPage, row.RowStart, row.RowSize);
                 }
 
-                int slotOffset = db.DataPage.RowsStart + (rowIndex * 2);
+                int slotOffset = format.DataPage.RowsStart + (rowIndex * 2);
                 Wu16(lvalPage, slotOffset, Ru16(lvalPage, slotOffset) | Constants.DataPage.DeletedRowFlag);
                 await pager.WritePageAsync(pageNumber, lvalPage, cancellationToken).ConfigureAwait(false);
             }
@@ -403,7 +402,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
         }
         finally
         {
-            ReturnPage(lvalPage);
+            PageBuffers.Return(lvalPage);
         }
     }
 }
