@@ -1522,7 +1522,7 @@ internal sealed class TableSchemaEditor(
                     minimumPageNumber: 3,
                     strict: false,
                     pager.ReadPageAsync,
-                    ReturnPage,
+                    PageBuffers.Return,
                     indexPages,
                     cancellationToken).ConfigureAwait(false))
                 {

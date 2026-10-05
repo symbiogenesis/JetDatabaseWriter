@@ -290,7 +290,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(2, roots.Count);
         foreach (long root in roots)
         {
-            Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, (await reopened.Database.ReadPageCopyAsync(root, this.ct))[0]);
+            Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, (await reopened.Database.Pages.ReadPageCopyAsync(root, this.ct))[0]);
             await IndexLeafChain.AssertCoversLiveRowsAsync(reopened.Database, tdefPage, root, this.ct);
         }
 
@@ -386,7 +386,7 @@ public sealed class IndexIncrementalMaintenanceTests
 
         stream.Position = 0;
         await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
-        TableDef tableDef = await reopened.Database.ReadRequiredTableDefAsync(tdefPage, "T", this.ct);
+        TableDef tableDef = await reopened.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, "T", this.ct);
         await ClearRealIdxColMapsAsync(reopened, tdefPage, this.ct);
 
         var insertedRows = new List<(RowLocation Loc, object[] Row)>
@@ -489,23 +489,23 @@ public sealed class IndexIncrementalMaintenanceTests
         CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
-        byte[] tdef = await db.ReadPageAsync(tdefPage, cancellationToken);
+        byte[] tdef = await db.Pages.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, db.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.Format.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.Format.TDef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected the test fixture to declare at least one real index.");
 
-            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
+            int colStart = db.Format.TDef.BlockEnd + (numRealIdx * db.Format.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.Format.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.Format.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk TDEF column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            IndexLayout layout = db.IndexLayoutInfo;
+            IndexLayout layout = db.Format.Index;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
                 bool decoded = layout.TryReadRealIdxSlotWithKeyColumns(

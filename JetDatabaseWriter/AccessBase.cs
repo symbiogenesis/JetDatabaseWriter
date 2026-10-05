@@ -19,13 +19,13 @@ public abstract class AccessBase : IAccessBase
     private protected AccessBase(DatabaseFile database) => this.Database = database;
 
     /// <inheritdoc/>
-    public DatabaseFormat DatabaseFormat => this.Database.Format;
+    public DatabaseFormat DatabaseFormat => this.Database.Format.Kind;
 
     /// <inheritdoc/>
-    public int PageSize => this.Database.PageSizeBytes;
+    public int PageSize => this.Database.Format.PageSize;
 
     /// <inheritdoc/>
-    public int CodePage => this.Database.CodePage;
+    public int CodePage => this.Database.Format.CodePage;
 
     /// <summary>Gets the open database file this reader or writer owns.</summary>
     private protected DatabaseFile Database { get; }

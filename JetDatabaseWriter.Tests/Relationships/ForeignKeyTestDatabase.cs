@@ -200,7 +200,7 @@ internal static class ForeignKeyTestDatabase
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long relationshipsPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
         Assert.True(relationshipsPage > 0, "The database has no MSysRelationships table.");
-        TableDef relationshipsDef = await harness.Database.ReadRequiredTableDefAsync(relationshipsPage, Constants.SystemTableNames.Relationships, Ct);
+        TableDef relationshipsDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(relationshipsPage, Constants.SystemTableNames.Relationships, Ct);
 
         object[] row = relationshipsDef.CreateNullValueRow();
         relationshipsDef.SetValueByName(row, "ccolumn", 1);

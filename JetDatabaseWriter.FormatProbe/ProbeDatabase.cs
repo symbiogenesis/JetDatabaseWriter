@@ -33,20 +33,20 @@ internal sealed class ProbeDatabase : IAsyncDisposable
         this.services = services;
     }
 
-    public DatabaseFormat DatabaseFormat => this.db.Format;
+    public DatabaseFormat DatabaseFormat => this.db.Format.Kind;
 
-    public int PageSize => this.db.PageSizeBytes;
+    public int PageSize => this.db.Format.PageSize;
 
-    public int CodePage => this.db.CodePage;
+    public int CodePage => this.db.Format.CodePage;
 
     /// <summary>Gets the path the database was opened from.</summary>
     public string HostDatabasePath => this.db.DatabasePath;
 
     /// <summary>Gets the data-page header offsets for this format.</summary>
-    public DataPageLayout DataPage => this.db.DataPage;
+    public DataPageLayout DataPage => this.db.Format.DataPage;
 
     /// <summary>Gets the row-trailer field sizes for this format.</summary>
-    public RowFieldSizes RowFields => this.db.RowFields;
+    public RowFieldSizes RowFields => this.db.Format.RowFields;
 
     /// <summary>Opens <paramref name="path"/> read-only, sharing it with any other reader or writer.</summary>
     /// <param name="path">The database file path.</param>
@@ -84,13 +84,13 @@ internal sealed class ProbeDatabase : IAsyncDisposable
     /// <param name="pageNumber">The page number.</param>
     /// <param name="cancellationToken">A token used to cancel the read.</param>
     public ValueTask<byte[]> GetRawPageBytesAsync(long pageNumber, CancellationToken cancellationToken = default)
-        => this.db.ReadPageCopyAsync(pageNumber, cancellationToken);
+        => this.db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
 
     /// <summary>Returns a caller-owned copy of a decrypted page.</summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="cancellationToken">A token used to cancel the read.</param>
     public ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
-        => this.db.ReadPageCopyAsync(pageNumber, cancellationToken);
+        => this.db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
 
     /// <summary>
     /// Returns the concatenated TDEF page-chain bytes for <paramref name="tdefPage"/>
@@ -100,7 +100,7 @@ internal sealed class ProbeDatabase : IAsyncDisposable
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the read.</param>
     public ValueTask<byte[]?> GetRawTDefBytesAsync(long tdefPage, CancellationToken cancellationToken = default)
-        => this.db.ReadTDefBytesAsync(tdefPage, cancellationToken);
+        => this.db.TableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken);
 
     /// <summary>Loads the <c>MSysObjects</c> table definition (page 2).</summary>
     /// <param name="cancellationToken">A token used to cancel the read.</param>
@@ -123,7 +123,7 @@ internal sealed class ProbeDatabase : IAsyncDisposable
     /// <param name="pageNumber">The page number.</param>
     /// <param name="page">The page bytes.</param>
     public IEnumerable<RowLocation> EnumerateLiveRowLocations(long pageNumber, byte[] page)
-        => this.db.EnumerateLiveRowLocations(pageNumber, page);
+        => DataPageRows.EnumerateLiveRowLocations(this.db.Format, pageNumber, page);
 
     public ValueTask<IReadOnlyList<string>> ListTablesAsync(CancellationToken cancellationToken = default)
         => this.services.Schema.ListTablesAsync(cancellationToken);

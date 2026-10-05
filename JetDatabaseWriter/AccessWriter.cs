@@ -526,7 +526,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTableAsync(this.Database.Profile, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTableAsync(this.Database.Format, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
@@ -587,7 +587,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         ReadOnlyMemory<byte> cachedSchemaLvProp,
         CancellationToken cancellationToken = default)
     {
-        byte[] validatedLvProp = LinkedTableManager.CopyValidatedCachedSchemaLvProp(this.Database.Format, cachedSchemaLvProp, nameof(cachedSchemaLvProp));
+        byte[] validatedLvProp = LinkedTableManager.CopyValidatedCachedSchemaLvProp(this.Database.Format.Kind, cachedSchemaLvProp, nameof(cachedSchemaLvProp));
         return this.CreateLinkedOdbcTableCoreAsync(linkedTableName, connectionString, foreignTableName, validatedLvProp, sourceColumns: null, cancellationToken);
     }
 
@@ -607,7 +607,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTextTableAsync(this.Database.Profile, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTextTableAsync(this.Database.Format, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
 
     // ════════════════════════════════════════════════════════════════
     // Foreign-key relationships — thin forwarders to RelationshipManager
@@ -666,7 +666,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>The number of free pages scrubbed.</returns>
     public ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken = default)
     {
-        this.Database.ThrowIfDisposedOrCancelled(cancellationToken);
+        this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
         return this.services.PageAllocator.ScrubFreePagesAsync(cancellationToken);
     }
 
@@ -679,7 +679,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>The number of pages removed from the end of the file.</returns>
     public ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken = default)
     {
-        this.Database.ThrowIfDisposedOrCancelled(cancellationToken);
+        this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
         return this.services.PageAllocator.ShrinkDatabaseAsync(cancellationToken);
     }
 
@@ -707,7 +707,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <inheritdoc/>
     public override async ValueTask DisposeAsync()
     {
-        if (this.Database.IsDisposed)
+        if (this.Database.Pages.IsDisposed)
         {
             return;
         }
@@ -778,7 +778,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
         => this.RunAutoCommitAsync(
             _ => LinkedTableManager.CreateLinkedOdbcTableAsync(
-                this.Database.Profile, this.Database.Pages,
+                this.Database.Format, this.Database.Pages,
                 this.services.CatalogArtifacts,
                 linkedTableName,
                 connectionString,
@@ -801,7 +801,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             await EncryptionManager.RewrapDecryptedCompoundFileAsync(
-                this.Database.DatabaseStream,
+                this.Database.Pages.Stream,
                 this.outerEncryptedStream,
                 this.outerEncryptedFormat,
                 this.options.Password).ConfigureAwait(false);

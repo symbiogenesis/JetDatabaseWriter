@@ -23,7 +23,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// TDEF complex AutoNumber at <see cref="Pages.TDefHeaderLayout.ComplexAutoNumber"/>.
 /// The seed also covers the references a file actually holds, because files
 /// written by earlier builds of this library leave that counter at 0. Every
-/// read goes through <see cref="DatabaseFile"/>, so an active transaction's
+/// read uses the writer's page source, so an active transaction's
 /// pending writes are visible.
 /// </summary>
 /// <param name="format">The database's immutable format profile.</param>

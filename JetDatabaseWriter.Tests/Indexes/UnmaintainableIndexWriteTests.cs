@@ -12,6 +12,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -543,15 +544,15 @@ public sealed class UnmaintainableIndexWriteTests
             }
             else
             {
-                LogicalTDefChain intact = await harness.Database.ReadTDefChainAsync(table.Entry.TDefPage, Ct);
+                LogicalTDefChain intact = await harness.Database.TableDefs.ReadTDefChainAsync(table.Entry.TDefPage, Ct);
                 phantoms = await LegacyDamageInjector.InjectStrayUsedPagesByteAsync(harness, table.Entry.TDefPage, Ct);
                 if (layout == DamagedTable.ChainHeaderHit101)
                 {
                     // Real index 2's stray byte is now the first continuation
                     // page's type, so the chain ends after its first page.
-                    byte[] continuation = await harness.Database.ReadPageCopyAsync(intact.PageNumbers[1], Ct);
+                    byte[] continuation = await harness.Database.Pages.ReadPageCopyAsync(intact.PageNumbers[1], Ct);
                     Assert.Equal((byte)0x04, continuation[0]);
-                    Assert.Single((await harness.Database.ReadTDefChainAsync(table.Entry.TDefPage, Ct)).PageNumbers);
+                    Assert.Single((await harness.Database.TableDefs.ReadTDefChainAsync(table.Entry.TDefPage, Ct)).PageNumbers);
                 }
             }
 

@@ -49,9 +49,8 @@ context. Writer collaborators took `AccessWriter` and found each other through i
 `Relationships`, `ComplexColumns`, and `Constraints` properties; reader helpers took `AccessReader`
 and some called its public methods back; and page I/O lived in the `AccessBase` base class, so any
 service that read pages held the facade object. `ReaderServices` and `WriterServices` now build each
-facade's collaborators and inject their dependencies; the collaborators depend on `DatabaseFile` (the
-composite of the format profile, the page I/O, the TDEF parser and the owned-page enumeration), not on
-a facade; and the read and write workflows live in
+facade's collaborators and inject their dependencies; the collaborators receive the format profile, page source, TDEF parser and owned-page enumeration
+they use; and the read and write workflows live in
 services (`TableReader`, `IndexRowReader`, `SchemaReader`, `TableDataWriter`, `TableSchemaEditor`,
 `CatalogArtifactWriter`). The facades are now [AccessReader.cs](../JetDatabaseWriter/AccessReader.cs)
 (460 lines, mostly XML docs and one-line forwarders), [AccessWriter.cs](../JetDatabaseWriter/AccessWriter.cs)
@@ -60,8 +59,8 @@ regressions, including a check that neither facade is reachable from its service
 
 `TableReader` remains large but is cohesive around one concern (reading a table's rows); it is listed so
 it is watched, not because it mixes roles. `DatabaseFile` is now a composite of `JetFormat`,
-`PageFile`/`Pager`, `TableDefReader` and `OwnedDataPages`/`DataPageRows` that forwards to them;
-core-split-b removes the forwarders.
+`PageFile`/`Pager`, `TableDefReader` and `OwnedDataPages`. It owns their lifetime and exposes
+those parts; collaborators receive the parts directly.
 
 **Why it matters:** these files exceed what a reviewer can hold in working memory, force wide-ranging
 merge conflicts, and make it impossible to unit-test slices in isolation.

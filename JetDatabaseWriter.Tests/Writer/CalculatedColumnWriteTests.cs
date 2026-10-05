@@ -14,6 +14,7 @@ using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
@@ -1224,22 +1225,22 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(ColumnType.TextType, calculated.Single(c => c.Name == "AllNames").Type);
 
         Dictionary<string, byte[]>? slots = null;
-        await db.ForEachLiveTableRowAsync(
+        await db.OwnedPages.ForEachLiveTableRowAsync(
             entry.TDefPage,
             (row, _) =>
             {
                 byte[] page = row.Page;
                 int rowStart = row.Location.RowStart;
                 int rowSize = row.Location.RowSize;
-                Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
-                ColumnSlice nameSlice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, page, rowStart, rowSize, layout, firstName);
-                if (db.DecodeTextForFormat(page, rowStart + nameSlice.DataStart, nameSlice.DataLen) == "Ann")
+                Assert.True(RowDecodePlan.TryParseRowLayout(db.Format.RowFields, page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
+                ColumnSlice nameSlice = RowDecodePlan.ResolveColumnSlice(db.Format.RowFields, page, rowStart, rowSize, layout, firstName);
+                if (db.Format.DecodeText(page, rowStart + nameSlice.DataStart, nameSlice.DataLen) == "Ann")
                 {
                     slots = calculated.ToDictionary(
                         c => c.Name,
                         c =>
                         {
-                            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, page, rowStart, rowSize, layout, c);
+                            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Format.RowFields, page, rowStart, rowSize, layout, c);
                             return page.AsSpan(rowStart + slice.DataStart, slice.DataLen).ToArray();
                         });
                 }
@@ -1260,10 +1261,10 @@ public sealed class CalculatedColumnWriteTests
         byte[] allNames = slots["AllNames"];
         Assert.True(allNames.Length >= Constants.LongValue.HeaderSize, $"AllNames slot is {allNames.Length} bytes, shorter than a long-value header.");
         Assert.Contains(allNames[3], new byte[] { 0x80, 0x40, 0x00 });
-        var longValues = new LongValueDecoder(db.Profile, harness.Services.PageCache);
+        var longValues = new LongValueDecoder(db.Format, harness.Services.PageCache);
         byte[] lval = await longValues.ReadLongValueRawBytesAsync(allNames, 0, allNames.Length, TestContext.Current.CancellationToken);
         byte[] text = CalculatedColumnUtil.Unwrap(lval);
-        Assert.Equal("Lee, Ann=Lee, Ann", db.DecodeTextForFormat(text, 0, text.Length));
+        Assert.Equal("Lee, Ann=Lee, Ann", db.Format.DecodeText(text, 0, text.Length));
     }
 
     /// <summary>
@@ -1391,8 +1392,8 @@ public sealed class CalculatedColumnWriteTests
                 continue;
             }
 
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, TestContext.Current.CancellationToken);
-            int slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.DataPage.RowsStart + (rowIndex * 2)));
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, TestContext.Current.CancellationToken);
+            int slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.Format.DataPage.RowsStart + (rowIndex * 2)));
             if (LongValueStore.IsLvalPage(page) && (slot & Constants.DataPage.DeletedRowFlag) == 0)
             {
                 live.Add($"page {pageNumber} row {rowIndex}");
@@ -1722,14 +1723,14 @@ public sealed class CalculatedColumnWriteTests
         DatabaseFile db = harness.Database;
         ColumnInfo column = tableDef.Columns.Single(c => c.Name == columnName);
         var pointers = new List<uint>();
-        await db.ForEachLiveTableRowAsync(
+        await db.OwnedPages.ForEachLiveTableRowAsync(
             entry.TDefPage,
             (row, _) =>
             {
                 int rowStart = row.Location.RowStart;
                 int rowSize = row.Location.RowSize;
-                Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, row.Page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
-                ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, row.Page, rowStart, rowSize, layout, column);
+                Assert.True(RowDecodePlan.TryParseRowLayout(db.Format.RowFields, row.Page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout));
+                ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Format.RowFields, row.Page, rowStart, rowSize, layout, column);
                 if (slice.DataLen >= Constants.LongValue.HeaderSize
                     && LongValueDescriptor.TryRead(row.Page.AsSpan(rowStart + slice.DataStart, slice.DataLen), out LongValueDescriptor descriptor)
                     && descriptor.IsExternal

@@ -16,6 +16,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Writer workflows on overflow rows, the rows Access moved to another slot when
@@ -761,10 +762,10 @@ public sealed class OverflowRowWriteTests
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, Ct);
         Assert.NotNull(entry);
         TableDef? tableDef = await harness.ReadTableDefAsync(entry.TDefPage, Ct);
-        byte[]? tdef = await db.ReadTDefBytesAsync(entry.TDefPage, Ct);
+        byte[]? tdef = await db.TableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct);
         Assert.NotNull(tableDef);
         Assert.NotNull(tdef);
-        IndexMetadata? primaryKey = IndexCatalogReader.ReadMetadata(db.Profile, tdef, tableDef.Columns).Find(i => i.Kind == IndexKind.PrimaryKey);
+        IndexMetadata? primaryKey = IndexCatalogReader.ReadMetadata(db.Format, tdef, tableDef.Columns).Find(i => i.Kind == IndexKind.PrimaryKey);
         if (primaryKey is null)
         {
             return null;
@@ -786,12 +787,12 @@ public sealed class OverflowRowWriteTests
         Assert.NotNull(entry);
 
         var headers = new List<(long Page, int Row)>();
-        foreach (long pageNumber in await db.GetOwnedDataPagesAsync(entry.TDefPage, Ct))
+        foreach (long pageNumber in await db.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct))
         {
-            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(checked((int)(pageNumber * db.PageSizeBytes)) + db.DataPage.NumRows));
+            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(checked((int)(pageNumber * db.Format.PageSize)) + db.Format.DataPage.NumRows));
             for (int r = 0; r < numRows; r++)
             {
-                if ((SyntheticOverflowRows.ReadSlot(bytes, db.PageSizeBytes, db.DataPage.RowsStart, pageNumber, r) & OverflowFlags) == OverflowHeader)
+                if ((SyntheticOverflowRows.ReadSlot(bytes, db.Format.PageSize, db.Format.DataPage.RowsStart, pageNumber, r) & OverflowFlags) == OverflowHeader)
                 {
                     headers.Add((pageNumber, r));
                 }
@@ -811,7 +812,7 @@ public sealed class OverflowRowWriteTests
     {
         await using var ms = new MemoryStream(bytes, writable: false);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
-        return (harness.Database.PageSizeBytes, harness.Database.DataPage.RowsStart);
+        return (harness.Database.Format.PageSize, harness.Database.Format.DataPage.RowsStart);
     }
 
     private static bool IsZero(byte[] bytes, long pageNumber, int pageSize, int start, int length)
@@ -823,7 +824,7 @@ public sealed class OverflowRowWriteTests
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
         TableDef? msys = await harness.ReadTableDefAsync(2, Ct);
         Assert.NotNull(msys);
-        List<CatalogRow> rows = await new CatalogRowReader(harness.Database.Profile, harness.Database.TableDefs, harness.Database.OwnedPages).GetCatalogRowsAsync(msys, Ct);
+        List<CatalogRow> rows = await new CatalogRowReader(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages).GetCatalogRowsAsync(msys, Ct);
         return Assert.Single(rows, r => r.ObjectType == 1 && r.Name == name);
     }
 
@@ -843,11 +844,11 @@ public sealed class OverflowRowWriteTests
         int keyOrdinal = tableDef.FindColumnIndex(keyColumn);
 
         bool isOverflow = false;
-        await harness.Database.ForEachLiveTableRowAsync(
+        await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
             entry.TDefPage,
             async (row, token) =>
             {
-                object?[]? values = await harness.Database.TryReadColumnValuesTypedAsync(row.Location, tableDef, [keyOrdinal], token);
+                object?[]? values = await PartialColumnReader.TryReadColumnValuesTypedAsync(harness.Database.Format, harness.Database.Pages, row.Location, tableDef, [keyOrdinal], token);
                 if (values is [int id] && id == key)
                 {
                     isOverflow = row.Location.IsOverflow;

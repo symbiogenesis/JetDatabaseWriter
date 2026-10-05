@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -46,7 +47,7 @@ public sealed class RowDirectoryTests
     {
         await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
-        int top = db.PageSizeBytes;
+        int top = db.Format.PageSize;
         int shared = top - 300;
         byte[] page = BuildDataPage(db, top - 100, shared, shared | Deleted, shared | Deleted, shared | Deleted);
 
@@ -64,7 +65,7 @@ public sealed class RowDirectoryTests
     {
         await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
-        int top = db.PageSizeBytes;
+        int top = db.Format.PageSize;
         int shared = top - 300;
         byte[] page = BuildDataPage(db, shared | Deleted, shared | Deleted, top - 100, shared | Deleted, shared);
 
@@ -82,7 +83,7 @@ public sealed class RowDirectoryTests
     {
         await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
-        int top = db.PageSizeBytes;
+        int top = db.Format.PageSize;
         byte[] page = BuildDataPage(db, top - 600, top - 100, top - 300, (top - 450) | Deleted);
 
         AssertBounds(
@@ -106,17 +107,17 @@ public sealed class RowDirectoryTests
     {
         await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
-        int top = db.PageSizeBytes;
+        int top = db.Format.PageSize;
         byte[] page = BuildDataPage(db, top - 100, (top - 200) | Overflow, (top - 300) | Deleted, (top - 400) | Deleted | Overflow);
 
-        Assert.Equal([new RowBound(0, top - 100, 100), new RowBound(1, top - 200, 100, IsOverflowPointer: true)], db.ComputeRowDirectory(page));
-        Assert.Equal([new RowBound(0, top - 100, 100)], db.EnumerateLiveRowBounds(page).ToArray());
+        Assert.Equal([new RowBound(0, top - 100, 100), new RowBound(1, top - 200, 100, IsOverflowPointer: true)], DataPageRows.ComputeRowDirectory(db.Format, page));
+        Assert.Equal([new RowBound(0, top - 100, 100)], DataPageRows.EnumerateLiveRowBounds(db.Format, page).ToArray());
     }
 
     private static void AssertBounds(DatabaseFile db, byte[] page, params RowBound[] expected)
     {
-        Assert.Equal(expected, db.EnumerateLiveRowBounds(page).ToArray());
-        Assert.Equal(expected, db.ComputeRowDirectory(page));
+        Assert.Equal(expected, DataPageRows.EnumerateLiveRowBounds(db.Format, page).ToArray());
+        Assert.Equal(expected, DataPageRows.ComputeRowDirectory(db.Format, page));
     }
 
     /// <summary>
@@ -127,14 +128,14 @@ public sealed class RowDirectoryTests
     /// <param name="slots">The raw row-offset entries, in slot order.</param>
     private static byte[] BuildDataPage(DatabaseFile db, params int[] slots)
     {
-        byte[] page = new byte[db.PageSizeBytes];
+        byte[] page = new byte[db.Format.PageSize];
         page[0] = 0x01;
         page[1] = 0x01;
-        BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(db.DataPage.TDefOff), 2);
-        BinaryPrimitives.WriteUInt16LittleEndian(page.AsSpan(db.DataPage.NumRows), checked((ushort)slots.Length));
+        BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(db.Format.DataPage.TDefOff), 2);
+        BinaryPrimitives.WriteUInt16LittleEndian(page.AsSpan(db.Format.DataPage.NumRows), checked((ushort)slots.Length));
         for (int i = 0; i < slots.Length; i++)
         {
-            BinaryPrimitives.WriteUInt16LittleEndian(page.AsSpan(db.DataPage.RowsStart + (i * 2)), checked((ushort)slots[i]));
+            BinaryPrimitives.WriteUInt16LittleEndian(page.AsSpan(db.Format.DataPage.RowsStart + (i * 2)), checked((ushort)slots[i]));
         }
 
         return page;

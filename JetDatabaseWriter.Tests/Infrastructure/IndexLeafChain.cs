@@ -8,6 +8,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages.Models;
 using Xunit;
+using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -29,12 +30,12 @@ internal static class IndexLeafChain
     /// <returns>The leaf entries.</returns>
     public static async Task<List<IndexEntry>> ReadEntriesAsync(DatabaseFile db, long tdefPage, long rootPage, CancellationToken cancellationToken)
     {
-        IndexPageLayout layout = db.Profile.IndexPage;
+        IndexPageLayout layout = db.Format.IndexPage;
         long current = rootPage;
         for (int depth = 0; ; depth++)
         {
             Assert.True(depth < 16, $"Index descent from root {rootPage} did not reach a leaf.");
-            byte[] page = await db.ReadPageCopyAsync(current, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(current, cancellationToken);
             Assert.True(Ri32(page, 4) == tdefPage, $"Index page {current} is owned by page {Ri32(page, 4)}, not the table's TDEF {tdefPage}.");
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -42,7 +43,7 @@ internal static class IndexLeafChain
             }
 
             Assert.True(page[0] == Constants.IndexLeafPage.PageTypeIntermediate, $"Page {current} has type 0x{page[0]:X2}, not an index page.");
-            List<DecodedIntermediateEntry> children = IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes);
+            List<DecodedIntermediateEntry> children = IndexPageCodec.DecodeIntermediateEntries(layout, page, db.Format.PageSize);
             Assert.NotEmpty(children);
             current = children[0].ChildPage;
         }
@@ -53,10 +54,10 @@ internal static class IndexLeafChain
         while (current != 0)
         {
             Assert.True(--leafBudget > 0, "Index leaf chain does not end.");
-            byte[] leaf = await db.ReadPageCopyAsync(current, cancellationToken);
+            byte[] leaf = await db.Pages.ReadPageCopyAsync(current, cancellationToken);
             Assert.True(leaf[0] == Constants.IndexLeafPage.PageTypeLeaf, $"Leaf chain reached page {current} of type 0x{leaf[0]:X2}.");
             Assert.True(Ri32(leaf, 4) == tdefPage, $"Leaf page {current} is owned by page {Ri32(leaf, 4)}, not the table's TDEF {tdefPage}.");
-            foreach (IndexEntry entry in IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes))
+            foreach (IndexEntry entry in IndexPageCodec.DecodeLeafEntries(layout, leaf, db.Format.PageSize))
             {
                 Assert.True(previousKey is null || IndexPageCodec.CompareKeyBytes(previousKey, entry.Key) <= 0, $"Leaf page {current} holds a key out of order.");
                 previousKey = entry.Key;
@@ -83,7 +84,7 @@ internal static class IndexLeafChain
     /// <returns>The tree's page numbers.</returns>
     public static async Task<HashSet<long>> ReadTreePagesAsync(DatabaseFile db, long tdefPage, long rootPage, CancellationToken cancellationToken)
     {
-        IndexPageLayout layout = db.Profile.IndexPage;
+        IndexPageLayout layout = db.Format.IndexPage;
         var pages = new HashSet<long>();
         var pending = new Stack<long>();
         pending.Push(rootPage);
@@ -96,7 +97,7 @@ internal static class IndexLeafChain
             }
 
             Assert.True(pages.Count < 100_000, $"The index tree rooted at {rootPage} does not end.");
-            byte[] page = await db.ReadPageCopyAsync(current, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(current, cancellationToken);
             Assert.True(Ri32(page, 4) == tdefPage, $"Index page {current} is owned by page {Ri32(page, 4)}, not the table's TDEF {tdefPage}.");
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -105,7 +106,7 @@ internal static class IndexLeafChain
 
             Assert.True(page[0] == Constants.IndexLeafPage.PageTypeIntermediate, $"Page {current} has type 0x{page[0]:X2}, not an index page.");
             pending.Push(IndexPageCodec.ReadTailPage(layout, page));
-            foreach (DecodedIntermediateEntry child in IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes))
+            foreach (DecodedIntermediateEntry child in IndexPageCodec.DecodeIntermediateEntries(layout, page, db.Format.PageSize))
             {
                 pending.Push(child.ChildPage);
             }
@@ -121,17 +122,17 @@ internal static class IndexLeafChain
     /// <returns>The root pages, by real-index number.</returns>
     public static async Task<List<long>> ReadRealIndexRootsAsync(DatabaseFile db, long tdefPage, CancellationToken cancellationToken)
     {
-        byte[]? tdef = await db.ReadTDefBytesAsync(tdefPage, cancellationToken);
+        byte[]? tdef = await db.TableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken);
         Assert.NotNull(tdef);
-        int numCols = Ru16(tdef, db.TDef.NumCols);
-        int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tdef, numCols, numRealIdx);
+        int numCols = Ru16(tdef, db.Format.TDef.NumCols);
+        int numRealIdx = Ri32(tdef, db.Format.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, tdef, numCols, numRealIdx);
         Assert.True(realIdxDescStart >= 0, $"The TDEF at page {tdefPage} could not be walked.");
 
         var roots = new List<long>(numRealIdx);
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            Assert.True(db.IndexLayoutInfo.TryReadRealIdxSlot(tdef, realIdxDescStart, ri, out RealIdxSlot slot));
+            Assert.True(db.Format.Index.TryReadRealIdxSlot(tdef, realIdxDescStart, ri, out RealIdxSlot slot));
             roots.Add((uint)Ri32(tdef, slot.FirstDpOffset));
         }
 

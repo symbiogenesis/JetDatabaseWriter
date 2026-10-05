@@ -16,6 +16,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -120,7 +121,7 @@ internal static class ComplexColumnTestSupport
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
         List<LocatedRow> rows = await harness.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, Ct);
-        byte[] tdef = await harness.Database.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
+        byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
         return new RawTable(table.Definition, [.. rows.Select(r => r.Values)], tdef);
     }
 
@@ -162,14 +163,14 @@ internal static class ComplexColumnTestSupport
             }
 
             RowLocation location = row.Location;
-            byte[] page = await db.ReadPageCopyAsync(location.DataPageNumber, Ct);
-            int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(db.ReadRowColumnCount(page, location.RowStart));
+            byte[] page = await db.Pages.ReadPageCopyAsync(location.DataPageNumber, Ct);
+            int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(db.Format.ReadRowColumnCount(page, location.RowStart));
             Span<byte> nullMask = page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize);
             foreach (ColumnInfo column in table.Definition.Columns.Where(c => c.Type is ColumnType.ComplexType or ColumnType.AttachmentType))
             {
                 int? reference = slotFor(row.Values, column.Name);
                 JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, reference.HasValue);
-                BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(location.RowStart + db.RowFields.NumCols + column.FixedOff, 4), reference ?? 0);
+                BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(location.RowStart + db.Format.RowFields.NumCols + column.FixedOff, 4), reference ?? 0);
             }
 
             await harness.Pager.WritePageAsync(location.DataPageNumber, page, Ct);
@@ -177,7 +178,7 @@ internal static class ComplexColumnTestSupport
 
         if (clearCounter)
         {
-            byte[] tdef = await db.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
+            byte[] tdef = await db.Pages.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
             tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
             await harness.Pager.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
         }
@@ -192,7 +193,7 @@ internal static class ComplexColumnTestSupport
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(systemTableName, Ct);
         Assert.True(page > 0, $"System table '{systemTableName}' was not found.");
-        return await harness.Database.ReadPageCopyAsync(page, Ct);
+        return await harness.Database.Pages.ReadPageCopyAsync(page, Ct);
     }
 
     /// <summary>Returns the per-row complex reference held in <paramref name="row"/>'s slot for <paramref name="column"/>, or null.</summary>

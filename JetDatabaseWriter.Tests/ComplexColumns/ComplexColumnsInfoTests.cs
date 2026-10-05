@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -251,13 +252,13 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     {
         DatabaseFile file = harness.Database;
         long tdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
-        TableDef msys = Assert.IsType<TableDef>(await file.ReadTableDefAsync(tdefPage, TestContext.Current.CancellationToken));
+        TableDef msys = Assert.IsType<TableDef>(await file.TableDefs.ReadTableDefAsync(tdefPage, TestContext.Current.CancellationToken));
         ColumnInfo typeObjectId = Assert.IsType<ColumnInfo>(msys.FindColumn("ComplexTypeObjectID"));
         Assert.True(typeObjectId.IsFixed);
         foreach (RowLocation location in await file.GetLiveRowLocationsAsync(tdefPage, TestContext.Current.CancellationToken))
         {
-            byte[] page = await file.ReadPageCopyAsync(location.PageNumber, TestContext.Current.CancellationToken);
-            page.AsSpan(location.RowStart + file.RowFields.NumCols + typeObjectId.FixedOff, 4).Clear();
+            byte[] page = await file.Pages.ReadPageCopyAsync(location.PageNumber, TestContext.Current.CancellationToken);
+            page.AsSpan(location.RowStart + file.Format.RowFields.NumCols + typeObjectId.FixedOff, 4).Clear();
             await harness.Pager.WritePageAsync(location.PageNumber, page, TestContext.Current.CancellationToken);
         }
     }

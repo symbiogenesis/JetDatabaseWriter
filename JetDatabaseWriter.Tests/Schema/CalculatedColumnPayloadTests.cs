@@ -147,9 +147,9 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         }
 
         var rows = new List<Dictionary<string, byte[]>>();
-        DataPageLayout dataPage = reader.Database.Profile.DataPage;
-        RowFieldSizes rowSizes = reader.Database.Profile.RowFields;
-        long pageCount = reader.Database.PageCount;
+        DataPageLayout dataPage = reader.Database.Format.DataPage;
+        RowFieldSizes rowSizes = reader.Database.Format.RowFields;
+        long pageCount = reader.Database.Pages.PageCount;
 
         for (long pageNumber = 1; pageNumber < pageCount; pageNumber++)
         {
@@ -159,7 +159,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
                 continue;
             }
 
-            foreach (RowBound rowBound in reader.Database.EnumerateLiveRowBounds(page))
+            foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(reader.Database.Format, page))
             {
                 Assert.True(
                     TryParseRawRowLayout(page, rowBound.RowStart, rowBound.RowSize, tableDef.HasVarColumns, rowSizes, out RawRowLayout layout),

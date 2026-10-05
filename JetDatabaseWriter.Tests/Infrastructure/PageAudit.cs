@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -28,7 +29,7 @@ internal static class PageAudit
     {
         HashSet<long> globalMapPages = await ReadGlobalMapBitmapPagesAsync(db, cancellationToken);
         var allocated = new SortedSet<long>();
-        long pageCount = db.PageCount;
+        long pageCount = db.Pages.PageCount;
         for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
         {
             if (!globalMapPages.Contains(pageNumber) && !await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
@@ -52,10 +53,10 @@ internal static class PageAudit
     public static async ValueTask<SortedSet<long>> FindUnlinkedReservedPagesAsync(DatabaseFile db, PageAllocator allocator, CancellationToken cancellationToken)
     {
         var unlinked = new SortedSet<long>();
-        long pageCount = db.PageCount;
+        long pageCount = db.Pages.PageCount;
         for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
         {
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
             if ((page[0] == Constants.PageTypes.Freed || IsAllZero(page))
                 && !await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
             {
@@ -89,7 +90,7 @@ internal static class PageAudit
         }
 
         var unreachable = new SortedSet<long>();
-        long pageCount = db.PageCount;
+        long pageCount = db.Pages.PageCount;
         for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
         {
             if (reachable.Contains(pageNumber))
@@ -97,7 +98,7 @@ internal static class PageAudit
                 continue;
             }
 
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
             if (page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf
                 && Ri32(page, 4) == tdefPage
                 && !await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
@@ -116,10 +117,10 @@ internal static class PageAudit
     private static async ValueTask<HashSet<long>> ReadGlobalMapBitmapPagesAsync(DatabaseFile db, CancellationToken cancellationToken)
     {
         var bitmapPages = new HashSet<long>();
-        byte[] globalPage = await db.ReadPageCopyAsync(1, cancellationToken);
-        if (UsageMap.TryGetFirstRowBound(globalPage, db.DataPage, db.PageSizeBytes, out RowBound rowBound))
+        byte[] globalPage = await db.Pages.ReadPageCopyAsync(1, cancellationToken);
+        if (UsageMap.TryGetFirstRowBound(globalPage, db.Format.DataPage, db.Format.PageSize, out RowBound rowBound))
         {
-            await UsageMap.CollectReferenceBitmapPagesAsync(globalPage, rowBound, db.PageCount, db.ReadPageAsync, DatabaseFile.ReturnPage, bitmapPages, cancellationToken);
+            await UsageMap.CollectReferenceBitmapPagesAsync(globalPage, rowBound, db.Pages.PageCount, db.Pages.ReadPageAsync, PageBuffers.Return, bitmapPages, cancellationToken);
         }
 
         return bitmapPages;

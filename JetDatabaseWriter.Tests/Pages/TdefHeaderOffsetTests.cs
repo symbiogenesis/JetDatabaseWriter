@@ -168,7 +168,7 @@ public sealed class TdefHeaderOffsetTests
     public async Task Jet3AccessAuthoredFixture_DeclaredRowCount_MatchesLiveRows()
     {
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(TestDatabases.Jet3Test, cancellationToken: this.ct);
-        Assert.Equal(DatabaseFormat.Jet3Mdb, harness.Database.Format);
+        Assert.Equal(DatabaseFormat.Jet3Mdb, harness.Database.Format.Kind);
 
         var tdefPages = new List<long> { 2 };
         await using (AccessReader reader = await AccessReader.OpenAsync(

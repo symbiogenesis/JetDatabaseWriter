@@ -11,6 +11,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -211,10 +212,10 @@ public sealed class TableScanReadAheadTests : IDisposable
         await using (ReaderHarness sequential = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken))
         {
             DatabaseFile sequentialDb = sequential.Database;
-            expected = new byte[checked((int)sequentialDb.PageCount)][];
+            expected = new byte[checked((int)sequentialDb.Pages.PageCount)][];
             for (int page = 1; page < expected.Length; page++)
             {
-                expected[page] = await sequentialDb.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
+                expected[page] = await sequentialDb.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
             }
         }
 
@@ -225,7 +226,7 @@ public sealed class TableScanReadAheadTests : IDisposable
         for (int round = 0; round < 8; round++)
         {
             Task<byte[]>[] reads = [.. Enumerable.Range(1, expected.Length - 1).Select(page =>
-                Task.Run(async () => await db.ReadPageCopyAsync(page, TestContext.Current.CancellationToken)))];
+                Task.Run(async () => await db.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken)))];
             byte[][] actual = await Task.WhenAll(reads);
             for (int page = 1; page < expected.Length; page++)
             {
@@ -289,15 +290,15 @@ public sealed class TableScanReadAheadTests : IDisposable
             new AccessReaderOptions { PageCacheSize = 0, PageReadOptimizationMode = mode, UseLockFile = false },
             TestContext.Current.CancellationToken);
         DatabaseFile db = reader.Database;
-        Assert.Equal(mode != PageReadOptimizationMode.Disabled && !LibraryTarget.IsNetStandard, db.UsesRandomAccessPageReads);
-        int pageSize = db.PageSizeBytes;
-        int pageCount = checked((int)db.PageCount);
+        Assert.Equal(mode != PageReadOptimizationMode.Disabled && !LibraryTarget.IsNetStandard, db.Pages.UsesRandomAccessPageReads);
+        int pageSize = db.Format.PageSize;
+        int pageCount = checked((int)db.Pages.PageCount);
         Assert.Equal(file.Length, pageCount * pageSize);
 
         for (int round = 0; round < 4; round++)
         {
             Task<byte[]>[] reads = [.. Enumerable.Range(1, pageCount - 1).Select(page =>
-                Task.Run(async () => await db.ReadPageCopyAsync(page, TestContext.Current.CancellationToken)))];
+                Task.Run(async () => await db.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken)))];
             byte[][] actual = await Task.WhenAll(reads);
             for (int page = 1; page < pageCount; page++)
             {
@@ -342,7 +343,7 @@ public sealed class TableScanReadAheadTests : IDisposable
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(
             await reader.Services.Catalog.ResolveTableAsync(tableName, TestContext.Current.CancellationToken));
-        IReadOnlyList<long> pages = await reader.Database.GetOwnedDataPagesAsync(
+        IReadOnlyList<long> pages = await reader.Database.OwnedPages.GetOwnedDataPagesAsync(
             resolved.Entry.TDefPage,
             TestContext.Current.CancellationToken);
         Assert.True(pages.Count >= 3, $"'{tableName}' should span at least 3 data pages; it spans {pages.Count}.");

@@ -338,7 +338,7 @@ internal sealed class RelationshipCatalogStore(
     /// <c>NoRefIntegrity</c>, its row count differs from <c>ccolumn</c>, or a
     /// table or column name is empty. The table is found with one
     /// <c>MSysObjects</c> walk and its rows are read by page, through the
-    /// writer's <see cref="DatabaseFile"/>, so an active transaction's pending
+    /// writer's <see cref="OwnedDataPages"/>, so an active transaction's pending
     /// writes are visible.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

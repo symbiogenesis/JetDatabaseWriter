@@ -111,19 +111,19 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
             : await CreateDatabaseAsync(format, this.ct);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
-        Assert.Equal(format, db.Format);
+        Assert.Equal(format, db.Format.Kind);
 
-        byte[] record = db.EncodeTDefNameRecord(name);
+        byte[] record = db.Format.EncodeTDefNameRecord(name);
         byte[] td = [0xEE, .. record, 0xEE];
         int pos = 1;
 
-        Assert.Equal(record.Length, db.ReadColumnName(td, ref pos, out string decoded));
+        Assert.Equal(record.Length, db.Format.ReadColumnName(td, ref pos, out string decoded));
         Assert.Equal(name, decoded);
         Assert.Equal(1 + record.Length, pos);
         if (format == DatabaseFormat.Jet3Mdb)
         {
-            Assert.Equal(1252, db.CodePage);
-            byte[] ansi = db.AnsiEncoding.GetBytes(name);
+            Assert.Equal(1252, db.Format.CodePage);
+            byte[] ansi = db.Format.AnsiEncoding.GetBytes(name);
             Assert.Equal([(byte)ansi.Length, .. ansi], record);
         }
         else
@@ -138,8 +138,8 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
         await using MemoryStream stream = await cache.CopyToStreamAsync(TestDatabases.IndexTestV1997, this.ct);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
 
-        Assert.Equal(256, harness.Database.EncodeTDefNameRecord(new string('n', 255)).Length);
-        Assert.Throws<ArgumentException>(() => harness.Database.EncodeTDefNameRecord(new string('n', 256)));
+        Assert.Equal(256, harness.Database.Format.EncodeTDefNameRecord(new string('n', 255)).Length);
+        Assert.Throws<ArgumentException>(() => harness.Database.Format.EncodeTDefNameRecord(new string('n', 256)));
     }
 
     /// <summary>
@@ -159,19 +159,19 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
         await using MemoryStream stream = await cache.CopyToStreamAsync(path, this.ct);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
-        IndexLayout layout = db.IndexLayoutInfo;
-        Assert.Equal(format, db.Format);
+        IndexLayout layout = db.Format.Index;
+        Assert.Equal(format, db.Format.Kind);
 
         CatalogEntry child = (await harness.GetCatalogEntryAsync("Table1", this.ct))!;
         CatalogEntry parent = (await harness.GetCatalogEntryAsync("Table2", this.ct))!;
         int foreignKeyColumn = (await harness.ReadTableDefAsync(child.TDefPage, this.ct))!.FindColumn("otherfk1")!.ColNum;
-        byte[] td = (await db.ReadTDefBytesAsync(child.TDefPage, this.ct))!;
-        int numCols = Ru16(td, db.TDef.NumCols);
-        int numIdx = Ri32(td, db.TDef.NumIdx);
-        int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
+        byte[] td = (await db.TableDefs.ReadTDefBytesAsync(child.TDefPage, this.ct))!;
+        int numCols = Ru16(td, db.Format.TDef.NumCols);
+        int numIdx = Ri32(td, db.Format.TDef.NumIdx);
+        int numRealIdx = Ri32(td, db.Format.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, td, numCols, numRealIdx);
         IndexSectionAnchors anchors = layout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(db.Profile, td, anchors.LogIdxNamesStart, numIdx);
+        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(db.Format, td, anchors.LogIdxNamesStart, numIdx);
         int li = names.IndexOf("Table2Table1");
         Assert.True(li >= 0);
 
@@ -204,10 +204,10 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
         int namePos = anchors.LogIdxNamesStart;
         for (int i = 0; i < li; i++)
         {
-            Assert.True(db.ReadColumnName(td, ref namePos, out _) > 0);
+            Assert.True(db.Format.ReadColumnName(td, ref namePos, out _) > 0);
         }
 
-        byte[] nameRecord = db.EncodeTDefNameRecord("Table2Table1");
+        byte[] nameRecord = db.Format.EncodeTDefNameRecord("Table2Table1");
         Assert.Equal(td.AsSpan(namePos, nameRecord.Length).ToArray(), nameRecord);
     }
 

@@ -60,10 +60,10 @@ internal sealed class ReaderHarness : IAsyncDisposable
 
         if (options.UsesPositionalPageReads(openedFromPath: true))
         {
-            harness.Database.EnableRandomAccessPageReadsIfSupported();
+            harness.Database.Pages.EnableRandomAccessPageReadsIfSupported();
         }
 
-        harness.Database.ReadsInlineOnThreadPool = true;
+        harness.Database.Pages.ReadsInlineOnThreadPool = true;
         return harness;
     }
 
@@ -99,13 +99,13 @@ internal sealed class ReaderHarness : IAsyncDisposable
     /// <param name="tdefPage">The TDEF page number.</param>
     /// <param name="cancellationToken">A token used to cancel the read.</param>
     public ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
-        => this.Database.ReadTableDefAsync(tdefPage, cancellationToken);
+        => this.Database.TableDefs.ReadTableDefAsync(tdefPage, cancellationToken);
 
     /// <summary>Returns a caller-owned copy of a decrypted page.</summary>
     /// <param name="pageNumber">The page number.</param>
     /// <param name="cancellationToken">A token used to cancel the read.</param>
     public ValueTask<byte[]> ReadPageCopyAsync(long pageNumber, CancellationToken cancellationToken = default)
-        => this.Database.ReadPageCopyAsync(pageNumber, cancellationToken);
+        => this.Database.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()

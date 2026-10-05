@@ -91,7 +91,7 @@ public sealed class OwnedMapPolicyTests
             Assert.False(await policy.CanMaintainAsync(tdefPage, Ct));
             Assert.True(
                 counting.BytesRead == 0,
-                $"The repeated answer for TDEF page {tdefPage} read pages {string.Join(", ", counting.PagesRead(harness.Database.PageSizeBytes).Order())}.");
+                $"The repeated answer for TDEF page {tdefPage} read pages {string.Join(", ", counting.PagesRead(harness.Database.Format.PageSize).Order())}.");
         }
 
         Assert.True(await policy.CanMaintainAsync(userTable, Ct));
@@ -116,7 +116,7 @@ public sealed class OwnedMapPolicyTests
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
         CatalogOwnedMapPolicy policy = harness.Services.OwnedMaps;
-        long unnamedPage = harness.Database.PageCount + 10;
+        long unnamedPage = harness.Database.Pages.PageCount + 10;
 
         Assert.False(await policy.CanMaintainAsync(unnamedPage, Ct));
         Assert.Contains(unnamedPage, policy.Capture().RefusedTdefs);

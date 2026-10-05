@@ -24,7 +24,7 @@ public sealed class SystemTableIndexMaintenanceTests
         await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-        TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
+        TableDef tableDef = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ObjectId", -70_001);
         tableDef.SetValueByName(row, "SID", Constants.Aces.UsersSid);
@@ -54,7 +54,7 @@ public sealed class SystemTableIndexMaintenanceTests
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         for (int i = 0; i < 700; i++)
         {
-            TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
+            TableDef tableDef = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
             object[] row = tableDef.CreateNullValueRow();
             tableDef.SetValueByName(row, "ObjectId", -70_001 - i);
             tableDef.SetValueByName(row, "SID", Constants.Aces.UsersSid);
@@ -76,7 +76,7 @@ public sealed class SystemTableIndexMaintenanceTests
         bool anyGrown = false;
         foreach (long root in roots)
         {
-            anyGrown |= (await writer.Database.ReadPageCopyAsync(root, ct))[0] == Constants.IndexLeafPage.PageTypeIntermediate;
+            anyGrown |= (await writer.Database.Pages.ReadPageCopyAsync(root, ct))[0] == Constants.IndexLeafPage.PageTypeIntermediate;
             await IndexLeafChain.AssertCoversLiveRowsAsync(writer.Database, tdefPage, root, ct);
         }
 
@@ -138,7 +138,7 @@ public sealed class SystemTableIndexMaintenanceTests
         await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, ct);
-        TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
+        TableDef tableDef = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ColumnName", "SyntheticComplexColumn");
         tableDef.SetValueByName(row, "ComplexID", 70_001);
@@ -164,7 +164,7 @@ public sealed class SystemTableIndexMaintenanceTests
         await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-        TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
+        TableDef tableDef = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
         await CorruptFirstIndexRootPageTypeAsync(writer, tdefPage, ct);
 
         object[] row = tableDef.CreateNullValueRow();
@@ -228,27 +228,27 @@ public sealed class SystemTableIndexMaintenanceTests
     private static async ValueTask CorruptFirstIndexRootPageTypeAsync(WriterHarness writer, long tdefPage, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
-        byte[] tdef = await db.ReadPageAsync(tdefPage, cancellationToken);
+        byte[] tdef = await db.Pages.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, db.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.Format.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.Format.TDef.NumRealIdx);
             Assert.True(numRealIdx > 0, $"Expected TDEF page {tdefPage} to declare at least one real index.");
 
-            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
+            int colStart = db.Format.TDef.BlockEnd + (numRealIdx * db.Format.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.Format.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.Format.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk TDEF page {tdefPage} column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            int physStart = db.IndexLayoutInfo.RealIdxPhysOffset(realIdxDescStart, 0);
-            int firstDp = Ri32(tdef, db.IndexLayoutInfo.FirstDpAbsoluteOffset(physStart));
+            int physStart = db.Format.Index.RealIdxPhysOffset(realIdxDescStart, 0);
+            int firstDp = Ri32(tdef, db.Format.Index.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, $"Expected TDEF page {tdefPage} first real-index root page to be allocated.");
 
-            byte[] root = await db.ReadPageAsync(firstDp, cancellationToken);
+            byte[] root = await db.Pages.ReadPageAsync(firstDp, cancellationToken);
             try
             {
                 Assert.True(

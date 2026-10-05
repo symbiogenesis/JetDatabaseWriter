@@ -11,8 +11,10 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Writer workflows that read the table they are about to change (update,
@@ -339,13 +341,13 @@ public sealed class TransactionReadVisibilityTests
         await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, WriterOptions(WriteMode.Direct), cancellationToken: Ct))
         {
             CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", Ct);
-            TableDef tableDef = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, "T", Ct);
+            TableDef tableDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, "T", Ct);
             List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, Ct);
             RowLocation first = locations[0];
-            Assert.Equal(1, (await harness.Database.TryReadColumnValuesTypedAsync(first, tableDef, [0], Ct))?[0]);
+            Assert.Equal(1, (await PartialColumnReader.TryReadColumnValuesTypedAsync(harness.Database.Format, harness.Database.Pages, first, tableDef, [0], Ct))?[0]);
 
-            byte[] page = await harness.Database.ReadPageCopyAsync(first.PageNumber, Ct);
-            page.AsSpan(first.RowStart, harness.Database.RowFields.NumCols).Clear();
+            byte[] page = await harness.Database.Pages.ReadPageCopyAsync(first.PageNumber, Ct);
+            page.AsSpan(first.RowStart, harness.Database.Format.RowFields.NumCols).Clear();
             await harness.Pager.WritePageAsync(first.PageNumber, page, Ct);
         }
 

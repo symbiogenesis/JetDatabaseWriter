@@ -14,6 +14,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -71,9 +72,9 @@ public sealed class OwnedUsageMapGrowthTests
 
         counting.Reset();
         IReadOnlyList<long> ownedPages = await db.OwnedPages.GetOwnedDataPagesAsync(tdefPage, Ct);
-        HashSet<long> pagesRead = counting.PagesRead(db.PageSizeBytes);
+        HashSet<long> pagesRead = counting.PagesRead(db.Format.PageSize);
         Assert.False(
-            pagesRead.IsSupersetOf(Enumerable.Range(3, checked((int)db.PageCount) - 3).Select(page => (long)page)),
+            pagesRead.IsSupersetOf(Enumerable.Range(3, checked((int)db.Pages.PageCount) - 3).Select(page => (long)page)),
             "The reader rejected the owned-pages map and took the whole-file owned-page pass.");
 
         HashSet<long> dataPages = await ReadDataPagesOfAsync(db, tdefPage);
@@ -209,11 +210,11 @@ public sealed class OwnedUsageMapGrowthTests
         // One-page rows take the end of file to about half a tree below page
         // 512, so the trees the next rebuild appends straddle it.
         long target = InlineWindow - (largestTree / 2);
-        Assert.True(db.PageCount < target, $"The file already has {db.PageCount} pages; the next tree ({largestTree} pages) would start past page {target}.");
+        Assert.True(db.Pages.PageCount < target, $"The file already has {db.Pages.PageCount} pages; the next tree ({largestTree} pages) would start past page {target}.");
         int nextId = 1;
-        while (db.PageCount < target)
+        while (db.Pages.PageCount < target)
         {
-            int rows = checked((int)(target - db.PageCount));
+            int rows = checked((int)(target - db.Pages.PageCount));
             _ = await writer.InsertRowsAsync(WideTable, WideRows(nextId, rows), Ct);
             nextId += rows;
         }
@@ -344,10 +345,10 @@ public sealed class OwnedUsageMapGrowthTests
     private static async Task<HashSet<long>> ReadDataPagesOfAsync(DatabaseFile db, long tdefPage)
     {
         var pages = new HashSet<long>();
-        for (long pageNumber = 3; pageNumber < db.PageCount; pageNumber++)
+        for (long pageNumber = 3; pageNumber < db.Pages.PageCount; pageNumber++)
         {
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, Ct);
-            if (page[0] == Constants.PageTypes.Data && Ri32(page, db.DataPage.TDefOff) == tdefPage)
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, Ct);
+            if (page[0] == Constants.PageTypes.Data && Ri32(page, db.Format.DataPage.TDefOff) == tdefPage)
             {
                 _ = pages.Add(pageNumber);
             }
@@ -401,8 +402,8 @@ public sealed class OwnedUsageMapGrowthTests
 
     private static async Task<UsageMapRow> ReadTableMapRowAsync(DatabaseFile db, long tdefPage, bool freeSpace)
     {
-        byte[] tdef = await db.ReadPageCopyAsync(tdefPage, Ct);
-        int pointer = freeSpace ? db.TDef.FreePages : db.TDef.UsedPages;
+        byte[] tdef = await db.Pages.ReadPageCopyAsync(tdefPage, Ct);
+        int pointer = freeSpace ? db.Format.TDef.FreePages : db.Format.TDef.UsedPages;
         return await ReadUsageMapRowAsync(db, UsageMap.ReadUInt24(tdef, pointer + 1), tdef[pointer]);
     }
 
@@ -411,17 +412,17 @@ public sealed class OwnedUsageMapGrowthTests
     /// <param name="tdefPage">The table's TDEF page.</param>
     private static async Task<List<IndexMap>> ReadIndexMapsAsync(DatabaseFile db, long tdefPage)
     {
-        byte[]? tdef = await db.ReadTDefBytesAsync(tdefPage, Ct);
+        byte[]? tdef = await db.TableDefs.ReadTDefBytesAsync(tdefPage, Ct);
         Assert.NotNull(tdef);
-        int numCols = Ru16(tdef, db.TDef.NumCols);
-        int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tdef, numCols, numRealIdx);
+        int numCols = Ru16(tdef, db.Format.TDef.NumCols);
+        int numRealIdx = Ri32(tdef, db.Format.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, tdef, numCols, numRealIdx);
         Assert.True(realIdxDescStart >= 0, $"The TDEF at page {tdefPage} could not be walked.");
 
         var maps = new List<IndexMap>(numRealIdx);
         for (int realIdx = 0; realIdx < numRealIdx; realIdx++)
         {
-            Assert.True(db.IndexLayoutInfo.TryReadRealIdxSlot(tdef, realIdxDescStart, realIdx, out RealIdxSlot slot));
+            Assert.True(db.Format.Index.TryReadRealIdxSlot(tdef, realIdxDescStart, realIdx, out RealIdxSlot slot));
             int usedPages = slot.FirstDpOffset - 4;
             HashSet<long> tree = await IndexLeafChain.ReadTreePagesAsync(db, tdefPage, (uint)Ri32(tdef, slot.FirstDpOffset), Ct);
             maps.Add(new IndexMap(tree, await ReadUsageMapRowAsync(db, UsageMap.ReadUInt24(tdef, usedPages + 1), tdef[usedPages])));
@@ -432,14 +433,14 @@ public sealed class OwnedUsageMapGrowthTests
 
     private static async Task<UsageMapRow> ReadUsageMapRowAsync(DatabaseFile db, int usageMapPage, int rowIndex)
     {
-        byte[] page = await db.ReadPageCopyAsync(usageMapPage, Ct);
+        byte[] page = await db.Pages.ReadPageCopyAsync(usageMapPage, Ct);
         Assert.True(
-            UsageMap.TryGetRowBound(page, db.DataPage, db.PageSizeBytes, rowIndex, out RowBound bound),
+            UsageMap.TryGetRowBound(page, db.Format.DataPage, db.Format.PageSize, rowIndex, out RowBound bound),
             $"Usage-map page {usageMapPage} has no row {rowIndex}.");
 
         var pages = new List<long>();
         Assert.True(
-            await UsageMap.TryEnumeratePagesAsync(page, bound, db.PageSizeBytes, db.PageCount, minimumPageNumber: 1, strict: true, db.ReadPageAsync, DatabaseFile.ReturnPage, pages, Ct),
+            await UsageMap.TryEnumeratePagesAsync(page, bound, db.Format.PageSize, db.Pages.PageCount, minimumPageNumber: 1, strict: true, db.Pages.ReadPageAsync, PageBuffers.Return, pages, Ct),
             $"Row {rowIndex} of usage-map page {usageMapPage} is not a usage map whose pages all lie in the file.");
 
         byte type = page[bound.RowStart];
@@ -465,7 +466,7 @@ public sealed class OwnedUsageMapGrowthTests
         Assert.NotEmpty(row.BitmapPages);
         foreach (int bitmapPage in row.BitmapPages)
         {
-            byte[] page = await db.ReadPageCopyAsync(bitmapPage, Ct);
+            byte[] page = await db.Pages.ReadPageCopyAsync(bitmapPage, Ct);
             Assert.Equal(BitmapPageHeader, page[..BitmapPageHeader.Length]);
         }
     }

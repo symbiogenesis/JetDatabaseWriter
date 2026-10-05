@@ -14,9 +14,8 @@ using JetDatabaseWriter.ValueDecoding;
 /// Composition root for one <see cref="AccessReader"/>. Builds every reader
 /// collaborator once and passes each one the parts of the <see cref="DatabaseFile"/>
 /// it reads through (the format profile, the pages, the TDEF reader and the
-/// owned-page walk) plus the specific sibling services it uses. The row
-/// decoder and the table reader still take the whole file, which they hand to
-/// <see cref="RowDecodePlan"/> as the row format source. No
+/// owned-page walk) plus the specific sibling services it uses. Row decoders
+/// take the immutable format directly. No
 /// collaborator receives the facade or this object, so the service graph is
 /// acyclic and each dependency is visible in a constructor signature.
 /// </summary>
@@ -36,18 +35,18 @@ internal sealed class ReaderServices : IDisposable
             db.DatabasePath);
 
         this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader));
-        JetFormat format = db.Profile;
+        JetFormat format = db.Format;
         TableDefReader tableDefs = db.TableDefs;
         this.PageCache = new ReaderPageCache(format, db.Pages, options.PageCacheSize);
 
-        var rows = new RowDecoder(db.Profile, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache), options.StrictParsing);
+        var rows = new RowDecoder(db.Format, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache), options.StrictParsing);
         var catalogRows = new CatalogRowReader(format, tableDefs, db.OwnedPages);
         this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows);
         this.Catalog = new CatalogReader(format, tableDefs, this.TableCatalog, catalogRows, rows, new ColumnPropertyReader(format, tableDefs, rows));
 
         var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);
-        this.Tables = new TableReader(db.Profile, db.Pages, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
+        this.Tables = new TableReader(db.Format, db.Pages, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
         this.Indexes = new IndexRowReader(format, tableDefs, this.PageCache, rows, this.Catalog, complexColumns, this.Tables, this.Operations);
         this.Schema = new SchemaReader(format, db.Pages, tableDefs, this.PageCache, this.Catalog, complexColumns, this.LinkedTables, this.Tables, this.Operations);
         this.ComplexItems = new ComplexItemReader(complexColumns, this.Operations);

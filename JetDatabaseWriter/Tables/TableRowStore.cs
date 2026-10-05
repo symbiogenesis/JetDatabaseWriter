@@ -276,7 +276,7 @@ internal sealed class TableRowStore(
             bool secureErase = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
             if ((dataMode == DeletedRowDataMode.Clear || secureErase) && DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound header))
             {
-                if (await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, ReturnPage, cancellationToken).ConfigureAwait(false) is { } target)
+                if (await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, PageBuffers.Return, cancellationToken).ConfigureAwait(false) is { } target)
                 {
                     try
                     {

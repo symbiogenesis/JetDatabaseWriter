@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Lists the user tables of a database straight from the <c>MSysObjects</c> data
@@ -48,10 +49,10 @@ internal static class RawCatalogWalker
         Assert.NotNull(id);
 
         var names = new SortedSet<string>(StringComparer.Ordinal);
-        for (long pageNumber = 3; pageNumber < db.PageCount; pageNumber++)
+        for (long pageNumber = 3; pageNumber < db.Pages.PageCount; pageNumber++)
         {
             byte[] page = await harness.ReadPageCopyAsync(pageNumber, cancellationToken);
-            if (page[0] != 0x01 || BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(db.DataPage.TDefOff)) != 2)
+            if (page[0] != 0x01 || BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(db.Format.DataPage.TDefOff)) != 2)
             {
                 continue;
             }
@@ -73,10 +74,10 @@ internal static class RawCatalogWalker
                     continue;
                 }
 
-                string rowName = db.DecodeSimpleColumnValue(found.RowPage, found.Start, found.Size, name);
-                int rowType = int.TryParse(db.DecodeSimpleColumnValue(found.RowPage, found.Start, found.Size, type), NumberStyles.Integer, CultureInfo.InvariantCulture, out int t) ? t : 0;
-                long rowFlags = long.TryParse(db.DecodeSimpleColumnValue(found.RowPage, found.Start, found.Size, flags), NumberStyles.Integer, CultureInfo.InvariantCulture, out long f) ? f : 0;
-                long rowId = long.TryParse(db.DecodeSimpleColumnValue(found.RowPage, found.Start, found.Size, id), NumberStyles.Integer, CultureInfo.InvariantCulture, out long i) ? i : 0;
+                string rowName = ScalarColumnReader.DecodeSimpleColumnValue(db.Format, found.RowPage, found.Start, found.Size, name);
+                int rowType = int.TryParse(ScalarColumnReader.DecodeSimpleColumnValue(db.Format, found.RowPage, found.Start, found.Size, type), NumberStyles.Integer, CultureInfo.InvariantCulture, out int t) ? t : 0;
+                long rowFlags = long.TryParse(ScalarColumnReader.DecodeSimpleColumnValue(db.Format, found.RowPage, found.Start, found.Size, flags), NumberStyles.Integer, CultureInfo.InvariantCulture, out long f) ? f : 0;
+                long rowId = long.TryParse(ScalarColumnReader.DecodeSimpleColumnValue(db.Format, found.RowPage, found.Start, found.Size, id), NumberStyles.Integer, CultureInfo.InvariantCulture, out long i) ? i : 0;
                 if (rowType == 1 && (unchecked((uint)rowFlags) & SystemObjectFlags) == 0 && rowName.Length > 0 && (rowId & 0xFFFFFF) > 0)
                 {
                     _ = names.Add(rowName);
@@ -88,10 +89,10 @@ internal static class RawCatalogWalker
     }
 
     private static int SlotCount(DatabaseFile db, byte[] page)
-        => Math.Min(BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.DataPage.NumRows)), (db.PageSizeBytes - db.DataPage.RowsStart) / 2);
+        => Math.Min(BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.Format.DataPage.NumRows)), (db.Format.PageSize - db.Format.DataPage.RowsStart) / 2);
 
     private static int Slot(DatabaseFile db, byte[] page, int rowIndex)
-        => BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.DataPage.RowsStart + (rowIndex * 2)));
+        => BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.Format.DataPage.RowsStart + (rowIndex * 2)));
 
     /// <summary>Returns the bytes from <paramref name="start"/> to the next greater offset of any slot.</summary>
     /// <param name="db">The open database, which supplies the page layout.</param>
@@ -99,7 +100,7 @@ internal static class RawCatalogWalker
     /// <param name="start">The row's start offset.</param>
     private static int RowSize(DatabaseFile db, byte[] page, int start)
     {
-        int end = db.PageSizeBytes;
+        int end = db.Format.PageSize;
         int numRows = SlotCount(db, page);
         for (int r = 0; r < numRows; r++)
         {
@@ -125,7 +126,7 @@ internal static class RawCatalogWalker
 
             int targetRow = page[pointerStart];
             long targetPage = page[pointerStart + 1] | (page[pointerStart + 2] << 8) | (page[pointerStart + 3] << 16);
-            if (targetPage <= 0 || targetPage >= db.PageCount)
+            if (targetPage <= 0 || targetPage >= db.Pages.PageCount)
             {
                 return null;
             }

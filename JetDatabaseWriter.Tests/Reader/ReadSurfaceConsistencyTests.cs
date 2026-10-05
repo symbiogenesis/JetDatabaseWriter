@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -419,24 +420,24 @@ public sealed class ReadSurfaceConsistencyTests
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(TableName, cancellationToken);
         Assert.NotNull(entry);
 
-        IReadOnlyList<long> pages = await harness.Database.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken);
+        IReadOnlyList<long> pages = await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken);
         Assert.True(pages.Count >= 2, $"Expected the table to span several data pages; it has {pages.Count}.");
 
-        int pageStart = checked((int)(pages[1] * harness.Database.PageSizeBytes));
+        int pageStart = checked((int)(pages[1] * harness.Database.Format.PageSize));
         corrupt(harness.Database, bytes, pageStart);
     }
 
     private static void CorruptFirstRowColumnCount(DatabaseFile database, byte[] bytes, int pageStart)
     {
-        byte[] page = bytes.AsSpan(pageStart, database.PageSizeBytes).ToArray();
-        RowBound row = database.EnumerateLiveRowBounds(page).First();
-        bytes.AsSpan(pageStart + row.RowStart, database.RowFields.NumCols).Clear();
+        byte[] page = bytes.AsSpan(pageStart, database.Format.PageSize).ToArray();
+        RowBound row = DataPageRows.EnumerateLiveRowBounds(database.Format, page).First();
+        bytes.AsSpan(pageStart + row.RowStart, database.Format.RowFields.NumCols).Clear();
     }
 
     private static void CorruptRowCountPastCapacity(DatabaseFile database, byte[] bytes, int pageStart)
     {
-        int capacity = (database.PageSizeBytes - database.DataPage.RowsStart) / 2;
-        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(pageStart + database.DataPage.NumRows, 2), checked((ushort)(capacity + 100)));
+        int capacity = (database.Format.PageSize - database.Format.DataPage.RowsStart) / 2;
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(pageStart + database.Format.DataPage.NumRows, 2), checked((ushort)(capacity + 100)));
     }
 
     private async ValueTask<byte[]> CreateItemsDatabaseAsync(DatabaseFormat format)

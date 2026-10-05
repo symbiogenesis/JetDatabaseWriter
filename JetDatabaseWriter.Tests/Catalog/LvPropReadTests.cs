@@ -291,7 +291,7 @@ public sealed class LvPropReadTests
 
         Assert.Contains(rows, r => r.Id != entry.TDefPage && (r.Id & LowIdBits) == entry.TDefPage);
         RawCatalogRow own = Assert.Single(rows, r => r.Id == entry.TDefPage);
-        ColumnPropertyBlock oracle = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(await own.ReadLvPropAsync(harness.Database), harness.Database.Format));
+        ColumnPropertyBlock oracle = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(await own.ReadLvPropAsync(harness.Database), harness.Database.Format.Kind));
 
         ColumnPropertyBlock? read = await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct);
         Assert.Equal(Describe(oracle), Describe(read));
@@ -300,7 +300,7 @@ public sealed class LvPropReadTests
         foreach (ColumnMetadata column in await reader.GetColumnMetadataAsync(table, Ct))
         {
             Assert.Equal(
-                oracle.FindTarget(column.Name)?.GetTextValue(Constants.ColumnPropertyNames.Description, harness.Database.Format),
+                oracle.FindTarget(column.Name)?.GetTextValue(Constants.ColumnPropertyNames.Description, harness.Database.Format.Kind),
                 column.Description);
         }
     }
@@ -377,7 +377,7 @@ public sealed class LvPropReadTests
         Assert.Equal(16_175, blob.Length);
         ColumnPropertyBlock? read = await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct);
         Assert.Equal(90, read?.Targets.Count);
-        Assert.Equal(Describe(ColumnPropertyBlock.Parse(blob, harness.Database.Format)), Describe(read));
+        Assert.Equal(Describe(ColumnPropertyBlock.Parse(blob, harness.Database.Format.Kind)), Describe(read));
     }
 
     /// <summary>
@@ -467,13 +467,13 @@ public sealed class LvPropReadTests
         {
             ColumnPropertyBlock? read = await harness.Services.Catalog.ReadLvPropForTableAsync(table.Id, Ct);
             byte[]? ownBlob = await table.ReadLvPropAsync(db);
-            Assert.Equal(Describe(ColumnPropertyBlock.Parse(ownBlob, db.Format)), Describe(read));
+            Assert.Equal(Describe(ColumnPropertyBlock.Parse(ownBlob, db.Format.Kind)), Describe(read));
 
             // The earlier read scanned the rows in page and slot order, as
             // ReadRawCatalogRowsAsync lists them, and took the first whose Id's
             // low 24 bits equal the TDEF page.
             RawCatalogRow legacyRow = rows.First(r => (r.Id & LowIdBits) == table.Id);
-            var legacyBlock = ColumnPropertyBlock.Parse(await ReadLegacyLvPropAsync(db, legacyRow), db.Format);
+            var legacyBlock = ColumnPropertyBlock.Parse(await ReadLegacyLvPropAsync(db, legacyRow), db.Format.Kind);
             if (Describe(legacyBlock).SequenceEqual(Describe(read)))
             {
                 continue;
@@ -563,27 +563,27 @@ public sealed class LvPropReadTests
     /// <param name="db">The open database.</param>
     private static async Task<IReadOnlyList<RawCatalogRow>> ReadRawCatalogRowsAsync(DatabaseFile db)
     {
-        TableDef msys = Assert.IsType<TableDef>(await db.ReadTableDefAsync(2, Ct));
+        TableDef msys = Assert.IsType<TableDef>(await db.TableDefs.ReadTableDefAsync(2, Ct));
         ColumnInfo id = Assert.IsType<ColumnInfo>(msys.FindColumn("Id"));
         ColumnInfo name = Assert.IsType<ColumnInfo>(msys.FindColumn("Name"));
         ColumnInfo type = Assert.IsType<ColumnInfo>(msys.FindColumn("Type"));
         ColumnInfo? lvProp = msys.FindColumn("LvProp");
         var rows = new List<RawCatalogRow>();
-        await db.ForEachLiveTableRowAsync(
+        await db.OwnedPages.ForEachLiveTableRowAsync(
             2,
             (row, _) =>
             {
                 byte[] bytes = row.Page.AsSpan(row.Location.RowStart, row.Location.RowSize).ToArray();
                 ColumnSlice slice = default;
-                if (lvProp is not null && RowDecodePlan.TryParseRowLayout(db.RowFields, bytes, 0, bytes.Length, hasVarColumns: true, out RowLayout layout))
+                if (lvProp is not null && RowDecodePlan.TryParseRowLayout(db.Format.RowFields, bytes, 0, bytes.Length, hasVarColumns: true, out RowLayout layout))
                 {
-                    slice = RowDecodePlan.ResolveColumnSlice(db.RowFields, bytes, 0, bytes.Length, layout, lvProp);
+                    slice = RowDecodePlan.ResolveColumnSlice(db.Format.RowFields, bytes, 0, bytes.Length, layout, lvProp);
                 }
 
                 rows.Add(new RawCatalogRow(
-                    long.TryParse(db.DecodeSimpleColumnValue(bytes, 0, bytes.Length, id), NumberStyles.Integer, CultureInfo.InvariantCulture, out long idValue) ? idValue : 0,
-                    db.DecodeSimpleColumnValue(bytes, 0, bytes.Length, name),
-                    int.TryParse(db.DecodeSimpleColumnValue(bytes, 0, bytes.Length, type), NumberStyles.Integer, CultureInfo.InvariantCulture, out int typeValue) ? typeValue : 0,
+                    long.TryParse(ScalarColumnReader.DecodeSimpleColumnValue(db.Format, bytes, 0, bytes.Length, id), NumberStyles.Integer, CultureInfo.InvariantCulture, out long idValue) ? idValue : 0,
+                    ScalarColumnReader.DecodeSimpleColumnValue(db.Format, bytes, 0, bytes.Length, name),
+                    int.TryParse(ScalarColumnReader.DecodeSimpleColumnValue(db.Format, bytes, 0, bytes.Length, type), NumberStyles.Integer, CultureInfo.InvariantCulture, out int typeValue) ? typeValue : 0,
                     bytes,
                     slice));
                 return new ValueTask<bool>(true);
@@ -676,8 +676,8 @@ public sealed class LvPropReadTests
                 return null;
             }
 
-            using var pages = new ReaderPageCache(db.Profile, db.Pages, capacity: 0);
-            return await new LongValueDecoder(db.Profile, pages).ReadLongValueBytesExactAsync(this.Bytes, this.LvPropSlice.DataStart, this.LvPropSlice.DataLen, Ct);
+            using var pages = new ReaderPageCache(db.Format, db.Pages, capacity: 0);
+            return await new LongValueDecoder(db.Format, pages).ReadLongValueBytesExactAsync(this.Bytes, this.LvPropSlice.DataStart, this.LvPropSlice.DataLen, Ct);
         }
     }
 }

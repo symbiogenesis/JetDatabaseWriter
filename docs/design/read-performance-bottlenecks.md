@@ -226,12 +226,11 @@ of the object-array work for supported shapes.
 Object-array consumers should still expect to pay for all requested columns.
 There is no pending change here without a new API shape or fresh profiling.
 
-A few nanoseconds per column show on a 40-column row. The decoder reads the
-format, the row-trailer field sizes and the code-page encoding per row and per
-column, so `DatabaseFile` keeps copies of them as fields instead of forwarding
-to its `JetFormat` profile, and the decode loops read the field sizes once per
-row. Reading them through the profile, one more dependent load per read, made
-`Decode_Wide_Untyped` 4-8% slower.
+A few nanoseconds per column show on a 40-column row. The row decoder and
+direct decoder receive `JetFormat` itself, and the decode loops read the
+row-trailer field sizes once per row. This avoids a dependent load through
+`DatabaseFile` for every format access; forwarding each access through the
+composite had made `Decode_Wide_Untyped` 4-8% slower.
 
 Primary code path:
 
@@ -367,7 +366,7 @@ every run of three processes, `Auto` and `Disabled` together unless split:
 
 | Case | Overlapped handle with a hint | Synchronous handle, no hint |
 |---|---|---|
-| The OLE scan's 2,021 page reads replayed through `DatabaseFile.ReadPageAsync`, no page cache | 15.0-19.0 µs per read | 7.9-9.8 µs |
+| The OLE scan's 2,021 page reads replayed through the page reader (`PageFile.ReadPageAsync` today), no page cache | 15.0-19.0 µs per read | 7.9-9.8 µs |
 | Warm `Rows()` of the 2,000-row OLE table | 42-58 ms | 36-46 ms |
 | Warm `Rows()` of the 5,000-row MEMO table | 97-124 ms | 67-76 ms |
 | Warm `Rows()` of the 25,000-row numeric table, `Auto` | 10.2-19.9 ms | 8.9-14.0 ms |
@@ -420,7 +419,7 @@ together):
 
 | Case | Offloaded reads | Inline on pool threads |
 |---|---|---|
-| The OLE scan's 2,021 page reads replayed through `DatabaseFile.ReadPageAsync`, no page cache | 6.1-9.8 µs per read | 2.6-4.5 µs |
+| The OLE scan's 2,021 page reads replayed through the page reader (`PageFile.ReadPageAsync` today), no page cache | 6.1-9.8 µs per read | 2.6-4.5 µs |
 | Warm `Rows()` of the 2,000-row OLE table | 40-43 ms | 20-30 ms |
 | Warm `Rows()` of the 5,000-row MEMO table | 76-90 ms | 43-58 ms |
 | Warm `Rows()` of the 25,000-row numeric table | 12.9-21.8 ms | 9.1-18.4 ms, faster in every run |

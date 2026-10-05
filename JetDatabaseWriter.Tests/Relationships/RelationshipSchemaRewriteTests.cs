@@ -959,15 +959,15 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         DatabaseFile database = harness.Database;
         CatalogEntry entry = await harness.Services.Catalog.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException($"Table '{table}' not found.");
-        byte[] td = await database.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken)
+        byte[] td = await database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException($"Table '{table}' has no TDEF.");
-        int numIdx = Ri32(td, database.TDef.NumIdx);
-        int numRealIdx = Ri32(td, database.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(database.Profile, td, Ru16(td, database.TDef.NumCols), numRealIdx);
-        IndexSectionAnchors anchors = database.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        int index = IndexCatalogReader.ReadLogicalIdxNames(database.Profile, td, anchors.LogIdxNamesStart, numIdx).IndexOf(entryName);
+        int numIdx = Ri32(td, database.Format.TDef.NumIdx);
+        int numRealIdx = Ri32(td, database.Format.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(database.Format, td, Ru16(td, database.Format.TDef.NumCols), numRealIdx);
+        IndexSectionAnchors anchors = database.Format.Index.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        int index = IndexCatalogReader.ReadLogicalIdxNames(database.Format, td, anchors.LogIdxNamesStart, numIdx).IndexOf(entryName);
         Assert.True(index >= 0, $"Table '{table}' has no index '{entryName}'.");
-        int fields = database.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, index);
+        int fields = database.Format.Index.LogicalIdxFieldsOffset(anchors.LogIdxStart, index);
         Assert.Equal((byte)IndexKind.ForeignKey, td[fields + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset]);
         await harness.Services.TDefWriter.WriteInt32Async(
             entry.TDefPage,

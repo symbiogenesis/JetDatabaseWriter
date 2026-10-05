@@ -168,12 +168,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         AccessReader reader = await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
         if (options.UsesPositionalPageReads(openedFromPath: true))
         {
-            reader.Database.EnableRandomAccessPageReadsIfSupported();
+            reader.Database.Pages.EnableRandomAccessPageReadsIfSupported();
         }
 
         // CreateStream opened a synchronous handle, so a page read that starts
         // on a pool thread is cheaper done there than handed to another one.
-        reader.Database.ReadsInlineOnThreadPool = true;
+        reader.Database.Pages.ReadsInlineOnThreadPool = true;
         return reader;
     }
 
@@ -463,7 +463,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private void ValidateDatabaseFormat()
     {
-        Stream stream = this.Database.DatabaseStream;
+        Stream stream = this.Database.Pages.Stream;
         if (stream.Length < 128)
         {
             throw new InvalidDataException("File too small to be a valid JET database");

@@ -123,8 +123,8 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
             },
             cancellationToken: TestContext.Current.CancellationToken);
         DatabaseFile db = reader.Database;
-        db.EnableRandomAccessPageReadsIfSupported();
-        Assert.Equal(!LibraryTarget.IsNetStandard, db.UsesRandomAccessPageReads);
+        db.Pages.EnableRandomAccessPageReadsIfSupported();
+        Assert.Equal(!LibraryTarget.IsNetStandard, db.Pages.UsesRandomAccessPageReads);
 
         int handleReadsBeforeScan = stream.HandleReads;
         int count = 0;

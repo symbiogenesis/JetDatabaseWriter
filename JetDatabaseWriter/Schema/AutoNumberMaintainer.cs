@@ -101,7 +101,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
 
     /// <summary>
     /// Reads the AutoNumber high-water value from the TDEF at
-    /// <paramref name="tdefPage"/> through <see cref="DatabaseFile"/>, so an
+    /// <paramref name="tdefPage"/> through <see cref="Pager"/>, so an
     /// active transaction's pending writes are visible. Returns 0 when the
     /// page is not a TDEF.
     /// </summary>
@@ -135,7 +135,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
     /// reads. With no such index, a key that does not decode, or an index
     /// that is empty while the TDEF declares rows, it comes from a scan of
     /// that column alone: data pages only, with no long-value reads. Every
-    /// read goes through <see cref="DatabaseFile"/>, so an active
+    /// read goes through <see cref="Pager"/>, so an active
     /// transaction's pending writes are visible. Returns 0 when the page is
     /// not a TDEF.
     /// </summary>
@@ -220,7 +220,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
     /// <summary>
     /// Reads the complex AutoNumber (the last per-row complex reference handed
     /// out) from the TDEF at <paramref name="tdefPage"/> through
-    /// <see cref="DatabaseFile"/>, so an active transaction's pending writes
+    /// <see cref="Pager"/>, so an active transaction's pending writes
     /// are visible. Returns 0 on Jet3 and Jet4, which have no such counter,
     /// and when the page is not a TDEF.
     /// </summary>

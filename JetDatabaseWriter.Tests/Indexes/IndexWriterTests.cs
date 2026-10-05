@@ -578,16 +578,16 @@ public sealed class IndexWriterTests
         DatabaseFile db = harness.Database;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
-        byte[]? td = await db.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken);
+        byte[]? td = await db.TableDefs.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         Assert.NotNull(td);
 
-        int numCols = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.TDef.NumCols));
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, realIndexCount);
-        int usageMapPage = ReadUInt24(td, db.TDef.UsedPagesPage);
+        int numCols = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.Format.TDef.NumCols));
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, td, numCols, realIndexCount);
+        int usageMapPage = ReadUInt24(td, db.Format.TDef.UsedPagesPage);
         Assert.True(usageMapPage > 0);
         for (int realIdxNum = 0; realIdxNum < realIndexCount; realIdxNum++)
         {
-            Assert.True(db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot));
+            Assert.True(db.Format.Index.TryReadRealIdxSlot(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot));
             int usedPagesOffset = slot.FirstDpOffset - 4;
             Assert.Equal(realIdxNum + 2, td[usedPagesOffset]);
             Assert.Equal(usageMapPage, ReadUInt24(td, usedPagesOffset + 1));

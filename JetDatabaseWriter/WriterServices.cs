@@ -16,8 +16,8 @@ using JetDatabaseWriter.ValueEncoding;
 
 /// <summary>
 /// Composition root for one <see cref="AccessWriter"/>. Builds every writer
-/// collaborator once and passes each one the <see cref="DatabaseFile"/> it
-/// reads pages through, the writer's <see cref="Pager"/> when it writes pages,
+/// collaborator once and passes each one the format, page, TDEF and owned-page
+/// parts it uses, the writer's <see cref="Pager"/> when it writes pages,
 /// and the specific sibling services it uses. Only this graph holds the pager,
 /// which <see cref="DatabaseFile.ForWriter"/> hands to the writer alone. No
 /// collaborator receives the facade or this object, so the service graph is
@@ -40,34 +40,34 @@ internal sealed class WriterServices
         // A capacity-0 page cache keeps nothing between calls, and names
         // resolve through the writer's catalog, so DDL and rollback cannot
         // leave a stale snapshot behind.
-        var snapshotPages = new ReaderPageCache(db.Profile, db.Pages, capacity: 0);
-        var snapshotRows = new RowDecoder(db.Profile, db.OwnedPages, snapshotPages, new LongValueDecoder(db.Profile, snapshotPages), strictParsing: true);
-        var columnProperties = new ColumnPropertyReader(db.Profile, db.TableDefs, snapshotRows);
+        var snapshotPages = new ReaderPageCache(db.Format, db.Pages, capacity: 0);
+        var snapshotRows = new RowDecoder(db.Format, db.OwnedPages, snapshotPages, new LongValueDecoder(db.Format, snapshotPages), strictParsing: true);
+        var columnProperties = new ColumnPropertyReader(db.Format, db.TableDefs, snapshotRows);
 
-        this.CatalogRows = new CatalogRowReader(db.Profile, db.TableDefs, db.OwnedPages);
+        this.CatalogRows = new CatalogRowReader(db.Format, db.TableDefs, db.OwnedPages);
         this.Catalog = new TableCatalog(db.Pages, db.TableDefs, this.CatalogRows, columnProperties);
-        this.PageAllocator = new PageAllocator(db.Profile, pager, options);
+        this.PageAllocator = new PageAllocator(db.Format, pager, options);
         this.TDefWriter = new TDefWriter(pager, db.TableDefs);
 
         TableCatalog catalog = this.Catalog;
 
         var snapshots = new TableSnapshotReader(
-            db.Profile,
+            db.Format,
             db.Pages,
             db.TableDefs,
             db.OwnedPages,
             snapshotRows,
-            new CatalogReader(db.Profile, db.TableDefs, catalog, this.CatalogRows, snapshotRows, columnProperties));
+            new CatalogReader(db.Format, db.TableDefs, catalog, this.CatalogRows, snapshotRows, columnProperties));
         this.Snapshots = snapshots;
-        var tdefPageBuilder = new TDefPageBuilder(db.Profile, pager);
-        var longValueEncoder = new LongValueEncoder(db.Profile, pager, this.PageAllocator, options);
-        this.OwnedMaps = new CatalogOwnedMapPolicy(db.Profile, db.TableDefs, this.CatalogRows);
-        var usageMaps = new UsageMapEditor(db.Profile, pager, this.PageAllocator);
-        var dataPages = new DataPageInserter(db.Profile, db.OwnedPages, pager, this.PageAllocator, this.OwnedMaps, usageMaps);
-        var tableRows = new TableRowStore(db.Profile, db.OwnedPages, pager, options, longValueEncoder, new RowEncoder(db.Profile), dataPages, tdefPageBuilder);
-        var autoNumbers = new AutoNumberMaintainer(db.Profile, db.TableDefs, db.OwnedPages, pager);
+        var tdefPageBuilder = new TDefPageBuilder(db.Format, pager);
+        var longValueEncoder = new LongValueEncoder(db.Format, pager, this.PageAllocator, options);
+        this.OwnedMaps = new CatalogOwnedMapPolicy(db.Format, db.TableDefs, this.CatalogRows);
+        var usageMaps = new UsageMapEditor(db.Format, pager, this.PageAllocator);
+        var dataPages = new DataPageInserter(db.Format, db.OwnedPages, pager, this.PageAllocator, this.OwnedMaps, usageMaps);
+        var tableRows = new TableRowStore(db.Format, db.OwnedPages, pager, options, longValueEncoder, new RowEncoder(db.Format), dataPages, tdefPageBuilder);
+        var autoNumbers = new AutoNumberMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager);
         CatalogRowReader catalogRows = this.CatalogRows;
-        var complexReferenceSeeds = new ComplexReferenceSeedReader(db.Profile, db.TableDefs, db.OwnedPages, catalogRows, autoNumbers);
+        var complexReferenceSeeds = new ComplexReferenceSeedReader(db.Format, db.TableDefs, db.OwnedPages, catalogRows, autoNumbers);
         var constraints = new ConstraintRegistry(
             async (tableName, ct) =>
             {
@@ -96,30 +96,30 @@ internal sealed class WriterServices
                     : await complexReferenceSeeds.ReadSeedAsync(entry.TDefPage, tableDef, ct).ConfigureAwait(false);
             });
 
-        this.Indexes = new IndexMaintainer(db.Profile, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
-        var catalogWriter = new CatalogWriter(db.Profile, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
-        this.CatalogArtifacts = new CatalogArtifactWriter(db.Profile, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
-        this.ComplexColumns = new ComplexColumnManager(db.Profile, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds);
+        this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
+        var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
+        this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
+        this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds);
 
-        var relationshipCatalog = new RelationshipCatalogStore(db.Profile, db.TableDefs, db.OwnedPages, this.Indexes, this.CatalogRows, snapshots, catalog);
-        var enforcer = new RelationshipEnforcer(db.Profile, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
-        this.Relationships = new RelationshipManager(db.Profile, db.TableDefs, pager, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
+        var relationshipCatalog = new RelationshipCatalogStore(db.Format, db.TableDefs, db.OwnedPages, this.Indexes, this.CatalogRows, snapshots, catalog);
+        var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
+        this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
 
-        this.Transactions = new TransactionLifecycle(db.Profile, pager, options, byteRangeLock, catalog, dataPages, this.OwnedMaps, constraints);
+        this.Transactions = new TransactionLifecycle(db.Format, pager, options, byteRangeLock, catalog, dataPages, this.OwnedMaps, constraints);
         this.Data = new TableDataWriter(
-            db.Profile,
+            db.Format,
             db.Pages,
             catalog,
             tableRows,
             this.Indexes,
-            new UniqueIndexChecker(db.Profile, db.Pages, db.TableDefs, snapshots),
+            new UniqueIndexChecker(db.Format, db.Pages, db.TableDefs, snapshots),
             autoNumbers,
             constraints,
             enforcer,
             this.ComplexColumns,
             snapshots);
         this.Schema = new TableSchemaEditor(
-            db.Profile,
+            db.Format,
             db.TableDefs,
             db.OwnedPages,
             pager,

@@ -160,16 +160,16 @@ public sealed class RowSizeLimitTests
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(TableName, ct));
-        TableDef tableDef = await db.ReadRequiredTableDefAsync(entry.TDefPage, TableName, ct);
+        TableDef tableDef = await db.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, TableName, ct);
         var store = new TableRowStore(
-            db.Profile,
+            db.Format,
             db.OwnedPages,
             harness.Pager,
             options,
-            new LongValueEncoder(db.Profile, harness.Pager, harness.Services.PageAllocator, options),
-            new RowEncoder(db.Profile),
-            new DataPageInserter(db.Profile, db.OwnedPages, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps, new UsageMapEditor(db.Profile, harness.Pager, harness.Services.PageAllocator)),
-            new TDefPageBuilder(db.Profile, harness.Pager));
+            new LongValueEncoder(db.Format, harness.Pager, harness.Services.PageAllocator, options),
+            new RowEncoder(db.Format),
+            new DataPageInserter(db.Format, db.OwnedPages, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps, new UsageMapEditor(db.Format, harness.Pager, harness.Services.PageAllocator)),
+            new TDefPageBuilder(db.Format, harness.Pager));
 
         int[] lengths = [900, 1_000, 1_000, 950, 1_000];
         object[] values = Row(tableDef, lengths);
