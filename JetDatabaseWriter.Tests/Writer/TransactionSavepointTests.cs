@@ -127,7 +127,7 @@ public sealed class TransactionSavepointTests
             {
                 await harness.Services.Schema.DropTableAsync("Items", token);
                 throw new InvalidDataException("Failure after freeing the table's pages.");
-                },
+            },
             TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(before, await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken));
         await harness.CreateTableAsync("Other", [new ColumnDefinition("Id", typeof(int))], [], TestContext.Current.CancellationToken);
@@ -157,7 +157,7 @@ public sealed class TransactionSavepointTests
             {
                 await harness.Services.Schema.CreateDeclaredTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], [], token);
                 throw new InvalidDataException("Failure after creating the table.");
-                },
+            },
             TestContext.Current.CancellationToken).AsTask());
         Assert.Null(await harness.Services.Catalog.GetCatalogEntryAsync("Items", TestContext.Current.CancellationToken));
         await harness.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], [], TestContext.Current.CancellationToken);
@@ -187,7 +187,7 @@ public sealed class TransactionSavepointTests
             {
                 _ = await harness.Services.Data.DeleteRowsAsync("Parent", RowCriteria.All(), token);
                 throw new InvalidDataException("Failure after the cascade freed pages.");
-                },
+            },
             TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(before, await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken));
         await harness.InsertRowAsync("Parent", [2], TestContext.Current.CancellationToken);
@@ -228,6 +228,7 @@ public sealed class TransactionSavepointTests
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, await reader.GetRealRowCountAsync("Items", TestContext.Current.CancellationToken));
     }
+
     /// <summary>Commit waits for a whole statement, including its suspended callback.</summary>
     [Fact]
     public async Task Commit_WaitsForActiveStatement()
@@ -249,7 +250,7 @@ public sealed class TransactionSavepointTests
                 entered.SetResult(true);
                 _ = await proceed.Task.WaitAsync(token);
                 await harness.Services.Data.InsertRowAsync("Items", [2], token);
-                },
+            },
             TestContext.Current.CancellationToken).AsTask();
         _ = await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
         Task commit = transaction.CommitAsync(TestContext.Current.CancellationToken).AsTask();
@@ -287,7 +288,7 @@ public sealed class TransactionSavepointTests
             {
                 entered.SetResult(true);
                 _ = await proceed.Task.WaitAsync(token);
-                },
+            },
             TestContext.Current.CancellationToken).AsTask();
         _ = await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
         int teardowns = 0;
@@ -316,12 +317,14 @@ public sealed class TransactionSavepointTests
         Assert.Equal(1, teardowns);
         Assert.True(transaction.IsRolledBack);
     }
+
     private static IEnumerable<object?[]> CancelledRows(CancellationTokenSource cancellation)
     {
         yield return [1];
         cancellation.Cancel();
         yield return [2];
     }
+
     private static IEnumerable<object?[]> FailingRows()
     {
         yield return [1];

@@ -425,6 +425,7 @@ internal sealed class TransactionLifecycle(
             throw JetErrors.Operation(JetErrorCode.ReentrantWriterCall, "A writer mutation cannot be called from another writer mutation's callback.");
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         await this.mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         var context = new MutationContext();
         this.mutationActive.Value = context;

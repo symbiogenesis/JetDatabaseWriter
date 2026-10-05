@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
@@ -209,12 +210,13 @@ public sealed class PagerTests
         await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
 
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(
             async () => await harness.Services.Transactions.BeginTransactionAsync(Ct));
 
         Assert.Equal(
             "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.",
             ex.Message);
+        Assert.Equal(JetErrorCode.TransactionAlreadyActive, ex.ErrorCode);
         Assert.True(harness.Pager.IsJournalActive);
 
         await tx.RollbackAsync(Ct);

@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Transactions;
@@ -144,13 +145,14 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         await File.WriteAllBytesAsync(blockedLockPath, [1], ct);
         this.tempFiles.Add(blockedLockPath);
 
-        await Assert.ThrowsAsync<IOException>(async () =>
+        JetLockException error = await Assert.ThrowsAsync<JetLockException>(async () =>
             await AccessWriter.EncryptAsync(
                 blockedPath,
                 FirstPasswordMemory,
                 AccessEncryptionFormat.AccdbLegacyPassword,
                 cancellationToken: ct));
 
+        Assert.Equal(JetErrorCode.DatabaseInUse, error.ErrorCode);
         Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(blockedPath, ct));
 
         string allowedPath = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");

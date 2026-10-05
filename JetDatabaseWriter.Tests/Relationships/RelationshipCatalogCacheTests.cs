@@ -230,7 +230,8 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
                 await using (var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
                     holder.Lock(commitLockOffset, 1);
-                    _ = await Assert.ThrowsAsync<IOException>(async () => await tx.CommitAsync(Ct));
+                    JetLockException error = await Assert.ThrowsAsync<JetLockException>(async () => await tx.CommitAsync(Ct));
+                    Assert.Equal(JetErrorCode.LockTimeout, error.ErrorCode);
                     holder.Unlock(commitLockOffset, 1);
                 }
 

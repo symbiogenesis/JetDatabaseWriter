@@ -406,8 +406,9 @@ public sealed class TransactionRollbackStateTests
                 await using (var holder = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
                     holder.Lock(0xFFFFFFFCL, 1);
-                    _ = await Assert.ThrowsAsync<IOException>(async () =>
+                    JetLockException error = await Assert.ThrowsAsync<JetLockException>(async () =>
                         await tx.CommitAsync(TestContext.Current.CancellationToken));
+                    Assert.Equal(JetErrorCode.LockTimeout, error.ErrorCode);
                     holder.Unlock(0xFFFFFFFCL, 1);
                 }
 
