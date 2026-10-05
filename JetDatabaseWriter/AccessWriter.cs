@@ -778,7 +778,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken)
         => this.RunAutoCommitAsync(
             _ => LinkedTableManager.CreateLinkedOdbcTableAsync(
-                this.Database.Format, this.Database.Pages,
+                this.Database.Format,
+                this.Database.Pages,
                 this.services.CatalogArtifacts,
                 linkedTableName,
                 connectionString,

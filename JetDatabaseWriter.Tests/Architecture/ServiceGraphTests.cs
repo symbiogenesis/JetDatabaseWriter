@@ -68,10 +68,13 @@ public sealed class ServiceGraphTests
         string[] properties = [.. typeof(DatabaseFile).GetProperties(DeclaredMembers).Select(property => property.Name).Order(StringComparer.Ordinal)];
         Assert.Equal(["DatabasePath", "Format", "OwnedPages", "Pages", "TableDefs"], properties);
 
-        string[] methods = [.. typeof(DatabaseFile).GetMethods(DeclaredMembers)
-            .Where(method => !method.IsStatic && !method.IsSpecialName)
-            .Select(method => method.Name)
-            .Order(StringComparer.Ordinal)];
+        string[] methods =
+        [
+            .. typeof(DatabaseFile).GetMethods(DeclaredMembers)
+                .Where(method => !method.IsStatic && !method.IsSpecialName)
+                .Select(method => method.Name)
+                .Order(StringComparer.Ordinal),
+        ];
         Assert.Equal(["DisposeAsync", "DisposeManagedResources"], methods);
     }
 

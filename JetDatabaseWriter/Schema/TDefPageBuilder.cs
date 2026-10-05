@@ -647,7 +647,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     /// is unencrypted and has no password. The 2 bytes at 0x56, which vary from
     /// file to file and whose meaning is unknown, stay zero.
     /// </summary>
-    /// <param name="format">The database's immutable format profile.</param>
+    /// <param name="db">The database bytes whose header is initialized.</param>
     private static void WriteJet3HeaderDefaults(byte[] db)
     {
         db[0x19] = 0x01;
