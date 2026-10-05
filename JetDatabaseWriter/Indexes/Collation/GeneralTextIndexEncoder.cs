@@ -67,7 +67,6 @@ internal static partial class GeneralTextIndexEncoder
             ascending,
             Codes.Value,
             ExtCodes.Value,
-            GeneralLegacyTextIndexEncoder.LongRowSeparatorGeneral,
             GeneralLegacyTextIndexEncoder.MaxEntryLengthGeneralV2010,
             TryComputeV2010LongRowSuffix,
             trimTrailingSpaces);

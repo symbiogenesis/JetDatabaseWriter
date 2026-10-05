@@ -8,18 +8,14 @@ using Xunit;
 #pragma warning disable CA1707 // underscores in test names
 
 /// <summary>
-/// Unit tests for the 2-chunk "long-row" path added to
-/// <see cref="GeneralLegacyTextIndexEncoder"/> /
-/// <see cref="GeneralTextIndexEncoder"/>. The fixture-driven byte-exact
-/// validation for V2000 / V2003 / V2007 lives in the per-encoder fixture
-/// suites; this class adds focused unit assertions for the structural
-/// invariants of the 2-chunk path so regressions surface with smaller
-/// diffs than the fixture sweeps.
+/// Unit tests for long keys containing CRLF. The apparent four-byte separator
+/// is the ordinary encoding of CR followed by LF; long legacy keys retain
+/// both characters and continuously encode up to 255 characters.
 /// </summary>
 public sealed class IndexLongRowEncoderTests
 {
     [Fact]
-    public void Encode_LongInputWithCrLf_EmitsTwoChunksSeparatedBy08070804_GeneralLegacy()
+    public void Encode_LongInputWithCrLf_PreservesCrLfCodes08070804_GeneralLegacy()
     {
         // 200-char ASCII input with a CRLF at position 90.
         string text = new string('a', 90) + "\r\n" + new string('b', 108);
@@ -31,7 +27,7 @@ public sealed class IndexLongRowEncoderTests
     }
 
     [Fact]
-    public void Encode_LongInputWithCrLf_EmitsTwoChunksSeparatedBy07090706_General()
+    public void Encode_LongInputWithCrLf_PreservesCrLfCodes07090706_General()
     {
         string text = new string('a', 90) + "\r\n" + new string('b', 108);
         byte[] enc = GeneralTextIndexEncoder.Encode(text, ascending: true);
@@ -45,8 +41,8 @@ public sealed class IndexLongRowEncoderTests
     public void Encode_LongInputWithoutLineBreak_FallsBackToSingleChunkPath()
     {
         // > 127 chars but no CR/LF: must NOT emit a separator (we don't have
-        // an Access-authored fixture for this branch). Single-chunk
-        // truncation at MaxTextIndexCharLength preserves the pre-2-chunk
+        // an Access-authored fixture for this branch). Single-prefix
+        // truncation at MaxTextIndexCharLength preserves the 127-character
         // behaviour.
         string text = new('a', 200);
         byte[] enc = GeneralLegacyTextIndexEncoder.Encode(text, ascending: true);
@@ -55,7 +51,7 @@ public sealed class IndexLongRowEncoderTests
     }
 
     [Fact]
-    public void Encode_LongInput_DescendingComplementsTwoChunkPayload_GeneralLegacy()
+    public void Encode_LongInput_DescendingComplementsLongPayload_GeneralLegacy()
     {
         string text = new string('a', 90) + "\r\n" + new string('b', 108);
         byte[] asc = GeneralLegacyTextIndexEncoder.Encode(text, ascending: true);
@@ -74,7 +70,7 @@ public sealed class IndexLongRowEncoderTests
         Assert.Equal(0x00, desc[^1]);
         Assert.Equal(0xFF, desc[^2]);
 
-        // The complemented genleg separator 08 07 08 04 -> F7 F8 F7 FB.
+        // The complemented CRLF codes 08 07 08 04 -> F7 F8 F7 FB.
         AssertHasSubsequence(desc, [0xF7, 0xF8, 0xF7, 0xFB]);
     }
 

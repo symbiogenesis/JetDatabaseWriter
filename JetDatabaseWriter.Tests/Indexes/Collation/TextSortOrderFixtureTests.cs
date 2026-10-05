@@ -22,10 +22,9 @@ public sealed class TextSortOrderFixtureTests
     };
 
     /// <summary>Gets the fixtures with at least one supported index.</summary>
-    /// <remarks>testUnicodeCompV2003 contains only the Unicode index, whose known key
-    /// mismatch is tracked in docs/todo.md and excluded from this sweep.</remarks>
     public static TheoryData<string> DispatchFixtures =>
     [
+        TestDatabases.TestUnicodeCompV2003,
         TestDatabases.TestIndexCodesV1997,
         TestDatabases.TestIndexCodesV2000,
         TestDatabases.TestIndexCodesV2003,

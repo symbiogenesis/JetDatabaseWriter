@@ -28,11 +28,8 @@ using static JetDatabaseWriter.Constants.IndexEntryFlags;
 /// 0x7F vs 0x80 is the "is-descending" signal itself).
 /// </para>
 /// <para>
-/// <b>Validation status:</b> the per-codepoint code tables come verbatim
-/// from Jackcess and the state machine is a faithful port. Byte sequences
-/// have not been independently re-validated against an Access-authored
-/// fixture; see <see href="docs/design/index-and-relationship-format-notes.md" />
-/// §8 for the standing Microsoft Access compact-and-repair gap.
+/// The code tables and auxiliary-stream framing are checked byte-for-byte
+/// against Access-authored index fixtures, including long text with line breaks.
 /// </para>
 /// </summary>
 internal static class GeneralLegacyTextIndexEncoder
@@ -82,24 +79,6 @@ internal static class GeneralLegacyTextIndexEncoder
 
     internal static ReadOnlySpan<byte> SurrogateExtraBytes => [0x3F];
 
-    /// <summary>
-    /// Gets the General Legacy two-chunk long-row separator reverse-engineered from Access-authored
-    /// testIndexCodes V2000/V2003/V2007/V2010 fixtures (Table11 / Table11_desc).
-    /// </summary>
-    /// <remarks>
-    /// See <see href="docs/format-probe/format-probe-long-row-index-encoding.md" /> for details.
-    /// </remarks>
-    internal static ReadOnlySpan<byte> LongRowSeparatorGeneralLegacy => [0x08, 0x07, 0x08, 0x04];
-
-    /// <summary>
-    /// Gets the General two-chunk long-row separator reverse-engineered from Access-authored
-    /// testIndexCodes V2010 fixtures (Table11 / Table11_desc).
-    /// </summary>
-    /// <remarks>
-    /// See <see href="docs/format-probe/format-probe-long-row-index-encoding.md" /> for details.
-    /// </remarks>
-    internal static ReadOnlySpan<byte> LongRowSeparatorGeneral => [0x07, 0x09, 0x07, 0x06];
-
     internal delegate ushort? LongRowSuffixProvider(string text, bool ascending, byte[] fullEntry);
 
     private static readonly Lazy<CharHandler[]> Codes =
@@ -147,11 +126,6 @@ internal static class GeneralLegacyTextIndexEncoder
     /// <param name="ascending">True for ascending sort, false for descending.</param>
     /// <param name="codes">Per-BMP-codepoint handler table (0x0000–0x00FF).</param>
     /// <param name="extCodes">Extended handler table (0x0100–0xFFFF).</param>
-    /// <param name="longRowSeparator">
-    /// 4-byte separator emitted between chunks when the input is split across
-    /// two chunks (only used when <paramref name="text"/> exceeds
-    /// <see cref="Constants.IndexTextEncoding.MaxTextIndexCharLength"/> and contains an embedded line-break).
-    /// </param>
     /// <param name="maxEntryLength">
     /// Optional hard cap on the encoded entry length (0 = no cap). When set,
     /// the encoder truncates the produced bytes at this boundary; used by the
@@ -168,7 +142,6 @@ internal static class GeneralLegacyTextIndexEncoder
         bool ascending,
         CharHandler[] codes,
         CharHandler[] extCodes,
-        ReadOnlySpan<byte> longRowSeparator = default,
         int maxEntryLength = 0,
         LongRowSuffixProvider? longRowSuffixProvider = null,
         bool trimTrailingSpaces = true,
@@ -207,25 +180,16 @@ internal static class GeneralLegacyTextIndexEncoder
 
         if (text.Length > Constants.IndexTextEncoding.MaxTextIndexCharLength)
         {
-            int splitAt = FindFirstLineBreak(text);
-            if (splitAt >= 0)
+            // Access-authored long keys retain each CR/LF code and its auxiliary-stream position.
+            if (FindFirstLineBreak(text) >= 0)
             {
-                int resumeAt = splitAt + 1;
-                if (resumeAt < text.Length
-                    && ((text[splitAt] == '\r' && text[resumeAt] == '\n')
-                        || (text[splitAt] == '\n' && text[resumeAt] == '\r')))
+                ReadOnlySpan<char> longChars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength));
+                if (trimTrailingSpaces)
                 {
-                    resumeAt++;
+                    longChars = longChars.TrimEnd(' ');
                 }
 
-                return EncodeTwoChunks(
-                    text,
-                    splitAt,
-                    resumeAt,
-                    ascending,
-                    codes,
-                    extCodes,
-                    longRowSeparator.IsEmpty ? LongRowSeparatorGeneralLegacy : longRowSeparator);
+                return EncodeSingleChunk(text, longChars, ascending, codes, extCodes, 0, null);
             }
         }
 
@@ -256,36 +220,6 @@ internal static class GeneralLegacyTextIndexEncoder
         FinishEntry(bout, payloadStart, state, ascending);
         ApplyMaxEntryLength(bout, text, ascending, maxEntryLength, longRowSuffixProvider);
 
-        return [.. bout];
-    }
-
-    private static byte[] EncodeTwoChunks(
-        string text,
-        int splitAt,
-        int resumeAt,
-        bool ascending,
-        CharHandler[] codes,
-        CharHandler[] extCodes,
-        ReadOnlySpan<byte> separator)
-    {
-        ReadOnlySpan<char> chunk1 = text.AsSpan(0, splitAt);
-
-        int chunk2Cap = Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength);
-        int chunk2Take = chunk2Cap - resumeAt;
-
-        ReadOnlySpan<char> chunk2 = chunk2Take > 0
-            ? text.AsSpan(resumeAt, chunk2Take).TrimEnd(' ')
-            : [];
-
-        List<byte> bout = CreateEntryBuffer(chunk1.Length + chunk2.Length + separator.Length, ascending);
-        int payloadStart = bout.Count;
-
-        var state = new ChunkEmitState(chunk1.Length + chunk2.Length);
-        EmitChunkInline(chunk1, codes, extCodes, bout, state);
-        AppendBytes(bout, separator);
-        EmitChunkInline(chunk2, codes, extCodes, bout, state);
-
-        FinishEntry(bout, payloadStart, state, ascending);
         return [.. bout];
     }
 
@@ -370,7 +304,7 @@ internal static class GeneralLegacyTextIndexEncoder
     /// Writes the trailing END_TEXT, extras stream, optional unprintable +
     /// crazy block, and END_EXTRA_TEXT terminator (with the descending
     /// one's-complement pass) to <paramref name="bout"/>. Shared between the
-    /// single-chunk and two-chunk paths.
+    /// index and comparison paths.
     /// </summary>
     /// <param name="bout">The output byte buffer.</param>
     /// <param name="payloadStart">The payload start.</param>

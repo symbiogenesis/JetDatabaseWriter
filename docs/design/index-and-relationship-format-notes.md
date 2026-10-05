@@ -505,7 +505,7 @@ Descending pass: the entire payload region (flag-byte exclusive, trailing `END_E
 
 Truncation + padding rules (matching Jackcess `toIndexCharSequence`):
 
-- Inputs longer than `MaxTextIndexCharLength = 127` chars (Jet4/ACE: `TEXT_FIELD_MAX_LENGTH (255 bytes) / TEXT_FIELD_UNIT_SIZE (2 B/char)`) are sliced to 127 chars before encoding.
+- Inputs longer than `MaxTextIndexCharLength = 127` chars (Jet4/ACE: `TEXT_FIELD_MAX_LENGTH (255 bytes) / TEXT_FIELD_UNIT_SIZE (2 B/char)`) are sliced to 127 chars before encoding. General Legacy values longer than 127 chars that contain CR or LF use a prefix of up to 255 chars, matching the Access-authored long-row and Unicode fixtures. That prefix is encoded continuously: actual CR and LF characters keep their own unprintable codes and offsets; no separator is synthesized.
 - Trailing ASCII spaces (`U+0020`) are stripped before encoding so `"AB"` and `"AB   "` produce identical entries.
 - Surrogate pairs (lone or paired) collapse to the documented `0x3F` extra-byte fallback rather than throwing.
 
@@ -518,7 +518,7 @@ if (columnType == Text || columnType == Memo)
 }
 ```
 
-Memo (`Memo`, `0x0C`) is routed through the same encoder; the indexed prefix is bounded by the same 127-char cap, so memo-keyed indexes only exercise the leading 127 chars of each value (matching Access). The reader-side LVAL chain is not re-fetched during indexing — only the inline preview / loaded string value is encoded.
+Memo (`Memo`, `0x0C`) is routed through the same encoder and uses the same bounded prefix, including the General Legacy CR/LF exception above. The reader-side LVAL chain is not re-fetched during indexing — only the inline preview / loaded string value is encoded.
 
 Wiring + subsystems updated:
 
