@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
@@ -206,6 +207,39 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
     }
 
     [Fact]
+    public async Task CapturedSecondQuery_IsReadAsynchronously()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        IQueryable<TailItem> source = reader.Query<TailItem>(Table);
+        IQueryable<TailItem> second = source.Where(i => i.Id < 3);
+        List<int> expected = await source.Concat(second).Select(i => i.Id).ToListAsync(ct);
+
+        List<int> actual = await CapturedConcat(source, second).Select(i => i.Id).ToListAsync(ct);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task CapturedSecondQuery_IsValidatedBeforeEitherSourceIsRead()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using var counting = new CountingStream(stream);
+        await using AccessReader reader = await OpenReaderAsync(counting, ct);
+        IQueryable<TailItem> source = reader.Query<TailItem>(Table);
+        IQueryable<TailItem> query = CapturedConcat(source, source.Where((_, index) => index > 0));
+        counting.Reset();
+
+        NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(async () => await query.Take(1).ToListAsync(ct));
+
+        Assert.Contains("'Where'", error.Message, StringComparison.Ordinal);
+        Assert.Contains("AsAsyncEnumerable()", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0L, counting.BytesRead);
+    }
+
+    [Fact]
     public async Task Take_AfterProjection_StopsTheTableRead()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -219,6 +253,57 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         // stops it, instead of reading the whole table into a list first.
         Assert.Equal(engineFirst, tailFirst);
         Assert.True(tailFirst < everyRow, $"Take(1) after Select read {tailFirst} bytes; the whole projection read {everyRow}.");
+    }
+
+    [Theory]
+    [InlineData("EngineOrderBy")]
+    [InlineData("OrderBy")]
+    [InlineData("Reverse")]
+    [InlineData("TakeLast")]
+    public async Task BufferedTail_ObservesCancellationWhileReturningBufferedRows(string operation)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        IQueryable<int> source = reader.Query<TailItem>(Table).Select(i => i.Id);
+        IQueryable<int> query = operation switch
+        {
+            "EngineOrderBy" => reader.Query<TailItem>(Table).OrderBy(i => i.Name).Select(i => i.Id),
+            "OrderBy" => source.OrderBy(i => i),
+            "Reverse" => source.Reverse(),
+            "TakeLast" => source.TakeLast(3),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unknown buffered operator."),
+        };
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await using IAsyncEnumerator<int> enumerator = query.AsAsyncEnumerable().GetAsyncEnumerator(cancellation.Token);
+        Assert.True(await enumerator.MoveNextAsync());
+
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await enumerator.MoveNextAsync());
+    }
+
+    [Theory]
+    [InlineData("Prepend")]
+    [InlineData("Append")]
+    [InlineData("DefaultIfEmpty")]
+    public async Task SyntheticTailElement_ObservesCancellation(string operation)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        IQueryable<int> source = reader.Query<TailItem>(Table).Select(i => i.Id).Take(0);
+        IQueryable<int> query = operation switch
+        {
+            "Prepend" => source.Prepend(1),
+            "Append" => source.Append(1),
+            "DefaultIfEmpty" => source.DefaultIfEmpty(1),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, "Unknown synthetic-element operator."),
+        };
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await query.FirstAsync(cancellation.Token));
     }
 
     [Fact]
@@ -272,6 +357,16 @@ public sealed class QueryTailTests(DatabaseCache db) : IClassFixture<DatabaseCac
         "TakeRangeTail" => q.Select(i => i.Id).Take(..3).Cast<object?>(),
         _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "Unknown query shape."),
     };
+
+    private static IQueryable<TailItem> CapturedConcat(IQueryable<TailItem> source, IQueryable<TailItem> second)
+    {
+        // Queryable normally embeds the second query's tree. A caller constructing a tree
+        // through IQueryProvider can instead refer to that query through a captured member.
+        Expression<Func<IEnumerable<TailItem>>> captured = () => second;
+        MethodCallExpression call = Expression.Call(
+            typeof(Queryable), nameof(Queryable.Concat), [typeof(TailItem)], source.Expression, captured.Body);
+        return source.Provider.CreateQuery<TailItem>(call);
+    }
 
     private static string Describe(object? value) => value switch
     {

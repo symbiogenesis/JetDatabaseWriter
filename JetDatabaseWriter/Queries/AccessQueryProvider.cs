@@ -70,7 +70,7 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
             rows = InMemoryTail.Apply(rows, expression, boundary, cancellationToken);
         }
 
-        return rows;
+        return ReadPreparedAsync(rows, cancellationToken);
     }
 
     public async ValueTask<long> CountAsync(Expression expression, CancellationToken cancellationToken)
@@ -96,6 +96,20 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
         }
 
         return count;
+    }
+
+    private static async IAsyncEnumerable<object?> ReadPreparedAsync(
+        IAsyncEnumerable<object?> rows,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // A buffered stage or a synthetic element need not advance the table reader,
+        // so enforce cancellation even after the read itself has finished.
+        cancellationToken.ThrowIfCancellationRequested();
+        await foreach (object? item in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return item;
+        }
     }
 
     /// <summary>

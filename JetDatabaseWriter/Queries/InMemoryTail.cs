@@ -228,7 +228,13 @@ internal static class InMemoryTail
             return engine.ExecuteStreamAsync(argument, cancellationToken);
         }
 
-        var values = (IEnumerable)ClosureValueReader.Evaluate(argument)!;
+        object? value = ClosureValueReader.Evaluate(argument);
+        if (value is IQueryable { Provider: IAccessQueryEngine capturedEngine } query)
+        {
+            return capturedEngine.ExecuteStreamAsync(query.Expression, cancellationToken);
+        }
+
+        var values = (IEnumerable)value!;
         return values.Cast<object?>().ToAsyncEnumerable();
     }
 
