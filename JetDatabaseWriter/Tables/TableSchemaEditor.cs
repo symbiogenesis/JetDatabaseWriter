@@ -475,6 +475,8 @@ internal sealed class TableSchemaEditor(
     /// <summary>Checks declared AutoNumber types before catalog I/O.</summary>
     /// <param name="column">The column being declared.</param>
     /// <param name="paramName">The public parameter name.</param>
+    /// <exception cref="NotSupportedException">The column requests AutoNumber on a byte or long type.</exception>
+    /// <exception cref="ArgumentException">The column requests AutoNumber on a non-integer type.</exception>
     private static void ValidateDeclaredAutoIncrement(ColumnDefinition? column, string paramName)
     {
         if (column?.IsAutoIncrement != true)

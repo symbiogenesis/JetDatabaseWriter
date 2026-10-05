@@ -14,14 +14,15 @@ using Xunit;
 public sealed class ColumnDeclarationSafetyTests
 {
     /// <summary>Gets declarations rejected before any schema writes.</summary>
-    public static TheoryData<string> RejectedDeclarations => new()
-    {
+    public static TheoryData<string> RejectedDeclarations =>
+    [
         "ByteAutoNumber", "LongAutoNumber", "TextAutoNumber", "BinaryDefault", "TimeSpanDefault", "DateTimeOffsetDefault",
-    };
+    ];
 
     /// <summary>Both declaration entry points leave bytes and catalog intact.</summary>
     /// <param name="kind">The invalid declaration.</param>
     /// <returns>The asynchronous test.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The declaration kind is unknown.</exception>
     [Theory]
     [MemberData(nameof(RejectedDeclarations))]
     public async Task UnsupportedDeclaration_DoesNotWrite(string kind)

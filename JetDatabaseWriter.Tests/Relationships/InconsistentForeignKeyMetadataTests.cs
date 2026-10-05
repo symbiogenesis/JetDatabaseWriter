@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Relationships;
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -21,7 +22,7 @@ public sealed class InconsistentForeignKeyMetadataTests(DatabaseCache db) : ICla
     [InlineData(DatabaseFormat.Jet4Mdb)]
     public async Task DropTable_RemovesOneWayForeignKeyEntryNamingFreedPage(DatabaseFormat format)
     {
-        using MemoryStream stream = await this.CreateDatabaseAsync(format);
+        await using MemoryStream stream = await this.CreateDatabaseAsync(format);
         long targetPage = await GetPageAsync(stream, "Target");
         await PatchChildAsync(stream, targetPage, null);
         stream.Position = 0;
@@ -30,7 +31,7 @@ public sealed class InconsistentForeignKeyMetadataTests(DatabaseCache db) : ICla
             await writer.DropTableAsync("Target", TestContext.Current.CancellationToken);
         }
 
-        var links = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
+        Dictionary<long, List<IndexMetadata>> links = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
         ForeignKeyLinks.AssertNoEntryNamesPage(links, targetPage);
     }
 
@@ -43,7 +44,7 @@ public sealed class InconsistentForeignKeyMetadataTests(DatabaseCache db) : ICla
     [InlineData(DatabaseFormat.Jet4Mdb, "rename")]
     public async Task SchemaRewrite_PreservesPartnerOfUnnumberedBacklink(DatabaseFormat format, string operation)
     {
-        using MemoryStream stream = await this.CreateDatabaseAsync(format);
+        await using MemoryStream stream = await this.CreateDatabaseAsync(format);
         long parentPage = await GetPageAsync(stream, "Parent");
         await PatchChildAsync(stream, parentPage, -1);
         stream.Position = 0;
@@ -87,7 +88,7 @@ public sealed class InconsistentForeignKeyMetadataTests(DatabaseCache db) : ICla
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = await harness.Services.Catalog.GetCatalogEntryAsync("Child", TestContext.Current.CancellationToken) ?? throw new InvalidOperationException("Table not found.");
         byte[] td = await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken) ?? throw new InvalidOperationException("TDEF not found.");
-        var format = harness.Database.Format;
+        JetFormat format = harness.Database.Format;
         int count = Ri32(td, format.TDef.NumIdx);
         int realCount = Ri32(td, format.TDef.NumRealIdx);
         int start = IndexCatalogReader.LocateRealIdxDescStart(format, td, Ru16(td, format.TDef.NumCols), realCount);

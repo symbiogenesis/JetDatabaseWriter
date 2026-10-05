@@ -46,7 +46,7 @@ public sealed class CalculatedExpressionDatePrecisionTests
     [Fact]
     public void ClockPrecision_TruncatesDateWithoutReducingTimerPrecision()
     {
-        var clock = new DateTime(2020, 1, 31, 6, 0, 1, 987, DateTimeKind.Local).AddTicks(6543);
+        DateTime clock = new DateTime(2020, 1, 31, 6, 0, 1, 987, DateTimeKind.Local).AddTicks(6543);
 
         Assert.Equal(new DateTime(2020, 1, 31, 6, 0, 1, DateTimeKind.Local), CalculatedExpressionDateTimeFunctions.TruncateToWholeSeconds(clock));
         Assert.Equal(clock.TimeOfDay.TotalSeconds, CalculatedExpressionDateTimeFunctions.TimerSeconds(clock));

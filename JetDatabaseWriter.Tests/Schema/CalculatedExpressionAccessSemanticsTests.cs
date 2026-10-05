@@ -685,7 +685,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("FormatDateTime([D2], 0)", "1/31/2020")]
     [InlineData("FormatDateTime([D], vbGeneralDate)", "1/31/2020 6:00:00 AM")]
     [InlineData("Len([D])", "20")]
-    [InlineData("CStr(DateValue(CDate(0.25)))", "6:00:00 AM")]
+    [InlineData("CStr(DateValue(CDate(0.25)))", "12:00:00 AM")]
     [InlineData("IIf([D] Like \"1/31/2020 6:*\", \"y\", \"n\")", "y")]
     public void DateToText_IsEnUsGeneralDate(string expression, string expected)
     {
