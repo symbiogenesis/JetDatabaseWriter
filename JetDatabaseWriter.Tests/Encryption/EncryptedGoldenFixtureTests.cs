@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -174,7 +175,7 @@ public sealed class EncryptedGoldenFixtureTests
     /// <param name="source">The encrypted database.</param>
     private static async Task<List<string>> ReadPageDigestsAsync(Stream source)
     {
-        byte[] header = await DatabaseFile.ReadHeaderAsync(source, Ct);
+        byte[] header = await PageFile.ReadHeaderAsync(source, Ct);
         byte[]? decrypted = await EncryptionManager.TryDecryptAgileCompoundFileAsync(
             source,
             header,

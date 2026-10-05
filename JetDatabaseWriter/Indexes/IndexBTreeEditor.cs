@@ -15,11 +15,11 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Plans and applies in-place JET index B-tree mutations for <see cref="IndexMaintainer"/>.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
 /// <param name="pager">The writer's page file, through which index pages are written and appended.</param>
 /// <param name="tdefWriter">Writes a moved index root back into the table's TDEF chain.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter tdefWriter, PageAllocator pageAllocator)
+internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter tdefWriter, PageAllocator pageAllocator)
 {
     internal async ValueTask<bool> TryRebuildCatalogIndexTreeAsync(
         IndexPageLayout layout,
@@ -52,7 +52,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                 return false;
             }
 
-            allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes));
+            allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize));
             walkPage = IndexPageCodec.ReadNextPage(layout, leaf);
         }
 
@@ -93,7 +93,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         ReservedPageRuns runs,
         CancellationToken cancellationToken)
         => this.TryPlaceTreeAsync(
-            firstPage => IndexBTreeBuilder.Build(layout, db.PageSizeBytes, tdefPage, entries, firstPage),
+            firstPage => IndexBTreeBuilder.Build(layout, format.PageSize, tdefPage, entries, firstPage),
             runs,
             cancellationToken);
 
@@ -116,7 +116,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         IndexBTreeBuildResult provisional;
         try
         {
-            provisional = buildAt(db.PageCount);
+            provisional = buildAt(pager.PageCount);
         }
         catch (ArgumentOutOfRangeException)
         {
@@ -227,14 +227,14 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] pageBytes = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] pageBytes = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return (byte[])pageBytes.Clone();
         }
         finally
         {
-            DatabaseFile.ReturnPage(pageBytes);
+            PageBuffers.Return(pageBytes);
         }
     }
 
@@ -248,7 +248,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> TryAppendContiguousAsync(IReadOnlyList<byte[]> pages, CancellationToken cancellationToken)
     {
-        long expected = db.PageCount;
+        long expected = pager.PageCount;
         for (int i = 0; i < pages.Count; i++)
         {
             long appended = await pager.AppendPageAsync(pages[i], cancellationToken).ConfigureAwait(false);
@@ -351,7 +351,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                 long thisNext = p == splitCount - 1 ? leafNext : pageNumbers[p + 1];
                 pageBytesAll[p] = IndexPageCodec.BuildLeafPage(
                     layout,
-                    db.PageSizeBytes,
+                    format.PageSize,
                     tdefPage,
                     splitPages[p],
                     prevPage: thisPrev,
@@ -402,7 +402,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                 long prev = p == 0 ? firstPrev : pageNumbers[p - 1];
                 long next = p == n - 1 ? lastNext : pageNumbers[p + 1];
                 byte[]? built = IndexBTreeBuilder.TryBuildIntermediatePage(
-                    layout, db.PageSizeBytes, tdefPage, splitInts[p], prev, next, tails[p]);
+                    layout, format.PageSize, tdefPage, splitInts[p], prev, next, tails[p]);
                 if (built is null)
                 {
                     return null;
@@ -485,7 +485,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         {
             byte[] page = IndexPageCodec.BuildLeafPage(
                 layout,
-                db.PageSizeBytes,
+                format.PageSize,
                 parentTdefPage: 0,
                 entries,
                 enablePrefixCompression: true,
@@ -567,7 +567,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                 return 0;
             }
 
-            long firstChild = IndexPageCodec.ReadFirstChildPointer(layout, page, db.PageSizeBytes);
+            long firstChild = IndexPageCodec.ReadFirstChildPointer(layout, page, format.PageSize);
             if (firstChild <= 0)
             {
                 return 0;
@@ -631,7 +631,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
 
         int originalTailPrefLen = Ru16(tailLeaf, layout.PrefLenOffset);
 
-        List<IndexEntry> existingTail = IndexPageCodec.DecodeLeafEntries(layout, tailLeaf, db.PageSizeBytes);
+        List<IndexEntry> existingTail = IndexPageCodec.DecodeLeafEntries(layout, tailLeaf, format.PageSize);
 
         // Every new key must sort strictly after the current tail max.
         // Empty tail leaf trivially satisfies the predicate.
@@ -665,7 +665,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         {
             rewritten = IndexPageCodec.BuildLeafPage(
                 layout,
-                db.PageSizeBytes,
+                format.PageSize,
                 tdefPage,
                 spliced,
                 prevPage: tailPrev,
@@ -752,7 +752,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
             return false;
         }
 
-        List<IndexEntry> existingLeafEntries = IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes);
+        List<IndexEntry> existingLeafEntries = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
         if (existingLeafEntries.Count == 0)
         {
             // Empty leaf — descent shouldn't normally land here. Bail.
@@ -781,7 +781,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         byte[] oldMaxKey = existingLeafEntries[^1].Key;
 
         byte[]? rebuilt = IndexPageCodec.TryBuildLeafPage(
-            layout, db.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
+            layout, format.PageSize, tdefPage, spliced, leafPrev, leafNext, leafTail);
         if (rebuilt != null)
         {
             IndexEntry newLast = spliced[^1];
@@ -810,7 +810,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         }
 
         // Bails only if a single entry exceeds page payload area.
-        SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, db.PageSizeBytes, spliced);
+        SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, format.PageSize, spliced);
         if (splitPages is null)
         {
             return false;
@@ -819,7 +819,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         // First page reuses the original leaf page; remaining pages are
         // freshly appended at end-of-file.
         int splitCount = splitPages.Count;
-        long firstFreshPage = db.PageCount;
+        long firstFreshPage = pager.PageCount;
         long[] pageNumbers = AllocateSplitPageNumbers(targetLeafPage, splitCount, firstFreshPage);
 
         byte[][]? pageBytesAll = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, originalPrefLen);
@@ -906,7 +906,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
             }
 
             List<DecodedIntermediateEntry> entries =
-                IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes);
+                IndexPageCodec.DecodeIntermediateEntries(layout, page, format.PageSize);
             if (entries.Count == 0)
             {
                 return 0;
@@ -925,7 +925,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                 }
 
                 long tail = IndexPageCodec.ReadTailPage(layout, page);
-                long nextChild = tail > 0 ? tail : ReadLastChildPointer(page, db.PageSizeBytes, layout);
+                long nextChild = tail > 0 ? tail : ReadLastChildPointer(page, format.PageSize, layout);
                 if (nextChild <= 0)
                 {
                     return 0;
@@ -992,7 +992,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
             int originalPrefLen = Ru16(pageBytes, layout.PrefLenOffset);
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, db.PageSizeBytes, tdefPage, newEntries, prev, next, tail, originalPrefLen);
+                layout, format.PageSize, tdefPage, newEntries, prev, next, tail, originalPrefLen);
             if (rebuilt is null)
             {
                 return null;
@@ -1070,7 +1070,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         int originalPrefLen = Ru16(parentBytes, layout.PrefLenOffset);
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
-            layout, db.PageSizeBytes, tdefPage, newEntries, parentPrev, parentNext, parentTail, originalPrefLen);
+            layout, format.PageSize, tdefPage, newEntries, parentPrev, parentNext, parentTail, originalPrefLen);
         if (rebuiltParent is null)
         {
             // Parent overflow on insertion of the new summary entries —
@@ -1233,7 +1233,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
         // boundary pass can re-link survivors across contiguous dead runs.
         var emptyingLeafSiblings = new Dictionary<long, (long Prev, long Next)>();
 
-        long nextAllocatedPageNumber = db.PageCount;
+        long nextAllocatedPageNumber = pager.PageCount;
 
         // Single I/O pass: read each target leaf once, splice its change-set,
         // and capture everything the processing pass needs (sibling pointers,
@@ -1251,7 +1251,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                 return false;
             }
 
-            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes);
+            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
             if (existing.Count == 0)
             {
                 return false;
@@ -1327,7 +1327,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
 
             // ── Try in-place rewrite first ──
             byte[]? rebuilt = IndexPageCodec.TryBuildLeafPage(
-                layout, db.PageSizeBytes, tdefPage, spliced, leafPrev, leafNext, leafTail);
+                layout, format.PageSize, tdefPage, spliced, leafPrev, leafNext, leafTail);
             if (rebuilt != null)
             {
                 if (existingPageRewrites.ContainsKey(group.LeafPage))
@@ -1352,7 +1352,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
             // ── N-way split ──
             // Greedy left-fill into N pages; bails only if a single entry
             // exceeds the page payload area.
-            SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, db.PageSizeBytes, spliced);
+            SplitPages? splitPages = IndexHelpers.TryGreedySplitLeafInN(layout, format.PageSize, spliced);
             if (splitPages is null)
             {
                 return false;
@@ -1658,14 +1658,14 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
             return IndexPageCodec.ReadTailPage(layout, rewriteBytes);
         }
 
-        byte[] raw = await db.ReadPageAsync(intermediatePage, cancellationToken).ConfigureAwait(false);
+        byte[] raw = await pager.ReadPageAsync(intermediatePage, cancellationToken).ConfigureAwait(false);
         try
         {
             return IndexPageCodec.ReadTailPage(layout, raw);
         }
         finally
         {
-            DatabaseFile.ReturnPage(raw);
+            PageBuffers.Return(raw);
         }
     }
 
@@ -1859,7 +1859,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
             }
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
-                layout, db.PageSizeBytes, tdefPage, newEntries, origPrev, origNext, newTail);
+                layout, format.PageSize, tdefPage, newEntries, origPrev, origNext, newTail);
             if (rebuilt is null)
             {
                 // Intermediate overflow → greedy left-fill split into N pages
@@ -1869,7 +1869,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                 // root over the split pages and signal the caller to patch
                 // first_dp. Per-page tail_page is computed just below.
                 List<List<DecodedIntermediateEntry>>? splitInts =
-                    IndexHelpers.TryGreedySplitIntermediateInN(layout, db.PageSizeBytes, tdefPage, newEntries);
+                    IndexHelpers.TryGreedySplitIntermediateInN(layout, format.PageSize, tdefPage, newEntries);
                 if (splitInts is null)
                 {
                     // Single entry too big for any intermediate page — bail.
@@ -1983,7 +1983,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter 
                     try
                     {
                         newRootBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
-                            layout, db.PageSizeBytes, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: intTails[nSplit - 1]);
+                            layout, format.PageSize, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: intTails[nSplit - 1]);
                     }
                     catch (ArgumentOutOfRangeException)
                     {

@@ -516,5 +516,5 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The values, or <see langword="null"/>.</returns>
     internal ValueTask<object?[]?> TryReadColumnValuesTypedAsync(RowLocation loc, TableDef tableDef, int[] columnOrdinals, CancellationToken cancellationToken)
-        => PartialColumnReader.TryReadColumnValuesTypedAsync(this, loc, tableDef, columnOrdinals, cancellationToken);
+        => PartialColumnReader.TryReadColumnValuesTypedAsync(this.Profile, this.Pages, loc, tableDef, columnOrdinals, cancellationToken);
 }

@@ -120,39 +120,7 @@ public sealed class ServiceGraphTests
     [Fact]
     public void Collaborators_TakingDatabaseFile_OnlyShrink()
     {
-        string[] allowed =
-        [
-            "JetDatabaseWriter.Catalog.CatalogArtifactWriter",
-            "JetDatabaseWriter.Catalog.CatalogWriter",
-            "JetDatabaseWriter.ComplexColumns.ComplexColumnManager",
-            "JetDatabaseWriter.ComplexColumns.ComplexReferenceSeedReader",
-            "JetDatabaseWriter.Indexes.IndexBTreeEditor",
-            "JetDatabaseWriter.Indexes.IndexMaintainer",
-            "JetDatabaseWriter.Indexes.UniqueIndexChecker",
-            "JetDatabaseWriter.Pages.DataPageInserter",
-            "JetDatabaseWriter.Pages.PageAllocator",
-            "JetDatabaseWriter.Relationships.LinkedTableManager",
-            "JetDatabaseWriter.Relationships.RelationshipCatalogStore",
-            "JetDatabaseWriter.Relationships.RelationshipChildRowLocator",
-            "JetDatabaseWriter.Relationships.RelationshipEnforcer",
-            "JetDatabaseWriter.Relationships.RelationshipManager",
-            "JetDatabaseWriter.Relationships.RelationshipPageReader",
-            "JetDatabaseWriter.Relationships.RelationshipSeekPlanner",
-            "JetDatabaseWriter.Schema.AccessObjectName",
-            "JetDatabaseWriter.Schema.AutoNumberMaintainer",
-            "JetDatabaseWriter.Schema.TDefPageBuilder",
-            "JetDatabaseWriter.Tables.TableDataWriter",
-            "JetDatabaseWriter.Tables.TableReader",
-            "JetDatabaseWriter.Tables.TableRowStore",
-            "JetDatabaseWriter.Tables.TableSchemaEditor",
-            "JetDatabaseWriter.Transactions.TransactionLifecycle",
-            "JetDatabaseWriter.ValueDecoding.DirectRowDecoder`1",
-            "JetDatabaseWriter.ValueDecoding.PartialColumnReader",
-            "JetDatabaseWriter.ValueDecoding.RowDecodePlan",
-            "JetDatabaseWriter.ValueDecoding.RowDecoder",
-            "JetDatabaseWriter.ValueEncoding.LongValueEncoder",
-            "JetDatabaseWriter.ValueEncoding.RowEncoder",
-        ];
+        string[] allowed = [];
 
         Type[] exempt = [.. Facades, typeof(ReaderServices), typeof(WriterServices), typeof(DatabaseFile)];
         string[] actual =

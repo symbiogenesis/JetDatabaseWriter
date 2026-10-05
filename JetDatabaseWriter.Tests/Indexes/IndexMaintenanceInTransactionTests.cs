@@ -619,7 +619,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                 Assert.True(rowBound.RowSize > 0, $"Index entry points at row {indexEntry.DataRow} of page {indexEntry.DataPage}, which is not a live row.");
 
                 object?[] values = new object?[1];
-                Assert.True(decodePlan.TryDecodePartialColumns(db, data.Page, rowBound.RowStart, rowBound.RowSize, values));
+                Assert.True(decodePlan.TryDecodePartialColumns(db.Profile, data.Page, rowBound.RowStart, rowBound.RowSize, values));
                 int key = Assert.IsType<int>(values[0]);
                 Assert.Equal(IndexKeyEncoder.EncodeEntry(keyType, key), indexEntry.Key);
                 int order = previousKey is null ? -1 : IndexPageCodec.CompareKeyBytes(previousKey, indexEntry.Key);

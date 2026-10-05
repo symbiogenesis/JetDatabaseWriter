@@ -20,8 +20,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Encodes in-memory value arrays into on-disk row byte layouts for a JET
 /// data page.  Extracted from <see cref="AccessWriter"/>.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
-internal sealed class RowEncoder(DatabaseFile db)
+/// <param name="format">The database's immutable format profile.</param>
+internal sealed class RowEncoder(JetFormat format)
 {
     internal static byte[]? EncodeOleValue(object value)
     {
@@ -283,7 +283,7 @@ internal sealed class RowEncoder(DatabaseFile db)
     }
 
     /// <summary>Gets the longest row one data page holds (<see cref="DataPageLayout.MaxRowLength"/>).</summary>
-    internal int MaxRowLength => db.DataPage.MaxRowLength(db.PageSizeBytes);
+    internal int MaxRowLength => format.DataPage.MaxRowLength(format.PageSize);
 
     /// <summary>
     /// Creates the exception for a row of <paramref name="rowLength"/> bytes,
@@ -349,7 +349,7 @@ internal sealed class RowEncoder(DatabaseFile db)
 
         int nullMaskLen = JetTypeInfo.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
-        bool jet3 = db.Profile.IsJet3;
+        bool jet3 = format.IsJet3;
         if (jet3 && (numCols > Constants.TableDefinition.MaxJet3Columns || varLen > Constants.TableDefinition.MaxJet3Columns))
         {
             throw new JetLimitationException(
@@ -432,7 +432,7 @@ internal sealed class RowEncoder(DatabaseFile db)
             }
         }
 
-        int baseRowLength = db.RowFields.NumCols + fixedAreaSize + varPayloadSize + db.RowFields.Eod + (varLen * db.RowFields.VarEntry) + db.RowFields.VarLen + nullMaskLen;
+        int baseRowLength = format.RowFields.NumCols + fixedAreaSize + varPayloadSize + format.RowFields.Eod + (varLen * format.RowFields.VarEntry) + format.RowFields.VarLen + nullMaskLen;
         int jumpSize = jet3 ? Jet3JumpTable.CountForLength(baseRowLength) : 0;
         rowLength = baseRowLength + jumpSize;
 
@@ -455,8 +455,8 @@ internal sealed class RowEncoder(DatabaseFile db)
         byte[] row = new byte[rowLength];
         int pos = 0;
 
-        WriteField(row, pos, db.RowFields.NumCols, numCols);
-        pos += db.RowFields.NumCols;
+        WriteField(row, pos, format.RowFields.NumCols, numCols);
+        pos += format.RowFields.NumCols;
 
         if (fixedAreaSize > 0)
         {
@@ -470,7 +470,7 @@ internal sealed class RowEncoder(DatabaseFile db)
             ArrayPool<byte>.Shared.Return(fixedArea);
         }
 
-        int currentOffset = db.RowFields.NumCols + fixedAreaSize;
+        int currentOffset = format.RowFields.NumCols + fixedAreaSize;
 
         // Stack-allocate variable offsets for typical tables (up to 128 var columns).
         Span<int> variableOffsets = varLen <= 128 ? stackalloc int[varLen] : new int[varLen];
@@ -488,13 +488,13 @@ internal sealed class RowEncoder(DatabaseFile db)
 
         // Jet3 keeps only the low byte of the EOD and each offset; the jump
         // table below carries their high parts.
-        WriteField(row, pos, db.RowFields.Eod, jet3 ? currentOffset & 0xFF : currentOffset);
-        pos += db.RowFields.Eod;
+        WriteField(row, pos, format.RowFields.Eod, jet3 ? currentOffset & 0xFF : currentOffset);
+        pos += format.RowFields.Eod;
 
         for (int varIndex = varLen - 1; varIndex >= 0; varIndex--)
         {
-            WriteField(row, pos, db.RowFields.VarEntry, jet3 ? variableOffsets[varIndex] & 0xFF : variableOffsets[varIndex]);
-            pos += db.RowFields.VarEntry;
+            WriteField(row, pos, format.RowFields.VarEntry, jet3 ? variableOffsets[varIndex] & 0xFF : variableOffsets[varIndex]);
+            pos += format.RowFields.VarEntry;
         }
 
         if (jumpSize > 0)
@@ -503,8 +503,8 @@ internal sealed class RowEncoder(DatabaseFile db)
             pos += jumpSize;
         }
 
-        WriteField(row, pos, db.RowFields.VarLen, varLen);
-        pos += db.RowFields.VarLen;
+        WriteField(row, pos, format.RowFields.VarLen, varLen);
+        pos += format.RowFields.VarLen;
         nullMask.CopyTo(row.AsSpan(pos));
 
         return row;
@@ -513,7 +513,7 @@ internal sealed class RowEncoder(DatabaseFile db)
     private bool CanStoreFixedColumn(ColumnInfo column)
     {
         int size = JetTypeInfo.GetFixedSize(column.Type);
-        return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < db.PageSizeBytes;
+        return size >= 0 && column.FixedOff >= 0 && column.FixedOff + size < format.PageSize;
     }
 
     private byte[]? EncodeVariableValue(ColumnInfo column, object value)
@@ -620,7 +620,7 @@ internal sealed class RowEncoder(DatabaseFile db)
             return null;
         }
 
-        byte[] data = db.EncodeTextForFormat(text, compress: false);
+        byte[] data = format.EncodeText(text, compress: false);
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
         if (wrapped.Length > Constants.LongValue.MaxInlineMemoBytes)
         {
@@ -638,7 +638,7 @@ internal sealed class RowEncoder(DatabaseFile db)
         }
 
         int limit = maxSize > 0 ? maxSize : int.MaxValue;
-        byte[] bytes = db.EncodeTextForFormat(value, limit, compress);
+        byte[] bytes = format.EncodeText(value, limit, compress);
         if (maxSize > 0 && bytes.Length > maxSize)
         {
             Array.Resize(ref bytes, maxSize);
@@ -658,7 +658,7 @@ internal sealed class RowEncoder(DatabaseFile db)
                 return null;
             }
 
-            bytes = db.AnsiEncoding.GetBytes(stringValue);
+            bytes = format.AnsiEncoding.GetBytes(stringValue);
         }
 
         if (maxSize > 0 && bytes.Length > maxSize)
@@ -676,7 +676,7 @@ internal sealed class RowEncoder(DatabaseFile db)
             return null;
         }
 
-        byte[] data = db.EncodeTextForFormat(value, compress);
+        byte[] data = format.EncodeText(value, compress);
         if (data.Length > Constants.LongValue.MaxInlineMemoBytes)
         {
             throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");

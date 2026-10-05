@@ -81,7 +81,7 @@ internal sealed class RowDecodePlan
     }
 
     internal static ColumnSlice ResolveColumnSliceForDirectDecode(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -261,7 +261,7 @@ internal sealed class RowDecodePlan
     internal string GetColumnName(int columnIndex) => this.columns[columnIndex].Name;
 
     internal bool TryDecodeDirect<T>(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -309,7 +309,7 @@ internal sealed class RowDecodePlan
     }
 
     private static bool TryDecodeInlineColumnValue(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int start,
         ColumnInfo column,
@@ -337,7 +337,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type == TextType)
             {
-                value = source.DecodeTextForFormat(page, start, length);
+                value = source.DecodeText(page, start, length);
                 return true;
             }
 
@@ -366,7 +366,7 @@ internal sealed class RowDecodePlan
     }
 
     internal async ValueTask<string[]?> TryDecodeStringRowAsync(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -408,7 +408,7 @@ internal sealed class RowDecodePlan
     }
 
     internal bool TryDecodeTypedIntoBuffer(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -439,7 +439,7 @@ internal sealed class RowDecodePlan
         return true;
     }
 
-    internal bool TryDecodePartialColumns(DatabaseFile source, byte[] page, int rowStart, int rowSize, object?[] result)
+    internal bool TryDecodePartialColumns(JetFormat source, byte[] page, int rowStart, int rowSize, object?[] result)
     {
         if (this.columnOrdinals == null || result.Length < this.columnOrdinals.Length)
         {
@@ -502,11 +502,11 @@ internal sealed class RowDecodePlan
     /// <param name="page">The data page.</param>
     /// <param name="rowStart">The row start.</param>
     /// <param name="rowSize">The row size.</param>
-    internal bool CanDecodeRow(DatabaseFile source, byte[] page, int rowStart, int rowSize)
+    internal bool CanDecodeRow(JetFormat source, byte[] page, int rowStart, int rowSize)
         => this.TryParseLayout(source, page, rowStart, rowSize, out _);
 
     internal bool TryParseLayoutForDirectDecode(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         int rowSize,
@@ -514,14 +514,14 @@ internal sealed class RowDecodePlan
         => this.TryParseLayout(source, page, rowStart, rowSize, out layout);
 
     private bool TryParseLayout(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         int rowSize,
         out RowLayout layout)
     {
         layout = default;
-        if (rowSize < source.RowColumnCountFieldSize)
+        if (rowSize < source.RowFields.NumCols)
         {
             return false;
         }
@@ -537,7 +537,7 @@ internal sealed class RowDecodePlan
     }
 
     private async ValueTask<string> DecodeStringValueAsync(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         ColumnSlice slice,
@@ -560,7 +560,7 @@ internal sealed class RowDecodePlan
         };
 
     private async ValueTask<string> DecodeStringVariableValueAsync(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int start,
         int length,
@@ -596,7 +596,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type == TextType)
             {
-                return source.DecodeTextForFormat(page, start, length);
+                return source.DecodeText(page, start, length);
             }
 
             if (column.Type == BinaryType)
@@ -631,7 +631,7 @@ internal sealed class RowDecodePlan
     }
 
     private async ValueTask<string> DecodeCalculatedStringVariableValueAsync(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int start,
         int length,
@@ -648,7 +648,7 @@ internal sealed class RowDecodePlan
             if (valueType == TextType)
             {
                 byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
-                return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
+                return source.DecodeText(textPayload, 0, textPayload.Length);
             }
 
             if (valueType == BinaryType)
@@ -688,7 +688,7 @@ internal sealed class RowDecodePlan
     }
 
     private object? DecodeTypedValue(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int rowStart,
         ColumnSlice slice,
@@ -704,7 +704,7 @@ internal sealed class RowDecodePlan
         };
 
     private object? DecodeTypedVariableValue(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int start,
         int length,
@@ -733,7 +733,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type == TextType)
             {
-                return source.DecodeTextForFormat(page, start, length);
+                return source.DecodeText(page, start, length);
             }
 
             if (column.Type == BinaryType)
@@ -784,7 +784,7 @@ internal sealed class RowDecodePlan
     }
 
     private object? DecodeCalculatedTypedVariableValue(
-        DatabaseFile source,
+        JetFormat source,
         byte[] page,
         int start,
         int length,
@@ -799,7 +799,7 @@ internal sealed class RowDecodePlan
             if (valueType == TextType)
             {
                 byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
-                return source.DecodeTextForFormat(textPayload, 0, textPayload.Length);
+                return source.DecodeText(textPayload, 0, textPayload.Length);
             }
 
             if (valueType == BinaryType)

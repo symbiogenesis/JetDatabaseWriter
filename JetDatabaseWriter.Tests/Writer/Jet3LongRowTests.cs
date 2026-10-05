@@ -319,7 +319,7 @@ public sealed class Jet3LongRowTests
         await using MemoryStream ms = await CreateDatabaseAsync(null, [], ct);
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct);
-        var encoder = new RowEncoder(harness.Database);
+        var encoder = new RowEncoder(harness.Database.Profile);
         var random = new Random(20261003);
         int withJumps = 0;
         for (int iteration = 0; iteration < 20_000; iteration++)
@@ -414,7 +414,7 @@ public sealed class Jet3LongRowTests
         };
         wide.InitializeColumnMetadata();
         JetLimitationException encode = Assert.Throws<JetLimitationException>(() =>
-            new RowEncoder(harness.Database).SerializeRow(wide, [.. Enumerable.Range(0, 256).Select(i => (object)i)]));
+            new RowEncoder(harness.Database.Profile).SerializeRow(wide, [.. Enumerable.Range(0, 256).Select(i => (object)i)]));
         Assert.Contains("255", encode.Message, StringComparison.Ordinal);
     }
 
@@ -431,7 +431,7 @@ public sealed class Jet3LongRowTests
         await using MemoryStream ms = await CreateDatabaseAsync(null, [], ct);
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct);
-        var encoder = new RowEncoder(harness.Database);
+        var encoder = new RowEncoder(harness.Database.Profile);
         int[] lengths = [.. Enumerable.Repeat(-1, 255)];
         (TableDef tableDef, object[] values) = BuildRow(new Random(1), fixedCount: 0, lengths);
 

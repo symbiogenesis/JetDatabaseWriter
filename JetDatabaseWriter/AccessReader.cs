@@ -15,6 +15,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Queries;
 using JetDatabaseWriter.Transactions;
 
@@ -203,7 +204,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-            byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
+            byte[] header = await PageFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
 
             // Office Crypto API ("Agile") encryption: the file is a real OLE
             // compound document with EncryptionInfo + EncryptedPackage streams.
@@ -223,7 +224,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
                 }
 
                 var inner = new MemoryStream(decryptedAgile, writable: false);
-                byte[] innerHeader = await DatabaseFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
+                byte[] innerHeader = await PageFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
                 return new AccessReader(string.Empty, options, inner, innerHeader);
             }
 
@@ -452,7 +453,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="options">The reader options, which supply the file access and sharing.</param>
     /// <returns>The opened stream.</returns>
     private static FileStream CreateStream(string path, AccessReaderOptions options) =>
-        DatabaseFile.OpenFileStream(path, options.FileAccess, options.FileShare, FileOptions.None);
+        PageFile.OpenFileStream(path, options.FileAccess, options.FileShare, FileOptions.None);
 
     private async ValueTask DisposeReaderResourcesAsync()
     {

@@ -14,11 +14,13 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -35,7 +37,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// when the parent column or table changes shape. See
 /// <see href="docs/design/complex-columns-format-notes.md" />.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pager">The writer's page file, through which the header page and patched parent rows are written.</param>
 /// <param name="catalog">Resolves parent tables by name.</param>
 /// <param name="tableRows">Writes and tombstones flat-table and <c>MSysComplexColumns</c> rows.</param>
@@ -46,7 +50,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, a parent table's complex AutoNumber after a reference is allocated, and <c>MSysComplexColumns</c>' ComplexID counter.</param>
 /// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
 internal sealed class ComplexColumnManager(
-    DatabaseFile db,
+    JetFormat format,
+    TableDefReader tableDefs,
+    OwnedDataPages ownedPages,
     Pager pager,
     TableCatalog catalog,
     TableRowStore tableRows,
@@ -59,7 +65,9 @@ internal sealed class ComplexColumnManager(
 {
     private const int ComplexTypeTemplateTextLength = 255;
 
-    private readonly DatabaseFile db = db;
+    private readonly JetFormat format = format;
+    private readonly TableDefReader tableDefs = tableDefs;
+    private readonly OwnedDataPages ownedPages = ownedPages;
     private readonly Pager pager = pager;
     private readonly TableCatalog catalog = catalog;
 
@@ -78,7 +86,7 @@ internal sealed class ComplexColumnManager(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask ScaffoldSystemTablesAsync(bool fullCatalogSchema, long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
-        if (!this.db.Profile.SupportsComplexColumns || !fullCatalogSchema)
+        if (!this.format.SupportsComplexColumns || !fullCatalogSchema)
         {
             return;
         }
@@ -192,7 +200,7 @@ internal sealed class ComplexColumnManager(
         long relationshipsTdefPage,
         CancellationToken cancellationToken)
     {
-        byte[] header = await this.db.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
+        byte[] header = await this.pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
         try
         {
             EncryptionManager.TransformHeaderMask(header);
@@ -205,7 +213,7 @@ internal sealed class ComplexColumnManager(
         }
         finally
         {
-            DatabaseFile.ReturnPage(header);
+            PageBuffers.Return(header);
         }
     }
 
@@ -437,7 +445,7 @@ internal sealed class ComplexColumnManager(
             return null;
         }
 
-        if (!this.db.Profile.SupportsComplexColumns)
+        if (!this.format.SupportsComplexColumns)
         {
             throw new NotSupportedException(
                 "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
@@ -476,17 +484,17 @@ internal sealed class ComplexColumnManager(
     /// <exception cref="InvalidOperationException">Every <c>ComplexID</c> up to <see cref="int.MaxValue"/> has been used.</exception>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
-        TableDef msysComplex = await this.db.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysComplex = await this.tableDefs.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
 
         long maxId = await autoNumbers.ReadHighWaterAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
         if (idCol != null)
         {
-            await this.db.ForEachLiveTableRowAsync(
+            await this.ownedPages.ForEachLiveTableRowAsync(
                 msysComplexPg,
                 (row, _) =>
                 {
-                    string idText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, idCol);
+                    string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, idCol);
                     if (CatalogValueReader.TryParseInt32(idText, out int v) && v > maxId)
                     {
                         maxId = v;
@@ -731,7 +739,7 @@ internal sealed class ComplexColumnManager(
             throw new InvalidOperationException("MSysComplexColumns table is missing.");
         }
 
-        TableDef msysComplex = await this.db.ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysComplex = await this.tableDefs.ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         object[] values = msysComplex.CreateNullValueRow();
 
         msysComplex.SetValueByName(values, "ColumnName", parentColumnName);
@@ -762,7 +770,7 @@ internal sealed class ComplexColumnManager(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
-        this.db.ThrowIfDisposed();
+        this.pager.ThrowIfDisposed();
         cancellationToken.ThrowIfCancellationRequested();
 
         if (parentRowKey.Count == 0)
@@ -770,7 +778,7 @@ internal sealed class ComplexColumnManager(
             throw new ArgumentException("At least one key column is required.", nameof(parentRowKey));
         }
 
-        if (!this.db.Profile.SupportsComplexColumns)
+        if (!this.format.SupportsComplexColumns)
         {
             throw new NotSupportedException(
                 "Complex (Attachment / MultiValue) columns are an Access 2007+ ACE feature; only .accdb databases are supported.");
@@ -799,7 +807,7 @@ internal sealed class ComplexColumnManager(
                 $"No MSysComplexColumns row was found for column '{tableName}.{columnName}'.");
         }
 
-        TableDef flatDef = await this.db.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+        TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
         ComplexColumnKind kind = ClassifyComplexColumnKind(complexCol.Type, flatDef);
         if (kind == ComplexColumnKind.Unknown)
         {
@@ -902,7 +910,7 @@ internal sealed class ComplexColumnManager(
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
-        TableDef? msys = await this.db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false)
+        TableDef? msys = await this.tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("MSysObjects catalog table is missing.");
 
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
@@ -929,7 +937,7 @@ internal sealed class ComplexColumnManager(
         RowLocation match = default;
         bool found = false;
 
-        await this.db.ForEachLiveTableRowAsync(
+        await this.ownedPages.ForEachLiveTableRowAsync(
             parentTdefPage,
             (row, _) =>
             {
@@ -937,7 +945,7 @@ internal sealed class ComplexColumnManager(
                 for (int p = 0; p < predIndexes.Length; p++)
                 {
                     ColumnInfo c = parentDef.Columns[predIndexes[p]];
-                    string actual = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, c);
+                    string actual = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, c);
                     if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
                     {
                         ok = false;
@@ -998,17 +1006,17 @@ internal sealed class ComplexColumnManager(
         ColumnInfo complexCol,
         CancellationToken cancellationToken)
     {
-        byte[] page = await this.db.ReadPageAsync(parentLocation.DataPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.pager.ReadPageAsync(parentLocation.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (ComplexReferenceSeedReader.TryReadSlot(this.db, page, parentLocation.RowStart, parentLocation.RowSize, complexCol, out int existing))
+            if (ComplexReferenceSeedReader.TryReadSlot(this.format, page, parentLocation.RowStart, parentLocation.RowSize, complexCol, out int existing))
             {
                 return existing;
             }
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
 
         // The registry's session counter is the one inserts take references
@@ -1031,15 +1039,15 @@ internal sealed class ComplexColumnManager(
         CancellationToken cancellationToken)
     {
         // An overflow row's bytes are on the page its header points at.
-        byte[] page = await this.db.ReadPageAsync(location.DataPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.pager.ReadPageAsync(location.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             foreach (ColumnInfo column in parentDef.Columns)
             {
                 if (column.Type is AttachmentType or ComplexType
-                    && !ComplexReferenceSeedReader.TryReadSlot(this.db, page, location.RowStart, location.RowSize, column, out _))
+                    && !ComplexReferenceSeedReader.TryReadSlot(this.format, page, location.RowStart, location.RowSize, column, out _))
                 {
-                    ComplexReferenceSeedReader.WriteSlot(this.db, page, location.RowStart, location.RowSize, column, reference);
+                    ComplexReferenceSeedReader.WriteSlot(this.format, page, location.RowStart, location.RowSize, column, reference);
                 }
             }
 
@@ -1047,19 +1055,19 @@ internal sealed class ComplexColumnManager(
         }
         finally
         {
-            DatabaseFile.ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
     private async ValueTask<bool> HasComplexColumnIndexAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
-        byte[]? tdef = await this.db.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (tdef is null || tdef.Length < this.db.TDef.BlockEnd)
+        byte[]? tdef = await this.tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (tdef is null || tdef.Length < this.format.TDef.BlockEnd)
         {
             return false;
         }
 
-        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(this.db.Profile, tdef, tableDef.Columns))
+        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(this.format, tdef, tableDef.Columns))
         {
             foreach (IndexColumnReference key in index.Columns)
             {
@@ -1210,13 +1218,13 @@ internal sealed class ComplexColumnManager(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] page = await this.db.ReadPageAsync(loc.DataPageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await this.pager.ReadPageAsync(loc.DataPageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 foreach (ColumnInfo col in complexCols)
                 {
                     if (idsByCol.TryGetValue(col.ColNum, out HashSet<int>? ids)
-                        && ComplexReferenceSeedReader.TryReadSlot(this.db, page, loc.RowStart, loc.RowSize, col, out int reference))
+                        && ComplexReferenceSeedReader.TryReadSlot(this.format, page, loc.RowStart, loc.RowSize, col, out int reference))
                     {
                         _ = ids.Add(reference);
                     }
@@ -1224,7 +1232,7 @@ internal sealed class ComplexColumnManager(
             }
             finally
             {
-                DatabaseFile.ReturnPage(page);
+                PageBuffers.Return(page);
             }
         }
 
@@ -1246,7 +1254,7 @@ internal sealed class ComplexColumnManager(
                 continue;
             }
 
-            TableDef flatDef = await this.db.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
+            TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
 
             ColumnInfo? fkCol = flatDef.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
                 ?? flatDef.Columns.Find(c => c.Type == LongIntegerType);
@@ -1255,11 +1263,11 @@ internal sealed class ComplexColumnManager(
                 continue;
             }
 
-            await this.db.ForEachLiveTableRowAsync(
+            await this.ownedPages.ForEachLiveTableRowAsync(
                 flatTdefPage,
                 (row, _) =>
                 {
-                    string fkText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, fkCol);
+                    string fkText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, fkCol);
                     if (CatalogValueReader.TryParseInt32(fkText, out int fk)
                         && ids.Contains(fk))
                     {
@@ -1313,7 +1321,7 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        TableDef msysCxDef = await this.db.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.tableDefs.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
@@ -1325,23 +1333,23 @@ internal sealed class ComplexColumnManager(
         long flatTdefPage = 0;
         var deletedRows = new List<(long PageNumber, int RowIndex)>();
 
-        await this.db.ForEachLiveTableRowAsync(
+        await this.ownedPages.ForEachLiveTableRowAsync(
             msysCxPg,
             (row, _) =>
             {
-                string rowName = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                string rowName = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
                 if (!string.Equals(rowName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
                     return new ValueTask<bool>(true);
                 }
 
-                string idText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
                 if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                 {
                     return new ValueTask<bool>(true);
                 }
 
-                string flatText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
+                string flatText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
                 if (CatalogValueReader.TryParseInt64(flatText, out long fid))
                 {
                     flatTdefPage = CatalogValueReader.TdefPageFromId(fid);
@@ -1370,7 +1378,7 @@ internal sealed class ComplexColumnManager(
         // Drop the hidden flat-table catalog row. Same model as
         // DropComplexChildrenForTableAsync — orphaned data pages are reclaimed
         // by Access on the next Compact &amp; Repair pass.
-        TableDef? msys = await this.db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await this.tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return;
@@ -1412,7 +1420,7 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        TableDef msysCxDef = await this.db.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.tableDefs.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (nameCol == null || cxIdCol == null)
@@ -1421,17 +1429,17 @@ internal sealed class ComplexColumnManager(
         }
 
         var matched = new List<(RowLocation Loc, object[] Values)>();
-        await this.db.ForEachLiveTableRowAsync(
+        await this.ownedPages.ForEachLiveTableRowAsync(
             msysCxPg,
             (row, _) =>
             {
-                string rowName = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                string rowName = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
                 if (!string.Equals(rowName, oldColumnName, StringComparison.OrdinalIgnoreCase))
                 {
                     return new ValueTask<bool>(true);
                 }
 
-                string idText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
                 if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                 {
                     return new ValueTask<bool>(true);
@@ -1440,7 +1448,7 @@ internal sealed class ComplexColumnManager(
                 object[] values = new object[msysCxDef.Columns.Count];
                 for (int i = 0; i < values.Length; i++)
                 {
-                    string text = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
+                    string text = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
                     values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                 }
 
@@ -1475,7 +1483,7 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        TableDef msysCxDef = await this.db.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.tableDefs.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
         if (cxIdCol == null)
         {
@@ -1483,11 +1491,11 @@ internal sealed class ComplexColumnManager(
         }
 
         var matched = new List<(RowLocation Loc, object[] Values)>();
-        await this.db.ForEachLiveTableRowAsync(
+        await this.ownedPages.ForEachLiveTableRowAsync(
             msysCxPg,
             (row, _) =>
             {
-                string idText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
                 if (!CatalogValueReader.TryParseInt32(idText, out int rid) || rid != complexId)
                 {
                     return new ValueTask<bool>(true);
@@ -1496,7 +1504,7 @@ internal sealed class ComplexColumnManager(
                 object[] values = new object[msysCxDef.Columns.Count];
                 for (int i = 0; i < values.Length; i++)
                 {
-                    string text = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
+                    string text = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, msysCxDef.Columns[i]);
                     values[i] = string.IsNullOrEmpty(text) ? DBNull.Value : text;
                 }
 
@@ -1536,7 +1544,7 @@ internal sealed class ComplexColumnManager(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask DropComplexChildrenForTableAsync(long parentTdefPage, CancellationToken cancellationToken)
     {
-        TableDef? parentDef = await this.db.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? parentDef = await this.tableDefs.ReadTableDefAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
         if (parentDef == null)
         {
             return;
@@ -1562,7 +1570,7 @@ internal sealed class ComplexColumnManager(
             return;
         }
 
-        TableDef msysCxDef = await this.db.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        TableDef msysCxDef = await this.tableDefs.ReadRequiredTableDefAsync(msysCxPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameCol = msysCxDef.FindColumn("ColumnName");
         ColumnInfo? flatIdCol = msysCxDef.FindColumn("FlatTableID");
         ColumnInfo? cxIdCol = msysCxDef.FindColumn("ComplexID");
@@ -1586,12 +1594,12 @@ internal sealed class ComplexColumnManager(
         var flatTdefPages = new HashSet<long>();
         var cxRowsToDelete = new List<(long PageNumber, int RowIndex)>();
 
-        await this.db.ForEachLiveTableRowAsync(
+        await this.ownedPages.ForEachLiveTableRowAsync(
             msysCxPg,
             (row, _) =>
             {
-                string rowName = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
-                string idText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
+                string rowName = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, cxIdCol);
                 if (!CatalogValueReader.TryParseInt32(idText, out int rid))
                 {
                     return new ValueTask<bool>(true);
@@ -1602,7 +1610,7 @@ internal sealed class ComplexColumnManager(
                     return new ValueTask<bool>(true);
                 }
 
-                string flatText = this.db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
+                string flatText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, flatIdCol);
                 if (CatalogValueReader.TryParseInt64(flatText, out long flatId))
                 {
                     flatTdefPages.Add(CatalogValueReader.TdefPageFromId(flatId));
@@ -1630,7 +1638,7 @@ internal sealed class ComplexColumnManager(
 
         // Drop the hidden flat-table catalog rows (system-flag tables —
         // public DropTableAsync would skip them).
-        TableDef? msys = await this.db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await this.tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return;

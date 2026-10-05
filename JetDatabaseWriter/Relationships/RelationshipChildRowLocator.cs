@@ -7,10 +7,12 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-internal sealed class RelationshipChildRowLocator(DatabaseFile db)
+internal sealed class RelationshipChildRowLocator(JetFormat format, IPageSource pageSource, OwnedDataPages ownedPages)
 {
     public async ValueTask<List<(RowLocation Loc, TPayload Payload)>?> TrySeekChildLocationsAsync<TPayload>(
         CatalogEntry childEntry,
@@ -20,8 +22,8 @@ internal sealed class RelationshipChildRowLocator(DatabaseFile db)
     {
         var pendingByLocation = new Dictionary<long, (long DataPage, int RowIndex, TPayload Payload)>();
         var cursor = new IndexCursor(
-            (page, token) => RelationshipPageReader.ReadOwnedAsync(db, page, token),
-            db.PageSizeBytes);
+            (page, token) => RelationshipPageReader.ReadOwnedAsync(pageSource, page, token),
+            format.PageSize);
 
         foreach ((object?[] oldPrimaryKey, TPayload? payload) in requests)
         {
@@ -67,15 +69,15 @@ internal sealed class RelationshipChildRowLocator(DatabaseFile db)
         foreach (KeyValuePair<long, HashSet<int>> pageRows in byPage)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await db.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pageSource.ReadPageAsync(pageRows.Key, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (page[0] != Constants.PageTypes.Data || Ri32(page, db.DataPage.TDefOff) != childEntry.TDefPage)
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != childEntry.TDefPage)
                 {
                     return null;
                 }
 
-                foreach (RowBound rowBound in db.ComputeRowDirectory(page))
+                foreach (RowBound rowBound in DataPageRows.ComputeRowDirectory(format, page))
                 {
                     if (!pageRows.Value.Contains(rowBound.RowIndex))
                     {
@@ -93,12 +95,12 @@ internal sealed class RelationshipChildRowLocator(DatabaseFile db)
                     {
                         // The index names an overflow row's header; the row's
                         // bytes are where the header points.
-                        if (await db.TryResolveOverflowRowAsync(page, rowBound, db.ReadPageAsync, DatabaseFile.ReturnPage, cancellationToken).ConfigureAwait(false) is not { } target)
+                        if (await ownedPages.TryResolveOverflowRowAsync(page, rowBound, pageSource.ReadPageAsync, PageBuffers.Return, cancellationToken).ConfigureAwait(false) is not { } target)
                         {
                             continue;
                         }
 
-                        DatabaseFile.ReturnPage(target.Page);
+                        PageBuffers.Return(target.Page);
                         location = new RowLocation(pageRows.Key, rowBound.RowIndex, target.Bound.RowStart, target.Bound.RowSize)
                         {
                             DataPageNumber = target.PageNumber,
@@ -111,7 +113,7 @@ internal sealed class RelationshipChildRowLocator(DatabaseFile db)
             }
             finally
             {
-                DatabaseFile.ReturnPage(page);
+                PageBuffers.Return(page);
             }
         }
 

@@ -548,7 +548,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("T", Ct)).Entry.TDefPage;
         byte[] before = await harness.Database.ReadPageCopyAsync(tdefPage, Ct);
-        var autoNumbers = new AutoNumberMaintainer(harness.Database, harness.Pager);
+        var autoNumbers = new AutoNumberMaintainer(harness.Database.Profile, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager);
 
         await autoNumbers.RaiseComplexHighWaterAsync(tdefPage, 99, Ct);
 

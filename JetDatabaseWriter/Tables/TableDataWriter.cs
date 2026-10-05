@@ -16,6 +16,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -33,7 +34,8 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// update or delete ignores it from its first page write and runs to
 /// completion. The public facade owns the auto-commit scope around each call.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="pageSource">The database's page source.</param>
 /// <param name="catalog">Resolves the target table by name.</param>
 /// <param name="tableRows">Writes and tombstones the affected rows.</param>
 /// <param name="indexes">Maintains index B-trees after each batch.</param>
@@ -44,7 +46,8 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
 /// <param name="snapshots">Reads the decoded rows that update and delete predicates are evaluated against.</param>
 internal sealed class TableDataWriter(
-    DatabaseFile db,
+    JetFormat format,
+    IPageSource pageSource,
     TableCatalog catalog,
     TableRowStore tableRows,
     IndexMaintainer indexes,
@@ -137,7 +140,7 @@ internal sealed class TableDataWriter(
     {
         object[] normalized = NormalizePublicRow(values, nameof(values));
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         _ = await this.InsertMappedRowsAfterValidationAsync(
             tableName,
@@ -151,7 +154,7 @@ internal sealed class TableDataWriter(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(rows, nameof(rows));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         return await this.InsertMappedRowsAfterValidationAsync(
             tableName,
@@ -166,7 +169,7 @@ internal sealed class TableDataWriter(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(item, nameof(item));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         _ = await this.InsertMappedRowsAfterValidationAsync(
             tableName,
@@ -181,7 +184,7 @@ internal sealed class TableDataWriter(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(items, nameof(items));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         return await this.InsertMappedRowsAfterValidationAsync(
             tableName,
@@ -195,7 +198,7 @@ internal sealed class TableDataWriter(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(row, nameof(row));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         _ = await this.InsertMappedRowsAfterValidationAsync(
             tableName,
@@ -209,7 +212,7 @@ internal sealed class TableDataWriter(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(rows, nameof(rows));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         return await this.InsertMappedRowsAfterValidationAsync(
             tableName,
@@ -224,7 +227,7 @@ internal sealed class TableDataWriter(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(criteria, nameof(criteria));
         Guard.NotNull(updatedValues, nameof(updatedValues));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         if (updatedValues.Count == 0)
         {
@@ -401,7 +404,7 @@ internal sealed class TableDataWriter(
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         Guard.NotNull(criteria, nameof(criteria));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pageSource.ThrowIfDisposedOrCancelled(cancellationToken);
 
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
@@ -684,7 +687,7 @@ internal sealed class TableDataWriter(
     /// <exception cref="JetLimitationException">A Text or Memo value holds a character the database's code page does not have.</exception>
     private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row)
     {
-        if (!db.Profile.IsJet3)
+        if (!format.IsJet3)
         {
             return;
         }
@@ -699,9 +702,9 @@ internal sealed class TableDataWriter(
             }
 
             if (Convert.ToString(row[i], CultureInfo.InvariantCulture) is { } text
-                && db.DescribeUnstorableCharacter(text) is { } character)
+                && format.DescribeUnstorableCharacter(text) is { } character)
             {
-                throw new JetLimitationException(db.UnstorableTextMessage($"The value for column '{column.Name}' of table '{tableName}'", character));
+                throw new JetLimitationException(format.UnstorableTextMessage($"The value for column '{column.Name}' of table '{tableName}'", character));
             }
         }
     }

@@ -162,13 +162,14 @@ public sealed class RowSizeLimitTests
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(TableName, ct));
         TableDef tableDef = await db.ReadRequiredTableDefAsync(entry.TDefPage, TableName, ct);
         var store = new TableRowStore(
-            db,
+            db.Profile,
+            db.OwnedPages,
             harness.Pager,
             options,
-            new LongValueEncoder(db, harness.Pager, harness.Services.PageAllocator, options),
-            new RowEncoder(db),
-            new DataPageInserter(db, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps),
-            new TDefPageBuilder(db, harness.Pager));
+            new LongValueEncoder(db.Profile, harness.Pager, harness.Services.PageAllocator, options),
+            new RowEncoder(db.Profile),
+            new DataPageInserter(db.Profile, db.OwnedPages, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps),
+            new TDefPageBuilder(db.Profile, harness.Pager));
 
         int[] lengths = [900, 1_000, 1_000, 950, 1_000];
         object[] values = Row(tableDef, lengths);

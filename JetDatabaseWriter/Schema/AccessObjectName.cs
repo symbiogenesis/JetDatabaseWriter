@@ -117,23 +117,23 @@ internal static class AccessObjectName
     }
 
     /// <summary>
-    /// Refuses a new name that <paramref name="db"/> cannot store as given. A
+    /// Refuses a new name that <paramref name="format"/> cannot store as given. A
     /// Jet3 database stores names in its code page, where a character outside
     /// it would be stored as a best-fit match or <c>?</c>, so the stored name
     /// would no longer match the caller's (<see cref="JetFormat.DescribeUnstorableCharacter"/>).
     /// Jet4 and ACE store any name.
     /// </summary>
-    /// <param name="db">The database the name is written to.</param>
+    /// <param name="format">The database's immutable format profile.</param>
     /// <param name="name">The name, already checked by <see cref="ThrowIfInvalid"/> or <see cref="ThrowIfInvalidMember"/>.</param>
     /// <param name="paramName">The public parameter that carries the name.</param>
     /// <param name="kind">The kind of object, for the message: "table", "column", "index" or "relationship".</param>
     /// <param name="position">The definition's position in its list, or <see langword="null"/>.</param>
     /// <exception cref="ArgumentException"><paramref name="name"/> holds a character the database's code page does not have.</exception>
-    internal static void ThrowIfNotStorable(DatabaseFile db, string name, string paramName, string kind, int? position = null)
+    internal static void ThrowIfNotStorable(JetFormat format, string name, string paramName, string kind, int? position = null)
     {
-        if (db.DescribeUnstorableCharacter(name) is { } character)
+        if (format.DescribeUnstorableCharacter(name) is { } character)
         {
-            throw new ArgumentException(db.UnstorableTextMessage($"The {kind} name '{Display(name)}'{At(position)}", character), paramName);
+            throw new ArgumentException(format.UnstorableTextMessage($"The {kind} name '{Display(name)}'{At(position)}", character), paramName);
         }
     }
 

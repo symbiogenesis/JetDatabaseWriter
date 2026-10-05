@@ -9,17 +9,16 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
-using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Owns the Access global page-allocation map on page 1 and exposes page
 /// reserve, free, scrub, and tail-shrink operations for the writer.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
 /// <param name="pager">The writer's page file, through which pages are written, appended and truncated.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for freed pages.</param>
-internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOptions options)
+internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterOptions options)
 {
     private const int GlobalUsageMapPageNumber = 1;
 
@@ -80,7 +79,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
             return reusableStart;
         }
 
-        byte[] blankPage = new byte[db.PageSizeBytes];
+        byte[] blankPage = new byte[format.PageSize];
         long firstAppendedPage = -1;
         int appended = 0;
         try
@@ -155,11 +154,11 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
     internal async ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken)
     {
         var freePages = new SortedSet<long>(await this.EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false));
-        long totalPages = db.PageCount;
+        long totalPages = pager.PageCount;
         for (long pageNumber = 2; pageNumber < totalPages; pageNumber++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (page[0] == Constants.PageTypes.Freed)
@@ -169,7 +168,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
             }
             finally
             {
-                ReturnPage(page);
+                PageBuffers.Return(page);
             }
         }
 
@@ -198,7 +197,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         }
 
         bool secure = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
-        long totalPages = db.PageCount;
+        long totalPages = pager.PageCount;
         long newTotalPages = totalPages;
         while (newTotalPages > 3)
         {
@@ -222,7 +221,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
             return 0;
         }
 
-        long newLength = newTotalPages * db.PageSizeBytes;
+        long newLength = newTotalPages * format.PageSize;
         await pager.SetLengthAsync(newLength, cancellationToken).ConfigureAwait(false);
 
         return totalPages - newTotalPages;
@@ -230,12 +229,12 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
 
     internal async ValueTask<bool> IsPageFreeAsync(long pageNumber, CancellationToken cancellationToken)
     {
-        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= db.PageCount)
+        if (pageNumber <= GlobalUsageMapPageNumber || pageNumber >= pager.PageCount)
         {
             return false;
         }
 
-        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             return IsPhysicallyReusableFreePage(page)
@@ -243,7 +242,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         }
         finally
         {
-            ReturnPage(page);
+            PageBuffers.Return(page);
         }
     }
 
@@ -325,7 +324,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, db.DataPage, db.PageSizeBytes, out RowBound rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, format.DataPage, format.PageSize, out RowBound rowBound))
             {
                 return [];
             }
@@ -334,11 +333,11 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
             bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
                 globalPage,
                 rowBound,
-                db.PageSizeBytes,
-                db.PageCount,
+                format.PageSize,
+                pager.PageCount,
                 minimumPageNumber: GlobalUsageMapPageNumber + 1,
                 strict: false,
-                db.ReadPageAsync,
+                pager.ReadPageAsync,
                 ReturnPage,
                 mappedFreePages,
                 cancellationToken).ConfigureAwait(false);
@@ -351,7 +350,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         }
         finally
         {
-            ReturnPage(globalPage);
+            PageBuffers.Return(globalPage);
         }
     }
 
@@ -366,7 +365,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         foreach (long pageNumber in mappedFreePages)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
                 if (IsPhysicallyReusableFreePage(page))
@@ -376,7 +375,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
             }
             finally
             {
-                ReturnPage(page);
+                PageBuffers.Return(page);
             }
         }
 
@@ -388,7 +387,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, db.DataPage, db.PageSizeBytes, out RowBound rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, format.DataPage, format.PageSize, out RowBound rowBound))
             {
                 return false;
             }
@@ -402,7 +401,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         }
         finally
         {
-            ReturnPage(globalPage);
+            PageBuffers.Return(globalPage);
         }
     }
 
@@ -411,10 +410,10 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!UsageMap.TryGetFirstRowBound(globalPage, db.DataPage, db.PageSizeBytes, out RowBound rowBound))
+            if (!UsageMap.TryGetFirstRowBound(globalPage, format.DataPage, format.PageSize, out RowBound rowBound))
             {
                 this.InitializeGlobalUsageMapPage(globalPage);
-                rowBound = new RowBound(0, db.PageSizeBytes - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
+                rowBound = new RowBound(0, format.PageSize - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
             }
 
             byte mapType = globalPage[rowBound.RowStart];
@@ -443,7 +442,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         }
         finally
         {
-            ReturnPage(globalPage);
+            PageBuffers.Return(globalPage);
         }
     }
 
@@ -453,8 +452,8 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         _ = UsageMap.TryEnumerateInlinePages(
             globalPage,
             rowBound,
-            db.PageSizeBytes,
-            db.PageCount,
+            format.PageSize,
+            pager.PageCount,
             minimumPageNumber: GlobalUsageMapPageNumber + 1,
             strict: false,
             existingFreePages);
@@ -470,7 +469,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
 
     private async ValueTask<bool> TryGetReferenceFreeStateAsync(byte[] globalPage, int rowStart, int rowSize, long pageNumber, CancellationToken cancellationToken)
     {
-        int pointerIndex = UsageMap.ReferencePointerIndex(db.PageSizeBytes, pageNumber);
+        int pointerIndex = UsageMap.ReferencePointerIndex(format.PageSize, pageNumber);
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
@@ -479,12 +478,12 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
 
         int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
         int mapPageNumber = Ri32(globalPage, pointerOffset);
-        if (mapPageNumber <= 0 || mapPageNumber >= db.PageCount)
+        if (mapPageNumber <= 0 || mapPageNumber >= pager.PageCount)
         {
             return false;
         }
 
-        byte[] mapPage = await db.ReadPageAsync(mapPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] mapPage = await pager.ReadPageAsync(mapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (mapPage[0] != Constants.PageTypes.UsageMap)
@@ -492,17 +491,17 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
                 return false;
             }
 
-            return UsageMap.TryGetReferencePageState(mapPage, db.PageSizeBytes, pageNumber, out bool isFree) && isFree;
+            return UsageMap.TryGetReferencePageState(mapPage, format.PageSize, pageNumber, out bool isFree) && isFree;
         }
         finally
         {
-            ReturnPage(mapPage);
+            PageBuffers.Return(mapPage);
         }
     }
 
     private async ValueTask SetReferenceFreeStateAsync(byte[] globalPage, int rowStart, int rowSize, long pageNumber, bool free, CancellationToken cancellationToken)
     {
-        int pointerIndex = UsageMap.ReferencePointerIndex(db.PageSizeBytes, pageNumber);
+        int pointerIndex = UsageMap.ReferencePointerIndex(format.PageSize, pageNumber);
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
@@ -520,7 +519,7 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
                 return;
             }
 
-            mapPage = new byte[db.PageSizeBytes];
+            mapPage = new byte[format.PageSize];
             mapPage[0] = Constants.PageTypes.UsageMap;
             mapPageNumber = checked((int)await pager.AppendPageAsync(mapPage, cancellationToken).ConfigureAwait(false));
             Wi32(globalPage, pointerOffset, mapPageNumber);
@@ -528,18 +527,18 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         }
         else
         {
-            mapPage = await db.ReadPageAsync(mapPageNumber, cancellationToken).ConfigureAwait(false);
+            mapPage = await pager.ReadPageAsync(mapPageNumber, cancellationToken).ConfigureAwait(false);
             returnMapPage = true;
             if (mapPage[0] != Constants.PageTypes.UsageMap)
             {
-                Array.Clear(mapPage, 0, db.PageSizeBytes);
+                Array.Clear(mapPage, 0, format.PageSize);
                 mapPage[0] = Constants.PageTypes.UsageMap;
             }
         }
 
         try
         {
-            if (UsageMap.TrySetReferencePageState(mapPage, db.PageSizeBytes, pageNumber, free))
+            if (UsageMap.TrySetReferencePageState(mapPage, format.PageSize, pageNumber, free))
             {
                 await pager.WritePageAsync(mapPageNumber, mapPage, cancellationToken).ConfigureAwait(false);
             }
@@ -548,14 +547,14 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         {
             if (returnMapPage)
             {
-                ReturnPage(mapPage);
+                PageBuffers.Return(mapPage);
             }
         }
     }
 
     private async ValueTask<byte[]> ReadGlobalUsageMapPageAsync(CancellationToken cancellationToken)
     {
-        byte[] page = await db.ReadPageAsync(GlobalUsageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        byte[] page = await pager.ReadPageAsync(GlobalUsageMapPageNumber, cancellationToken).ConfigureAwait(false);
         if (!this.IsGlobalUsageMapPage(page))
         {
             this.InitializeGlobalUsageMapPage(page);
@@ -567,12 +566,12 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
 
     private bool IsGlobalUsageMapPage(byte[] page)
     {
-        if (page.Length < db.PageSizeBytes || page[0] != Constants.PageTypes.Data || page[1] != 0x01)
+        if (page.Length < format.PageSize || page[0] != Constants.PageTypes.Data || page[1] != 0x01)
         {
             return false;
         }
 
-        if (!UsageMap.TryGetFirstRowBound(page, db.DataPage, db.PageSizeBytes, out RowBound rowBound))
+        if (!UsageMap.TryGetFirstRowBound(page, format.DataPage, format.PageSize, out RowBound rowBound))
         {
             return false;
         }
@@ -583,18 +582,18 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
 
     private void InitializeGlobalUsageMapPage(byte[] page)
     {
-        Array.Clear(page, 0, db.PageSizeBytes);
+        Array.Clear(page, 0, format.PageSize);
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        int rowStart = db.PageSizeBytes - Constants.UsageMap.RowSize;
+        int rowStart = format.PageSize - Constants.UsageMap.RowSize;
         int row1Start = rowStart - Constants.UsageMap.RowSize;
-        int slotTableEnd = db.DataPage.RowsStart + 4;
+        int slotTableEnd = format.DataPage.RowsStart + 4;
         int freeSpace = row1Start - slotTableEnd;
         Wu16(page, 2, freeSpace);
-        Wi32(page, db.DataPage.TDefOff, 1);
-        Wu16(page, db.DataPage.NumRows, 2);
-        Wu16(page, db.DataPage.RowsStart, rowStart);
-        Wu16(page, db.DataPage.RowsStart + 2, row1Start);
+        Wi32(page, format.DataPage.TDefOff, 1);
+        Wu16(page, format.DataPage.NumRows, 2);
+        Wu16(page, format.DataPage.RowsStart, rowStart);
+        Wu16(page, format.DataPage.RowsStart + 2, row1Start);
         page[rowStart] = Constants.UsageMap.InlineMapType;
         Wi32(page, rowStart + 1, 0);
         page[row1Start] = Constants.UsageMap.InlineMapType;
@@ -607,12 +606,12 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         bool returnPage;
         if (secure)
         {
-            page = new byte[db.PageSizeBytes];
+            page = new byte[format.PageSize];
             returnPage = false;
         }
         else
         {
-            page = await db.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             returnPage = true;
         }
 
@@ -620,14 +619,14 @@ internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOp
         {
             page[0] = Constants.PageTypes.Freed;
             page[1] = 0x01;
-            Wu16(page, 2, Math.Max(0, db.PageSizeBytes - 16));
+            Wu16(page, 2, Math.Max(0, format.PageSize - 16));
             await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             if (returnPage)
             {
-                ReturnPage(page);
+                PageBuffers.Return(page);
             }
         }
     }

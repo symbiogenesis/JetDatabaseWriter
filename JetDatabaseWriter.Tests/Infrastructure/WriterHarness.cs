@@ -48,7 +48,7 @@ internal sealed class WriterHarness : IAsyncDisposable
     public static async ValueTask<WriterHarness> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA2000 // The stream overload owns the stream once the file is open (leaveOpen: false), and the catch disposes it when the open throws.
-        FileStream stream = DatabaseFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
+        FileStream stream = PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
 #pragma warning restore CA2000 // The stream overload owns the stream once the file is open (leaveOpen: false), and the catch disposes it when the open throws.
         try
         {
@@ -72,7 +72,7 @@ internal sealed class WriterHarness : IAsyncDisposable
         options ??= new AccessWriterOptions { UseLockFile = false };
         options.Validate();
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-        byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
+        byte[] header = await PageFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
         var database = DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager);
         try
         {

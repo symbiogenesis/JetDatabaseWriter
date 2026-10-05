@@ -14,6 +14,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -318,7 +319,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         }
         finally
         {
-            DatabaseFile.ReturnPage(pending);
+            PageBuffers.Return(pending);
         }
 
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
@@ -330,7 +331,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         }
         finally
         {
-            DatabaseFile.ReturnPage(afterRollback);
+            PageBuffers.Return(afterRollback);
         }
     }
 

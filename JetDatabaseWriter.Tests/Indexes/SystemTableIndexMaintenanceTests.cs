@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -258,12 +259,12 @@ public sealed class SystemTableIndexMaintenanceTests
             }
             finally
             {
-                DatabaseFile.ReturnPage(root);
+                PageBuffers.Return(root);
             }
         }
         finally
         {
-            DatabaseFile.ReturnPage(tdef);
+            PageBuffers.Return(tdef);
         }
     }
 }

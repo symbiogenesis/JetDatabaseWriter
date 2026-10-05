@@ -10,9 +10,12 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
+using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
@@ -29,13 +32,17 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// which drop it; and no other process writes the file while the writer has
 /// it open (see <c>docs/design/concurrency-and-lock-ordering.md</c>).
 /// </remarks>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The database's immutable format profile.</param>
+/// <param name="tableDefs">The table-definition reader.</param>
+/// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="indexes">Inserts and rewrites system-table rows with index maintenance.</param>
 /// <param name="catalogRows">Locates the <c>MSysRelationships</c> table.</param>
 /// <param name="snapshots">Reads decoded <c>MSysRelationships</c> rows for enforcement.</param>
 /// <param name="tableCatalog">The writer's table catalog, whose <see cref="TableCatalog.Generation"/> keys the cache.</param>
 internal sealed class RelationshipCatalogStore(
-    DatabaseFile db,
+    JetFormat format,
+    TableDefReader tableDefs,
+    OwnedDataPages ownedPages,
     IndexMaintainer indexes,
     CatalogRowReader catalogRows,
     TableSnapshotReader snapshots,
@@ -131,13 +138,13 @@ internal sealed class RelationshipCatalogStore(
             return results;
         }
 
-        await db.ForEachLiveTableRowAsync(
+        await ownedPages.ForEachLiveTableRowAsync(
             msysRelTdefPage,
             (row, _) =>
             {
                 byte[] page = row.Page;
                 RowLocation location = row.Location;
-                string name = db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameCol);
+                string name = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameCol);
                 if (string.IsNullOrEmpty(name) || !namePredicate(name))
                 {
                     return new ValueTask<bool>(true);
@@ -147,7 +154,7 @@ internal sealed class RelationshipCatalogStore(
                 for (int column = 0; column < values.Length; column++)
                 {
                     ColumnInfo tableColumn = msysRelDef.Columns[column];
-                    string raw = db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, tableColumn);
+                    string raw = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, tableColumn);
                     values[column] = string.IsNullOrEmpty(raw)
                         ? DBNull.Value
                         : tableColumn.Type switch
@@ -177,13 +184,13 @@ internal sealed class RelationshipCatalogStore(
                 results.Add(new RelationshipRowSnapshot(
                     location,
                     name,
-                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, objCol),
-                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refObjCol),
-                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, colCol),
-                    db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, refColCol),
-                    CatalogValueReader.ParseInt32OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, icolCol)),
-                    CatalogValueReader.ParseInt32OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, ccolCol)),
-                    CatalogValueReader.ParseInt32OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, grbitCol)),
+                    ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, objCol),
+                    ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, refObjCol),
+                    ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, colCol),
+                    ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, refColCol),
+                    CatalogValueReader.ParseInt32OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, icolCol)),
+                    CatalogValueReader.ParseInt32OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, ccolCol)),
+                    CatalogValueReader.ParseInt32OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, grbitCol)),
                     values));
                 return new ValueTask<bool>(true);
             },
@@ -265,11 +272,11 @@ internal sealed class RelationshipCatalogStore(
             return names;
         }
 
-        await db.ForEachLiveTableRowAsync(
+        await ownedPages.ForEachLiveTableRowAsync(
             msysRelTdefPage,
             (row, _) =>
             {
-                string name = db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
+                string name = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, row.Location.RowStart, row.Location.RowSize, nameCol);
                 if (!string.IsNullOrEmpty(name))
                 {
                     names.Add(name);
@@ -343,7 +350,7 @@ internal sealed class RelationshipCatalogStore(
             return [];
         }
 
-        TableDef? definition = await db.ReadTableDefAsync(page, cancellationToken).ConfigureAwait(false);
+        TableDef? definition = await tableDefs.ReadTableDefAsync(page, cancellationToken).ConfigureAwait(false);
         int nameOrdinal = definition?.FindColumnIndex("szRelationship") ?? -1;
         if (definition is null || nameOrdinal < 0)
         {
