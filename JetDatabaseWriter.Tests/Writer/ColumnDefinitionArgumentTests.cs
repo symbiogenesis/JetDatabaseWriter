@@ -96,6 +96,34 @@ public sealed class ColumnDefinitionArgumentTests
         Assert.Equal(1, Assert.Single(table.AsEnumerable())["Id"]);
     }
 
+    /// <summary>Invalid ODBC source definitions name the public parameter and change no bytes.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="kind">The rejected definition kind.</param>
+    /// <returns>The asynchronous test completion.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "CurrencyNotDecimal")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "CurrencyNotDecimal")]
+    [InlineData(DatabaseFormat.AceAccdb, "CurrencyNotDecimal")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "PrecisionAbove28")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "PrecisionAbove28")]
+    [InlineData(DatabaseFormat.AceAccdb, "PrecisionAbove28")]
+    public async Task CreateLinkedOdbcTable_InvalidSourceDefinition_ReportsSourceColumns(DatabaseFormat format, string kind)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        byte[] before = stream.ToArray();
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            ArgumentException exception = await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
+                await writer.CreateLinkedOdbcTableAsync("Linked", "ODBC;DSN=Example", "dbo.Source", [BadColumn(kind)], Ct));
+            AssertRejected(exception, kind, "sourceColumns");
+        }
+
+        Assert.Equal(before, stream.ToArray());
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Assert.Empty(await reader.ListLinkedTablesAsync(Ct));
+    }
+
     private static ColumnDefinition BadColumn(string kind) => kind switch
     {
         "AttachmentAndMultiValue" => new(BadColumnName, typeof(object)) { IsAttachment = true, IsMultiValue = true, MultiValueElementType = typeof(int) },

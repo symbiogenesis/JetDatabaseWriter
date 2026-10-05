@@ -98,7 +98,7 @@ internal static class LinkedOdbcLvPropBuilder
                 throw new ArgumentException($"Duplicate source column name '{column.Name}'.", nameof(sourceColumns));
             }
 
-            ColumnType typeCode = JetTypeInfo.TypeCodeFromDefinition(column);
+            ColumnType typeCode = JetTypeInfo.TypeCodeFromDefinition(column, nameof(sourceColumns));
             identities.Add(new ColumnIdentity(column, typeCode, Guid.NewGuid()));
         }
 
