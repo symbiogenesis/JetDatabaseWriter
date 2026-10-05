@@ -12,7 +12,14 @@ using System.Threading.Tasks;
 /// </summary>
 internal interface IAccessQueryEngine
 {
-    public IAsyncEnumerable<object> ExecuteStreamAsync(Expression expression, CancellationToken cancellationToken);
+    /// <summary>
+    /// Runs <paramref name="expression"/> and streams its results, boxed: the engine's rows,
+    /// or the output of the operators above them (a projection's values can be null).
+    /// </summary>
+    /// <param name="expression">The query expression to run.</param>
+    /// <param name="cancellationToken">A token used to cancel the enumeration.</param>
+    /// <returns>The query's results as they are produced.</returns>
+    public IAsyncEnumerable<object?> ExecuteStreamAsync(Expression expression, CancellationToken cancellationToken);
 
     /// <summary>
     /// Counts the rows <paramref name="expression"/> produces. Counting the whole

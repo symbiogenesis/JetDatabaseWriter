@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Queries;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
@@ -18,7 +17,9 @@ using JetDatabaseWriter.Tables;
 /// supported LINQ operators into an ordered <see cref="QueryStage"/> pipeline and runs
 /// the stages in written order: a leading run of filters is pushed into the index
 /// reader's predicate inference, later stages (filter / order / page) run over the stream, and
-/// includes eager-load inferred relationships onto the final set. Execution is
+/// includes eager-load inferred relationships onto the final set. The operators above that
+/// pipeline (a <c>Select</c> projection and what follows it) run through
+/// <see cref="InMemoryTail"/> over the rows as they stream. Execution is
 /// async-only: the synchronous <see cref="IQueryProvider"/> entry points throw (see
 /// <see cref="AsyncOnlyQuery"/>), so nothing blocks a thread on the async read stack. The
 /// provider is generic on the entity type so it can map rows; <see cref="AccessQueryable{T}"/>
@@ -54,30 +55,23 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
         throw AsyncOnlyQuery.ExecutionNotSupported(expression);
     }
 
-    public async IAsyncEnumerable<object> ExecuteStreamAsync(Expression expression, [EnumeratorCancellation] CancellationToken cancellationToken)
+    public async IAsyncEnumerable<object?> ExecuteStreamAsync(Expression expression, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         Guard.NotNull(expression, nameof(expression));
         (AccessQueryPlan plan, Expression boundary) = AccessQueryTranslator.Translate(expression);
 
-        // No tail: stream the engine pipeline straight through so Take/First can
+        // A tail (a projection, or operators the engine does not translate) runs over the
+        // engine's rows as they stream. It is composed here, before a row is read, so an
+        // operator it does not run throws first. With or without one, Take/First can
         // short-circuit before the whole table is read.
-        if (ReferenceEquals(boundary, expression))
+        IAsyncEnumerable<object?> rows = this.ExecuteEngineAsync(plan, cancellationToken);
+        if (!ReferenceEquals(boundary, expression))
         {
-            await foreach (T item in this.ExecuteEngineAsync(plan, cancellationToken).ConfigureAwait(false))
-            {
-                yield return item;
-            }
-
-            yield break;
+            rows = InMemoryTail.Apply(rows, expression, boundary, cancellationToken);
         }
 
-        // A tail (projection or post-projection operators) replays in memory, so the
-        // engine prefix is materialized first.
-        List<T> rows = await this.MaterializeAsync(plan, cancellationToken).ConfigureAwait(false);
-        (IQueryProvider provider, Expression rewritten) = BuildTail(rows, expression, boundary);
-        foreach (object item in provider.CreateQuery(rewritten))
+        await foreach (object? item in rows.ConfigureAwait(false))
         {
-            cancellationToken.ThrowIfCancellationRequested();
             yield return item;
         }
     }
@@ -99,7 +93,7 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
         // Every other shape (a filter, paging, a projection, or includes) streams the rows
         // and counts them without buffering a list.
         long count = 0;
-        await foreach (object unused in this.ExecuteStreamAsync(expression, cancellationToken).ConfigureAwait(false))
+        await foreach (object? unused in this.ExecuteStreamAsync(expression, cancellationToken).ConfigureAwait(false))
         {
             count++;
         }
@@ -110,38 +104,18 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
     /// <summary>
     /// Determines whether <paramref name="expression"/>'s outermost node is a LINQ
     /// ordering operator (<c>OrderBy</c> / <c>OrderByDescending</c> / <c>ThenBy</c> /
-    /// <c>ThenByDescending</c>). Only those results are surfaced as
-    /// <see cref="IOrderedQueryable{T}"/> (via <see cref="AccessOrderedQueryable{T}"/>), so
-    /// <c>ThenBy</c> / <c>ThenByDescending</c> stay callable only after an ordering
-    /// operator, matching LINQ semantics.
+    /// <c>ThenByDescending</c> / <c>Order</c> / <c>OrderDescending</c>). Only those results
+    /// are surfaced as <see cref="IOrderedQueryable{T}"/> (via
+    /// <see cref="AccessOrderedQueryable{T}"/>), which <see cref="Queryable"/> casts each of
+    /// them to, so <c>ThenBy</c> / <c>ThenByDescending</c> stay callable only after an
+    /// ordering operator, matching LINQ semantics.
     /// </summary>
     /// <param name="expression">The composed query expression.</param>
     /// <returns><see langword="true"/> when the outermost operator establishes an ordering.</returns>
     private static bool IsOrderingOperator(Expression expression) =>
         expression is MethodCallExpression call
         && call.Method.DeclaringType == typeof(Queryable)
-        && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending";
-
-    private static (IQueryProvider Provider, Expression Rewritten) BuildTail(List<T> rows, Expression root, Expression boundary)
-    {
-        // Replay the tail over the materialized engine rows: rebind the engine boundary to
-        // an in-memory queryable and hand the rewritten tree to LINQ-to-Objects, which
-        // turns the Queryable operators into their Enumerable equivalents.
-        IQueryable<T> materialized = rows.AsQueryable();
-        Expression rewritten = new RebindSourceVisitor(boundary, materialized.Expression).Visit(root);
-        return (materialized.Provider, rewritten);
-    }
-
-    private async ValueTask<List<T>> MaterializeAsync(AccessQueryPlan plan, CancellationToken cancellationToken)
-    {
-        var list = new List<T>();
-        await foreach (T item in this.ExecuteEngineAsync(plan, cancellationToken).ConfigureAwait(false))
-        {
-            list.Add(item);
-        }
-
-        return list;
-    }
+        && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "Order" or "OrderDescending";
 
     private async IAsyncEnumerable<T> ExecuteEngineAsync(AccessQueryPlan plan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -233,12 +207,5 @@ internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader 
         return order.FindCoveringIndex(tableIndexes) is { } index
             ? indexes.ReadIndexRowsAsync<T>(table, index.Name, IndexQueryCriteria.All, cancellationToken)
             : null;
-    }
-
-    private sealed class RebindSourceVisitor(Expression target, Expression replacement) : ExpressionVisitor
-    {
-        [return: NotNullIfNotNull(nameof(node))]
-        public override Expression? Visit(Expression? node) =>
-            ReferenceEquals(node, target) ? replacement : base.Visit(node);
     }
 }

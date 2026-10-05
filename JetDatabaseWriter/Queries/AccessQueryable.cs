@@ -46,9 +46,9 @@ internal class AccessQueryable<T> : IQueryable<T>, IAsyncEnumerable<T>
 
     public async IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
-        await foreach (object item in ((IAccessQueryEngine)this.Provider).ExecuteStreamAsync(this.Expression, cancellationToken).ConfigureAwait(false))
+        await foreach (object? item in ((IAccessQueryEngine)this.Provider).ExecuteStreamAsync(this.Expression, cancellationToken).ConfigureAwait(false))
         {
-            yield return (T)item;
+            yield return (T)item!;
         }
     }
 }

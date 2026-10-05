@@ -209,6 +209,15 @@ public interface IAccessReader : IAccessBase
     /// anything is read.
     /// </para>
     /// <para>
+    /// The operators above those (a <c>Select</c> projection and what follows it, or an
+    /// ordering with a comparer) run in memory over the rows as the read streams them, with
+    /// LINQ to Objects' results. <c>GroupBy</c>, <c>SelectMany</c>, the joins, <c>Zip</c>,
+    /// <c>Chunk</c>, the <c>DistinctBy</c>-style set operators and the overloads whose lambdas
+    /// take an element index throw <see cref="System.NotSupportedException"/> naming the
+    /// operator and <c>AsAsyncEnumerable()</c>, which hands the rows to the async LINQ
+    /// operators instead.
+    /// </para>
+    /// <para>
     /// <c>Include</c> / <c>ThenInclude</c> resolve the related table from the navigation's
     /// target type by name, ignoring case and non-alphanumeric separators (so an
     /// <c>OrderLine</c> type binds to an <c>Order_Line</c> table). Annotate the type with
