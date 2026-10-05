@@ -444,24 +444,16 @@ internal sealed class ConstraintRegistry(
     }
 
     /// <summary>
-    /// Returns the value the declaring writer stores for <paramref name="def"/>'s CLR
-    /// <see cref="ColumnDefinition.DefaultValue"/>. When no
-    /// <see cref="ColumnDefinition.DefaultValueExpression"/> is set, the CLR default is
-    /// persisted as a literal that later writers apply instead, so the declaring writer
-    /// applies what that literal denotes. A number of any CLR type is read back from its
-    /// literal as the column's type (<see cref="ColumnDefaultValue.TryReadBackNumber"/>),
-    /// so <c>0.1f</c> on a Double column is 0.1, and a number the column's type cannot
-    /// hold gives no default, as in a later writer; <c>CreateTableAsync</c> and
-    /// <c>AddColumnAsync</c> reject such a default before it gets here. A
-    /// <see cref="DateTime"/> is cut to the whole second, the resolution of an Access
-    /// date literal. Other values are stored as given.
+    /// Applies a CLR default through the same literal conversion as a reopened writer.
+    /// An explicit expression keeps the declaring writer's CLR override. Otherwise a
+    /// literal that cannot be evaluated or converted supplies no default in either session.
     /// </summary>
-    /// <param name="def">The column definition.</param>
-    /// <returns>The default to apply, or <see langword="null"/> for none.</returns>
+    /// <param name="def">The column declaration.</param>
+    /// <returns>The converted default, or null when the literal supplies no value.</returns>
     private static object? ToAppliedClrDefault(ColumnDefinition def)
     {
         object? value = def.DefaultValue;
-        if (value is DBNull)
+        if (value is null or DBNull)
         {
             return null;
         }
@@ -471,14 +463,14 @@ internal sealed class ConstraintRegistry(
             return value;
         }
 
-        if (ColumnDefaultValue.TryReadBackNumber(value, def.ClrType, out object? number))
-        {
-            return number;
-        }
-
-        return value is DateTime dateTime
-            ? new DateTime(dateTime.Ticks - (dateTime.Ticks % TimeSpan.TicksPerSecond), dateTime.Kind)
-            : value;
+        string expression = JetExpressionConverter.ToJetExpression(value)!;
+        Type targetType = def.ClrType == typeof(Hyperlink) ? typeof(string) : def.ClrType;
+        return ColumnDefaultValue.Compile(expression).TryEvaluate(
+            targetType,
+            static () => new CalculatedExpressionEvaluationContext(new TableDef(), [], [], force: false),
+            out object evaluated)
+            ? evaluated
+            : null;
     }
 
     /// <summary>

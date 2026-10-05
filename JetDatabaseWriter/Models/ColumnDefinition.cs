@@ -67,14 +67,14 @@ public sealed record ColumnDefinition
     /// <see cref="AccessWriter"/> and Microsoft Access apply the same default. Text, Boolean,
     /// integer, floating-point, <see cref="decimal"/>, <see cref="DateTime"/> and
     /// <see cref="Guid"/> values can be written this way; any other type, such as
-    /// <c>byte[]</c>, makes table creation throw <see cref="NotSupportedException"/>. The
+    /// <c>byte[]</c>, makes table creation or adding a column throw <see cref="NotSupportedException"/> before anything is written. The
     /// literal is persisted only when the catalog has an <c>LvProp</c> column
     /// (<see cref="AccessWriterOptions.WriteFullCatalogSchema"/>, the default).
     /// <see cref="DBNull.Value"/> means no default.
     /// </para>
     /// <para>
     /// Every writer, including the one that declares it, stores the value the literal
-    /// denotes for a number and for a value of the column's own type. A number of any
+    /// denotes after conversion to the column's type. A number of any
     /// CLR type is applied as its literal reads back in the column's type, so <c>0.1f</c>
     /// on a Double column stores 0.1, and a <see cref="decimal"/> on a Double or Single
     /// column stores the floating-point value nearest its digits. <c>CreateTableAsync</c>
@@ -82,10 +82,10 @@ public sealed record ColumnDefinition
     /// column's type cannot hold, such as 1e39 on a Single column or 300 on a Byte
     /// column, and for NaN and infinities, which have no literal. A
     /// <see cref="DateTime"/> default is persisted and applied to the whole second, the
-    /// resolution of an Access date literal. A Boolean, text or date default on a column
-    /// of another type is not yet stored the same way in every writer: <c>true</c> on a
-    /// Number column stores 1 in the declaring writer and -1, as in Access, in a later
-    /// one. When <see cref="DefaultValueExpression"/> is also set, the declaring writer
+    /// resolution of an Access date literal. Boolean, text and date defaults use the
+    /// expression engine's conversions in every writer: <c>true</c> on a Number column
+    /// stores -1. A literal the engine cannot evaluate or convert gives no default.
+    /// When <see cref="DefaultValueExpression"/> is also set to non-blank text, the declaring writer
     /// stores this value as given.
     /// </para>
     /// <para>
@@ -104,8 +104,8 @@ public sealed record ColumnDefinition
     /// <see cref="DbDefault.Value"/>, or leaves the column out. The next value
     /// is seeded on first use from the larger of the table's persisted AutoNumber counter
     /// and the largest existing value, plus one (<c>1</c> for a new table), and incremented
-    /// per insert. Only valid for <see cref="byte"/>, <see cref="short"/>,
-    /// <see cref="int"/>, and <see cref="long"/> columns.
+    /// per insert. Only valid for <see cref="short"/> and <see cref="int"/> columns.
+    /// Unsupported types are rejected before anything is written.
     /// </summary>
     /// <remarks>
     /// Persisted in the JET TDEF column-flag bit <c>FLAG_AUTO_LONG (0x04)</c>. The
@@ -251,6 +251,7 @@ public sealed record ColumnDefinition
     /// <see cref="ArgumentException"/>. A <c>DefaultValue</c> property another tool stored on
     /// such a column is kept in the file but never applied.
     /// </para>
+    /// <para>A blank expression is treated as absent; <see cref="DefaultValue"/> supplies the literal instead.</para>
     /// </remarks>
     public string? DefaultValueExpression { get; init; }
 

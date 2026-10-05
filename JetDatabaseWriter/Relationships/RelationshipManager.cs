@@ -1290,7 +1290,9 @@ internal sealed class RelationshipManager(
     /// <paramref name="partnerTdefPage"/>, whose <c>rel_tbl_page</c> is
     /// <paramref name="tdefPage"/> and whose <c>rel_idx_num</c> is
     /// <paramref name="indexNumber"/>, as on both sides of every writer-created
-    /// relationship and every relationship in the Access fixtures. For a
+    /// relationship and every relationship in the Access fixtures. A partner
+    /// with <c>rel_idx_num = -1</c> also links back when its table page matches;
+    /// the rewrite restores its missing entry number. For a
     /// self-referencing entry both pages are the same TDEF, and the partner
     /// must be a different entry.
     /// Returns <see langword="false"/> for a dangling entry: its partner page
@@ -1339,7 +1341,8 @@ internal sealed class RelationshipManager(
             if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] == (byte)IndexKind.ForeignKey
                 && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset) == partnerIndexNumber
                 && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) == tdefPage
-                && Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset) == indexNumber)
+                && (Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset) == indexNumber
+                    || Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset) == -1))
             {
                 return true;
             }
@@ -1551,13 +1554,13 @@ internal sealed class RelationshipManager(
     /// Removes, from every other table, the FK logical-idx entries whose
     /// <c>rel_tbl_page</c> names <paramref name="tdefPage"/>, the TDEF page of
     /// a table about to be dropped, and reclaims the trailing real-idx slots
-    /// those removals leave unreferenced. The partners are found through the
-    /// dropped table's own FK entries, so tables the catalog does not list are
-    /// covered too; an entry on a partner whose page now holds an unrelated
+    /// those removals leave unreferenced. The partners are found through the catalog and the
+    /// dropped table's own FK entries, so one-way cataloged links and partners
+    /// the catalog does not list are covered too; an entry on a partner whose page now holds an unrelated
     /// table is left alone, because it does not name <paramref name="tdefPage"/>.
     /// The removed entries' index leaves stay allocated until Compact &amp;
     /// Repair, as after <see cref="DropRelationshipAsync"/>. Does nothing when
-    /// the page is not a TDEF or the table has no FK entries.
+    /// the page is not a TDEF.
     /// </summary>
     /// <param name="tdefPage">The TDEF page of the table being dropped, still intact.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -1590,6 +1593,27 @@ internal sealed class RelationshipManager(
             if (partnerPage != tdefPage && this.IsTDefPageCandidate(partnerPage))
             {
                 _ = partners.Add(partnerPage);
+            }
+        }
+
+        // A one-way FK can name this page even when this table has no entry
+        // naming its owner. Scan local table rows, including hidden and system
+        // tables and ODBC TDEFs, rather than the user-table cache. Other IDs do not
+        // identify local TDEF pages.
+        TableDef? objects = await this.tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        if (objects is not null)
+        {
+            foreach (CatalogRow row in await this.catalogRows.GetCatalogRowsAsync(objects, cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (row.IsDecoded
+                    && (row.ObjectType == Constants.SystemObjects.UserTableType
+                        || row.ObjectType == Constants.SystemObjects.LinkedOdbcType)
+                    && row.TDefPage != tdefPage
+                    && this.IsTDefPageCandidate(row.TDefPage))
+                {
+                    _ = partners.Add(row.TDefPage);
+                }
             }
         }
 

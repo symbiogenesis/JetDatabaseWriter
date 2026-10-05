@@ -14,8 +14,8 @@ internal static class CalculatedExpressionDateTimeFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATE", 0, 0, static _ => CurrentAccessLocalDateTime().Date, "TODAY"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "NOW", 0, 0, static _ => CurrentAccessLocalDateTime()));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIME", 0, 0, static _ => TimeOnDayZero(CurrentAccessLocalDateTime())));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEVALUE", 1, 1, static function => function.Arg(0) is DateTime date ? date : ParseDate(ToText(function.Arg(0)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATESERIAL", 3, 3, static function => DateSerial(checked((int)ToDecimal(function.Arg(0))), checked((int)ToDecimal(function.Arg(1))), checked((int)ToDecimal(function.Arg(2))))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEVALUE", 1, 1, static function => (function.Arg(0) is DateTime date ? date : ParseDate(ToText(function.Arg(0)))).Date));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATESERIAL", 3, 3, static function => DateSerial(ToVbaInteger(function.Arg(0)), ToVbaInteger(function.Arg(1)), ToVbaInteger(function.Arg(2)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEADD", 3, 3, static function => DateAdd(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), ToDateTime(function.Arg(2)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEDIFF", 3, 5, static function => DateDiff(ToText(function.Arg(0)), ToDateTime(function.Arg(1)), ToDateTime(function.Arg(2)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEPART", 2, 4, static function => DatePart(ToText(function.Arg(0)), ToDateTime(function.Arg(1)))));
@@ -27,7 +27,7 @@ internal static class CalculatedExpressionDateTimeFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "SECOND", 1, 1, static function => ToDateTime(function.Arg(0)).Second));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMEVALUE", 1, 1, static function => TimeOnDayZero(ToDateTime(function.Arg(0)))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMESERIAL", 3, 3, static function => EvaluateTimeSerial(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMER", 0, 0, static _ => CurrentAccessLocalDateTime().TimeOfDay.TotalSeconds));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMER", 0, 0, static _ => TimerSeconds(CurrentLocalDateTime())));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "MONTHNAME", 1, 2, static function => CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(checked((int)ToDecimal(function.Arg(0))))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "WEEKDAY", 1, 2, static function => Weekday(ToDateTime(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 1)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "WEEKDAYNAME", 1, 3, static function => WeekdayName(checked((int)ToDecimal(function.Arg(0))), function.Count > 1 && ToBoolean(function.Arg(1)), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : 1)));
@@ -35,8 +35,21 @@ internal static class CalculatedExpressionDateTimeFunctions
     }
 
 #pragma warning disable RS0030 // Access DATE/NOW/TIME/TIMER evaluate against the host local clock.
-    private static DateTime CurrentAccessLocalDateTime() => DateTime.Now;
+    private static DateTime CurrentLocalDateTime() => DateTime.Now;
+
+    private static DateTime CurrentAccessLocalDateTime() => TruncateToWholeSeconds(CurrentLocalDateTime());
 #pragma warning restore RS0030
+
+    /// <summary>Removes fractional seconds from an Access clock date.</summary>
+    /// <param name="value">The local clock reading.</param>
+    /// <returns>The reading truncated to the preceding whole second.</returns>
+    internal static DateTime TruncateToWholeSeconds(DateTime value)
+        => value.AddTicks(-(value.Ticks % TimeSpan.TicksPerSecond));
+
+    /// <summary>Returns Timer's fractional seconds since local midnight.</summary>
+    /// <param name="value">The untruncated local clock reading.</param>
+    /// <returns>The elapsed seconds, including the fractional part.</returns>
+    internal static double TimerSeconds(DateTime value) => value.TimeOfDay.TotalSeconds;
 
     /// <summary>
     /// VBA's TimeSerial, as measured with VBScript. Each argument rounds half to even

@@ -119,6 +119,7 @@ internal sealed class TableSchemaEditor(
 
         for (int i = 0; i < columns.Count; i++)
         {
+            ValidateDeclaredAutoIncrement(columns[i], nameof(columns));
             ValidateDeclaredCalculatedExpression(columns[i], nameof(columns));
             ValidateDeclaredDefault(columns[i], nameof(columns));
         }
@@ -266,6 +267,7 @@ internal sealed class TableSchemaEditor(
         // so a calculated column on an .mdb reports that, then the expression,
         // then the default.
         _ = TDefPageBuilder.ValidateColumnForFormat(column, format, nameof(column));
+        ValidateDeclaredAutoIncrement(column, nameof(column));
         ValidateDeclaredCalculatedExpression(column, nameof(column));
         ValidateDeclaredDefault(column, nameof(column));
 
@@ -470,6 +472,30 @@ internal sealed class TableSchemaEditor(
         }
     }
 
+    /// <summary>Checks declared AutoNumber types before catalog I/O.</summary>
+    /// <param name="column">The column being declared.</param>
+    /// <param name="paramName">The public parameter name.</param>
+    private static void ValidateDeclaredAutoIncrement(ColumnDefinition? column, string paramName)
+    {
+        if (column?.IsAutoIncrement != true)
+        {
+            return;
+        }
+
+        if (column.ClrType == typeof(byte) || column.ClrType == typeof(long))
+        {
+            throw new NotSupportedException(
+                $"Column '{column.Name}': IsAutoIncrement is only supported for Int16 and Int32; '{column.ClrType}' is not supported.");
+        }
+
+        if (column.ClrType != typeof(short) && column.ClrType != typeof(int))
+        {
+            throw new ArgumentException(
+                $"Column '{column.Name}' is marked IsAutoIncrement=true but its CLR type '{column.ClrType}' is not an integer type.",
+                paramName);
+        }
+    }
+
     /// <summary>
     /// Definition-time check for a default the caller is declaring now
     /// (CreateTable / AddColumn). Access gives AutoNumber, calculated,
@@ -499,6 +525,11 @@ internal sealed class TableSchemaEditor(
 
         if (column.CanHaveDefault)
         {
+            if (string.IsNullOrWhiteSpace(column.DefaultValueExpression))
+            {
+                _ = JetExpressionConverter.ToJetExpression(column.DefaultValue);
+            }
+
             if (column.DefaultValue is double d ? !double.IsFinite(d) : column.DefaultValue is float f && !float.IsFinite(f))
             {
                 throw new JetArgumentException(JetErrorCode.DefaultNotAllowed, $"Column '{column.Name}': a floating-point DefaultValue must be finite; Access has no literal for NaN or an infinity.", paramName, new JetErrorInfo { ColumnName = column.Name });

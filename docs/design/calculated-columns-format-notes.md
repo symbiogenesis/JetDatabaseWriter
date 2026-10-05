@@ -230,8 +230,10 @@ Delivered:
   already computed the value.
 - Expressions are normalized for common Access syntax: leading `=` is ignored,
   bracketed column references such as `[Column Name]` resolve against the
-  in-flight row, `#date literal#` becomes `DATEVALUE("date literal")`,
-  single-quoted text (`'it''s'`, where `''` is a quote) becomes the
+  in-flight row, `#date literal#` becomes `CDATE("date literal")` to preserve its time,
+  while DateValue removes the time. DateSerial rounds each argument half to even
+  to a VBA Integer; Now and Time use whole seconds, while Timer retains fractional seconds.
+  Single-quoted text (`'it''s'`, where `''` is a quote) becomes the
   double-quoted literal, `&H`/`&O` radix literals become decimal numbers, and
   Access word operators are lowered into evaluator functions before the
   ClosedXML.Parser pass. The expression text persisted in the file is never

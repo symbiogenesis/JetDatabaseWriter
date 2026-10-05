@@ -844,7 +844,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         Assert.Equal(new DateTime(1899, 12, 30), time.Date);
         if (before.Date == after.Date)
         {
-            Assert.InRange(time.TimeOfDay, before.TimeOfDay, after.TimeOfDay);
+            Assert.InRange(time.TimeOfDay, before.TimeOfDay - TimeSpan.FromTicks(before.Ticks % TimeSpan.TicksPerSecond), after.TimeOfDay);
         }
 
         Assert.DoesNotContain("/", text, StringComparison.Ordinal);

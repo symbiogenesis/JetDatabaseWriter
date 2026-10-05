@@ -91,8 +91,9 @@ internal static class JetExpressionConverter
         Guard.NotNull(builder, nameof(builder));
         Guard.NotNull(col, nameof(col));
 
-        string? defaultExpr = col.DefaultValueExpression
-            ?? ToJetExpression(col.DefaultValue);
+        string? defaultExpr = string.IsNullOrWhiteSpace(col.DefaultValueExpression)
+            ? ToJetExpression(col.DefaultValue)
+            : col.DefaultValueExpression;
 
         // Required = true is persisted explicitly to match how DAO/Access surface
         // NOT NULL constraints. AutoNumber columns are the DAO-observed exception:
