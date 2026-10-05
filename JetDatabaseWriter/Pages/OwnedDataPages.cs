@@ -16,9 +16,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// maps every data page to its owner. The read-only reader memoizes the
 /// whole-file pass and each table's owned pages, whichever of the two gave
 /// them, so it reads and validates a table's map once, even a map it rejects;
-/// the writer, whose pages change, never caches, and the constructor refuses
-/// a caching instance over a <see cref="Pager"/>. Row visits follow overflow
-/// pointers to the moved row bytes.
+/// the writer maintains the fallback owner index from logical page writes but
+/// revalidates usage maps on each lookup. The constructor refuses per-table
+/// result caching over a <see cref="Pager"/>. Row visits follow overflow pointers
+/// to the moved row bytes.
 /// </summary>
 internal sealed class OwnedDataPages : IDisposable
 {

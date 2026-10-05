@@ -57,6 +57,49 @@ public sealed class OwnedPageIndexTests
         Assert.Empty(await index.GetAsync(2, TestContext.Current.CancellationToken));
     }
 
+    /// <summary>Owner discovery reads pending images without retaining cold scan frames.</summary>
+    /// <param name="transactional">Whether pending images belong to a transaction.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Scan_DoesNotFillFrameCache_AndSeesPendingPages(bool transactional)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        await using var stream = new MemoryStream();
+        stream.SetLength(format.PageSize * 20);
+#pragma warning disable CA2000 // The awaited pager owns its codec.
+        await using var pager = new Pager(stream, format.PageSize, new NoPageCodec(), true, typeof(AccessWriter), cacheSize: 4);
+#pragma warning restore CA2000
+        byte[] page = new byte[format.PageSize];
+        page[0] = 1;
+        BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(format.DataPage.TDefOff, 4), 2);
+        await pager.WritePageAsync(3, page, TestContext.Current.CancellationToken);
+        pager.InvalidateAll();
+        if (transactional)
+        {
+            using Pager.JournalGate gate = await pager.EnterJournalGateAsync(TestContext.Current.CancellationToken);
+            gate.Attach(new PagerTransaction(stream.Length, format.PageSize, 4));
+        }
+
+        await using WriteScope? scope = transactional ? null : pager.BeginWriteScope();
+        await pager.WritePageAsync(4, page, TestContext.Current.CancellationToken);
+        Assert.Equal(20, await pager.AppendPageAsync(page, TestContext.Current.CancellationToken));
+        PageBuffers.Return(await pager.ReadPageAsync(10, TestContext.Current.CancellationToken));
+        long cached = pager.Statistics.CachedFrames;
+        long evictions = pager.Statistics.Evictions;
+        using var index = new OwnedPageIndex(pager, format);
+        long[] owned = await index.GetAsync(2, TestContext.Current.CancellationToken);
+        Assert.Equal([3L, 4L, 20L], owned);
+        Assert.Equal(cached, pager.Statistics.CachedFrames);
+        Assert.Equal(evictions, pager.Statistics.Evictions);
+        Assert.Equal(format.PageSize * 20, stream.Length);
+        if (transactional)
+        {
+            using Pager.JournalGate gate = await pager.EnterJournalGateAsync(TestContext.Current.CancellationToken);
+            gate.Detach();
+        }
+    }
+
     /// <summary>A session's second insert avoids repeating Northwind's physical owner scan.</summary>
     [Fact]
     public async Task Northwind_SecondInsert_ReadsFewerThan300Pages()

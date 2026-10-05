@@ -48,7 +48,7 @@ internal sealed class OwnedPageIndex(IPageSource pages, JetFormat format) : IPag
                 long totalPages = pages.PageCount;
                 for (long number = 3; number < totalPages; number++)
                 {
-                    byte[] page = await pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
+                    byte[] page = await pages.ReadUncachedPageAsync(number, cancellationToken).ConfigureAwait(false);
                     try
                     {
                         long pageOwner = this.ReadOwner(page);
