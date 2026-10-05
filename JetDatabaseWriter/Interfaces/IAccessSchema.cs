@@ -273,7 +273,8 @@ public interface IAccessSchema : IAccessBase
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when a referenced table does not exist or when a relationship with the
-    /// same name already exists in the database.
+    /// same name already exists in the database, or when an enforced relationship would
+    /// include an existing non-null foreign key with no matching parent.
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when a referenced column does not exist on its table, or, before anything

@@ -34,6 +34,7 @@ using JetDatabaseWriter.ValueDecoding.Models;
 /// <param name="catalog">Loads the enforced relationships from <c>MSysRelationships</c>.</param>
 /// <param name="complexColumns">Cascades deletes into complex-column child rows.</param>
 /// <param name="snapshots">Reads decoded parent and child rows when no seekable index exists.</param>
+/// <param name="constraints">Checks constraints on keys cascaded to null.</param>
 internal sealed class RelationshipEnforcer(
     JetFormat format,
     IPageSource pageSource,
@@ -44,7 +45,8 @@ internal sealed class RelationshipEnforcer(
     IndexMaintainer indexes,
     RelationshipCatalogStore catalog,
     ComplexColumnManager complexColumns,
-    TableSnapshotReader snapshots)
+    TableSnapshotReader snapshots,
+    ConstraintRegistry constraints)
 {
     private readonly RelationshipSeekPlanner seekPlanner = new(format, tableDefs, tableCatalog);
     private readonly RelationshipChildRowLocator childRowLocator = new(format, pageSource, ownedPages);
@@ -266,7 +268,7 @@ internal sealed class RelationshipEnforcer(
     /// every refusal they call for. Each relationship is checked against its
     /// own primary columns: one none of whose primary columns the update
     /// assigns is skipped, and only the rows whose key in those columns
-    /// changes from a non-null value to another non-null value move their
+    /// changes from a non-null value, including to null, move their
     /// dependent rows. Every relationship whose key changes is resolved first,
     /// so one that names a missing table or column refuses the update; then a
     /// relationship that does not cascade updates refuses when it has any
@@ -281,6 +283,9 @@ internal sealed class RelationshipEnforcer(
     /// its new row, which the caller rewrites, rather than planned as a
     /// second rewrite. Last, every rewritten child row is encoded and measured
     /// as its re-insert will encode it (<see cref="TableRowStore.EncodeRow"/>);
+    /// a cascade that sets any key component to null first checks the
+    /// assigned child columns with the update constraints, including through
+    /// a self-relationship;
     /// the rows of <paramref name="rows"/> are final once this returns, and
     /// the caller encodes them. A refusal from any relationship therefore
     /// comes before any row is written.
@@ -335,6 +340,7 @@ internal sealed class RelationshipEnforcer(
         var cascades = new List<CascadeUpdate>();
         var plannedTables = new Dictionary<long, (CascadeUpdate Cascade, Dictionary<(long PageNumber, int RowIndex), int> Positions)>();
         var ownRowChanges = new List<(object[] NewRow, int[] ForeignColumnIndexes, object[] NewPkSubset)>();
+        var nullKeyAssignments = new Dictionary<object[], (string TableName, TableDef Definition, HashSet<int> Columns)>();
         foreach (ReferencedKeyChange change in keyChanges)
         {
             FkRelationship rel = change.Relationship;
@@ -384,6 +390,7 @@ internal sealed class RelationshipEnforcer(
             foreach ((object[] newRow, object[] newPkSubset) in ownDependents)
             {
                 ownRowChanges.Add((newRow, fkIdx, newPkSubset));
+                RecordNullKeyAssignments(newRow, newPkSubset, fkIdx, primaryTable, primaryDef);
             }
 
             if (dependents.Count == 0)
@@ -422,6 +429,7 @@ internal sealed class RelationshipEnforcer(
                     newRow[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
                 }
 
+                RecordNullKeyAssignments(newRow, newPkSubset, fkIdx, rel.ForeignTable, change.ChildTable.Definition);
                 UnreadableLongValue.ThrowIfAny(newRow, rel.ForeignTable);
             }
         }
@@ -435,6 +443,13 @@ internal sealed class RelationshipEnforcer(
             {
                 newRow[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
             }
+        }
+
+        // Null-producing cascades must obey the child column constraints too.
+        // Check the composed rows before any cascade or parent row is written.
+        foreach ((object[] newRow, (string tableName, TableDef definition, HashSet<int> columns)) in nullKeyAssignments)
+        {
+            await constraints.ApplyUpdateAsync(tableName, definition, newRow, columns, cancellationToken).ConfigureAwait(false);
         }
 
         // Every rewritten child row is final now, so each is encoded and
@@ -452,6 +467,22 @@ internal sealed class RelationshipEnforcer(
         }
 
         return cascades;
+
+        void RecordNullKeyAssignments(object[] newRow, object[] newPkSubset, int[] columns, string tableName, TableDef definition)
+        {
+            if (!Array.Exists(newPkSubset, value => value is null or DBNull))
+            {
+                return;
+            }
+
+            if (!nullKeyAssignments.TryGetValue(newRow, out (string TableName, TableDef Definition, HashSet<int> Columns) assigned))
+            {
+                assigned = (tableName, definition, []);
+                nullKeyAssignments.Add(newRow, assigned);
+            }
+
+            assigned.Columns.UnionWith(columns);
+        }
     }
 
     /// <summary>
@@ -882,7 +913,7 @@ internal sealed class RelationshipEnforcer(
     /// Resolves every relationship whose referenced key an update of
     /// <paramref name="primaryTable"/> moves: one whose primary columns the
     /// update assigns and whose key in those columns changes, on some row,
-    /// from a non-null value to another non-null value.
+    /// from a non-null value, including to null.
     /// </summary>
     /// <param name="primaryTable">The table being updated.</param>
     /// <param name="primaryDef">The table's definition.</param>
@@ -917,7 +948,7 @@ internal sealed class RelationshipEnforcer(
             {
                 string? oldKey = RelationshipKeyBuilder.Build(oldRow, primaryPkIdx);
                 string? newKey = RelationshipKeyBuilder.Build(newRow, primaryPkIdx);
-                if (oldKey == null || newKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
+                if (oldKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
                 {
                     continue;
                 }

@@ -15,9 +15,11 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tables;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 #pragma warning disable SA1204
@@ -40,6 +42,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalogArtifacts">Emits the relationship's <c>MSysObjects</c> row.</param>
 /// <param name="catalogRows">Locates the <c>MSysRelationships</c> table.</param>
 /// <param name="catalog">Reads and rewrites <c>MSysRelationships</c> rows.</param>
+/// <param name="snapshots">Reads existing rows through the writer's current pages.</param>
 internal sealed class RelationshipManager(
     JetFormat format,
     TableDefReader tableDefs,
@@ -49,7 +52,8 @@ internal sealed class RelationshipManager(
     PageAllocator pageAllocator,
     CatalogArtifactWriter catalogArtifacts,
     CatalogRowReader catalogRows,
-    RelationshipCatalogStore catalog)
+    RelationshipCatalogStore catalog,
+    TableSnapshotReader snapshots)
 {
     private readonly JetFormat format = format;
     private readonly TableDefReader tableDefs = tableDefs;
@@ -60,6 +64,7 @@ internal sealed class RelationshipManager(
     private readonly CatalogArtifactWriter catalogArtifacts = catalogArtifacts;
     private readonly CatalogRowReader catalogRows = catalogRows;
     private readonly RelationshipCatalogStore catalog = catalog;
+    private readonly TableSnapshotReader snapshots = snapshots;
 
     // ════════════════════════════════════════════════════════════════
     // Foreign-key relationships — lifecycle orchestration
@@ -77,7 +82,7 @@ internal sealed class RelationshipManager(
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown when a key column is missing from its table, or, before anything is read, when the relationship name breaks the Access naming rules (<see cref="AccessObjectName"/>) or a name is not in a Jet3 database's code page.</exception>
     /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when a relationship with the same name already exists.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when a relationship with the same name already exists or existing rows violate its enforced constraint.</exception>
     /// <remarks>
     /// Per <see href="docs/design/index-and-relationship-format-notes.md" /> §7. The
     /// MSysRelationships catalog rows are what the Microsoft Access
@@ -154,6 +159,8 @@ internal sealed class RelationshipManager(
             throw new InvalidOperationException($"A relationship named '{relationship.Name}' already exists.");
         }
 
+        await this.ValidateExistingRowsAsync(relationship, primaryTable, foreignTable, cancellationToken).ConfigureAwait(false);
+
         await this.catalog.AppendRelationshipRowsAsync(msysRelTdefPage, msysRelDef, relationship, cancellationToken).ConfigureAwait(false);
 
         await this.catalogArtifacts.ExecutePlanAsync(
@@ -190,6 +197,99 @@ internal sealed class RelationshipManager(
             TableDef foreignDefAfter = await this.tableDefs.ReadRequiredTableDefAsync(foreignEntry.TDefPage, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
             await this.indexes.MaintainIndexesAsync(foreignEntry.TDefPage, foreignDefAfter, relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>Refuses existing orphan keys before any relationship metadata or index pages are written.</summary>
+    /// <param name="relationship">The proposed relationship.</param>
+    /// <param name="primaryTable">The resolved parent table.</param>
+    /// <param name="foreignTable">The resolved child table.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private async ValueTask ValidateExistingRowsAsync(
+        RelationshipDefinition relationship,
+        ResolvedTable primaryTable,
+        ResolvedTable foreignTable,
+        CancellationToken cancellationToken)
+    {
+        if (!relationship.EnforceReferentialIntegrity)
+        {
+            return;
+        }
+
+        int[] primaryColumns = new int[relationship.PrimaryColumns.Count];
+        int[] foreignColumns = new int[relationship.ForeignColumns.Count];
+        for (int index = 0; index < primaryColumns.Length; index++)
+        {
+            primaryColumns[index] = primaryTable.Definition.FindColumnIndex(relationship.PrimaryColumns[index]);
+            foreignColumns[index] = foreignTable.Definition.FindColumnIndex(relationship.ForeignColumns[index]);
+        }
+
+        List<LocatedRow> foreignRows = await this.snapshots.ReadRowsAsync(foreignTable.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        var foreignKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (LocatedRow row in foreignRows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string? key = this.EncodeRelationshipKey(primaryTable.Definition, primaryColumns, row.Values, foreignColumns);
+            if (key != null)
+            {
+                _ = foreignKeys.Add(key);
+            }
+        }
+
+        if (foreignKeys.Count == 0)
+        {
+            return;
+        }
+
+        List<LocatedRow> primaryRows = primaryTable.Entry.TDefPage == foreignTable.Entry.TDefPage
+            ? foreignRows
+            : await this.snapshots.ReadRowsAsync(primaryTable.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        foreach (LocatedRow row in primaryRows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string? key = this.EncodeRelationshipKey(primaryTable.Definition, primaryColumns, row.Values, primaryColumns);
+            if (key != null)
+            {
+                _ = foreignKeys.Remove(key);
+                if (foreignKeys.Count == 0)
+                {
+                    return;
+                }
+            }
+        }
+
+        if (foreignKeys.Count != 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot create relationship '{relationship.Name}': existing rows in '{relationship.ForeignTable}' violate referential integrity because no matching row exists in '{relationship.PrimaryTable}'.");
+        }
+    }
+
+    /// <summary>Encodes each component with the referenced column's index comparison semantics.</summary>
+    /// <param name="primaryDef">The referenced table definition.</param>
+    /// <param name="primaryColumns">The referenced column ordinals.</param>
+    /// <param name="values">The row values.</param>
+    /// <param name="valueColumns">The row ordinals supplying the key.</param>
+    /// <returns>A key with unambiguous component boundaries, or null for a partial-null tuple.</returns>
+    private string? EncodeRelationshipKey(TableDef primaryDef, int[] primaryColumns, object[] values, int[] valueColumns)
+    {
+        foreach (int ordinal in valueColumns)
+        {
+            if (values[ordinal] is null or DBNull)
+            {
+                return null;
+            }
+        }
+
+        string[] components = new string[valueColumns.Length];
+        for (int index = 0; index < components.Length; index++)
+        {
+            components[index] = Convert.ToBase64String(IndexKeyEncoder.EncodeColumnEntry(
+                this.format,
+                primaryDef.Columns[primaryColumns[index]],
+                values[valueColumns[index]]));
+        }
+
+        return string.Join("|", components);
     }
 
     /// <summary>

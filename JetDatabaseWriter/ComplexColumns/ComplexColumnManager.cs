@@ -850,6 +850,10 @@ internal sealed class ComplexColumnManager(
         RowLocation parentLocation = await this.FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
             .ConfigureAwait(false);
 
+        // A legacy null slot requires a parent-row rewrite and index maintenance.
+        // Refuse unsupported parent indexes before allocating or patching a reference.
+        await indexes.ThrowIfIndexesUnmaintainableAsync(parentEntry.TDefPage, parentDef, tableName, cancellationToken).ConfigureAwait(false);
+
         // Read the parent row's per-row complex reference from its slot;
         // allocate one when the slot is null.
         int conceptualTableId = await this.ReadOrAllocateComplexReferenceAsync(

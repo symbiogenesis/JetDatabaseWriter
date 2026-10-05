@@ -103,8 +103,8 @@ internal sealed class WriterServices
         this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds);
 
         var relationshipCatalog = new RelationshipCatalogStore(db.Format, db.TableDefs, db.OwnedPages, this.Indexes, this.CatalogRows, snapshots, catalog);
-        var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
-        this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
+        var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots, constraints);
+        this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog, snapshots);
 
         this.Transactions = new TransactionLifecycle(db.Format, pager, options, byteRangeLock, catalog, dataPages, this.OwnedMaps, constraints);
         this.Data = new TableDataWriter(

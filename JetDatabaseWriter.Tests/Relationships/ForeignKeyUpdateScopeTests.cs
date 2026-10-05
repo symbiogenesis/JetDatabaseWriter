@@ -17,8 +17,8 @@ using Xunit;
 /// that assigns a key its current value, leaves the key unchecked even when it
 /// has no parent. A key changed to a value with no parent row is still
 /// rejected before anything is written. The child row with <c>Id</c> 2 is
-/// planted with the orphaned key 99 before the relationship is created, which
-/// <c>CreateRelationshipAsync</c> does not check.
+/// planted with the orphaned key 99 and relationship metadata is written directly
+/// into the catalog to deliberately bypass creation validation.
 /// </summary>
 /// <param name="db">Caches the fixture files.</param>
 public sealed class ForeignKeyUpdateScopeTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -193,10 +193,7 @@ public sealed class ForeignKeyUpdateScopeTests(DatabaseCache db) : IClassFixture
     private async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format)
     {
         MemoryStream ms = await ForeignKeyTestDatabase.CreateAsync(db, format, [[1, "one"]], [[1, 1, "a"], [2, 99, "b"]]);
-        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
-        {
-            await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, "P", "Id", "C", "ParentId"), Ct);
-        }
+        await ForeignKeyTestDatabase.PlantRelationshipAsync(ms, Relationship, "C", "ParentId", "P", "Id");
 
         ms.Position = 0;
         return ms;

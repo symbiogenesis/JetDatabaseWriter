@@ -32,6 +32,7 @@ using JetDatabaseWriter.Interfaces;
 /// </para>
 /// <list type="bullet">
 ///   <item><description>Both <see cref="PrimaryTable"/> and <see cref="ForeignTable"/> must already exist as user tables.</description></item>
+///   <item><description>Unless <see cref="EnforceReferentialIntegrity"/> is false, every existing foreign key with no null component must match a parent key before the relationship is written.</description></item>
 ///   <item><description>Every name in <see cref="PrimaryColumns"/> / <see cref="ForeignColumns"/> must match a column on its table, case-insensitively.</description></item>
 ///   <item><description><see cref="PrimaryColumns"/> and <see cref="ForeignColumns"/> must have the same length and at least one entry.</description></item>
 ///   <item><description><see cref="Name"/> must be unique across existing relationships in this database (case-insensitive), and must follow the Access naming rules (1 to 64 characters, not only white space, no leading space, none of <c>. ! ` [ ]</c> or a control character).</description></item>

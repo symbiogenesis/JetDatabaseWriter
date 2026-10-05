@@ -540,6 +540,8 @@ W7 caveats / not done:
 
 ### 7.7 W16 — what shipped (2026-04-26)
 
+`CreateRelationshipAsync` checks existing rows before writing relationship metadata. For an enforced relationship, each foreign key with no null component must match a parent key using the parent column descriptors and their text collation. Keys with a null component are exempt, and relationships with `EnforceReferentialIntegrity = false` allow orphaned rows.
+
 Replaces the W10 O(N) parent-table snapshot inside `EnforceFkOnInsertAsync` with an O(log N) B-tree seek over the parent's PK / FK index. Cascade-update / cascade-delete on the parent (`EnforceFkOnPrimaryUpdateAsync`, `EnforceFkOnPrimaryDeleteAsync`) shipped under W22 (2026-04-27); see §7.11.
 
 New helper:
@@ -700,6 +702,8 @@ W19 caveats:
 - **`Binary` columns whose `MaxLength > 255` map to `Ole (0x0B)`**, which Microsoft Access does not permit indexes over and which W18 rejects up-front in `ResolveIndexes`. The W19 encoder is therefore only reachable for declarations that produce `Binary` (i.e. `byte[]` with `MaxLength ∈ [1, 255]`).
 
 ### 7.11 W22 — what shipped (2026-04-27)
+
+Changing a referenced non-null key to a key containing Null follows the same dependency checks as any other key change. A restrictive relationship refuses the update while dependent rows remain. A cascading relationship copies the new key, including its Null components, to dependent rows; null-producing cascades validate assigned child constraints and recompute calculated values before writing, including rows reached through a self-relationship. Required child keys therefore refuse the entire update before any mutation. An old key containing Null has no dependents to move.
 
 W22 closes the W16 follow-up — `EnforceFkOnPrimaryUpdateAsync` and `EnforceFkOnPrimaryDeleteAsync` no longer load an O(N) child snapshot per relationship per call. They now use an O(log N + K) seek over the FK-side child real-idx that W9b already emits on every relationship.
 
