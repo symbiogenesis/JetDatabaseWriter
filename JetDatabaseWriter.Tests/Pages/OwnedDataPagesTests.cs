@@ -208,7 +208,7 @@ public sealed class OwnedDataPagesTests
                 async token =>
                 {
                     _ = await harness.Services.Data.InsertRowsAsync(TableName, rows, token);
-                    Assert.True(db.IsJournalActive);
+                    Assert.True(harness.Pager.IsJournalActive);
                     await AssertOwnedPagesAsync(db, tdefPage, physicalPages, rowCount, token);
                 },
                 Ct);
@@ -221,7 +221,7 @@ public sealed class OwnedDataPagesTests
             await tx.CommitAsync(Ct);
         }
 
-        Assert.False(db.IsJournalActive);
+        Assert.False(harness.Pager.IsJournalActive);
         await AssertOwnedPagesAsync(db, tdefPage, physicalPages, rowCount, Ct);
     }
 

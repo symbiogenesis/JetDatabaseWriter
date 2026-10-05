@@ -12,6 +12,7 @@ using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
@@ -29,18 +30,22 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="RewriteSystemTableRowsAsync"/>).
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which index and data pages are written.</param>
+/// <param name="tdefWriter">Writes index roots and usage-map pointers back into TDEF chains.</param>
 /// <param name="pageAllocator">Reserves and frees index pages.</param>
 /// <param name="tableRows">Writes system-table rows ahead of their index splice.</param>
 /// <param name="dataPages">Owns usage-map rows and empty data pages.</param>
 /// <param name="snapshots">Reads decoded table rows for full index rebuilds.</param>
 internal sealed class IndexMaintainer(
     DatabaseFile db,
+    Pager pager,
+    TDefWriter tdefWriter,
     PageAllocator pageAllocator,
     TableRowStore tableRows,
     DataPageInserter dataPages,
     TableSnapshotReader snapshots)
 {
-    private readonly IndexBTreeEditor btreeEditor = new(db, pageAllocator);
+    private readonly IndexBTreeEditor btreeEditor = new(db, pager, tdefWriter, pageAllocator);
 
     /// <summary>
     /// Gets the most recent reason
@@ -133,7 +138,7 @@ internal sealed class IndexMaintainer(
 
         foreach (long pageNumber in dataPageNumbers)
         {
-            await db.WritePageAsync(pageNumber, dataPages.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(pageNumber, dataPages.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         }
 
         if (dataPageNumbers.Count > 0)
@@ -311,7 +316,7 @@ internal sealed class IndexMaintainer(
     /// column-name table). Index <c>first_dp</c> and <c>used_pages</c>
     /// offsets taken from it are logical too, so patches go into
     /// <see cref="Buffer"/> and back to disk through
-    /// <see cref="DatabaseFile.WriteTDefChainInPlaceAsync"/>.
+    /// <see cref="TDefWriter.WriteChainInPlaceAsync"/>.
     /// </summary>
     /// <param name="Chain">The logical TDEF chain.</param>
     /// <param name="NumCols">The number of cols.</param>
@@ -653,7 +658,7 @@ internal sealed class IndexMaintainer(
                 int oldRootPageNumber = Ri32(tdefBuffer, rie.FirstDpOffset);
                 if (build.Pages.Count == 1 && await this.CanReuseSingleLeafPageAsync(oldRootPageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
                 {
-                    await db.WritePageAsync(oldRootPageNumber, build.Pages[0], cancellationToken).ConfigureAwait(false);
+                    await pager.WritePageAsync(oldRootPageNumber, build.Pages[0], cancellationToken).ConfigureAwait(false);
                     rootPageNumber = oldRootPageNumber;
                     pageNumbers = [oldRootPageNumber];
                 }
@@ -716,7 +721,7 @@ internal sealed class IndexMaintainer(
 
         if (tdefDirty)
         {
-            await db.WriteTDefChainInPlaceAsync(preamble.Chain, cancellationToken).ConfigureAwait(false);
+            await tdefWriter.WriteChainInPlaceAsync(preamble.Chain, cancellationToken).ConfigureAwait(false);
         }
 
         if (oldIndexPageGroups is not null)
@@ -1453,7 +1458,7 @@ internal sealed class IndexMaintainer(
                 {
                     // This write links every tree rebuilt so far.
                     runs.MarkLinked();
-                    await db.WriteTDefChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
+                    await tdefWriter.WriteChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
                     tdefDirty = false;
                 }
 
@@ -1559,7 +1564,7 @@ internal sealed class IndexMaintainer(
                 continue;
             }
 
-            await db.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);
         }
 
         long[][]? indexPageGroups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, tdefBuffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false);
@@ -1581,7 +1586,7 @@ internal sealed class IndexMaintainer(
 
         if (tdefDirty)
         {
-            await db.WriteTDefChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
+            await tdefWriter.WriteChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
         }
 
         return true;
@@ -1991,7 +1996,7 @@ internal sealed class IndexMaintainer(
                     long[] pageNumbers = plan.PageNumbers;
                     for (int p = 1; p < splitCount; p++)
                     {
-                        await db.WritePageAsync(pageNumbers[p], plan.Pages[p], cancellationToken).ConfigureAwait(false);
+                        await pager.WritePageAsync(pageNumbers[p], plan.Pages[p], cancellationToken).ConfigureAwait(false);
                     }
 
                     runs.MarkLinked();
@@ -1999,14 +2004,14 @@ internal sealed class IndexMaintainer(
                     {
                         byte[] nextLeafBuf = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
                         IndexPageCodec.WritePrevPage(layout, nextLeafBuf, pageNumbers[splitCount - 1]);
-                        await db.WritePageAsync(leafNext, nextLeafBuf, cancellationToken).ConfigureAwait(false);
+                        await pager.WritePageAsync(leafNext, nextLeafBuf, cancellationToken).ConfigureAwait(false);
                     }
 
-                    await db.WritePageAsync(targetLeafPage, plan.Pages[0], cancellationToken).ConfigureAwait(false);
+                    await pager.WritePageAsync(targetLeafPage, plan.Pages[0], cancellationToken).ConfigureAwait(false);
 
                     foreach ((long pn, byte[] bytes) in ancestorWrites)
                     {
-                        await db.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+                        await pager.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
                     }
                 }
                 finally
@@ -2020,7 +2025,7 @@ internal sealed class IndexMaintainer(
                 continue;
             }
 
-            await db.WritePageAsync(targetLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(targetLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
         }
 
         return true;

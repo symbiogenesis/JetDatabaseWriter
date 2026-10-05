@@ -570,7 +570,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         await using WriterHarness writer = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
         await InsertCatalogObjectAsync(writer, -500, "LowLevelDuplicate", ct);
 
-        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer.Database, ct);
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             InsertCatalogObjectAsync(writer, -501, "lowlevelduplicate", ct).AsTask());
@@ -920,11 +920,12 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(string dbPath, CancellationToken cancellationToken)
     {
         await using WriterHarness harness = await WriterHarness.OpenAsync(dbPath, cancellationToken: cancellationToken);
-        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(harness.Database, cancellationToken);
+        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(harness, cancellationToken);
     }
 
-    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(DatabaseFile db, CancellationToken cancellationToken)
+    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(WriterHarness writer, CancellationToken cancellationToken)
     {
+        DatabaseFile db = writer.Database;
         byte[] tdef = await db.ReadPageAsync(2, cancellationToken);
         try
         {
@@ -953,7 +954,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                     root[0] is Constants.IndexLeafPage.PageTypeLeaf or Constants.IndexLeafPage.PageTypeIntermediate,
                     $"Expected MSysObjects index root page {firstDp} to be an index page, got 0x{root[0]:X2}.");
                 root[0] = 0x01;
-                await db.WritePageAsync(firstDp, root, cancellationToken);
+                await writer.Pager.WritePageAsync(firstDp, root, cancellationToken);
             }
             finally
             {

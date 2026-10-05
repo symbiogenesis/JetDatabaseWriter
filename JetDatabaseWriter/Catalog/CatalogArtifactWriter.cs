@@ -13,6 +13,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -24,6 +25,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// of a freshly created database.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which TDEF pages are written.</param>
 /// <param name="catalog">The cached user-table catalog, invalidated after every catalog mutation.</param>
 /// <param name="pageAllocator">Reserves TDEF and index leaf pages.</param>
 /// <param name="tdefPageBuilder">Builds and patches table-definition pages.</param>
@@ -32,6 +34,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="constraints">Registers client-side column constraints for created tables.</param>
 internal sealed class CatalogArtifactWriter(
     DatabaseFile db,
+    Pager pager,
     TableCatalog catalog,
     PageAllocator pageAllocator,
     TDefPageBuilder tdefPageBuilder,
@@ -140,7 +143,7 @@ internal sealed class CatalogArtifactWriter(
 
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], db.TDef, checked((int)usageMapPageNumber));
         DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
-        await db.WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
         dataPages.RegisterOwnedMapWritableTdef(2);
         catalog.Invalidate();
     }
@@ -258,7 +261,7 @@ internal sealed class CatalogArtifactWriter(
 
         for (int pageIndex = 0; pageIndex < tdefPages.Length; pageIndex++)
         {
-            await db.WritePageAsync(tdefPageNumber + pageIndex, tdefPages[pageIndex], cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(tdefPageNumber + pageIndex, tdefPages[pageIndex], cancellationToken).ConfigureAwait(false);
         }
 
         bool tdefDirty = false;
@@ -338,7 +341,7 @@ internal sealed class CatalogArtifactWriter(
             // autonum bytes and (for multi-page chains) the next-page pointers.
             for (int pageIndex = 0; pageIndex < tdefPages.Length; pageIndex++)
             {
-                await db.WritePageAsync(tdefPageNumber + pageIndex, tdefPages[pageIndex], cancellationToken).ConfigureAwait(false);
+                await pager.WritePageAsync(tdefPageNumber + pageIndex, tdefPages[pageIndex], cancellationToken).ConfigureAwait(false);
             }
         }
 

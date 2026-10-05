@@ -81,14 +81,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Stream stream,
         byte[] header,
         bool leaveOpen = false)
-        : base(new DatabaseFile(
-            stream,
-            header,
-            options.Password,
-            path,
-            leaveOpen,
-            typeof(AccessReader),
-            writable: false))
+        : base(DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen))
     {
         Guard.NotNull(options, nameof(options));
 

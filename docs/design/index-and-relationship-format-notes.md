@@ -598,8 +598,8 @@ New writer-side helper, now owned by `IndexMaintainer`: `TryMaintainIndexesIncre
   silently, and unique indexes went unenforced. Every index path now reads the
   whole chain (`TableDefReader.ReadTDefChainAsync` / `ReadTDefBytesAsync`) and
   writes `first_dp` / `used_pages` patches back to whichever physical page
-  holds them (`DatabaseFile.WriteTDefChainInPlaceAsync`,
-  `WriteTDefInt32Async`). A TDEF whose index section still cannot be parsed
+  holds them (`TDefWriter.WriteChainInPlaceAsync`,
+  `WriteInt32Async`). A TDEF whose index section still cannot be parsed
   or runs past the end of the chain as read, or an index that names a column
   the table does not have, makes every insert, update, delete and schema
   rewrite of that table throw `JetLimitationException` before it changes

@@ -386,7 +386,7 @@ public sealed class IndexIncrementalMaintenanceTests
         stream.Position = 0;
         await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
         TableDef tableDef = await reopened.Database.ReadRequiredTableDefAsync(tdefPage, "T", this.ct);
-        await ClearRealIdxColMapsAsync(reopened.Database, tdefPage, this.ct);
+        await ClearRealIdxColMapsAsync(reopened, tdefPage, this.ct);
 
         var insertedRows = new List<(RowLocation Loc, object[] Row)>
         {
@@ -483,10 +483,11 @@ public sealed class IndexIncrementalMaintenanceTests
     }
 
     private static async ValueTask ClearRealIdxColMapsAsync(
-        DatabaseFile db,
+        WriterHarness writer,
         long tdefPage,
         CancellationToken cancellationToken)
     {
+        DatabaseFile db = writer.Database;
         byte[] tdef = await db.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
@@ -523,7 +524,7 @@ public sealed class IndexIncrementalMaintenanceTests
                 }
             }
 
-            await db.WritePageAsync(tdefPage, tdef, cancellationToken);
+            await writer.Pager.WritePageAsync(tdefPage, tdef, cancellationToken);
         }
         finally
         {

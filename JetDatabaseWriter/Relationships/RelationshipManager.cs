@@ -15,6 +15,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -31,6 +32,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// The public facade owns the auto-commit scope around each workflow.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which TDEF chains are written.</param>
 /// <param name="tableCatalog">Resolves the primary and foreign tables by name.</param>
 /// <param name="indexes">Rebuilds FK index leaves after the per-TDEF entries change.</param>
 /// <param name="pageAllocator">Allocates FK leaf pages and grows or shrinks TDEF chains.</param>
@@ -39,6 +41,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalog">Reads and rewrites <c>MSysRelationships</c> rows.</param>
 internal sealed class RelationshipManager(
     DatabaseFile db,
+    Pager pager,
     TableCatalog tableCatalog,
     IndexMaintainer indexes,
     PageAllocator pageAllocator,
@@ -47,6 +50,7 @@ internal sealed class RelationshipManager(
     RelationshipCatalogStore catalog)
 {
     private readonly DatabaseFile db = db;
+    private readonly Pager pager = pager;
     private readonly TableCatalog tableCatalog = tableCatalog;
     private readonly IndexMaintainer indexes = indexes;
     private readonly PageAllocator pageAllocator = pageAllocator;
@@ -2185,7 +2189,7 @@ internal sealed class RelationshipManager(
             logicalBytes,
             usedLength,
             this.pageAllocator.AllocatePageAsync,
-            this.db.WritePageAsync,
+            this.pager.WritePageAsync,
             this.pageAllocator.DeallocatePageAsync,
             writeFreeSpace: this.db.Format != DatabaseFormat.Jet3Mdb,
             cancellationToken);

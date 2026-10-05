@@ -29,6 +29,7 @@ using JetDatabaseWriter.Schema.Models;
 /// if the transaction had never run.
 /// </remarks>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, which holds the journal and through which a commit writes and flushes.</param>
 /// <param name="options">The writer options; supplies the auto-commit switch and journal page budget.</param>
 /// <param name="byteRangeLock">The cooperative JET byte-range lock used for the commit-lock sentinel.</param>
 /// <param name="catalog">The writer's cached user-table catalog, invalidated on rollback.</param>
@@ -36,6 +37,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="constraints">The writer's constraint registry, restored on rollback.</param>
 internal sealed class TransactionLifecycle(
     DatabaseFile db,
+    Pager pager,
     AccessWriterOptions options,
     JetByteRangeLock byteRangeLock,
     TableCatalog catalog,
@@ -63,7 +65,7 @@ internal sealed class TransactionLifecycle(
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        using Pager.JournalGate gate = await db.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
+        using Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
         if (this.ActiveTransaction is not null)
         {
             throw new InvalidOperationException(
@@ -204,7 +206,7 @@ internal sealed class TransactionLifecycle(
         // already cancelled then ends the transaction as a rollback below
         // instead of leaving it half-detached. The gate is released before the
         // page writes below, which take it themselves.
-        using (Pager.JournalGate gate = await db.EnterJournalGateAsync(CancellationToken.None).ConfigureAwait(false))
+        using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(CancellationToken.None).ConfigureAwait(false))
         {
             if (transaction.IsTerminated)
             {
@@ -244,7 +246,7 @@ internal sealed class TransactionLifecycle(
             replayStarted = true;
             foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
             {
-                await db.WritePageAsync(entry.Key, entry.Value, CancellationToken.None).ConfigureAwait(false);
+                await pager.WritePageAsync(entry.Key, entry.Value, CancellationToken.None).ConfigureAwait(false);
             }
 
             await this.FlushDurableAsync(CancellationToken.None).ConfigureAwait(false);
@@ -286,7 +288,7 @@ internal sealed class TransactionLifecycle(
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        using Pager.JournalGate gate = await db.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
+        using Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
         if (transaction.IsTerminated)
         {
             throw new InvalidOperationException(JetTransaction.TerminatedMessage);
@@ -324,7 +326,7 @@ internal sealed class TransactionLifecycle(
         {
             // The rollback above detaches the journal under the gate; when it
             // fails, the journal is dropped here without waiting for the gate.
-            db.ForceDetachJournal();
+            pager.ForceDetachJournal();
             this.ActiveTransaction = null;
             this.stateAtBegin = null;
         }
@@ -335,7 +337,7 @@ internal sealed class TransactionLifecycle(
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
-        => await db.FlushDatabaseStreamAsync(flushToDisk: true, cancellationToken).ConfigureAwait(false);
+        => await pager.FlushAsync(toDisk: true, cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// Returns the writer's in-memory state to <paramref name="state"/> after

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -20,7 +21,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// empty database file.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
-internal sealed class TDefPageBuilder(DatabaseFile db)
+/// <param name="pager">The writer's page file, through which a TDEF's row count is written.</param>
+internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
 {
     /// <summary>
     /// Checks that <paramref name="format"/> can hold <paramref name="definition"/>
@@ -577,7 +579,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db)
                 }
             }
 
-            await db.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

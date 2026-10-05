@@ -309,7 +309,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         changed[pageSize - 1] ^= 0xFF;
 
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        await harness.Database.WritePageAsync(1, changed, TestContext.Current.CancellationToken);
+        await harness.Pager.WritePageAsync(1, changed, TestContext.Current.CancellationToken);
 
         byte[] pending = await cache.ReadPageAsync(1, TestContext.Current.CancellationToken);
         try

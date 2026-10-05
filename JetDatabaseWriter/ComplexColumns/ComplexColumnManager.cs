@@ -15,6 +15,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
@@ -35,6 +36,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see href="docs/design/complex-columns-format-notes.md" />.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which the header page and patched parent rows are written.</param>
 /// <param name="catalog">Resolves parent tables by name.</param>
 /// <param name="tableRows">Writes and tombstones flat-table and <c>MSysComplexColumns</c> rows.</param>
 /// <param name="indexes">Keeps system-table indexes current.</param>
@@ -45,6 +47,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
 internal sealed class ComplexColumnManager(
     DatabaseFile db,
+    Pager pager,
     TableCatalog catalog,
     TableRowStore tableRows,
     IndexMaintainer indexes,
@@ -57,6 +60,7 @@ internal sealed class ComplexColumnManager(
     private const int ComplexTypeTemplateTextLength = 255;
 
     private readonly DatabaseFile db = db;
+    private readonly Pager pager = pager;
     private readonly TableCatalog catalog = catalog;
 
     /// <summary>
@@ -197,7 +201,7 @@ internal sealed class ComplexColumnManager(
             Wi32(header, 0x28, checked((int)queriesTdefPage));
             Wi32(header, 0x2C, checked((int)relationshipsTdefPage));
             EncryptionManager.TransformHeaderMask(header);
-            await this.db.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
+            await this.pager.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1039,7 +1043,7 @@ internal sealed class ComplexColumnManager(
                 }
             }
 
-            await this.db.WritePageAsync(location.DataPageNumber, page, cancellationToken).ConfigureAwait(false);
+            await this.pager.WritePageAsync(location.DataPageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

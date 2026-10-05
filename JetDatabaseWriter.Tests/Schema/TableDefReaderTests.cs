@@ -278,7 +278,7 @@ public sealed class TableDefReaderTests
         byte[] fileBefore = stream.ToArray();
 
         JetTransaction? tx = inTransaction ? await harness.Services.Transactions.BeginTransactionAsync(Ct) : null;
-        await db.WriteTDefInt32Async(entry.TDefPage, logicalOffset, patched, Ct);
+        await harness.Services.TDefWriter.WriteInt32Async(entry.TDefPage, logicalOffset, patched, Ct);
 
         byte[]? logical = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct);
         Assert.NotNull(logical);
@@ -293,7 +293,7 @@ public sealed class TableDefReaderTests
 
         Assert.Equal(patched, BitConverter.ToInt32(stream.ToArray(), onDiskOffset));
 
-        await db.WriteTDefInt32Async(entry.TDefPage, logicalOffset, original, Ct);
+        await harness.Services.TDefWriter.WriteInt32Async(entry.TDefPage, logicalOffset, original, Ct);
         TableDef after = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, WideTable, Ct);
         Assert.Equal(before.Columns.Select(c => (c.Name, c.Type, c.ColNum)), after.Columns.Select(c => (c.Name, c.Type, c.ColNum)));
         Assert.Equal(fileBefore, stream.ToArray());

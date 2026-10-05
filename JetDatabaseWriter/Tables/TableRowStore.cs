@@ -10,6 +10,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
@@ -25,6 +26,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// maintenance and referential integrity are the caller's responsibility.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which deleted rows are written.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for deleted rows.</param>
 /// <param name="longValueEncoder">Moves oversized long values to LVAL chains and deallocates them.</param>
 /// <param name="rowEncoder">Serializes row values into on-disk row bytes.</param>
@@ -32,6 +34,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="tdefPageBuilder">Owns the TDEF row-count byte layout.</param>
 internal sealed class TableRowStore(
     DatabaseFile db,
+    Pager pager,
     AccessWriterOptions options,
     LongValueEncoder longValueEncoder,
     RowEncoder rowEncoder,
@@ -240,7 +243,7 @@ internal sealed class TableRowStore(
         }
 
         Wu16(page, offsetPos, raw | Constants.DataPage.DeletedRowFlag);
-        await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         ReturnPage(page);
 
         if (longValueRoots is null)
@@ -287,7 +290,7 @@ internal sealed class TableRowStore(
                         Array.Clear(dataPage, target.Bound.RowStart, target.Bound.RowSize);
                         if (target.PageNumber != pageNumber)
                         {
-                            await db.WritePageAsync(target.PageNumber, target.Page, cancellationToken).ConfigureAwait(false);
+                            await pager.WritePageAsync(target.PageNumber, target.Page, cancellationToken).ConfigureAwait(false);
                         }
                     }
                     finally
@@ -301,7 +304,7 @@ internal sealed class TableRowStore(
 
             int offsetPos = db.DataPage.RowsStart + (rowIndex * 2);
             Wu16(page, offsetPos, Ru16(page, offsetPos) | Constants.DataPage.DeletedRowFlag);
-            await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

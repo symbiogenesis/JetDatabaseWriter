@@ -346,7 +346,7 @@ public sealed class TransactionReadVisibilityTests
 
             byte[] page = await harness.Database.ReadPageCopyAsync(first.PageNumber, Ct);
             page.AsSpan(first.RowStart, harness.Database.RowFields.NumCols).Clear();
-            await harness.Database.WritePageAsync(first.PageNumber, page, Ct);
+            await harness.Pager.WritePageAsync(first.PageNumber, page, Ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))

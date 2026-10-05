@@ -13,7 +13,9 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Transactions;
@@ -25,11 +27,13 @@ using Xunit;
 /// <see cref="DatabaseFile"/> and builds its collaborators once in a
 /// composition root (<see cref="ReaderServices"/> / <see cref="WriterServices"/>)
 /// that hands every collaborator the database file plus the specific siblings
-/// it uses. No collaborator may hold or receive a facade, <see cref="AccessBase"/>,
-/// or a composition root; each collaborator graph must be acyclic; the facade
-/// must not be reachable from its services at runtime; the reader's graph holds
-/// nothing that writes; each facade sets up its page reads by how it was
-/// opened; and the facades expose no internal members.
+/// it uses, and the writer's <see cref="Pager"/> only to the writer services
+/// that write pages. No collaborator may hold or receive a facade,
+/// <see cref="AccessBase"/>, or a composition root; each collaborator graph
+/// must be acyclic; the facade must not be reachable from its services at
+/// runtime; the reader's graph neither holds nor names anything that writes;
+/// each facade sets up its page reads by how it was opened; and the facades
+/// expose no internal members.
 /// </summary>
 public sealed class ServiceGraphTests
 {
@@ -47,6 +51,14 @@ public sealed class ServiceGraphTests
     /// file through its own <see cref="DatabaseFile"/>, never through a reader.
     /// </summary>
     private static readonly Type[] OpensSeparateReader = [typeof(LinkedTableReader), typeof(LinkedTableManager)];
+
+    /// <summary>
+    /// The types a graph writes through: the writer's <see cref="Pager"/> and
+    /// its journal lease, the transaction journal, the byte-range locks and the
+    /// in-place TDEF write-backs. Only the writer's graph may hold or name them.
+    /// </summary>
+    private static readonly Type[] WriteCapabilities =
+        [typeof(Pager), typeof(Pager.JournalGate), typeof(PageJournal), typeof(JetByteRangeLock), typeof(TDefWriter)];
 
     public static TheoryData<Type> CompositionRoots => [typeof(ReaderServices), typeof(WriterServices)];
 
@@ -99,8 +111,8 @@ public sealed class ServiceGraphTests
     /// the whole <see cref="DatabaseFile"/> through a constructor or a method
     /// parameter, static helpers and delegates included, or hold it in a
     /// field, and the list may only shrink. New code takes the part it needs
-    /// instead: the <see cref="JetFormat"/> profile, an <see cref="JetDatabaseWriter.Pages.Paging.IPageSource"/>,
-    /// the <see cref="JetDatabaseWriter.Schema.TableDefReader"/> or <see cref="OwnedDataPages"/>.
+    /// instead: the <see cref="JetFormat"/> profile, an <see cref="IPageSource"/>,
+    /// the <see cref="TableDefReader"/> or <see cref="OwnedDataPages"/>.
     /// A type narrowed to its parts is removed from the list in the same
     /// commit. The facades, the composition roots and the composite itself are
     /// exempt.
@@ -215,6 +227,33 @@ public sealed class ServiceGraphTests
         }
     }
 
+    /// <summary>
+    /// The reader's graph cannot write: no type it holds or is built from is a
+    /// write capability, and none declares an instance field, property, method
+    /// or constructor whose signature names one, so nothing it reaches, the
+    /// <see cref="DatabaseFile"/> it shares with the writer included, hands
+    /// out a <see cref="Pager"/>. Static members are not scanned: the writer's
+    /// composition root takes its pager from the static
+    /// <see cref="DatabaseFile.ForWriter"/>, which opens a file of its own.
+    /// </summary>
+    [Fact]
+    public void ReaderCompositionRoot_ReachesNoWriteCapability()
+    {
+        var state = new Dictionary<Type, bool>();
+        _ = FindCycle(typeof(ReaderServices), state, new Stack<Type>());
+
+        string[] violations =
+        [
+            .. state.Keys.Where(type => WriteCapabilities.Contains(type)).Select(type => type.FullName!),
+            .. state.Keys.SelectMany(type => InstanceSignatures(type)
+                .Where(signature => WriteCapabilities.Any(capability => Mentions(signature.Type, capability)))
+                .Select(signature => $"{type.FullName}.{signature.Member} : {signature.Type.Name}")),
+        ];
+
+        Assert.Contains(typeof(DatabaseFile), state.Keys);
+        Assert.Empty(violations);
+    }
+
     [Fact]
     public void WriterCompositionRoot_ReachesEveryWriterWorkflow()
     {
@@ -224,6 +263,8 @@ public sealed class ServiceGraphTests
         Type[] expected =
         [
             typeof(DatabaseFile),
+            typeof(Pager),
+            typeof(TDefWriter),
             typeof(TableCatalog),
             typeof(TableDataWriter),
             typeof(TableSchemaEditor),
@@ -269,6 +310,30 @@ public sealed class ServiceGraphTests
         Assert.DoesNotContain(reachable, item => item is AccessReader);
     }
 
+    /// <summary>
+    /// The writer's services write through one pager, the one its database
+    /// file reads through, so a write is seen by the next read and a
+    /// transaction's journal covers every write.
+    /// </summary>
+    [Fact]
+    public async Task OpenWriter_PageWritesGoThroughTheWritersOnePager()
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync();
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        await writer.InsertRowAsync("Items", [2], TestContext.Current.CancellationToken);
+
+        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
+
+        Pager pager = Assert.IsType<Pager>(Assert.Single(reachable, item => item is Pager));
+        Assert.Same(FacadeDatabase(writer).Pages, pager);
+        _ = Assert.Single(reachable, item => item is TDefWriter);
+    }
+
     [Fact]
     public async Task OpenReader_FacadeIsNotReachableFromItsServices()
     {
@@ -288,8 +353,10 @@ public sealed class ServiceGraphTests
         Assert.DoesNotContain(reader, reachable);
         Assert.Contains(FacadeDatabase(reader), reachable);
 
-        // The reader's graph cannot write: no pager, journal or byte-range lock.
-        Assert.DoesNotContain(reachable, item => item is JetDatabaseWriter.Pages.Paging.Pager or PageJournal or JetByteRangeLock);
+        // The reader's graph cannot write: no pager, journal, byte-range lock
+        // or TDEF writer.
+        Assert.DoesNotContain(reachable, item => WriteCapabilities.Contains(item.GetType()));
+        Assert.IsNotType<Pager>(FacadeDatabase(reader).Pages);
     }
 
     [Fact]
@@ -538,6 +605,44 @@ public sealed class ServiceGraphTests
                 .SelectMany(method => method.GetParameters())
                 .Any(parameter => Mentions(parameter.ParameterType, typeof(DatabaseFile)))
             || type.GetFields(instanceMembers).Any(field => Mentions(field.FieldType, typeof(DatabaseFile)));
+    }
+
+    /// <summary>
+    /// Yields each type named by the signature of an instance member that
+    /// <paramref name="type"/> declares: field and property types, method
+    /// return and parameter types (accessors and indexers included), and
+    /// constructor parameter types, each with the member it came from.
+    /// </summary>
+    /// <param name="type">The library type.</param>
+    private static IEnumerable<(string Member, Type Type)> InstanceSignatures(Type type)
+    {
+        const BindingFlags instanceMembers = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        foreach (FieldInfo field in type.GetFields(instanceMembers))
+        {
+            yield return (field.Name, field.FieldType);
+        }
+
+        foreach (PropertyInfo property in type.GetProperties(instanceMembers))
+        {
+            yield return (property.Name, property.PropertyType);
+        }
+
+        foreach (MethodInfo method in type.GetMethods(instanceMembers))
+        {
+            yield return (method.Name, method.ReturnType);
+            foreach (ParameterInfo parameter in method.GetParameters())
+            {
+                yield return ($"{method.Name}({parameter.Name})", parameter.ParameterType);
+            }
+        }
+
+        foreach (ConstructorInfo constructor in type.GetConstructors(instanceMembers))
+        {
+            foreach (ParameterInfo parameter in constructor.GetParameters())
+            {
+                yield return ($"{constructor.Name}({parameter.Name})", parameter.ParameterType);
+            }
+        }
     }
 
     private static bool IsCompilerGenerated(Type type)

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Transactions;
@@ -47,14 +48,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool outerEncryptedLeaveOpen = false,
         AccessEncryptionFormat outerEncryptedFormat = AccessEncryptionFormat.None,
         bool leaveOpen = false)
-        : base(new DatabaseFile(
-            stream,
-            header,
-            options.Password,
-            path,
-            leaveOpen,
-            typeof(AccessWriter),
-            writable: true))
+        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager))
     {
         this.options = options;
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
@@ -66,8 +60,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.lockFileCoordinator.Acquire();
         try
         {
-            this.Database.ByteRangeLock = options.CreateByteRangeLock(stream);
-            this.services = new WriterServices(this.Database, options, this.Database.ByteRangeLock);
+            pager.ByteRangeLock = options.CreateByteRangeLock(stream);
+            this.services = new WriterServices(this.Database, pager, options, pager.ByteRangeLock);
         }
         catch
         {

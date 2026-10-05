@@ -16,7 +16,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Re-creates, in a table the current writer created, the table-definition
 /// damage that JetDatabaseWriter builds before 4.0.0 left behind, for tests of
 /// how the writer treats such tables. Every method patches pages through the
-/// <see cref="DatabaseFile"/> directly, below any writer workflow. Not to be
+/// writer's <see cref="JetDatabaseWriter.Pages.Paging.Pager"/> and
+/// <see cref="TDefWriter"/> directly, below any writer workflow. Not to be
 /// confused with legacy-repair's production <c>LegacyTDefDamage</c>, which
 /// detects and repairs the same damage.
 /// </summary>
@@ -45,13 +46,14 @@ internal static class LegacyDamageInjector
     /// index descriptor, entry and name past that point is cut off. Writes
     /// the same bytes as those builds (a39a315).
     /// </summary>
-    /// <param name="db">The open database file.</param>
+    /// <param name="writer">The open writer layers.</param>
     /// <param name="tdefPage">The table's first TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The real-index numbers, among those still readable, that now name a key column the table does not have, in ascending order.</returns>
     /// <exception cref="InvalidOperationException">The database is Jet3, or a stray byte would land in a continuation page's header past its page-type byte.</exception>
-    public static async ValueTask<IReadOnlyList<int>> InjectStrayUsedPagesByteAsync(DatabaseFile db, long tdefPage, CancellationToken cancellationToken)
+    public static async ValueTask<IReadOnlyList<int>> InjectStrayUsedPagesByteAsync(WriterHarness writer, long tdefPage, CancellationToken cancellationToken)
     {
+        DatabaseFile db = writer.Database;
         if (db.Format == DatabaseFormat.Jet3Mdb)
         {
             throw new InvalidOperationException("The stray used_pages byte was written only into Jet4 and ACE tables.");
@@ -94,13 +96,13 @@ internal static class LegacyDamageInjector
             strayBytes.Add((pageIndex, offset, checked((byte)(ri + 2))));
         }
 
-        await db.WriteTDefChainInPlaceAsync(chain, cancellationToken);
+        await writer.Services.TDefWriter.WriteChainInPlaceAsync(chain, cancellationToken);
         foreach ((int pageIndex, int offset, byte value) in strayBytes)
         {
             long pageNumber = chain.PageNumbers[pageIndex];
             byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
             page[offset] = value;
-            await db.WritePageAsync(pageNumber, page, cancellationToken);
+            await writer.Pager.WritePageAsync(pageNumber, page, cancellationToken);
         }
 
         return await FindPhantomIndexesAsync(db, tdefPage, cancellationToken);
@@ -113,14 +115,15 @@ internal static class LegacyDamageInjector
     /// Jet4 and ACE. Used for Jet3, whose wide tables builds before 4.0.0 left
     /// stale rather than with a phantom column.
     /// </summary>
-    /// <param name="db">The open database file.</param>
+    /// <param name="writer">The open writer layers.</param>
     /// <param name="tdefPage">The table's first TDEF page.</param>
     /// <param name="realIndexNumber">The real index to damage.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the TDEF has been written.</returns>
     /// <exception cref="InvalidOperationException">The real index does not exist, or its slot 1 already names a column.</exception>
-    public static async ValueTask SetPhantomKeyColumnAsync(DatabaseFile db, long tdefPage, int realIndexNumber, CancellationToken cancellationToken)
+    public static async ValueTask SetPhantomKeyColumnAsync(WriterHarness writer, long tdefPage, int realIndexNumber, CancellationToken cancellationToken)
     {
+        DatabaseFile db = writer.Database;
         LogicalTDefChain chain = await db.ReadTDefChainAsync(tdefPage, cancellationToken);
         byte[] td = chain.Bytes;
         int realIdxDescStart = LocateRealIdxDescStart(db, td, out int numRealIdx);
@@ -137,7 +140,7 @@ internal static class LegacyDamageInjector
         }
 
         Wu16(td, slotOffset, PhantomColumnNumber);
-        await db.WriteTDefChainInPlaceAsync(chain, cancellationToken);
+        await writer.Services.TDefWriter.WriteChainInPlaceAsync(chain, cancellationToken);
     }
 
     /// <summary>Returns the real indexes of the table whose <c>col_map</c> names a column the table does not have.</summary>

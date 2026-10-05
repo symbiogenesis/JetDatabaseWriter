@@ -6,6 +6,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
@@ -16,8 +17,10 @@ using JetDatabaseWriter.ValueEncoding;
 /// <summary>
 /// Composition root for one <see cref="AccessWriter"/>. Builds every writer
 /// collaborator once and passes each one the <see cref="DatabaseFile"/> it
-/// reads and writes pages through plus the specific sibling services it uses.
-/// No collaborator receives the facade or this object, so the service graph is
+/// reads pages through, the writer's <see cref="Pager"/> when it writes pages,
+/// and the specific sibling services it uses. Only this graph holds the pager,
+/// which <see cref="DatabaseFile.ForWriter"/> hands to the writer alone. No
+/// collaborator receives the facade or this object, so the service graph is
 /// acyclic and each dependency is visible in a constructor signature.
 /// </summary>
 internal sealed class WriterServices
@@ -26,10 +29,11 @@ internal sealed class WriterServices
     /// Initializes a new instance of the <see cref="WriterServices"/> class.
     /// </summary>
     /// <param name="db">The open database file.</param>
+    /// <param name="pager">The database file's pager, from <see cref="DatabaseFile.ForWriter"/>; the services that write pages write through it.</param>
     /// <param name="options">The writer options.</param>
     /// <param name="byteRangeLock">The cooperative JET byte-range lock bound to the database stream.</param>
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "A capacity-0 ReaderPageCache allocates no caches, so its Dispose has nothing to release.")]
-    internal WriterServices(DatabaseFile db, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
+    internal WriterServices(DatabaseFile db, Pager pager, AccessWriterOptions options, JetByteRangeLock byteRangeLock)
     {
         // Decoded reads of the writer's own rows go through the same database
         // file the writer writes, so they see an active transaction's journal.
@@ -42,17 +46,18 @@ internal sealed class WriterServices
 
         this.CatalogRows = new CatalogRowReader(db);
         this.Catalog = new TableCatalog(db, this.CatalogRows, columnProperties);
-        this.PageAllocator = new PageAllocator(db, options);
+        this.PageAllocator = new PageAllocator(db, pager, options);
+        this.TDefWriter = new TDefWriter(pager, db.TableDefs);
 
         TableCatalog catalog = this.Catalog;
 
         var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, this.CatalogRows, snapshotRows, columnProperties));
         this.Snapshots = snapshots;
-        var tdefPageBuilder = new TDefPageBuilder(db);
-        var longValueEncoder = new LongValueEncoder(db, this.PageAllocator, options);
-        var dataPages = new DataPageInserter(db, this.PageAllocator, this.CatalogRows);
-        var tableRows = new TableRowStore(db, options, longValueEncoder, new RowEncoder(db), dataPages, tdefPageBuilder);
-        var autoNumbers = new AutoNumberMaintainer(db);
+        var tdefPageBuilder = new TDefPageBuilder(db, pager);
+        var longValueEncoder = new LongValueEncoder(db, pager, this.PageAllocator, options);
+        var dataPages = new DataPageInserter(db, pager, this.PageAllocator, this.CatalogRows);
+        var tableRows = new TableRowStore(db, pager, options, longValueEncoder, new RowEncoder(db), dataPages, tdefPageBuilder);
+        var autoNumbers = new AutoNumberMaintainer(db, pager);
         CatalogRowReader catalogRows = this.CatalogRows;
         var complexReferenceSeeds = new ComplexReferenceSeedReader(db, catalogRows, autoNumbers);
         var constraints = new ConstraintRegistry(
@@ -83,16 +88,16 @@ internal sealed class WriterServices
                     : await complexReferenceSeeds.ReadSeedAsync(entry.TDefPage, tableDef, ct).ConfigureAwait(false);
             });
 
-        this.Indexes = new IndexMaintainer(db, this.PageAllocator, tableRows, dataPages, snapshots);
+        this.Indexes = new IndexMaintainer(db, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
         var catalogWriter = new CatalogWriter(db, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
-        this.CatalogArtifacts = new CatalogArtifactWriter(db, catalog, this.PageAllocator, tdefPageBuilder, dataPages, catalogWriter, constraints);
-        this.ComplexColumns = new ComplexColumnManager(db, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds);
+        this.CatalogArtifacts = new CatalogArtifactWriter(db, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, catalogWriter, constraints);
+        this.ComplexColumns = new ComplexColumnManager(db, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds);
 
         var relationshipCatalog = new RelationshipCatalogStore(db, this.Indexes, this.CatalogRows, snapshots, catalog);
         var enforcer = new RelationshipEnforcer(db, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
-        this.Relationships = new RelationshipManager(db, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
+        this.Relationships = new RelationshipManager(db, pager, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
 
-        this.Transactions = new TransactionLifecycle(db, options, byteRangeLock, catalog, dataPages, constraints);
+        this.Transactions = new TransactionLifecycle(db, pager, options, byteRangeLock, catalog, dataPages, constraints);
         this.Data = new TableDataWriter(
             db,
             catalog,
@@ -106,6 +111,7 @@ internal sealed class WriterServices
             snapshots);
         this.Schema = new TableSchemaEditor(
             db,
+            pager,
             catalog,
             tableRows,
             this.Indexes,
@@ -152,4 +158,7 @@ internal sealed class WriterServices
 
     /// <summary>Gets the global page allocator.</summary>
     internal PageAllocator PageAllocator { get; }
+
+    /// <summary>Gets the in-place TDEF write-backs.</summary>
+    internal TDefWriter TDefWriter { get; }
 }

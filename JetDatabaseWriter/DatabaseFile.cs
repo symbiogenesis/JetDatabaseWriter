@@ -17,7 +17,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
-using JetDatabaseWriter.Transactions;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -26,11 +25,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// (<see cref="JetFormat"/>), the page I/O (a read-only <see cref="PageFile"/>
 /// or the writer's <see cref="Pager"/>), the TDEF parser
 /// (<see cref="TableDefReader"/>) and the owned-page and row enumeration
-/// (<see cref="OwnedDataPages"/>, <see cref="DataPageRows"/>). It forwards to
-/// them, except for the row format it copies for the row decoder, and keeps
-/// only the in-place TDEF write-backs, which move to the writer's TDEF writer
-/// in core-split-b. Shared by the reader and writer service graphs; it knows
-/// nothing about either facade.
+/// (<see cref="OwnedDataPages"/>, <see cref="DataPageRows"/>). It forwards
+/// their read members, except for the row format it copies for the row
+/// decoder, and has no write member: <see cref="ForWriter"/> hands the
+/// writer's <see cref="Pager"/> to the writer's composition root alone, which
+/// gives it to the services that write pages. Shared by the reader and writer
+/// service graphs; it knows nothing about either facade.
 /// </summary>
 internal sealed class DatabaseFile : IAsyncDisposable
 {
@@ -50,23 +50,18 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="password">The database password.</param>
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
-    /// <param name="ownerType">The public type that owns this file, named by <see cref="ObjectDisposedException"/>s raised after disposal; its options type is named by a missing-password error.</param>
     /// <param name="writable">
-    /// <see langword="true"/> for the writer: the file gets a <see cref="Pager"/>,
-    /// which can write and journal pages. <see langword="false"/> for a reader:
-    /// the file gets a read-only <see cref="PageFile"/>, its write members
-    /// throw, and each table's TDEF bytes and owned data pages are memoized
-    /// until it is disposed. Nothing writes through it, and the reader assumes
-    /// that no other process changes the file while it is open: a change made
-    /// after a table was read is not seen.
+    /// <see langword="true"/> for the writer's file, whose page I/O is a
+    /// <see cref="Pager"/> and whose disposal errors name <see cref="AccessWriter"/>;
+    /// <see langword="false"/> for a reader's, whose page I/O is a read-only
+    /// <see cref="PageFile"/> and whose errors name <see cref="AccessReader"/>.
     /// </param>
-    internal DatabaseFile(
+    private DatabaseFile(
         Stream stream,
         byte[] header,
         ReadOnlyMemory<char> password,
         string path,
         bool leaveOpen,
-        Type ownerType,
         bool writable)
     {
         this.DatabasePath = path ?? string.Empty;
@@ -81,7 +76,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.RowFields = this.Profile.RowFields;
         this.AnsiEncoding = this.Profile.AnsiEncoding;
         bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
-        string passwordOptionName = ownerType == typeof(AccessWriter)
+        Type ownerType = writable ? typeof(AccessWriter) : typeof(AccessReader);
+        string passwordOptionName = writable
             ? EncryptionManager.WriterPasswordOption
             : EncryptionManager.ReaderPasswordOption;
         PageDecryptionKeys pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, this.Profile.Kind, isLegacyAesCfb, password, passwordOptionName);
@@ -101,16 +97,16 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>
     /// Gets the file's page I/O: a read-only <see cref="PageFile"/> for a
-    /// reader, or the writer's <see cref="Pager"/>. The I/O members below
-    /// forward to it; the write members throw on a read-only file.
+    /// reader, or the writer's <see cref="Pager"/>, typed here only as what
+    /// it reads. The I/O members below forward to it.
     /// </summary>
     internal PageFile Pages { get; }
 
     /// <summary>
     /// Gets the file's table-definition reader, which reads TDEF chains
     /// through <see cref="Pages"/> and memoizes their bytes only on a
-    /// read-only file. The TDEF members below forward to it; the in-place
-    /// TDEF write-backs stay here until the writer gets its own TDEF writer.
+    /// read-only file. The TDEF members below forward to it; the writer's
+    /// <see cref="TDefWriter"/> writes chains back in place.
     /// </summary>
     internal TableDefReader TableDefs { get; }
 
@@ -175,20 +171,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     internal bool IsDisposed => this.Pages.IsDisposed;
 
     /// <summary>
-    /// Gets or sets the writer's cooperative JET byte-range lock helper — see
-    /// <see cref="Pager.ByteRangeLock"/>.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    internal JetByteRangeLock ByteRangeLock
-    {
-        get => this.WritablePages.ByteRangeLock;
-        set => this.WritablePages.ByteRangeLock = value;
-    }
-
-    /// <summary>Gets a value indicating whether the writer has a transaction journal attached — see <see cref="Pager.IsJournalActive"/>.</summary>
-    internal bool IsJournalActive => this.Pages is Pager { IsJournalActive: true };
-
-    /// <summary>
     /// Gets a value indicating whether <see cref="EnableRandomAccessPageReadsIfSupported"/>
     /// switched page reads to <c>RandomAccess</c> reads — see <see cref="PageFile.UsesRandomAccessPageReads"/>.
     /// </summary>
@@ -213,10 +195,42 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// </summary>
     internal long PageCount => this.Pages.PageCount;
 
-    /// <summary>Gets the writer's <see cref="Pager"/>, or throws on a read-only file.</summary>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    private Pager WritablePages => this.Pages as Pager
-        ?? throw new InvalidOperationException("This database file was opened read-only; only the writer's file can write pages.");
+    /// <summary>
+    /// Opens a reader's file over a read-only <see cref="PageFile"/>. Each
+    /// table's TDEF bytes and owned data pages are memoized until the file is
+    /// disposed: nothing writes through it, and the reader assumes that no
+    /// other process changes the file while it is open, so a change made
+    /// after a table was read is not seen.
+    /// </summary>
+    /// <param name="stream">An open, seekable <see cref="Stream"/> for the database file.</param>
+    /// <param name="header">Header bytes read from page 0.</param>
+    /// <param name="password">The database password; a missing-password error names <see cref="AccessReaderOptions"/>.</param>
+    /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
+    /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
+    /// <returns>The read-only file.</returns>
+    internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen)
+        => new(stream, header, password, path, leaveOpen, writable: false);
+
+    /// <summary>
+    /// Opens the writer's file over a <see cref="Pager"/>, which writes and
+    /// journals pages, and hands that pager to the caller, the writer's
+    /// composition root, which gives it to the services that write. The file
+    /// itself exposes the pager only as the <see cref="PageFile"/> it reads,
+    /// and nothing is memoized, because its pages change.
+    /// </summary>
+    /// <param name="stream">An open, readable, writable, seekable <see cref="Stream"/> for the database file.</param>
+    /// <param name="header">Header bytes read from page 0.</param>
+    /// <param name="password">The database password; a missing-password error names <see cref="AccessWriterOptions"/>.</param>
+    /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
+    /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
+    /// <param name="pager">Receives the file's pager; the file owns and disposes it.</param>
+    /// <returns>The writer's file.</returns>
+    internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager)
+    {
+        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true);
+        pager = (Pager)file.Pages;
+        return file;
+    }
 
     /// <summary>Asynchronously reads the fixed-size JET header — see <see cref="PageFile.ReadHeaderAsync"/>.</summary>
     /// <param name="fs">An open, seekable stream positioned anywhere.</param>
@@ -245,33 +259,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
 
     /// <summary>Switches page reads to positional reads — see <see cref="PageFile.EnableRandomAccessPageReadsIfSupported"/>.</summary>
     internal void EnableRandomAccessPageReadsIfSupported() => this.Pages.EnableRandomAccessPageReadsIfSupported();
-
-    /// <summary>Sets the length of the backing stream — see <see cref="Pager.SetLengthAsync"/>.</summary>
-    /// <param name="length">The new length in bytes.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A task that completes when the stream is resized.</returns>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    internal ValueTask SetDatabaseLengthAsync(long length, CancellationToken cancellationToken)
-        => this.WritablePages.SetLengthAsync(length, cancellationToken);
-
-    /// <summary>Flushes the backing stream — see <see cref="Pager.FlushAsync"/>.</summary>
-    /// <param name="flushToDisk">Whether to flush a file through to the device.</param>
-    /// <param name="cancellationToken">A token used to cancel the flush.</param>
-    /// <returns>A task that completes when the stream is flushed.</returns>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    internal ValueTask FlushDatabaseStreamAsync(bool flushToDisk, CancellationToken cancellationToken)
-        => this.WritablePages.FlushAsync(flushToDisk, cancellationToken);
-
-    /// <summary>Takes the writer's I/O gate for a journal attach or detach — see <see cref="Pager.EnterJournalGateAsync"/>.</summary>
-    /// <param name="cancellationToken">A token used to cancel the wait for the gate.</param>
-    /// <returns>The lease, holding the gate.</returns>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    internal ValueTask<Pager.JournalGate> EnterJournalGateAsync(CancellationToken cancellationToken)
-        => this.WritablePages.EnterJournalGateAsync(cancellationToken);
-
-    /// <summary>Detaches the writer's journal without the gate, at dispose — see <see cref="Pager.ForceDetachJournal"/>.</summary>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    internal void ForceDetachJournal() => this.WritablePages.ForceDetachJournal();
 
     /// <summary>
     /// Disposes the page file (marking it disposed, then the stream unless the
@@ -353,32 +340,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <returns>The chain.</returns>
     internal ValueTask<LogicalTDefChain> ReadTDefChainAsync(long startPage, CancellationToken cancellationToken = default)
         => this.TableDefs.ReadTDefChainAsync(startPage, cancellationToken);
-
-    /// <summary>
-    /// Writes a chain read by <see cref="ReadTDefChainAsync"/> back in place,
-    /// mapping each logical byte to the physical page that holds it. Only
-    /// pages whose bytes changed are written.
-    /// </summary>
-    /// <param name="chain">The chain whose <see cref="LogicalTDefChain.Bytes"/> were patched.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask WriteTDefChainInPlaceAsync(LogicalTDefChain chain, CancellationToken cancellationToken = default)
-        => chain.WriteInPlaceAsync(this.ReadPageAsync, ReturnPage, this.WritePageAsync, cancellationToken);
-
-    /// <summary>
-    /// Patches one 32-bit field at a logical offset of the TDEF chain rooted
-    /// at <paramref name="tdefPage"/>, such as a real index's <c>first_dp</c>
-    /// root pointer, which sits on a continuation page in a wide table.
-    /// </summary>
-    /// <param name="tdefPage">The first TDEF page.</param>
-    /// <param name="logicalOffset">The field's offset in the logical TDEF buffer.</param>
-    /// <param name="value">The value to write.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask WriteTDefInt32Async(long tdefPage, int logicalOffset, int value, CancellationToken cancellationToken = default)
-    {
-        LogicalTDefChain chain = await this.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        Wi32(chain.Bytes, logicalOffset, value);
-        await this.WriteTDefChainInPlaceAsync(chain, cancellationToken).ConfigureAwait(false);
-    }
 
     /// <summary>Reads and parses a table definition — see <see cref="TableDefReader.ReadTableDefAsync"/>.</summary>
     /// <param name="tdefPage">The first TDEF page.</param>
@@ -466,25 +427,6 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="name">The column or index name.</param>
     /// <returns>The length-prefixed name record.</returns>
     internal byte[] EncodeTDefNameRecord(string name) => this.Profile.EncodeTDefNameRecord(name);
-
-    // ── Page write I/O (forwarders to the writer's Pager) ────────────
-
-    /// <summary>Writes one page in place, or buffers it in the transaction journal — see <see cref="Pager.WritePageAsync"/>.</summary>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="page">The plaintext page.</param>
-    /// <param name="cancellationToken">A token used to cancel the write.</param>
-    /// <returns>A task that completes when the page is written or buffered.</returns>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    internal ValueTask WritePageAsync(long pageNumber, byte[] page, CancellationToken cancellationToken = default)
-        => this.WritablePages.WritePageAsync(pageNumber, page, cancellationToken);
-
-    /// <summary>Appends one page at the end of file — see <see cref="Pager.AppendPageAsync"/>.</summary>
-    /// <param name="page">The plaintext page.</param>
-    /// <param name="cancellationToken">A token used to cancel the append.</param>
-    /// <returns>The appended page's number.</returns>
-    /// <exception cref="InvalidOperationException">The file is read-only.</exception>
-    internal ValueTask<long> AppendPageAsync(byte[] page, CancellationToken cancellationToken = default)
-        => this.WritablePages.AppendPageAsync(page, cancellationToken);
 
     // ── Owned pages and rows (forwarders to OwnedPages, DataPageRows and the column readers) ──
 

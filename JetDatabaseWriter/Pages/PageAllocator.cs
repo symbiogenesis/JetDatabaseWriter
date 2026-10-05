@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -16,8 +17,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// reserve, free, scrub, and tail-shrink operations for the writer.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which pages are written, appended and truncated.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for freed pages.</param>
-internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options)
+internal sealed class PageAllocator(DatabaseFile db, Pager pager, AccessWriterOptions options)
 {
     private const int GlobalUsageMapPageNumber = 1;
 
@@ -26,7 +28,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         long pageNumber = await this.ReserveContiguousPagesAsync(1, cancellationToken).ConfigureAwait(false);
         try
         {
-            await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -85,7 +87,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         {
             for (int offset = 0; offset < pageCount; offset++)
             {
-                long appendedPage = await db.AppendPageAsync(blankPage, cancellationToken).ConfigureAwait(false);
+                long appendedPage = await pager.AppendPageAsync(blankPage, cancellationToken).ConfigureAwait(false);
                 if (offset == 0)
                 {
                     firstAppendedPage = appendedPage;
@@ -190,7 +192,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
 
     internal async ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken)
     {
-        if (db.IsJournalActive)
+        if (pager.IsJournalActive)
         {
             throw new InvalidOperationException("ShrinkDatabaseAsync cannot run inside an active transaction.");
         }
@@ -221,7 +223,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         }
 
         long newLength = newTotalPages * db.PageSizeBytes;
-        await db.SetDatabaseLengthAsync(newLength, cancellationToken).ConfigureAwait(false);
+        await pager.SetLengthAsync(newLength, cancellationToken).ConfigureAwait(false);
 
         return totalPages - newTotalPages;
     }
@@ -420,7 +422,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
             {
                 if (UsageMap.TrySetInlinePageState(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free, initializeBaseForPage: false))
                 {
-                    await db.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
+                    await pager.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -458,7 +460,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
             existingFreePages);
         Array.Clear(globalPage, rowBound.RowStart, rowBound.RowSize);
         globalPage[rowBound.RowStart] = Constants.UsageMap.ReferenceMapType;
-        await db.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
 
         foreach (long freePageNumber in existingFreePages)
         {
@@ -520,9 +522,9 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
 
             mapPage = new byte[db.PageSizeBytes];
             mapPage[0] = Constants.PageTypes.UsageMap;
-            mapPageNumber = checked((int)await db.AppendPageAsync(mapPage, cancellationToken).ConfigureAwait(false));
+            mapPageNumber = checked((int)await pager.AppendPageAsync(mapPage, cancellationToken).ConfigureAwait(false));
             Wi32(globalPage, pointerOffset, mapPageNumber);
-            await db.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -539,7 +541,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         {
             if (UsageMap.TrySetReferencePageState(mapPage, db.PageSizeBytes, pageNumber, free))
             {
-                await db.WritePageAsync(mapPageNumber, mapPage, cancellationToken).ConfigureAwait(false);
+                await pager.WritePageAsync(mapPageNumber, mapPage, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -557,7 +559,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
         if (!this.IsGlobalUsageMapPage(page))
         {
             this.InitializeGlobalUsageMapPage(page);
-            await db.WritePageAsync(GlobalUsageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(GlobalUsageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
         }
 
         return page;
@@ -619,7 +621,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
             page[0] = Constants.PageTypes.Freed;
             page[1] = 0x01;
             Wu16(page, 2, Math.Max(0, db.PageSizeBytes - 16));
-            await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.DatabaseFile;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -20,9 +21,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// usage maps this writer may extend (both restored when a transaction rolls back).
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which data and usage-map pages are written.</param>
 /// <param name="pageAllocator">The page allocator.</param>
 /// <param name="catalogRows">Reads <c>MSysObjects</c> rows to decide whether an existing table's owned-page map is writable.</param>
-internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAllocator, CatalogRowReader catalogRows)
+internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocator pageAllocator, CatalogRowReader catalogRows)
 {
 #if NET9_0_OR_GREATER
     private readonly Lock insertPageHintLock = new();
@@ -280,7 +282,7 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
                     return;
                 }
 
-                await db.WritePageAsync(ownedPage, umPage, cancellationToken).ConfigureAwait(false);
+                await pager.WritePageAsync(ownedPage, umPage, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -294,7 +296,7 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
                 {
                     if (this.TrySetUsageMapBit(freeUmPage, freeRow, dataPageNumber))
                     {
-                        await db.WritePageAsync(freePage, freeUmPage, cancellationToken).ConfigureAwait(false);
+                        await pager.WritePageAsync(freePage, freeUmPage, cancellationToken).ConfigureAwait(false);
                     }
                 }
                 finally
@@ -409,7 +411,7 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
         Wu16(page, rowOffsetPos, rowStart);
         Wu16(page, db.DataPage.NumRows, numRows + 1);
         Wu16(page, 2, freeSpace);
-        await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -482,6 +484,6 @@ internal sealed class DataPageInserter(DatabaseFile db, PageAllocator pageAlloca
         Wu16(page, db.DataPage.NumRows, rowCount);
         int freeSpace = rowStart - (db.DataPage.RowsStart + (rowCount * 2));
         Wu16(page, 2, freeSpace);
-        await db.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(usageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
     }
 }

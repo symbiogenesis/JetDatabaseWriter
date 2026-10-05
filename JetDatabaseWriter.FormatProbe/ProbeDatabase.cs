@@ -54,12 +54,14 @@ internal sealed class ProbeDatabase : IAsyncDisposable
     public static async Task<ProbeDatabase> OpenAsync(string path, AccessReaderOptions? options = null, CancellationToken cancellationToken = default)
     {
         options ??= new AccessReaderOptions { UseLockFile = false };
+#pragma warning disable CA2000 // The database file owns the stream once it is open, and the catch disposes the stream when the open throws first.
         FileStream stream = DatabaseFile.OpenFileStream(path, FileAccess.Read, FileShare.ReadWrite, FileOptions.Asynchronous | FileOptions.RandomAccess);
+#pragma warning restore CA2000 // The database file owns the stream once it is open, and the catch disposes the stream when the open throws first.
         DatabaseFile? db = null;
         try
         {
             byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-            db = new DatabaseFile(stream, header, options.Password, path, leaveOpen: false, typeof(AccessReader), writable: false);
+            db = DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen: false);
             return new ProbeDatabase(db, new ReaderServices(db, options));
         }
         catch

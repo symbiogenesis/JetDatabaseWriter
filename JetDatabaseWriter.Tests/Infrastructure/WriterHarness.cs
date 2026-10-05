@@ -7,13 +7,15 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>
 /// Opens a database through the library's internal write layers — the
 /// <see cref="DatabaseFile"/> and a <see cref="WriterServices"/> graph built
 /// over it — for tests that drive a single writer service, inspect a writer
-/// service's state, or patch pages directly. Nothing goes through
-/// <see cref="AccessWriter"/>, so the facade carries no test-only members. The
+/// service's state, or patch pages directly through the writer's
+/// <see cref="Pager"/>. Nothing goes through <see cref="AccessWriter"/>, so
+/// the facade carries no test-only members. The
 /// mutation helpers (<see cref="CreateTableAsync"/>, <see cref="InsertRowAsync"/>
 /// and the rest) run their service call inside
 /// <see cref="JetDatabaseWriter.Transactions.TransactionLifecycle.RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>,
@@ -23,14 +25,18 @@ using JetDatabaseWriter.Models;
 /// </summary>
 internal sealed class WriterHarness : IAsyncDisposable
 {
-    private WriterHarness(DatabaseFile database, WriterServices services)
+    private WriterHarness(DatabaseFile database, Pager pager, WriterServices services)
     {
         this.Database = database;
+        this.Pager = pager;
         this.Services = services;
     }
 
     /// <summary>Gets the open database file.</summary>
     public DatabaseFile Database { get; }
+
+    /// <summary>Gets the database file's pager, which <see cref="Services"/> write pages through.</summary>
+    public Pager Pager { get; }
 
     /// <summary>Gets the writer service graph built over <see cref="Database"/>.</summary>
     public WriterServices Services { get; }
@@ -41,7 +47,9 @@ internal sealed class WriterHarness : IAsyncDisposable
     /// <param name="cancellationToken">A token used to cancel the open.</param>
     public static async ValueTask<WriterHarness> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
+#pragma warning disable CA2000 // The stream overload owns the stream once the file is open (leaveOpen: false), and the catch disposes it when the open throws.
         FileStream stream = DatabaseFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
+#pragma warning restore CA2000 // The stream overload owns the stream once the file is open (leaveOpen: false), and the catch disposes it when the open throws.
         try
         {
             return await OpenAsync(stream, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
@@ -65,12 +73,12 @@ internal sealed class WriterHarness : IAsyncDisposable
         options.Validate();
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
         byte[] header = await DatabaseFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-        var database = new DatabaseFile(stream, header, options.Password, path, leaveOpen, typeof(AccessWriter), writable: true);
+        var database = DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager);
         try
         {
-            database.ByteRangeLock = options.CreateByteRangeLock(stream);
-            var services = new WriterServices(database, options, database.ByteRangeLock);
-            return new WriterHarness(database, services);
+            pager.ByteRangeLock = options.CreateByteRangeLock(stream);
+            var services = new WriterServices(database, pager, options, pager.ByteRangeLock);
+            return new WriterHarness(database, pager, services);
         }
         catch
         {

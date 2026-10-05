@@ -969,14 +969,14 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         Assert.True(index >= 0, $"Table '{table}' has no index '{entryName}'.");
         int fields = database.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, index);
         Assert.Equal((byte)IndexKind.ForeignKey, td[fields + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset]);
-        await database.WriteTDefInt32Async(
+        await harness.Services.TDefWriter.WriteInt32Async(
             entry.TDefPage,
             fields + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset,
             checked((int)page),
             TestContext.Current.CancellationToken);
         if (relIdxNum is int number)
         {
-            await database.WriteTDefInt32Async(
+            await harness.Services.TDefWriter.WriteInt32Async(
                 entry.TDefPage,
                 fields + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset,
                 number,

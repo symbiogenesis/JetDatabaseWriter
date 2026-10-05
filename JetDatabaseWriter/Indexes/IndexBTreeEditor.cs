@@ -8,14 +8,18 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Plans and applies in-place JET index B-tree mutations for <see cref="IndexMaintainer"/>.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which index pages are written and appended.</param>
+/// <param name="tdefWriter">Writes a moved index root back into the table's TDEF chain.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAllocator)
+internal sealed class IndexBTreeEditor(DatabaseFile db, Pager pager, TDefWriter tdefWriter, PageAllocator pageAllocator)
 {
     internal async ValueTask<bool> TryRebuildCatalogIndexTreeAsync(
         IndexPageLayout layout,
@@ -68,7 +72,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
         }
 
         runs.MarkLinked();
-        await db.WriteTDefInt32Async(tdefPage, firstDpOffset, checked((int)placed.RootPageNumber), cancellationToken).ConfigureAwait(false);
+        await tdefWriter.WriteInt32Async(tdefPage, firstDpOffset, checked((int)placed.RootPageNumber), cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -172,7 +176,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
 
             for (int i = 0; i < pageCount; i++)
             {
-                await db.WritePageAsync(firstPage + i, build.Pages[i], cancellationToken).ConfigureAwait(false);
+                await pager.WritePageAsync(firstPage + i, build.Pages[i], cancellationToken).ConfigureAwait(false);
             }
 
             runs.Add(firstPage, pageCount);
@@ -247,7 +251,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
         long expected = db.PageCount;
         for (int i = 0; i < pages.Count; i++)
         {
-            long appended = await db.AppendPageAsync(pages[i], cancellationToken).ConfigureAwait(false);
+            long appended = await pager.AppendPageAsync(pages[i], cancellationToken).ConfigureAwait(false);
             if (appended != expected)
             {
                 return false;
@@ -271,7 +275,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
     {
         byte[] bytes = await this.ReadAndClonePageAsync(page, cancellationToken).ConfigureAwait(false);
         IndexPageCodec.WritePrevPage(layout, bytes, prevPage);
-        await db.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -286,7 +290,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
     {
         byte[] bytes = await this.ReadAndClonePageAsync(page, cancellationToken).ConfigureAwait(false);
         IndexPageCodec.WriteNextPage(layout, bytes, nextPage);
-        await db.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -677,7 +681,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
             return false;
         }
 
-        await db.WritePageAsync(tailLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(tailLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -793,12 +797,12 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
                 }
             }
 
-            await db.WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(targetLeafPage, rebuilt, cancellationToken).ConfigureAwait(false);
             if (ancestorWrites is not null)
             {
                 foreach ((long pn, byte[] bytes) in ancestorWrites)
                 {
-                    await db.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+                    await pager.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -848,11 +852,11 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
             await this.PatchPrevPointerAsync(layout, leafNext, lastSplitPage, cancellationToken).ConfigureAwait(false);
         }
 
-        await db.WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
+        await pager.WritePageAsync(targetLeafPage, pageBytesAll[0], cancellationToken).ConfigureAwait(false);
 
         foreach ((long pn, byte[] bytes) in splitAncestorWrites)
         {
-            await db.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
         }
 
         return true;
@@ -1499,7 +1503,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
 
         foreach ((long pageNum, byte[] bytes) in existingPageRewrites)
         {
-            await db.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
         }
 
         // If the root intermediate split, patch the real-idx first_dp slot
@@ -1509,7 +1513,7 @@ internal sealed class IndexBTreeEditor(DatabaseFile db, PageAllocator pageAlloca
         // may fall on a continuation page of a wide table's TDEF chain.
         if (stagingState.NewRootPage is long newRootPage)
         {
-            await db.WriteTDefInt32Async(tdefPage, firstDpOffset, checked((int)newRootPage), cancellationToken).ConfigureAwait(false);
+            await tdefWriter.WriteInt32Async(tdefPage, firstDpOffset, checked((int)newRootPage), cancellationToken).ConfigureAwait(false);
         }
 
         return true;

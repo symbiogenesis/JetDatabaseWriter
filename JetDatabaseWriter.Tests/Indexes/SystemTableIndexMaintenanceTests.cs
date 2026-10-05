@@ -164,7 +164,7 @@ public sealed class SystemTableIndexMaintenanceTests
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         TableDef tableDef = await writer.Database.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
-        await CorruptFirstIndexRootPageTypeAsync(writer.Database, tdefPage, ct);
+        await CorruptFirstIndexRootPageTypeAsync(writer, tdefPage, ct);
 
         object[] row = tableDef.CreateNullValueRow();
         tableDef.SetValueByName(row, "ObjectId", -70_101);
@@ -201,7 +201,7 @@ public sealed class SystemTableIndexMaintenanceTests
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct))
         {
             long acesTdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
-            await CorruptFirstIndexRootPageTypeAsync(harness.Database, acesTdefPage, ct);
+            await CorruptFirstIndexRootPageTypeAsync(harness, acesTdefPage, ct);
         }
 
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, leaveOpen: true, cancellationToken: ct);
@@ -224,8 +224,9 @@ public sealed class SystemTableIndexMaintenanceTests
         return stream;
     }
 
-    private static async ValueTask CorruptFirstIndexRootPageTypeAsync(DatabaseFile db, long tdefPage, CancellationToken cancellationToken)
+    private static async ValueTask CorruptFirstIndexRootPageTypeAsync(WriterHarness writer, long tdefPage, CancellationToken cancellationToken)
     {
+        DatabaseFile db = writer.Database;
         byte[] tdef = await db.ReadPageAsync(tdefPage, cancellationToken);
         try
         {
@@ -253,7 +254,7 @@ public sealed class SystemTableIndexMaintenanceTests
                     root[0] is Constants.IndexLeafPage.PageTypeLeaf or Constants.IndexLeafPage.PageTypeIntermediate,
                     $"Expected index root page {firstDp} to be an index page, got 0x{root[0]:X2}.");
                 root[0] = 0x01;
-                await db.WritePageAsync(firstDp, root, cancellationToken);
+                await writer.Pager.WritePageAsync(firstDp, root, cancellationToken);
             }
             finally
             {

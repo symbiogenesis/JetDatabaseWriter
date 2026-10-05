@@ -14,6 +14,7 @@ using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
@@ -29,9 +30,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// pre-encoding through this class.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which released LVAL pages are written.</param>
 /// <param name="pageAllocator">The page allocator.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for released LVAL rows.</param>
-internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAllocator, AccessWriterOptions options)
+internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocator pageAllocator, AccessWriterOptions options)
 {
     /// <summary>Throws when <paramref name="data"/> is too long for an LVAL descriptor's 24-bit length.</summary>
     /// <param name="data">The long value's payload.</param>
@@ -390,7 +392,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, PageAllocator pageAlloca
 
                 int slotOffset = db.DataPage.RowsStart + (rowIndex * 2);
                 Wu16(lvalPage, slotOffset, Ru16(lvalPage, slotOffset) | Constants.DataPage.DeletedRowFlag);
-                await db.WritePageAsync(pageNumber, lvalPage, cancellationToken).ConfigureAwait(false);
+                await pager.WritePageAsync(pageNumber, lvalPage, cancellationToken).ConfigureAwait(false);
             }
             else
             {

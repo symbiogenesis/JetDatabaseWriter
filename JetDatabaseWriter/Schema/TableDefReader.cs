@@ -17,9 +17,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// bytes, and its column descriptors and names parsed into a
 /// <see cref="TableDef"/>. It reads through an <see cref="IPageSource"/>, so
 /// over the writer's <see cref="Pager"/> it sees a transaction's pending TDEF
-/// pages, and it never writes; the in-place TDEF write-backs stay with the
-/// writer. The read-only reader memoizes each table's logical TDEF bytes, so
-/// a repeated <see cref="ReadTableDefAsync"/> or <see cref="ReadTDefBytesAsync"/>
+/// pages, and it never writes; the writer's <see cref="TDefWriter"/> writes
+/// chains back in place. The read-only reader memoizes each table's logical
+/// TDEF bytes, so a repeated <see cref="ReadTableDefAsync"/> or <see cref="ReadTDefBytesAsync"/>
 /// reads no page; it still parses a new <see cref="TableDef"/> from them, and
 /// hands out a new copy of them, on every call, because callers change what
 /// they get. The writer, whose pages change, never caches, and the

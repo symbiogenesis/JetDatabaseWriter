@@ -172,14 +172,14 @@ internal static class ComplexColumnTestSupport
                 BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(location.RowStart + db.RowFields.NumCols + column.FixedOff, 4), reference ?? 0);
             }
 
-            await db.WritePageAsync(location.DataPageNumber, page, Ct);
+            await harness.Pager.WritePageAsync(location.DataPageNumber, page, Ct);
         }
 
         if (clearCounter)
         {
             byte[] tdef = await db.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
             tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
-            await db.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
+            await harness.Pager.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
         }
     }
 

@@ -56,7 +56,7 @@ public sealed class IndexPageReservationTests
 
         int calls = 0;
         var runs = new ReservedPageRuns(allocator);
-        IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db, allocator).TryPlaceTreeAsync(
+        IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage => ++calls == 2
                 ? throw new ArgumentOutOfRangeException(nameof(firstPage), "Injected relocation failure.")
                 : IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, firstPage),
@@ -106,7 +106,7 @@ public sealed class IndexPageReservationTests
         // fault on the second page write of the tree.
         long relocatedTo = -1;
         var runs = new ReservedPageRuns(allocator);
-        _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db, allocator).TryPlaceTreeAsync(
+        _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage =>
             {
                 if (firstPage != db.PageCount)
@@ -152,7 +152,7 @@ public sealed class IndexPageReservationTests
 
             JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(this.ct);
             int calls = 0;
-            _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db, allocator).TryPlaceTreeAsync(
+            _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
                 firstPage => ++calls == 2
                     ? throw new IOException("Injected failure after the reservation.")
                     : IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, firstPage),
@@ -194,7 +194,7 @@ public sealed class IndexPageReservationTests
         Assert.Equal(0, Assert.Single(indexes, index => index.Name == "PK").RealIndexNumber);
         IndexMetadata nameIndex = Assert.Single(indexes, index => index.Name == "IX_Name");
         Assert.Equal(1, nameIndex.RealIndexNumber);
-        await StampPageTypeAsync(harness.Database, nameIndex.FirstDp, Constants.PageTypes.Data, this.ct);
+        await StampPageTypeAsync(harness, nameIndex.FirstDp, Constants.PageTypes.Data, this.ct);
 
         var hints = new List<(RowLocation Loc, object[] Row)>(SeedRows);
         for (int i = 0; i < SeedRows; i++)
@@ -489,11 +489,11 @@ public sealed class IndexPageReservationTests
         return await services.Indexes.ListIndexesAsync(TableName, cancellationToken);
     }
 
-    private static async Task StampPageTypeAsync(DatabaseFile db, long pageNumber, byte pageType, CancellationToken cancellationToken)
+    private static async Task StampPageTypeAsync(WriterHarness writer, long pageNumber, byte pageType, CancellationToken cancellationToken)
     {
-        byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+        byte[] page = await writer.Database.ReadPageCopyAsync(pageNumber, cancellationToken);
         page[0] = pageType;
-        await db.WritePageAsync(pageNumber, page, cancellationToken);
+        await writer.Pager.WritePageAsync(pageNumber, page, cancellationToken);
     }
 
     private static async Task<int> CountMsysObjectsIntermediateRootsAsync(DatabaseFile db, CancellationToken cancellationToken)

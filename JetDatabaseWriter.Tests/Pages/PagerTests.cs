@@ -4,14 +4,11 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
-using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.Transactions;
 using Xunit;
 
 /// <summary>
@@ -19,11 +16,11 @@ using Xunit;
 /// transaction's writes and appends, serves its pending pages as plaintext
 /// (on an encrypted file too), counts its appended pages in
 /// <see cref="Pager.PageCount"/>, keeps positional reads off while the
-/// journal is attached, and returns to the file's bytes on rollback; the
-/// reader's <see cref="PageFile"/> cannot write; and a page cache over the
-/// writer's file must not cache. Each case runs on writer-created Jet3, Jet4
-/// and ACCDB databases and on an ACCDB encrypted as
-/// <see cref="AccessEncryptionFormat.AccdbAesCfbWrapped"/>.
+/// journal is attached, and returns to the file's bytes on rollback; and a
+/// page cache over the writer's file must not cache. That the reader's graph
+/// holds no pager is checked in <see cref="Architecture.ServiceGraphTests"/>.
+/// Each case runs on writer-created Jet3, Jet4 and ACCDB databases and on an
+/// ACCDB encrypted as <see cref="AccessEncryptionFormat.AccdbAesCfbWrapped"/>.
 /// </summary>
 public sealed class PagerTests
 {
@@ -42,7 +39,7 @@ public sealed class PagerTests
         byte[] fileBefore = stream.ToArray();
         await using WriterHarness harness = await OpenAsync(stream, encrypted);
         DatabaseFile db = harness.Database;
-        Pager pager = Assert.IsType<Pager>(db.Pages);
+        Pager pager = harness.Pager;
         int pageSize = db.PageSizeBytes;
         const long pageNumber = 2;
 
@@ -52,8 +49,7 @@ public sealed class PagerTests
 
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
         Assert.True(pager.IsJournalActive);
-        Assert.True(db.IsJournalActive);
-        await db.WritePageAsync(pageNumber, changed, Ct);
+        await pager.WritePageAsync(pageNumber, changed, Ct);
 
         Assert.Equal(changed, await db.ReadPageCopyAsync(pageNumber, Ct));
         Assert.Equal(fileBefore, stream.ToArray());
@@ -75,14 +71,14 @@ public sealed class PagerTests
         await using MemoryStream stream = await CreateDatabaseAsync(format, encrypted);
         await using WriterHarness harness = await OpenAsync(stream, encrypted);
         DatabaseFile db = harness.Database;
-        Pager pager = Assert.IsType<Pager>(db.Pages);
+        Pager pager = harness.Pager;
         long physical = pager.PhysicalPageCount;
         Assert.Equal(physical, pager.PageCount);
 
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
         for (int i = 0; i < 3; i++)
         {
-            long appended = await db.AppendPageAsync(FilledPage(db.PageSizeBytes, (byte)(0x41 + i)), Ct);
+            long appended = await pager.AppendPageAsync(FilledPage(db.PageSizeBytes, (byte)(0x41 + i)), Ct);
             Assert.Equal(physical + i, appended);
         }
 
@@ -126,7 +122,7 @@ public sealed class PagerTests
 
             await using WriterHarness harness = await WriterHarness.OpenAsync(path, WriterOptions(encrypted), Ct);
             DatabaseFile db = harness.Database;
-            Pager pager = Assert.IsType<Pager>(db.Pages);
+            Pager pager = harness.Pager;
             db.EnableRandomAccessPageReadsIfSupported();
             Assert.Equal(!LibraryTarget.IsNetStandard, pager.UsesRandomAccessPageReads);
 
@@ -139,8 +135,8 @@ public sealed class PagerTests
             byte[] appendedPage = FilledPage(pageSize, 0x6B);
 
             JetTransaction rolledBack = await harness.Services.Transactions.BeginTransactionAsync(Ct);
-            await db.WritePageAsync(pageNumber, changed, Ct);
-            long appended = await db.AppendPageAsync(appendedPage, Ct);
+            await pager.WritePageAsync(pageNumber, changed, Ct);
+            long appended = await pager.AppendPageAsync(appendedPage, Ct);
             Assert.Equal(physical, appended);
 
             Assert.Equal(changed, await db.ReadPageCopyAsync(pageNumber, Ct));
@@ -152,7 +148,7 @@ public sealed class PagerTests
             Assert.Equal(original, await db.ReadPageCopyAsync(pageNumber, Ct));
 
             JetTransaction committed = await harness.Services.Transactions.BeginTransactionAsync(Ct);
-            await db.WritePageAsync(pageNumber, changed, Ct);
+            await pager.WritePageAsync(pageNumber, changed, Ct);
             await committed.CommitAsync(Ct);
 
             Assert.False(pager.IsJournalActive);
@@ -182,11 +178,11 @@ public sealed class PagerTests
             page = FilledPage(pageSize, 0x7E);
 
             JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
-            appended = await db.AppendPageAsync(page, Ct);
+            appended = await harness.Pager.AppendPageAsync(page, Ct);
             await tx.CommitAsync(Ct);
 
             Assert.True(tx.IsCommitted);
-            Assert.False(db.IsJournalActive);
+            Assert.False(harness.Pager.IsJournalActive);
             Assert.Equal(page, await db.ReadPageCopyAsync(appended, Ct));
         }
 
@@ -219,10 +215,10 @@ public sealed class PagerTests
         Assert.Equal(
             "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.",
             ex.Message);
-        Assert.True(harness.Database.IsJournalActive);
+        Assert.True(harness.Pager.IsJournalActive);
 
         await tx.RollbackAsync(Ct);
-        Assert.False(harness.Database.IsJournalActive);
+        Assert.False(harness.Pager.IsJournalActive);
     }
 
     [Fact]
@@ -230,7 +226,7 @@ public sealed class PagerTests
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, encrypted: false);
         await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
-        Pager pager = Assert.IsType<Pager>(harness.Database.Pages);
+        Pager pager = harness.Pager;
 
         using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(Ct))
         {
@@ -264,46 +260,6 @@ public sealed class PagerTests
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
         using var cached = new ReaderPageCache(reader.Database, capacity: 8);
         Assert.Equal(0, cached.Misses);
-    }
-
-    /// <summary>
-    /// The reader's database file holds a read-only <see cref="PageFile"/>:
-    /// every write member throws, and nothing reaches the stream.
-    /// </summary>
-    /// <param name="format">The database format.</param>
-    [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task ReadOnlyFile_WriteMembers_Throw(DatabaseFormat format)
-    {
-        await using MemoryStream stream = await CreateDatabaseAsync(format, encrypted: false);
-        byte[] before = stream.ToArray();
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
-        DatabaseFile db = reader.Database;
-        byte[] page = await db.ReadPageCopyAsync(1, Ct);
-        CatalogEntry? items = await reader.GetCatalogEntryAsync("Items", Ct);
-        Assert.NotNull(items);
-        long tdefPage = items.TDefPage;
-
-        // The TDEF write-backs write only the pages whose bytes changed, so
-        // each call below changes one field.
-        LogicalTDefChain chain = await db.ReadTDefChainAsync(tdefPage, Ct);
-        int field = BitConverter.ToInt32(chain.Bytes, 8);
-        chain.Bytes[8] ^= 0xFF;
-
-        Assert.IsNotType<Pager>(db.Pages);
-        Assert.False(db.IsJournalActive);
-        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await db.WritePageAsync(1, page, Ct));
-        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await db.AppendPageAsync(page, Ct));
-        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await db.SetDatabaseLengthAsync(0, Ct));
-        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await db.FlushDatabaseStreamAsync(flushToDisk: false, Ct));
-        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await db.EnterJournalGateAsync(Ct));
-        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await db.WriteTDefChainInPlaceAsync(chain, Ct));
-        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await db.WriteTDefInt32Async(tdefPage, 8, field ^ 1, Ct));
-        _ = Assert.Throws<InvalidOperationException>(db.ForceDetachJournal);
-        _ = Assert.Throws<InvalidOperationException>(() => db.ByteRangeLock);
-        _ = Assert.Throws<InvalidOperationException>(() => db.ByteRangeLock = JetByteRangeLock.Disabled);
-        Assert.Equal(before, stream.ToArray());
     }
 
     private static byte[] FilledPage(int pageSize, byte value)

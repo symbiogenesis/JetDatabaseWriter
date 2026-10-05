@@ -549,7 +549,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("T", Ct)).Entry.TDefPage;
         byte[] before = await harness.Database.ReadPageCopyAsync(tdefPage, Ct);
-        var autoNumbers = new AutoNumberMaintainer(harness.Database);
+        var autoNumbers = new AutoNumberMaintainer(harness.Database, harness.Pager);
 
         await autoNumbers.RaiseComplexHighWaterAsync(tdefPage, 99, Ct);
 
@@ -606,7 +606,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct)).Entry.TDefPage;
         byte[] tdef = await harness.Database.ReadPageCopyAsync(tdefPage, Ct);
         tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
-        await harness.Database.WritePageAsync(tdefPage, tdef, Ct);
+        await harness.Pager.WritePageAsync(tdefPage, tdef, Ct);
     }
 
     /// <summary>A complexDataTest Table1 complex column and the unique index Access keeps on it.</summary>

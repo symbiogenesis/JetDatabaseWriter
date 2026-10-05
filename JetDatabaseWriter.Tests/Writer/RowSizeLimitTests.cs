@@ -163,11 +163,12 @@ public sealed class RowSizeLimitTests
         TableDef tableDef = await db.ReadRequiredTableDefAsync(entry.TDefPage, TableName, ct);
         var store = new TableRowStore(
             db,
+            harness.Pager,
             options,
-            new LongValueEncoder(db, harness.Services.PageAllocator, options),
+            new LongValueEncoder(db, harness.Pager, harness.Services.PageAllocator, options),
             new RowEncoder(db),
-            new DataPageInserter(db, harness.Services.PageAllocator, harness.Services.CatalogRows),
-            new TDefPageBuilder(db));
+            new DataPageInserter(db, harness.Pager, harness.Services.PageAllocator, harness.Services.CatalogRows),
+            new TDefPageBuilder(db, harness.Pager));
 
         int[] lengths = [900, 1_000, 1_000, 950, 1_000];
         object[] values = Row(tableDef, lengths);

@@ -11,7 +11,7 @@ JetDatabaseWriter/
 ├── AccessBase.cs                          (public base: format, page size, code page; owns the facade's DatabaseFile)
 ├── AccessReader.cs                        (public read API — facade; every operation forwards to one reader service)
 ├── AccessWriter.cs                        (public write API — facade; every operation forwards to one writer service)
-├── DatabaseFile.cs                        (one open database: composes its JetFormat, PageFile or Pager, TableDefReader and OwnedDataPages and forwards to them; keeps only the TDEF write-backs and a copy of the row format)
+├── DatabaseFile.cs                        (one open database: composes its JetFormat, PageFile or Pager, TableDefReader and OwnedDataPages and forwards their read members; keeps a copy of the row format; hands the writer's Pager to the writer alone)
 ├── JetFormat.cs                           (immutable per-file format profile: format, page size, code page, byte layouts, text and name codecs)
 ├── ReaderServices.cs                      (reader composition root: builds and wires the reader's collaborators)
 ├── WriterServices.cs                      (writer composition root: builds and wires the writer's collaborators)
@@ -232,6 +232,7 @@ JetDatabaseWriter/
 │   ├── LogicalTDefChain.cs                (logical TDEF bytes spanning chained table-definition pages)
 │   ├── PersistedPropertyProjector.cs      (carries a table's LvProp blob through AddColumn / DropColumn / RenameColumn)
 │   ├── TableDefReader.cs                  (reads TDEF chains and parses them into TableDef: columns, names, row count; the reader memoizes the bytes)
+│   ├── TDefWriter.cs                      (the writer's in-place TDEF write-backs: patched chains and 32-bit fields, through the Pager)
 │   ├── Expressions/
 │   │   ├── AccessExpressionKeywords.cs             (Access word operators and literal words, shared by the parser and ExpressionFieldReferences)
 │   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)
@@ -401,20 +402,20 @@ Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only wh
 - reader: `TableReader`, `IndexRowReader`, `SchemaReader`, or `ComplexItemReader`; `FromIndex` and `Query<T>` return handles built over those services;
 - writer: `TableDataWriter`, `TableSchemaEditor`, `RelationshipManager`, `ComplexColumnManager`, `LinkedTableManager`, `PageAllocator`, or `TransactionLifecycle`, inside the auto-commit scope.
 
-Each facade owns one **`DatabaseFile`**, which composes the file's parts and forwards to them:
+Each facade owns one **`DatabaseFile`**, which composes the file's parts and forwards their read members:
 
 - its format profile, `JetFormat` (`DatabaseFile.Profile`): the format, page size, code page, byte layouts and text codecs, built once from the header. The row format that the row decoder reads per row and per column (`Format`, `RowFields`, `AnsiEncoding` and whether the file is Jet3) is copied from the profile into fields of `DatabaseFile`, which reads row column counts and decodes text from those copies, so that path does not load the profile on every read;
-- its page I/O (`DatabaseFile.Pages`): a read-only `PageFile` for the reader, which owns the stream, the I/O gate, the page cipher and the positional reads, and cannot write; or, for the writer, a `Pager`, the `PageFile` that also writes, appends, truncates and flushes pages, encrypts on write, takes the cooperative byte-range locks and holds the transaction journal. `TransactionLifecycle` attaches and detaches that journal only through a `Pager.JournalGate` lease, never through the gate or the journal directly. The reader's object graph holds no `Pager`, so its write forwarders throw;
-- its TDEF parser, `TableDefReader` (`DatabaseFile.TableDefs`), which reads a table's TDEF chain through the page file and parses its columns, so over the writer's `Pager` it sees a transaction's pending TDEF pages. On the read-only file only, it reads each table's TDEF chain once and memoizes its bytes (its constructor refuses to cache over a `Pager`); it still parses a new `TableDef` from them on every call, and `ReadTDefBytesAsync` returns a new copy of them, because callers change what they get. `ReadTDefChainAsync`, which only the writer's in-place write-backs use, always reads the chain. The in-place TDEF write-backs (`WriteTDefChainInPlaceAsync`, `WriteTDefInt32Async`) stay on `DatabaseFile` until the writer gets its own TDEF writer;
+- its page I/O (`DatabaseFile.Pages`): a read-only `PageFile` for the reader, which owns the stream, the I/O gate, the page cipher and the positional reads, and cannot write; or, for the writer, a `Pager`, the `PageFile` that also writes, appends, truncates and flushes pages, encrypts on write, takes the cooperative byte-range locks and holds the transaction journal. `TransactionLifecycle` attaches and detaches that journal only through a `Pager.JournalGate` lease, never through the gate or the journal directly. `DatabaseFile` types it only as the `PageFile` it reads and has no write member: `DatabaseFile.ForWriter` hands the `Pager` to the writer, whose `WriterServices` gives it to the services that write pages, so the reader's object graph neither holds nor names a `Pager`;
+- its TDEF parser, `TableDefReader` (`DatabaseFile.TableDefs`), which reads a table's TDEF chain through the page file and parses its columns, so over the writer's `Pager` it sees a transaction's pending TDEF pages. On the read-only file only, it reads each table's TDEF chain once and memoizes its bytes (its constructor refuses to cache over a `Pager`); it still parses a new `TableDef` from them on every call, and `ReadTDefBytesAsync` returns a new copy of them, because callers change what they get. `ReadTDefChainAsync`, which only the writer's in-place write-backs use, always reads the chain. Those write-backs (`WriteChainInPlaceAsync`, `WriteInt32Async`) are the writer's `TDefWriter`, built over the `Pager` and the `TableDefReader`;
 - its owned-page discovery and row enumeration, `OwnedDataPages` (`DatabaseFile.OwnedPages`), which memoizes each table's owned pages, whether its usage map gave them or the whole-file owner index did, only on the read-only file (its constructor refuses to cache over a `Pager`), with the row-directory parsing in the static `DataPageRows` and the scalar and partial column reads in `ScalarColumnReader` and `PartialColumnReader`.
 
-The forwarders keep today's callers working; core-split-b narrows every collaborator to the parts it uses and deletes them. Until then `ServiceGraphTests.Collaborators_TakingDatabaseFile_OnlyShrink` holds the list of types that may still take the whole `DatabaseFile` (collaborators through a constructor or a field, static helpers and delegates through a method parameter), and it may only shrink.
+The read forwarders keep today's callers working; core-split-b narrows every collaborator to the parts it uses and deletes them. Until then `ServiceGraphTests.Collaborators_TakingDatabaseFile_OnlyShrink` holds the list of types that may still take the whole `DatabaseFile` (collaborators through a constructor or a field, static helpers and delegates through a method parameter), and it may only shrink.
 
 Its `PageCount` is the one end of file: inside a transaction the `Pager` includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds the `DatabaseFile`, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the `DatabaseFile`, not the facade.
 
 `ReaderServices` and `WriterServices` are the **composition roots**. Each builds its facade's collaborators once and passes each one two kinds of dependency through its constructor:
 
-- the `DatabaseFile` it reads and writes pages through; and
+- the `DatabaseFile` it reads pages through, and in the writer the `Pager` to each service that writes pages and the `TDefWriter` to the index services that write TDEF fields back in place; and
 - the specific sibling services it calls, such as `TableCatalog`, `ReaderPageCache`, `RowDecoder`, `TableRowStore`, `IndexMaintainer`, or `ConstraintRegistry`.
 
 `TableCatalog`, the cached user-table catalog, is shared in shape by both graphs: both facades resolve table names through the same `MSysObjects` scan (`CatalogRowReader`), and system tables by name through its one lookup, `FindSystemTableTdefPageAsync`, which resolves `MSysObjects` itself to TDEF page 2 when no catalog row names it. The reader's operation gate (`AsyncReentrantOperationGate`) is created by `ReaderServices` and entered by each reader service's public operations, so the LINQ provider and index-query handles, which call services directly, are drained on disposal the same way facade calls are.
@@ -424,7 +425,8 @@ No collaborator receives a facade, `AccessBase`, or a composition root, and none
 - no library type outside the facades holds or accepts any of those types, including inside generic arguments;
 - the collaborator graph reachable from each composition root is acyclic;
 - walking the live object graph from an open facade's services never reaches the facade;
-- the writer's services hold exactly one `DatabaseFile`, the writer's own, and no `AccessReader`;
+- the writer's services hold exactly one `DatabaseFile`, the writer's own, and no `AccessReader`, and write through exactly one `Pager`, the one that `DatabaseFile` reads through;
+- the reader's graph holds no `Pager`, `PageJournal`, `JetByteRangeLock` or `TDefWriter`, and no type in it names one in an instance member's signature;
 - no type outside an allow-list that may only shrink takes the whole `DatabaseFile` through a constructor or a method parameter, or holds it in a field; and
 - the facades declare no internal members.
 
@@ -473,7 +475,8 @@ AccessWriter → WriterServices
   ComplexReferenceSeedReader → CatalogRowReader, AutoNumberMaintainer
   CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogWriter, ConstraintRegistry
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
-  IndexMaintainer     → PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
+  IndexMaintainer     → TDefWriter, PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
+  TDefWriter          → Pager, TableDefReader
   TableSnapshotReader → RowDecoder, CatalogReader
   CatalogReader       → TableCatalog, CatalogRowReader, RowDecoder, ColumnPropertyReader
   ColumnPropertyReader → RowDecoder
@@ -481,7 +484,8 @@ AccessWriter → WriterServices
   TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder
   DataPageInserter    → PageAllocator, CatalogRowReader
   TableCatalog        → CatalogRowReader
-  TransactionLifecycle → JetByteRangeLock, TableCatalog, DataPageInserter, ConstraintRegistry
+  TransactionLifecycle → Pager, JetByteRangeLock, TableCatalog, DataPageInserter, ConstraintRegistry
+  (services that write pages) → Pager
   (every collaborator) → DatabaseFile
 ```
 
@@ -508,11 +512,11 @@ Tables/           → Catalog/, ComplexColumns/, Indexes/, LongValues/, Pages/, 
                     ValueDecoding/, ValueEncoding/, Infrastructure/; DatabaseFile
 Queries/          → Indexes/, Linq/, Mapping/, Tables/, Infrastructure/
 Linq/             → Queries/, Infrastructure/
-DatabaseFile (root)   → JetFormat, Catalog/, Encryption/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/
+DatabaseFile (root)   → JetFormat, Catalog/, Encryption/, Indexes/, Pages/, Schema/, ValueDecoding/
 JetFormat (root)      → Encryption/, Indexes/, Pages/, Schema/
 AccessBase (root)     → DatabaseFile
 AccessReader (root)   → ReaderServices, Indexes/, Queries/, Encryption/, Transactions/
-AccessWriter (root)   → WriterServices, Relationships/, Encryption/, Schema/, Transactions/
+AccessWriter (root)   → WriterServices, Pages/, Relationships/, Encryption/, Schema/, Transactions/
 ReaderServices (root) → every reader collaborator
 WriterServices (root) → every writer collaborator
 ```

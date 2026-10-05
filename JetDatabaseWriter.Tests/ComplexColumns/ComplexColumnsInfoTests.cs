@@ -258,7 +258,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         {
             byte[] page = await file.ReadPageCopyAsync(location.PageNumber, TestContext.Current.CancellationToken);
             page.AsSpan(location.RowStart + file.RowFields.NumCols + typeObjectId.FixedOff, 4).Clear();
-            await file.WritePageAsync(location.PageNumber, page, TestContext.Current.CancellationToken);
+            await harness.Pager.WritePageAsync(location.PageNumber, page, TestContext.Current.CancellationToken);
         }
     }
 

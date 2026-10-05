@@ -18,6 +18,7 @@ using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Expressions;
@@ -49,6 +50,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// auto-commit scope around each call.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
+/// <param name="pager">The writer's page file, through which a transplanted TDEF and re-owned data pages are written.</param>
 /// <param name="catalog">Resolves table names and is invalidated after a rename.</param>
 /// <param name="tableRows">Copies rows into the rebuilt table.</param>
 /// <param name="indexMaintainer">Rebuilds forwarded indexes after a row copy.</param>
@@ -63,6 +65,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="autoNumbers">Carries the AutoNumber high-water value over to the rebuilt TDEF.</param>
 internal sealed class TableSchemaEditor(
     DatabaseFile db,
+    Pager pager,
     TableCatalog catalog,
     TableRowStore tableRows,
     IndexMaintainer indexMaintainer,
@@ -1108,7 +1111,7 @@ internal sealed class TableSchemaEditor(
 
             await this.ReclaimTableStoragePagesAsync(originalTdefPage, originalDef, includeTDefRoot: false, cancellationToken).ConfigureAwait(false);
             await this.PatchTablePageOwnersAsync(tempTdefPage, originalTdefPage, cancellationToken).ConfigureAwait(false);
-            await db.WritePageAsync(originalTdefPage, tempTdef, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(originalTdefPage, tempTdef, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -1167,7 +1170,7 @@ internal sealed class TableSchemaEditor(
 
                 int ownerOffset = patchDataPage ? db.DataPage.TDefOff : 4;
                 Wi32(page, ownerOffset, checked((int)toTdefPage));
-                await db.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+                await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
             }
             finally
             {

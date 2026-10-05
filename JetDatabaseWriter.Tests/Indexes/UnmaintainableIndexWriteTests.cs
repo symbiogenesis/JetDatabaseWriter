@@ -538,13 +538,13 @@ public sealed class UnmaintainableIndexWriteTests
             IReadOnlyList<int> phantoms;
             if (layout == DamagedTable.Jet3HandSet50)
             {
-                await LegacyDamageInjector.SetPhantomKeyColumnAsync(harness.Database, table.Entry.TDefPage, realIndexNumber: 3, Ct);
+                await LegacyDamageInjector.SetPhantomKeyColumnAsync(harness, table.Entry.TDefPage, realIndexNumber: 3, Ct);
                 phantoms = await LegacyDamageInjector.FindPhantomIndexesAsync(harness.Database, table.Entry.TDefPage, Ct);
             }
             else
             {
                 LogicalTDefChain intact = await harness.Database.ReadTDefChainAsync(table.Entry.TDefPage, Ct);
-                phantoms = await LegacyDamageInjector.InjectStrayUsedPagesByteAsync(harness.Database, table.Entry.TDefPage, Ct);
+                phantoms = await LegacyDamageInjector.InjectStrayUsedPagesByteAsync(harness, table.Entry.TDefPage, Ct);
                 if (layout == DamagedTable.ChainHeaderHit101)
                 {
                     // Real index 2's stray byte is now the first continuation

@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -32,7 +33,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="AccessWriter"/>.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
-internal sealed class AutoNumberMaintainer(DatabaseFile db)
+/// <param name="pager">The writer's page file, through which a raised counter is written.</param>
+internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
 {
     /// <summary>
     /// Returns the largest value <paramref name="row"/> holds in any AutoNumber
@@ -430,7 +432,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db)
             }
 
             Wi32(page, offset, unchecked((int)next));
-            await db.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
