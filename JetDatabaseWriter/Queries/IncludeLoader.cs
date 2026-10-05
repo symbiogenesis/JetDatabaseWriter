@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tables;
@@ -190,13 +191,13 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         EnsureConstructible(relatedType, navigation);
-        Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.ForeignColumns);
+        Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.ForeignColumns, metadata.TextSortOrder);
         Dictionary<string, object> parentsByKey = await BuildParentLookupAsync(
             metadata, relationship.PrimaryTable, relatedType, relationship.PrimaryColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
 
         foreach (object root in roots)
         {
-            string? key = BuildKeyFromObject(root, relationship.ForeignColumns);
+            string? key = BuildKeyFromObject(root, relationship.ForeignColumns, metadata.TextSortOrder);
             object? parent = key is not null && parentsByKey.TryGetValue(key, out object? match) ? match : null;
             navigation.SetValue(root, parent);
         }
@@ -214,14 +215,14 @@ internal static class IncludeLoader
         CancellationToken cancellationToken)
     {
         EnsureConstructible(relatedType, navigation);
-        Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.PrimaryColumns);
+        Dictionary<string, object?[]> distinctKeys = CollectDistinctKeys(roots, relationship.PrimaryColumns, metadata.TextSortOrder);
         Dictionary<string, List<object>> childrenByKey = await BuildChildGroupsAsync(
             metadata, relationship.ForeignTable, relatedType, relationship.ForeignColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
 
         var loaded = new List<object>();
         foreach (object root in roots)
         {
-            string? key = BuildKeyFromObject(root, relationship.PrimaryColumns);
+            string? key = BuildKeyFromObject(root, relationship.PrimaryColumns, metadata.TextSortOrder);
             IList list = RuntimeRowMapper.CreateList(relatedType);
             if (key is not null && childrenByKey.TryGetValue(key, out List<object>? children))
             {
@@ -274,11 +275,17 @@ internal static class IncludeLoader
         }
 
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
+        int[] keyIndices = ResolveKeyIndices(seek.Headers, keyColumns);
         foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
         {
             IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
             await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
             {
+                if (!string.Equals(BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder), entry.Key, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 map[entry.Key] = RuntimeRowMapper.Map(type, seek.Headers, row);
                 break;
             }
@@ -310,12 +317,18 @@ internal static class IncludeLoader
         }
 
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
+        int[] keyIndices = ResolveKeyIndices(seek.Headers, keyColumns);
         foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
         {
             var list = new List<object>();
             IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
             await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
             {
+                if (!string.Equals(BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder), entry.Key, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 list.Add(RuntimeRowMapper.Map(type, seek.Headers, row));
             }
 
@@ -346,7 +359,7 @@ internal static class IncludeLoader
         IndexMetadata? index;
         while ((index = FindCoveringIndex(candidates, keyColumns)) is not null)
         {
-            if (await metadata.Indexes.CanEncodeKeysAsync(table, index, distinctKeys.Values, cancellationToken).ConfigureAwait(false))
+            if (await metadata.Indexes.CanSeekJoinKeysAsync(table, index, distinctKeys.Values, cancellationToken).ConfigureAwait(false))
             {
                 break;
             }
@@ -412,12 +425,12 @@ internal static class IncludeLoader
     private static IndexQueryCriteria BuildSeekCriteria(int indexColumnCount, int joinColumnCount, object?[] values) =>
         indexColumnCount == joinColumnCount ? IndexQueryCriteria.Exact(values) : IndexQueryCriteria.KeyPrefix(values);
 
-    private static Dictionary<string, object?[]> CollectDistinctKeys(IReadOnlyList<object> roots, IReadOnlyList<string> columns)
+    private static Dictionary<string, object?[]> CollectDistinctKeys(IReadOnlyList<object> roots, IReadOnlyList<string> columns, TextSortOrder sortOrder)
     {
         var result = new Dictionary<string, object?[]>(StringComparer.Ordinal);
         foreach (object root in roots)
         {
-            (string? key, object?[]? values) = BuildKeyAndValues(root, columns);
+            (string? key, object?[]? values) = BuildKeyAndValues(root, columns, sortOrder);
             if (key is not null)
             {
                 result.TryAdd(key, values!);
@@ -427,7 +440,7 @@ internal static class IncludeLoader
         return result;
     }
 
-    private static (string? Key, object?[]? Values) BuildKeyAndValues(object instance, IReadOnlyList<string> columns)
+    private static (string? Key, object?[]? Values) BuildKeyAndValues(object instance, IReadOnlyList<string> columns, TextSortOrder sortOrder)
     {
         var map = EntityMap.For(instance.GetType());
         object?[] values = new object?[columns.Count];
@@ -440,7 +453,7 @@ internal static class IncludeLoader
             }
 
             object? value = property.GetValue(instance);
-            if (Normalize(value) is not string component)
+            if (Normalize(value, sortOrder) is not string component)
             {
                 return (null, null);
             }
@@ -477,7 +490,7 @@ internal static class IncludeLoader
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
         await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
-            string? key = BuildKeyFromRow(row, keyIndices);
+            string? key = BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder);
             if (key is null || !distinctKeys.ContainsKey(key) || map.ContainsKey(key))
             {
                 continue;
@@ -517,7 +530,7 @@ internal static class IncludeLoader
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
         await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
         {
-            string? key = BuildKeyFromRow(row, keyIndices);
+            string? key = BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder);
             if (key is null || !distinctKeys.ContainsKey(key))
             {
                 continue;
@@ -568,7 +581,7 @@ internal static class IncludeLoader
         return indices;
     }
 
-    private static string? BuildKeyFromObject(object instance, IReadOnlyList<string> columns)
+    private static string? BuildKeyFromObject(object instance, IReadOnlyList<string> columns, TextSortOrder sortOrder)
     {
         var map = EntityMap.For(instance.GetType());
         string[] parts = new string[columns.Count];
@@ -579,7 +592,7 @@ internal static class IncludeLoader
                 return null;
             }
 
-            if (Normalize(property.GetValue(instance)) is not string component)
+            if (Normalize(property.GetValue(instance), sortOrder) is not string component)
             {
                 return null;
             }
@@ -590,13 +603,13 @@ internal static class IncludeLoader
         return string.Join("|", parts);
     }
 
-    private static string? BuildKeyFromRow(object?[] row, int[] keyIndices)
+    private static string? BuildKeyFromRow(object?[] row, int[] keyIndices, TextSortOrder sortOrder)
     {
         string[] parts = new string[keyIndices.Length];
         for (int i = 0; i < keyIndices.Length; i++)
         {
             object? value = keyIndices[i] < row.Length ? row[keyIndices[i]] : null;
-            if (Normalize(value) is not string component)
+            if (Normalize(value, sortOrder) is not string component)
             {
                 return null;
             }
@@ -607,7 +620,7 @@ internal static class IncludeLoader
         return string.Join("|", parts);
     }
 
-    internal static string? Normalize(object? value) => value switch
+    internal static string? Normalize(object? value, TextSortOrder sortOrder) => value switch
     {
         null or DBNull => null,
         bool b => b ? "b1" : "b0",
@@ -616,13 +629,19 @@ internal static class IncludeLoader
         ulong ul => "n" + FormatNumeric(ul),
         decimal m => "n" + FormatNumeric(m),
         float or double => NormalizeReal(Convert.ToDouble(value, CultureInfo.InvariantCulture)),
-        char c => "s" + c,
+        char c => NormalizeText(c.ToString(), sortOrder),
         Guid g => "g" + g.ToString("N"),
         DateTime dt => "t" + dt.Ticks.ToString(CultureInfo.InvariantCulture),
-        string s => "s" + s,
+        string s => NormalizeText(s, sortOrder),
         byte[] bytes => "x" + BitConverter.ToString(bytes),
         _ => null,
     };
+
+    private static string NormalizeText(string text, TextSortOrder order)
+    {
+        var collation = new JetTextCollation(order);
+        return "s" + BitConverter.ToString(collation.EncodeComparisonKey(text, trimTrailingSpaces: true));
+    }
 
     private static string NormalizeReal(double value)
     {
@@ -816,6 +835,8 @@ internal static class IncludeLoader
         public TableReader Tables { get; } = tables;
 
         public IndexRowReader Indexes { get; } = indexes;
+
+        public TextSortOrder TextSortOrder => this.Indexes.DefaultTextSortOrder;
 
         public async ValueTask<IReadOnlyList<IndexMetadata>> GetIndexesAsync(string table, CancellationToken cancellationToken)
         {

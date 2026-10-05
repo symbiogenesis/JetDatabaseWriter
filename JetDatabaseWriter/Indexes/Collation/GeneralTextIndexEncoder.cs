@@ -43,16 +43,18 @@ internal static partial class GeneralTextIndexEncoder
     public static byte[] Encode(string? text, bool ascending)
         => Encode(text, ascending, trimTrailingSpaces: true);
 
-    /// <summary>Encodes one bounded expression window without the index-entry byte limit or suffix.</summary>
-    /// <param name="text">The comparison window.</param>
-    /// <returns>The complete sort key, retaining trailing spaces.</returns>
-    internal static byte[] EncodeComparisonWindow(string text)
+    /// <summary>Encodes whole comparison text without index-entry limits or suffix.</summary>
+    /// <param name="text">The comparison text.</param>
+    /// <param name="trimTrailingSpaces">Whether to trim trailing spaces.</param>
+    /// <returns>The complete comparison key.</returns>
+    internal static byte[] EncodeComparisonKey(string text, bool trimTrailingSpaces)
         => GeneralLegacyTextIndexEncoder.EncodeWithTables(
             text,
             ascending: true,
             Codes.Value,
             ExtCodes.Value,
-            trimTrailingSpaces: false);
+            trimTrailingSpaces: trimTrailingSpaces,
+            comparison: true);
 
     /// <summary>Encodes text with control over index-key trailing-space trimming.</summary>
     /// <param name="text">The text.</param>

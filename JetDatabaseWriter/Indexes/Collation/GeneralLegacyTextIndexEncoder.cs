@@ -126,6 +126,12 @@ internal static class GeneralLegacyTextIndexEncoder
     internal static byte[] Encode(string? text, bool ascending, bool trimTrailingSpaces)
         => EncodeWithTables(text, ascending, Codes.Value, ExtCodes.Value, trimTrailingSpaces: trimTrailingSpaces);
 
+    /// <summary>Encodes whole comparison text without index limits or line-break chunking.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="trimTrailingSpaces">Whether to trim trailing spaces.</param>
+    internal static byte[] EncodeComparisonKey(string text, bool trimTrailingSpaces)
+        => EncodeWithTables(text, true, Codes.Value, ExtCodes.Value, trimTrailingSpaces: trimTrailingSpaces, comparison: true);
+
     /// <summary>
     /// Shared "General Legacy"-shape state machine that both
     /// <see cref="GeneralLegacyTextIndexEncoder"/> and
@@ -156,6 +162,7 @@ internal static class GeneralLegacyTextIndexEncoder
     /// immediately before the hard cap truncation is applied.
     /// </param>
     /// <param name="trimTrailingSpaces">Whether to trim index-key trailing spaces.</param>
+    /// <param name="comparison">Whether to encode whole text with wide comparison positions.</param>
     internal static byte[] EncodeWithTables(
         string? text,
         bool ascending,
@@ -164,11 +171,23 @@ internal static class GeneralLegacyTextIndexEncoder
         ReadOnlySpan<byte> longRowSeparator = default,
         int maxEntryLength = 0,
         LongRowSuffixProvider? longRowSuffixProvider = null,
-        bool trimTrailingSpaces = true)
+        bool trimTrailingSpaces = true,
+        bool comparison = false)
     {
         if (text is null)
         {
             return [ascending ? AscendingNull : DescendingNull];
+        }
+
+        if (comparison)
+        {
+            ReadOnlySpan<char> comparisonChars = text.AsSpan();
+            if (trimTrailingSpaces)
+            {
+                comparisonChars = comparisonChars.TrimEnd(' ');
+            }
+
+            return EncodeSingleChunk(text, comparisonChars, ascending, codes, extCodes, 0, null, comparison: true);
         }
 
         if (maxEntryLength > 0)
@@ -226,12 +245,13 @@ internal static class GeneralLegacyTextIndexEncoder
         CharHandler[] codes,
         CharHandler[] extCodes,
         int maxEntryLength,
-        LongRowSuffixProvider? longRowSuffixProvider)
+        LongRowSuffixProvider? longRowSuffixProvider,
+        bool comparison = false)
     {
         List<byte> bout = CreateEntryBuffer(chars.Length, ascending);
         int payloadStart = bout.Count;
 
-        var state = new ChunkEmitState(chars.Length);
+        var state = new ChunkEmitState(chars.Length, comparison);
         EmitChunkInline(chars, codes, extCodes, bout, state);
         FinishEntry(bout, payloadStart, state, ascending);
         ApplyMaxEntryLength(bout, text, ascending, maxEntryLength, longRowSuffixProvider);
@@ -335,7 +355,7 @@ internal static class GeneralLegacyTextIndexEncoder
             if (!unprint.IsEmpty)
             {
                 state.UnprintableCodes ??= [];
-                WriteUnprintableCodes(curCharOffset, unprint, state.UnprintableCodes, state.ExtraCodes);
+                WriteUnprintableCodes(curCharOffset, unprint, state.UnprintableCodes, state.ExtraCodes, state.Comparison);
             }
 
             if (ch.CrazyFlag != 0)
@@ -437,7 +457,7 @@ internal static class GeneralLegacyTextIndexEncoder
         bout.RemoveRange(maxEntryLength, bout.Count - maxEntryLength);
     }
 
-    private sealed class ChunkEmitState(int initialCapacity)
+    private sealed class ChunkEmitState(int initialCapacity, bool comparison = false)
     {
         public ExtraCodesStream? ExtraCodes { get; set; }
 
@@ -446,6 +466,8 @@ internal static class GeneralLegacyTextIndexEncoder
         public List<byte>? CrazyCodes { get; set; }
 
         public int CharOffset { get; set; }
+
+        public bool Comparison { get; } = comparison;
 
         public ExtraCodesStream GetOrCreateExtraCodes()
         {
@@ -524,8 +546,25 @@ internal static class GeneralLegacyTextIndexEncoder
         int charOffset,
         ReadOnlySpan<byte> bytes,
         List<byte> unprintableCodes,
-        ExtraCodesStream? extraCodes)
+        ExtraCodesStream? extraCodes,
+        bool comparison)
     {
+        if (comparison)
+        {
+            long position = extraCodes is null
+                ? charOffset
+                : (long)extraCodes.Bytes.Count + charOffset - extraCodes.NumChars - extraCodes.UnprintablePrefixLen;
+            long wideOffset = UnprintableCountStart + (UnprintableCountMultiplier * position);
+            for (int shift = 56; shift >= 0; shift -= 8)
+            {
+                unprintableCodes.Add((byte)((wideOffset >> shift) & 0xFF));
+            }
+
+            unprintableCodes.Add(UnprintableMidfix);
+            AppendBytes(unprintableCodes, bytes);
+            return;
+        }
+
         int unprintCharOffset = extraCodes is null
             ? charOffset
             : extraCodes.Bytes.Count + (charOffset - extraCodes.NumChars) - extraCodes.UnprintablePrefixLen;

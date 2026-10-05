@@ -72,8 +72,21 @@ internal sealed class IndexRowReader(
         }
     }
 
+    private static int TextCollationFamily(JetDatabaseWriter.Indexes.Collation.TextSortOrder order)
+    {
+        if (order.Value == 0 || (order.HasVersion && order.Version == 0))
+        {
+            return 0;
+        }
+
+        return order.HasVersion ? 1 : 2;
+    }
+
     /// <summary>Gets a value indicating whether the database format uses index seeks (<see cref="JetFormat.SupportsIndexSeeks"/>).</summary>
     internal bool CanSeek => format.SupportsIndexSeeks;
+
+    /// <summary>Gets the database collation used to compare Include join text.</summary>
+    internal JetDatabaseWriter.Indexes.Collation.TextSortOrder DefaultTextSortOrder => format.DefaultTextSortOrder;
 
     /// <summary>
     /// Returns metadata for every logical index defined on <paramref name="tableName"/>,
@@ -215,12 +228,12 @@ internal sealed class IndexRowReader(
         return result;
     }
 
-    /// <summary>Checks every join key before Include chooses an index seek.</summary>
+    /// <summary>Checks join collation and every key before Include chooses an index seek.</summary>
     /// <param name="tableName">The related table.</param>
     /// <param name="index">The candidate index.</param>
     /// <param name="keys">The join keys.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    internal async ValueTask<bool> CanEncodeKeysAsync(string tableName, IndexMetadata index, IEnumerable<object?[]> keys, CancellationToken cancellationToken)
+    internal async ValueTask<bool> CanSeekJoinKeysAsync(string tableName, IndexMetadata index, IEnumerable<object?[]> keys, CancellationToken cancellationToken)
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -231,6 +244,18 @@ internal sealed class IndexRowReader(
 
         foreach (object?[] key in keys)
         {
+            for (int ordinal = 0; ordinal < key.Length && ordinal < index.Columns.Count; ordinal++)
+            {
+                ColumnInfo? column = resolved.Definition.Columns.Find(value => string.Equals(value.Name, index.Columns[ordinal].Name, StringComparison.OrdinalIgnoreCase));
+                if (column is not null && column.Type is TextType or MemoType
+                    && TextCollationFamily(column.TextSortOrder) != TextCollationFamily(format.DefaultTextSortOrder))
+                {
+                    // Include matches by database collation. A differently collated
+                    // index cannot safely narrow its candidate rows.
+                    return false;
+                }
+            }
+
             if (!CanEncodePlan(format, resolved.Definition, tableName, new IndexPlan(index, IndexQueryCriteria.KeyPrefix(key), key.Length)))
             {
                 return false;

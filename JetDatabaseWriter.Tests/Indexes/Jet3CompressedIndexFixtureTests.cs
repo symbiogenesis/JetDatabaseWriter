@@ -55,7 +55,7 @@ public sealed class Jet3CompressedIndexFixtureTests
     [InlineData(DatabaseFormat.Jet4Mdb)]
     public void IntermediatePrefix_ReconstructsRowAndChildPointers(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         IndexPageLayout layout = format.IndexPage;
         byte[] page = new byte[format.PageSize];
         page[0] = 3;

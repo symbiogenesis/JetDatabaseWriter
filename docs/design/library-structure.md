@@ -202,7 +202,7 @@ JetDatabaseWriter/
 │   │   ├── GeneralTextIndexEncoder.cs
 │   │   ├── GeneralTextIndexEncoder.V2010LongRowSuffix.cs
 │   │   ├── TextSortOrder.cs
-│   │   ├── JetTextCollation.cs             (expression text comparisons)
+│   │   ├── JetTextCollation.cs             (whole-text expression and Include comparisons)
 │   │   ├── GeneralLegacyTextIndexEncoder.cs
 │   │   └── General97TextIndexEncoder.cs
 │   ├── CodeTables/                        (embedded gzipped collation lookup tables)

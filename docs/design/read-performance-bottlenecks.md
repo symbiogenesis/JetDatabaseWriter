@@ -3,7 +3,7 @@
 Status: closed; retained as archived baseline and caller guidance
 Date: 2026-05-20
 Closed: 2026-05-31
-Last updated: 2026-10-04
+Last updated: 2026-10-05
 
 This note is closed. It records the read-performance baseline for
 `AccessReader`, the caller guidance that falls out of the measurements, and the
@@ -129,6 +129,93 @@ git history) and are not reproduced here.
 | Page I/O handle (2026-10-03, Arm64, .NET 10.0.12, A/B of Release builds in interleaved processes on a shared machine) | Opening path-opened readers with a synchronous handle and no access hint, instead of an overlapped handle with the `RandomAccess` or `SequentialScan` hint, took a warm page read from 15-19 µs to 8-10 µs, warm MEMO scans from 97-124 ms to 67-76 ms and OLE scans from 42-58 ms to 36-46 ms, and the open and first scan of an uncached copy of the OLE table from 2.3-3.2 s to 0.18-0.66 s. | Keep `FileOptions.None` for path-opened readers in every mode; see "Page I/O handle" below. Re-measure on x64 and slower storage before changing it. |
 | Inline page reads (same day and method) | Reading pages on the calling pool thread instead of handing each read to another pool thread took a warm page read from 6-10 µs to 2.6-4.5 µs, warm MEMO scans from 76-90 ms to 43-58 ms and OLE scans from 40-43 ms to 20-30 ms, and was faster on the numeric table in every run. | Keep inline reads for path-opened readers on pool threads without a synchronization context; see "Inline reads on thread-pool threads". |
 | Concurrent scans (2026-10-03, after the two changes above; Arm64, .NET 10.0.12, in-process ShortRun on a shared machine) | `AccessReaderConcurrentScanBenchmarks`: N simultaneous `Rows()` scans of the 25K-row numeric table, whose 405 data pages are more than the default 256-page cache holds, plain and AES-encrypted. On one shared reader in `Auto`, whose `RandomAccess` page reads bypass the reader's I/O gate: 7.0-7.5 ms at N=1, 8.9-10.2 ms at 2, 10.0-12.9 ms at 4 and 20.2-20.6 ms at 8. In `Disabled`, where every page read the cache misses waits for the gate: 7.6-7.7, 8.7-9.7, 13.6-15.3 and 23.0-24.7 ms. One reader per scan, in either mode: 6.9-7.8, 10.1-12.3, 19.4-24.9 and 34.2-37.4 ms, allocating up to 25% more. The AES-encrypted copy was within this run's noise of the plain file. An earlier run, before the two changes above, used `Auto` only, so none of its page reads took the gate. | A shared reader scales better on this shape in both modes: scans running in near lockstep hit pages another scan has just cached, while separate readers each read and decode every page. On a shared reader `Disabled` was 12-36% slower than `Auto` at 4 and 8 scans, against 3-9% at one scan, so the I/O gate costs something under contention, but a shared reader in `Disabled` still beat separate readers in either mode. The AES transform lock did not show. |
+
+## Reader check after the page-store split (2026-10-05)
+
+[Hosted comparison 37286446401](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37286446401)
+ran baseline `4a2bfa1c6011409081b9806c7299c91b2bf83f8f` then
+`fa0d38e2d79b489e6626aa459cffd173376ca1fb` on the same Windows host (AMD EPYC 9V45, x86-64-v4) with
+.NET SDK 10.0.401, .NET 10.0.12 and the default adaptive BenchmarkDotNet job.
+The head reused the baseline-generated numeric fixture, so both read the same
+25,000-row image. Error below is half the 99.9% confidence interval.
+
+| Workload | Baseline mean ± Error | Head mean ± Error | Head / baseline | Allocated, baseline → head |
+|---|---:|---:|---:|---:|
+| Open Northwind | 261.31 ± 4.47 µs | 268.30 ± 5.33 µs | 1.03 | 54.79 → 55.03 KB |
+| Numeric untyped | 4.92 ± 0.093 ms | 4.91 ± 0.095 ms | 1.00 | 7.89 → 7.89 MB |
+| Numeric untyped, two passes | 8.28 ± 0.152 ms | 8.49 ± 0.152 ms | 1.02 | 11.82 → 11.82 MB |
+
+This focused repeat found no reader regression outside the reported uncertainty.
+An [earlier comparison 37282934029](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37282934029)
+of the same baseline against `47426a7d8e5ad5673ee1f774110497ad6565739e`
+measured 9.613 ± 0.162 ms against 11.21 ± 0.222 ms for the one-pass numeric
+scan (1.17), while open and two-pass ratios were 0.97 and 1.01. That difference
+was larger than the first run's errors but did not reproduce; no reader-path
+optimization was made between the measurements. Keep both artifacts rather than
+interpreting either host's absolute throughput as a universal performance floor.
+
+## Writer page-cache baseline (2026-10-05)
+
+[Hosted run 37286441249](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37286441249)
+measured `fa0d38e2d79b489e6626aa459cffd173376ca1fb` with the default adaptive
+BenchmarkDotNet 0.15.8 job on Windows 11, AMD EPYC 7763, .NET SDK 10.0.401 and
+.NET 10.0.12. All 28 results are valid. This is a same-revision comparison of
+`PageCacheSize=0` and `256`, with direct writes and automatic statement
+transactions; the class did not exist at the branch point.
+
+Each iteration copies a baseline image, opens the writer and resets counters
+before measurement. The second Northwind insert also performs an unmeasured
+warm-up insert on that same writer. The measured operation includes its commit;
+disposal is outside measurement. The backing stream is a `MemoryStream`, so
+these are operation and page-traffic baselines, not disk durability timings.
+Northwind cases insert into a writer-created `PageIo` table in the large
+Access-authored image, not an existing Access-authored user table.
+
+Counts below are physical reads (distinct pages) for the final measured
+iteration. Writes and flushes are identical at both cache capacities. Bulk
+means one call inserting 999 rows; the other new-ACCDB cases operate on one
+row or add one column.
+
+| Workload | Mode | Reads, cache 0 | Reads, cache 256 | Writes | Flushes |
+|---|---|---:|---:|---:|---:|
+| Bulk 999 | Direct | 3,114 (20) | 10 (10) | 2,026 | 2,026 |
+| Single insert | Direct | 33 (9) | 9 (9) | 4 | 4 |
+| Update | Direct | 71 (35) | 43 (35) | 4 | 4 |
+| Delete | Direct | 28 (9) | 9 (9) | 4 | 4 |
+| AddColumn | Direct | 180 (20) | 16 (16) | 53 | 53 |
+| Northwind first insert | Direct | 421 (102) | 101 (101) | 7 | 7 |
+| Northwind second insert | Direct | 11 (4) | 0 (0) | 4 | 4 |
+| Bulk 999 | Auto-commit | 1,041 (10) | 10 (10) | 13 | 14 |
+| Single insert | Auto-commit | 30 (9) | 9 (9) | 4 | 5 |
+| Update | Auto-commit | 67 (35) | 42 (35) | 3 | 4 |
+| Delete | Auto-commit | 25 (9) | 9 (9) | 4 | 5 |
+| AddColumn | Auto-commit | 78 (16) | 16 (16) | 18 | 19 |
+| Northwind first insert | Auto-commit | 416 (101) | 101 (101) | 4 | 5 |
+| Northwind second insert | Auto-commit | 8 (4) | 4 (4) | 4 | 5 |
+
+The cache cuts repeated physical reads, while write-through preserves write and
+flush counts. Whole-file scans intentionally bypass frames, so update counts
+can exceed their distinct-page count. Transaction transitions invalidate frames,
+which explains the remaining reads on a warmed auto-commit writer.
+
+Selected timings are mean ± BenchmarkDotNet Error (half the 99.9% confidence
+interval); complete timings and allocations are in the run's `benchmark-results`
+artifact. Many single-operation distributions were multimodal, so small timing
+differences are not evidence of improvement.
+
+| Workload / mode | Cache 0 | Cache 256 | Allocated, 0 → 256 |
+|---|---:|---:|---:|
+| Bulk 999 / Direct | 20.887 ± 0.363 ms | 10.792 ± 1.521 ms | 6,148.63 → 14,255.09 KB |
+| Bulk 999 / Auto-commit | 9.447 ± 1.403 ms | 12.062 ± 1.508 ms | 6,050.93 → 14,321.30 KB |
+| AddColumn / Auto-commit | 2.883 ± 0.094 ms | 2.201 ± 0.038 ms | 1,080.16 → 1,431.87 KB |
+| Northwind first / Direct | 7.173 ± 0.143 ms | 5.948 ± 0.084 ms | 25,592.63 → 26,030.47 KB |
+| Northwind second / Direct | 200.2 ± 11.5 µs | 196.9 ± 9.8 µs | 41.95 → 58.16 KB |
+| Northwind second / Auto-commit | 248.3 ± 9.3 µs | 285.2 ± 8.5 µs | 59.16 → 107.81 KB |
+
+The additional frame copies increase allocations, particularly during bulk
+writes. This baseline supports the physical-read reduction; it does not show a
+uniform throughput or allocation improvement. Capacity zero remains available
+for workloads where frame maintenance outweighs repeated-read savings.
 
 ## Historical baseline
 

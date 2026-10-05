@@ -74,6 +74,54 @@ public sealed class TextSortOrderTests
         Assert.True(collation.Compare(text + "a", text + "b") < 0);
     }
 
+    [Theory]
+    [InlineData(false, (byte)0)]
+    [InlineData(true, (byte)0)]
+    [InlineData(true, (byte)1)]
+    public void WholeTextComparison_PrimaryWeightsPrecedeEarlierAccents(bool hasVersion, byte version)
+    {
+        var collation = new JetTextCollation(new TextSortOrder(0x0409, version, hasVersion));
+        string middle = new('a', 126);
+        Assert.True(collation.Compare("é" + middle + "a", "e" + middle + "z") < 0);
+        Assert.Equal(0, collation.Compare(middle + "\0b", middle + "b"));
+        string memo = new('a', 20000);
+        Assert.True(collation.Compare("é" + memo + "a", "e" + memo + "z") < 0);
+        Assert.NotEqual(0, collation.Compare(memo, memo + " "));
+    }
+
+    [Theory]
+    [InlineData(false, (byte)0)]
+    [InlineData(true, (byte)0)]
+    [InlineData(true, (byte)1)]
+    public void ComparisonKeys_PreserveShortIndexKeyOrdering(bool hasVersion, byte version)
+    {
+        var order = new TextSortOrder(0x0409, version, hasVersion);
+        var collation = new JetTextCollation(order);
+        string[] corpus = ["", "a", "a ", "ab", "a-b", "a'b", "a\rb", "a\tb", "é", "e", "Æ", "AE", "\u06D7", "\u0001", "a\u0001b"];
+        foreach (string left in corpus)
+        {
+            foreach (string right in corpus)
+            {
+                byte[] leftIndex = EncodeIndexComparison(order, left);
+                byte[] rightIndex = EncodeIndexComparison(order, right);
+                Assert.Equal(Math.Sign(IndexPageCodec.CompareKeyBytes(leftIndex, rightIndex)), Math.Sign(collation.Compare(left, right)));
+            }
+        }
+
+        Assert.Equal(collation.EncodeComparisonKey("a"), collation.EncodeComparisonKey("a ", trimTrailingSpaces: true));
+    }
+
+    [Theory]
+    [InlineData((byte)0)]
+    [InlineData((byte)1)]
+    public void MemoComparison_UnprintablePositionsDoNotWrap(byte version)
+    {
+        var collation = new JetTextCollation(new TextSortOrder(0x0409, version, true));
+        string primary = new('a', 20000);
+        Assert.True(collation.Compare(primary.Insert(9000, "-"), primary.Insert(18000, "-")) < 0);
+        Assert.True(collation.Compare(primary.Insert(18000, "-"), primary.Insert(9000, "-")) > 0);
+    }
+
     [Fact]
     public void GeneralLongKeyWithoutSuffixTable_RefusesEncoding()
         => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x0409, 1, true), new string('é', 255)));
@@ -81,4 +129,16 @@ public sealed class TextSortOrderTests
     [Fact]
     public void UnsupportedSortOrder_RefusesNonNullText()
         => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x041D, 0, true), "a", true));
+
+    private static byte[] EncodeIndexComparison(TextSortOrder order, string text)
+    {
+        if (!order.HasVersion)
+        {
+            return General97TextIndexEncoder.Encode(text, true, false);
+        }
+
+        return order.Version == 0
+            ? GeneralLegacyTextIndexEncoder.Encode(text, true, false)
+            : GeneralTextIndexEncoder.Encode(text, true, false);
+    }
 }

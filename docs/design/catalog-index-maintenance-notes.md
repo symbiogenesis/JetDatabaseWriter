@@ -89,7 +89,7 @@ The full-rebuild `InsertSystemRowAndMaintainAsync` path was rejected for a separ
 
 Per-leaf entry format follows the standard rules in [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4: `entry_start` bitmask + sort-key bytes + 4-byte row pointer (`page << 8 | row_index_within_page`). Page-shared prefix compression (§4.4.1, `pref_len` header field) is the only compression scheme; the previously-suspected per-entry incremental scheme does not exist (§4.4.2).
 
-The Text column `Name` uses the **General Legacy** text encoder (`JetDatabaseWriter/Indexes/Collation/GeneralLegacyTextIndexEncoder.cs`). That encoder is already shipped and exercised by user-table indexes; it is reusable here.
+In this fixture the Text column `Name` selects **General Legacy**. Catalog maintenance reads the stored column sort order and routes through `IndexKeyEncoder`, using the same General 97, General Legacy or General encoder as user-table indexes. Unsupported catalog text collations are rejected before catalog mutation.
 
 ## 4. Design as shipped
 
@@ -109,7 +109,7 @@ Append-only tail-leaf maintenance for ordinary index paths is handled by `IndexB
 ### 4.3 Algorithm (per real-idx slot)
 
 1. **Resolve root page**: read the catalog TDEF, walk to the real-idx slot for `I.RealIndexNumber`, and read the format-specific `first_dp` offset from the per-slot physical descriptor — see [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §3.1.
-2. **Encode the sort key** for the new row's index columns via `IndexKeyEncoder` (`Int32` / `Int16` ascending: big-endian, high-bit flipped; `Text` ascending: `GeneralLegacyTextIndexEncoder`; concatenated for composites).
+2. **Encode the sort key** for the new row's index columns via `IndexKeyEncoder` (`Int32` / `Int16` ascending: big-endian, high-bit flipped; `Text` ascending: the column-selected General 97, General Legacy or General encoder; concatenated for composites).
 3. **Build the entry payload**: `entry_start_bitmask + sort_key_bytes + 4-byte row pointer`. The bitmask carries one bit per leading column; for a single-row insert it is uniformly `0xFF...` (per [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md) §4.2).
 4. **Descend the B-tree** to the target leaf via `IndexCursor` descent logic. Big-endian intermediate child pointers are preserved as part of the historical root-cause rollup in [`round-trip-openrecordset-hypothesis.md`](round-trip-openrecordset-hypothesis.md#7-historical-root-cause-rollup).
 5. **Splice into the leaf**:

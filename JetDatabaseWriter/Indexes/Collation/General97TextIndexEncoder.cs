@@ -62,12 +62,21 @@ internal static class General97TextIndexEncoder
     public static byte[] Encode(string? text, bool ascending)
         => Encode(text, ascending, trimTrailingSpaces: true);
 
+    /// <summary>Encodes whole comparison text without the index character limit.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="trimTrailingSpaces">Whether to trim trailing spaces.</param>
+    internal static byte[] EncodeComparisonKey(string text, bool trimTrailingSpaces)
+        => EncodeCore(text, true, trimTrailingSpaces, comparison: true);
+
     /// <summary>Encodes text with control over index-key trailing-space trimming.</summary>
     /// <param name="text">The text.</param>
     /// <param name="ascending">The direction.</param>
     /// <param name="trimTrailingSpaces">Whether to trim trailing spaces.</param>
     /// <returns>The encoded entry.</returns>
     internal static byte[] Encode(string? text, bool ascending, bool trimTrailingSpaces)
+        => EncodeCore(text, ascending, trimTrailingSpaces, comparison: false);
+
+    private static byte[] EncodeCore(string? text, bool ascending, bool trimTrailingSpaces, bool comparison)
     {
         if (text is null)
         {
@@ -79,7 +88,9 @@ internal static class General97TextIndexEncoder
         // Per Jackcess GeneralLegacyIndexCodes.toIndexCharSequence — same
         // truncation/trim rule used for all sort orders (TEXT_FIELD_MAX_LENGTH
         // / TEXT_FIELD_UNIT_SIZE = 127 chars).
-        ReadOnlySpan<char> chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength));
+        ReadOnlySpan<char> chars = comparison
+            ? text.AsSpan()
+            : text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexCharLength));
         if (trimTrailingSpaces)
         {
             chars = chars.TrimEnd(' ');
@@ -94,7 +105,7 @@ internal static class General97TextIndexEncoder
                 : DescendingNonNull,
         };
 
-        Span<byte> extraBytes = stackalloc byte[extraByteCapacity];
+        Span<byte> extraBytes = comparison ? new byte[extraByteCapacity] : stackalloc byte[extraByteCapacity];
         int extraNibbleCount = 0;
         int significantCharCount = 0;
         GeneralLegacyTextIndexEncoder.CharHandler[] codes = Codes.Value;
