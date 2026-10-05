@@ -6,6 +6,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
@@ -50,7 +51,10 @@ internal sealed class WriterServices
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db);
         var longValueEncoder = new LongValueEncoder(db, this.PageAllocator, options);
-        var dataPages = new DataPageInserter(db, this.PageAllocator, this.CatalogRows);
+
+        // A writer's database file always pages through a Pager.
+        var usageMaps = new UsageMapEditor(db.Profile, (Pager)db.Pages, this.PageAllocator);
+        var dataPages = new DataPageInserter(db, this.PageAllocator, this.CatalogRows, usageMaps);
         var tableRows = new TableRowStore(db, options, longValueEncoder, new RowEncoder(db), dataPages, tdefPageBuilder);
         var autoNumbers = new AutoNumberMaintainer(db);
         CatalogRowReader catalogRows = this.CatalogRows;

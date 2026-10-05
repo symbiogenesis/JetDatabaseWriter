@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -166,7 +167,7 @@ public sealed class RowSizeLimitTests
             options,
             new LongValueEncoder(db, harness.Services.PageAllocator, options),
             new RowEncoder(db),
-            new DataPageInserter(db, harness.Services.PageAllocator, harness.Services.CatalogRows),
+            new DataPageInserter(db, harness.Services.PageAllocator, harness.Services.CatalogRows, new UsageMapEditor(db.Profile, (Pager)db.Pages, harness.Services.PageAllocator)),
             new TDefPageBuilder(db));
 
         int[] lengths = [900, 1_000, 1_000, 950, 1_000];

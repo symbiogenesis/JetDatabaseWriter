@@ -15,6 +15,12 @@ internal static class UsageMap
     internal static int PagesPerReferenceMapPage(int pageSize)
         => (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
 
+    /// <summary>Returns how many bitmap-page pointers a REFERENCE row of <paramref name="rowSize"/> bytes holds: 17 in a 69-byte row.</summary>
+    /// <param name="rowSize">The row's size in bytes.</param>
+    /// <returns>The pointer count.</returns>
+    internal static int ReferencePointerCount(int rowSize)
+        => Math.Max(0, (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4);
+
     internal static int ReferencePointerIndex(int pageSize, long pageNumber)
         => (int)(pageNumber / PagesPerReferenceMapPage(pageSize));
 
@@ -325,13 +331,7 @@ internal static class UsageMap
         return true;
     }
 
-    internal static bool TrySetInlinePageState(
-        byte[] usageMapPage,
-        int rowStart,
-        int rowSize,
-        long pageNumber,
-        bool isMarked,
-        bool initializeBaseForPage)
+    internal static bool TrySetInlinePageState(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber, bool isMarked)
     {
         if (rowSize <= Constants.UsageMap.InlineMapHeaderSize)
         {
@@ -342,12 +342,6 @@ internal static class UsageMap
         if (basePage < 0)
         {
             return false;
-        }
-
-        if (initializeBaseForPage && basePage == 0 && pageNumber >= Constants.UsageMap.InlineBitmapBits)
-        {
-            basePage = AlignInlineBasePage(pageNumber);
-            Wi32(usageMapPage, rowStart + Constants.UsageMap.ReferenceMapPointerOffset, basePage);
         }
 
         long bitIndex = pageNumber - basePage;
@@ -371,28 +365,121 @@ internal static class UsageMap
         return true;
     }
 
-    internal static void WriteInlineRow(byte[] page, int rowStart, IReadOnlyList<long> pageNumbers)
+    /// <summary>
+    /// Writes an INLINE row that lists <paramref name="pageNumbers"/> over the
+    /// <paramref name="rowSize"/> bytes at <paramref name="rowStart"/>, when one
+    /// bitmap window holds them all. The window starts at page 0 when the
+    /// lowest page lies in the first window, and otherwise at the lowest page
+    /// rounded down to a multiple of 8.
+    /// </summary>
+    /// <param name="page">The usage-map page.</param>
+    /// <param name="rowStart">The row's offset on the page.</param>
+    /// <param name="rowSize">The row's size in bytes.</param>
+    /// <param name="pageNumbers">The pages to list.</param>
+    /// <returns><see langword="false"/>, leaving the row untouched, when the pages span more than one window.</returns>
+    internal static bool TryWriteInlineRow(byte[] page, int rowStart, int rowSize, IReadOnlyList<long> pageNumbers)
     {
-        Array.Clear(page, rowStart, Constants.UsageMap.RowSize);
-        long firstPageNumber = pageNumbers.Count == 0 ? 0 : pageNumbers[0];
-        int basePageNumber = firstPageNumber < Constants.UsageMap.InlineBitmapBits
-            ? 0
-            : AlignInlineBasePage(firstPageNumber);
+        int bitCapacity = (rowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
+        if (bitCapacity <= 0)
+        {
+            return false;
+        }
 
+        long lowest = long.MaxValue;
+        long highest = long.MinValue;
+        for (int i = 0; i < pageNumbers.Count; i++)
+        {
+            lowest = Math.Min(lowest, pageNumbers[i]);
+            highest = Math.Max(highest, pageNumbers[i]);
+        }
+
+        int basePageNumber = pageNumbers.Count == 0 || lowest < bitCapacity ? 0 : AlignInlineBasePage(lowest);
+        if (pageNumbers.Count > 0 && (lowest < 0 || highest - basePageNumber >= bitCapacity))
+        {
+            return false;
+        }
+
+        Array.Clear(page, rowStart, rowSize);
         page[rowStart] = Constants.UsageMap.InlineMapType;
         Wi32(page, rowStart + Constants.UsageMap.ReferenceMapPointerOffset, basePageNumber);
 
         for (int i = 0; i < pageNumbers.Count; i++)
         {
             int bitIndex = checked((int)(pageNumbers[i] - basePageNumber));
-            if ((uint)bitIndex >= Constants.UsageMap.InlineBitmapBits)
+            page[rowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+        }
+
+        return true;
+    }
+
+    /// <summary>Returns whether the INLINE row of <paramref name="rowSize"/> bytes at <paramref name="rowStart"/> lists no page.</summary>
+    /// <param name="page">The usage-map page.</param>
+    /// <param name="rowStart">The row's offset on the page.</param>
+    /// <param name="rowSize">The row's size in bytes.</param>
+    /// <returns><see langword="true"/> when no bitmap bit is set.</returns>
+    internal static bool IsInlineBitmapEmpty(byte[] page, int rowStart, int rowSize)
+    {
+        for (int offset = rowStart + Constants.UsageMap.InlineBitmapOffset; offset < rowStart + rowSize; offset++)
+        {
+            if (page[offset] != 0)
             {
-                throw new NotSupportedException(
-                    "Index B-tree allocation spans more than one inline usage-map bitmap; " +
-                    "REFERENCE usage maps for index pages are not yet supported.");
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="bitmapPages"/> each bitmap page (page type
+    /// <c>0x05</c>) that the REFERENCE row at <paramref name="rowBound"/>
+    /// points at. Does nothing for a row of another type.
+    /// </summary>
+    /// <param name="usageMapPage">The usage-map page.</param>
+    /// <param name="rowBound">The row's bounds on the page.</param>
+    /// <param name="totalPages">The end of file in pages; a pointer at or past it is skipped.</param>
+    /// <param name="readPageAsync">Reads a page into a pooled buffer.</param>
+    /// <param name="returnPage">Returns a pooled buffer.</param>
+    /// <param name="bitmapPages">Receives the bitmap page numbers.</param>
+    /// <param name="cancellationToken">A token used to cancel the reads.</param>
+    /// <returns>A task that completes when the row's pointers have been read.</returns>
+    internal static async ValueTask CollectReferenceBitmapPagesAsync(
+        byte[] usageMapPage,
+        RowBound rowBound,
+        long totalPages,
+        Func<long, CancellationToken, ValueTask<byte[]>> readPageAsync,
+        Action<byte[]> returnPage,
+        ICollection<long> bitmapPages,
+        CancellationToken cancellationToken)
+    {
+        if (rowBound.RowSize <= 0
+            || rowBound.RowStart + rowBound.RowSize > usageMapPage.Length
+            || usageMapPage[rowBound.RowStart] != Constants.UsageMap.ReferenceMapType)
+        {
+            return;
+        }
+
+        int pointerCount = ReferencePointerCount(rowBound.RowSize);
+        for (int pointerIndex = 0; pointerIndex < pointerCount; pointerIndex++)
+        {
+            int bitmapPageNumber = Ri32(usageMapPage, rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4));
+            if (bitmapPageNumber <= 0 || bitmapPageNumber >= totalPages)
+            {
+                continue;
             }
 
-            page[rowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));
+            byte[] bitmapPage = await readPageAsync(bitmapPageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (bitmapPage[0] == Constants.PageTypes.UsageMap)
+                {
+                    bitmapPages.Add(bitmapPageNumber);
+                }
+            }
+            finally
+            {
+                returnPage(bitmapPage);
+            }
         }
     }
 

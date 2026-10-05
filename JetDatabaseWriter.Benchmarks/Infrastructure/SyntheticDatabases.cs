@@ -90,10 +90,9 @@ internal static class SyntheticDatabases
     public const int RelationalCustomers = 1_000;
 
     /// <summary>
-    /// Rows in <see cref="OrdersTable"/>: 10 per customer. Kept at 10,000 because
-    /// creating the relationship over 20,000 orders that already have two indexes
-    /// fails: the full index rebuild needs a REFERENCE index usage map, which the
-    /// writer cannot write yet (see <c>docs/design/read-performance-bottlenecks.md</c>).
+    /// Rows in <see cref="OrdersTable"/>: 10 per customer, fewer than planned
+    /// (see <c>docs/design/read-performance-bottlenecks.md</c>; raising it is
+    /// open work in <c>docs/todo.md</c>).
     /// </summary>
     public const int RelationalOrders = 10_000;
 

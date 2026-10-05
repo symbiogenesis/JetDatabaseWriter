@@ -418,7 +418,7 @@ internal sealed class PageAllocator(DatabaseFile db, AccessWriterOptions options
             byte mapType = globalPage[rowBound.RowStart];
             if (mapType == Constants.UsageMap.InlineMapType)
             {
-                if (UsageMap.TrySetInlinePageState(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free, initializeBaseForPage: false))
+                if (UsageMap.TrySetInlinePageState(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free))
                 {
                     await db.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
                     return;

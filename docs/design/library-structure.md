@@ -150,6 +150,7 @@ JetDatabaseWriter/
 │   ├── ReservedPageRuns.cs                (page runs an index operation reserved but has not linked; released on a bail or throw)
 │   ├── ReaderPageCache.cs                 (the reader's page and row-directory LRU caches)
 │   ├── UsageMap.cs                        (INLINE/REFERENCE usage-map parsing, bitmaps, pointer/row emission)
+│   ├── UsageMapEditor.cs                  (the writer's usage-map rows: marks pages, writes index rows, promotes INLINE rows to REFERENCE)
 │   ├── PageJournal.cs                     (in-memory after-images of a transaction's pages, replayed in place on commit)
 │   ├── Paging/                            (one open file's page I/O)
 │   │   ├── IPageSource.cs                 (read decrypted pages: the interface read-side code depends on)
@@ -479,7 +480,8 @@ AccessWriter → WriterServices
   ColumnPropertyReader → RowDecoder
   RowDecoder          → ReaderPageCache (capacity 0), LongValueDecoder
   TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder
-  DataPageInserter    → PageAllocator, CatalogRowReader
+  DataPageInserter    → PageAllocator, CatalogRowReader, UsageMapEditor
+  UsageMapEditor      → PageAllocator (and JetFormat and Pager, not DatabaseFile)
   TableCatalog        → CatalogRowReader
   TransactionLifecycle → JetByteRangeLock, TableCatalog, DataPageInserter, ConstraintRegistry
   (every collaborator) → DatabaseFile
@@ -600,7 +602,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Strategy via layout structs** | `JetFormat` holding `DataPageLayout`, `LvalPageLayout`, `TDefHeaderLayout`, `ColumnDescriptorLayout`, `RowFieldSizes`, `IndexLayout`, `IndexPageLayout` | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; one immutable profile per open file, built from its header |
 | **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PageJournal` | Dedicated page-level I/O: the reader's read-only `PageFile` with its 256-page LRU eviction cache, and the writer's `Pager` with an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
 | **Allocator** | `PageAllocator`, `ReservedPageRuns` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink; index paths record each run they reserve until a TDEF or usage-map write links it, and give back any run they abandon |
-| **Usage Map Codec** | `UsageMap` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization |
+| **Usage Map Codec** | `UsageMap`, `UsageMapEditor` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization; `UsageMapEditor` grows the writer's rows past one INLINE window by promoting them to REFERENCE and allocating their bitmap pages |
 | **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |
 | **Manager / Coordinator** | `RelationshipManager`, `LinkedTableManager`, `LinkedTableReader`, `ComplexColumnManager`, `ComplexColumnReader` | Keeps feature-specific catalog and child-table workflows out of the public facades |
 | **Workflow Service** | `TableReader`, `IndexRowReader`, `SchemaReader`, `TableDataWriter`, `TableSchemaEditor`, `CatalogArtifactWriter` | Own the read paths and the writer's DML, DDL, and catalog-plan workflows so neither facade holds any |
@@ -715,7 +717,7 @@ Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `Relatio
 
 ### 8. Usage-map parsing stays with page ownership
 
-`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `OwnedDataPages` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows; `PageAllocator` decides when to promote the global free map and allocate reference pages; `CatalogArtifactWriter`, `TableSchemaEditor`, and `IndexMaintainer` decide which index pages to emit or reclaim.
+`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `OwnedDataPages` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows and writes index rows through `UsageMapEditor`, which moves an empty INLINE window, promotes a row that outgrows its window to REFERENCE and allocates its bitmap pages; `PageAllocator` decides when to promote the global free map and allocate reference pages; `CatalogArtifactWriter`, `TableSchemaEditor`, and `IndexMaintainer` decide which index pages to emit or reclaim.
 
 ### 9. Linked-table metadata spans catalog, schema, and delimited text parsing
 

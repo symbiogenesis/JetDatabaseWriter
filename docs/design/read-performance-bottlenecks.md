@@ -90,13 +90,14 @@ release-quality benchmark results justify reopening a specific area.
   database has a 6-row `QuerySmall` table and a 25K-row `QueryLarge` table
   (integer primary key and a non-unique `Score` index), and the attachment
   database has 150 `Documents` rows with one 16 KB attachment each. The
-  relational and attachment databases are smaller than planned because of a
-  writer limit: a full index rebuild that spreads a table's index pages over
-  more than one inline usage-map bitmap throws `NotSupportedException`
-  ("REFERENCE usage maps for index pages are not yet supported"). Creating the
-  relationship over 20,000 orders that already have two indexes hits it, and so
-  does `AddAttachmentAsync`, which rebuilds the hidden flat table's indexes on
-  every call: on an 800-row table the 338th call threw.
+  relational and attachment databases are smaller than planned. Both were cut
+  while a full index rebuild that spread an index over more than one INLINE
+  usage-map window threw `NotSupportedException`, which creating the
+  relationship over 20,000 orders that already have two indexes did; the
+  rebuild now writes a REFERENCE usage map, so the relational database can
+  grow (docs/todo.md). The attachment database stays small because
+  `AddAttachmentAsync` rebuilds the hidden flat table's indexes on every call,
+  so filling it grows quadratically.
 - The `OpenAsync` floor is settled at roughly 1.1 ms / 41 KB. Do not spend
   optimization time on lazy catalog loading or catalog span rewrites without new
   measurements that contradict that floor.
@@ -253,8 +254,10 @@ The reader memoizes each table's owned pages whichever source gave them, so
 it reads and validates a table's map once even when it rejects the map.
 Validating a map again means reading the TDEF page, the map and every page the
 map lists before the index's answer is taken: for the 25,000-row text table,
-whose writer-built map lists 512 pages, that costs 0.92-1.33 ms and 181 KB per
-warm `FirstRow` call.
+whose writer-built map listed only the 512 pages of its INLINE window when
+this was measured, that cost 0.92-1.33 ms and 181 KB per warm `FirstRow`
+call. The writer now promotes such a map to REFERENCE, so a table it builds
+keeps every data page in its map and the map is no longer rejected.
 
 Primary code path:
 
