@@ -122,7 +122,6 @@ internal class StreamPageStore : IPageStore
             {
                 _ = this.Stream.Seek(offset, SeekOrigin.Begin);
                 await this.Stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-                await this.Stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -142,7 +141,6 @@ internal class StreamPageStore : IPageStore
         try
         {
             this.Stream.SetLength(length);
-            await this.Stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {

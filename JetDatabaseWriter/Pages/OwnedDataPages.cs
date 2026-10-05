@@ -23,9 +23,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal sealed class OwnedDataPages : IDisposable
 {
     private readonly IPageSource pages;
+    private readonly OwnedPageIndex ownerIndex;
     private readonly JetFormat format;
     private readonly bool cacheResults;
-    private readonly AsyncLazyInitializer<Dictionary<long, long[]>> ownedDataPageIndex;
 #if NET9_0_OR_GREATER
     private readonly Lock ownedDataPagesCacheLock = new();
 #else
@@ -54,9 +54,14 @@ internal sealed class OwnedDataPages : IDisposable
         }
 
         this.pages = pages;
+        this.ownerIndex = new OwnedPageIndex(pages, format);
+        if (pages is Pager pager)
+        {
+            pager.AddWriteObserver(this.ownerIndex);
+        }
+
         this.format = format;
         this.cacheResults = cacheResults;
-        this.ownedDataPageIndex = new(this.BuildOwnedDataPageIndexAsync);
     }
 
     /// <summary>Visits one row; returns <see langword="false"/> to stop the walk.</summary>
@@ -80,7 +85,11 @@ internal sealed class OwnedDataPages : IDisposable
             this.ownedDataPagesByTdef.Clear();
         }
 
-        this.ownedDataPageIndex.Dispose();
+        this.ownerIndex.Dispose();
+        if (this.pages is Pager pager)
+        {
+            pager.RemoveWriteObserver(this.ownerIndex);
+        }
     }
 
     /// <summary>
@@ -116,12 +125,7 @@ internal sealed class OwnedDataPages : IDisposable
             return mappedPages;
         }
 
-        Dictionary<long, long[]> pageIndex = canUseCache
-            ? await this.ownedDataPageIndex.GetAsync(cancellationToken).ConfigureAwait(false)
-            : await this.BuildOwnedDataPageIndexAsync(cancellationToken).ConfigureAwait(false);
-        long[] indexedPages = pageIndex.TryGetValue(tdefPage, out long[]? pageNumbers)
-            ? pageNumbers
-            : [];
+        long[] indexedPages = await this.ownerIndex.GetAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (canUseCache)
         {
             // The map was rejected: remember the index's answer too, so the
@@ -487,52 +491,6 @@ internal sealed class OwnedDataPages : IDisposable
         }
 
         return declaredRows == 0 || liveRows >= declaredRows;
-    }
-
-    private async ValueTask<Dictionary<long, long[]>> BuildOwnedDataPageIndexAsync(CancellationToken cancellationToken)
-    {
-        var pagesByOwner = new Dictionary<long, List<long>>();
-        long totalPages = this.pages.PageCount;
-
-        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            byte[] page = await this.pages.ReadUncachedPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page[0] != Constants.PageTypes.Data)
-                {
-                    continue;
-                }
-
-                long owner = Ri32(page, this.format.DataPage.TDefOff);
-                if (owner <= 0)
-                {
-                    continue;
-                }
-
-                if (!pagesByOwner.TryGetValue(owner, out List<long>? ownedPages))
-                {
-                    ownedPages = [];
-                    pagesByOwner.Add(owner, ownedPages);
-                }
-
-                ownedPages.Add(pageNumber);
-            }
-            finally
-            {
-                PageBuffers.Return(page);
-            }
-        }
-
-        var result = new Dictionary<long, long[]>(pagesByOwner.Count);
-        foreach ((long owner, List<long>? ownedPages) in pagesByOwner)
-        {
-            result.Add(owner, [.. ownedPages]);
-        }
-
-        return result;
     }
 
     /// <summary>One live row: the page that holds its bytes, and its location.</summary>

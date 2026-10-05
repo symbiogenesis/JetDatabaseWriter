@@ -325,8 +325,8 @@ public sealed class JetTransactionTests
         await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await BufferMultiPageInsertAsync(writer, TestContext.Current.CancellationToken);
 
-        // Each replayed page write flushes once; the durable flush follows.
-        int durableFlushCall = tx.JournaledPageCount + 1;
+        // Replay writes all pages before its single durable flush.
+        const int durableFlushCall = 1;
         stream.ThrowOnFlushCall(durableFlushCall);
 
         await Assert.ThrowsAsync<IOException>(async () =>

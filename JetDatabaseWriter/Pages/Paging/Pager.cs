@@ -35,9 +35,12 @@ internal sealed class Pager : PageFile
     /// Attached and detached only through a <see cref="JournalGate"/>, which
     /// holds the I/O gate, or by <see cref="ForceDetachJournal"/> at dispose.
     /// </summary>
-    private PageJournal? journal;
+    private readonly SortedDictionary<long, byte[]> dirtyPages = [];
+    private IPageWriteObserver[] observers = [];
+    private PagerTransaction? journal;
+    private int scopeDepth;
+    private long bufferedPageCount;
     private int clockHand;
-    private long generation;
     private long storeReads;
     private long cacheHits;
     private long evictions;
@@ -88,7 +91,7 @@ internal sealed class Pager : PageFile
     /// check and every caller that numbers pages before appending them uses
     /// this count.
     /// </summary>
-    public override long PageCount => this.journal?.NextAppendPageNumber ?? this.PhysicalPageCount;
+    public override long PageCount => this.journal?.NextAppendPageNumber ?? Math.Max(this.PhysicalPageCount, this.bufferedPageCount);
 
     /// <summary>
     /// Gets or sets the cooperative JET byte-range lock helper. Defaults to
@@ -111,6 +114,9 @@ internal sealed class Pager : PageFile
 
     /// <summary>Gets a value indicating whether a transaction journal is attached.</summary>
     internal bool IsJournalActive => this.journal is not null;
+
+    /// <summary>Gets the invalidation epoch for derived state.</summary>
+    internal long InvalidationGeneration { get; private set; }
 
     /// <summary>Gets physical-read and cache counters.</summary>
     internal PagerStatistics Statistics
@@ -170,6 +176,11 @@ internal sealed class Pager : PageFile
                         this.RetainFrame(appended, page);
                     }
 
+                    foreach (IPageWriteObserver observer in this.observers)
+                    {
+                        observer.OnPageWritten(appended, default, page.AsSpan(0, this.PageSize));
+                    }
+
                     return appended;
                 }
             }
@@ -178,7 +189,7 @@ internal sealed class Pager : PageFile
                 _ = this.IoGate.Release();
             }
 
-            long pageNumber = this.PhysicalPageCount;
+            long pageNumber = this.PageCount;
             await this.WriteCoreAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
             return pageNumber;
         }
@@ -197,8 +208,10 @@ internal sealed class Pager : PageFile
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await this.DrainDirtyPagesAsync().ConfigureAwait(false);
             this.InvalidateAll();
             await this.Store.SetLengthAsync(length, cancellationToken).ConfigureAwait(false);
+            this.bufferedPageCount = this.PhysicalPageCount;
         }
         finally
         {
@@ -221,7 +234,19 @@ internal sealed class Pager : PageFile
     /// <param name="toDisk">Whether to flush a file through to the device.</param>
     /// <param name="cancellationToken">A token used to cancel the flush.</param>
     /// <returns>A task that completes when the stream is flushed.</returns>
-    internal ValueTask FlushAsync(bool toDisk, CancellationToken cancellationToken) => this.Store.FlushAsync(toDisk, cancellationToken);
+    internal async ValueTask FlushAsync(bool toDisk, CancellationToken cancellationToken)
+    {
+        await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await this.DrainDirtyPagesAsync().ConfigureAwait(false);
+            await this.Store.FlushAsync(toDisk, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _ = this.frameGate.Release();
+        }
+    }
 
     /// <summary>
     /// Takes the frame gate and then the journal gate, waiting for in-flight
@@ -265,6 +290,11 @@ internal sealed class Pager : PageFile
         byte[]? pending = this.journal?.TryGet(pageNumber);
         if (pending is null)
         {
+            _ = this.dirtyPages.TryGetValue(pageNumber, out pending);
+        }
+
+        if (pending is null)
+        {
             return false;
         }
 
@@ -297,7 +327,7 @@ internal sealed class Pager : PageFile
     private protected override void OnStoreRead() => Interlocked.Increment(ref this.storeReads);
 
     /// <inheritdoc/>
-    private protected override bool HasPendingPages => this.journal is not null;
+    private protected override bool HasPendingPages => this.journal is not null || this.dirtyPages.Count != 0;
 
     /// <inheritdoc/>
     internal override void DisposeManagedResources()
@@ -318,18 +348,18 @@ internal sealed class Pager : PageFile
     /// <returns>The pooled owned page.</returns>
     internal async ValueTask<byte[]> ReadPageAsync(long pageNumber, PageReadHint hint, CancellationToken cancellationToken = default)
     {
-        if (this.cacheSize == 0 || hint == PageReadHint.NoCache)
-        {
-            return await base.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        }
-
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (this.cacheSize == 0 || hint == PageReadHint.NoCache)
+            {
+                return await base.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            }
+
             long loadedGeneration;
             lock (this.frameSync)
             {
-                loadedGeneration = this.generation;
+                loadedGeneration = this.InvalidationGeneration;
                 if (this.frames.TryGetValue(pageNumber, out Frame? frame))
                 {
                     frame.Referenced = true;
@@ -343,7 +373,7 @@ internal sealed class Pager : PageFile
             byte[] page = await base.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             lock (this.frameSync)
             {
-                if (loadedGeneration == this.generation)
+                if (loadedGeneration == this.InvalidationGeneration)
                 {
                     this.RetainFrame(pageNumber, page);
                 }
@@ -365,48 +395,95 @@ internal sealed class Pager : PageFile
             this.frames.Clear();
             this.clock.Clear();
             this.clockHand = 0;
-            this.generation++;
+            this.InvalidationGeneration++;
+            foreach (IPageWriteObserver observer in this.observers)
+            {
+                observer.OnInvalidateAll();
+            }
         }
+    }
+
+    private ValueTask<byte[]> ReadBeforeWriteAsync(long pageNumber, CancellationToken cancellationToken)
+    {
+        lock (this.frameSync)
+        {
+            if (this.frames.TryGetValue(pageNumber, out Frame? frame))
+            {
+                byte[] copy = ArrayPool<byte>.Shared.Rent(this.PageSize);
+                Buffer.BlockCopy(frame.Bytes, 0, copy, 0, this.PageSize);
+                return new ValueTask<byte[]>(copy);
+            }
+        }
+
+        return base.ReadPageAsync(pageNumber, cancellationToken);
     }
 
     private async ValueTask WriteCoreAsync(long pageNumber, byte[] page, CancellationToken cancellationToken)
     {
-        await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        bool pending;
-        long writeGeneration;
+        byte[]? before = this.observers.Length != 0 && pageNumber < this.PageCount
+            ? await this.ReadBeforeWriteAsync(pageNumber, cancellationToken).ConfigureAwait(false) : null;
         try
         {
-            pending = this.journal is not null;
-            this.journal?.Write(pageNumber, page.AsSpan(0, this.PageSize));
+            await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            bool pending;
+            long writeGeneration;
+            try
+            {
+                pending = this.journal is not null;
+                this.journal?.Write(pageNumber, page.AsSpan(0, this.PageSize));
+                lock (this.frameSync)
+                {
+                    writeGeneration = this.InvalidationGeneration;
+                }
+            }
+            finally
+            {
+                _ = this.IoGate.Release();
+            }
+
+            if (!pending && this.scopeDepth != 0)
+            {
+                this.dirtyPages[pageNumber] = page.AsSpan(0, this.PageSize).ToArray();
+                this.bufferedPageCount = Math.Max(this.PageCount, pageNumber + 1);
+                pending = true;
+                if (this.dirtyPages.Count >= Math.Max(64, this.cacheSize / 2))
+                {
+                    await this.DrainDirtyPagesAsync().ConfigureAwait(false);
+                }
+            }
+
+            if (!pending)
+            {
+                byte[] encoded = this.PrepareEncryptedPageForWrite(pageNumber, page);
+                try
+                {
+                    await this.Store.WriteAsync(pageNumber * this.PageSize, encoded.AsMemory(0, this.PageSize), cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    this.InvalidateAll();
+                    throw;
+                }
+            }
+
             lock (this.frameSync)
             {
-                writeGeneration = this.generation;
+                if (writeGeneration == this.InvalidationGeneration)
+                {
+                    this.RetainFrame(pageNumber, page);
+                }
+            }
+
+            foreach (IPageWriteObserver observer in this.observers)
+            {
+                observer.OnPageWritten(pageNumber, before is null ? default : before.AsSpan(0, this.PageSize), page.AsSpan(0, this.PageSize));
             }
         }
         finally
         {
-            _ = this.IoGate.Release();
-        }
-
-        if (!pending)
-        {
-            byte[] encoded = this.PrepareEncryptedPageForWrite(pageNumber, page);
-            try
+            if (before is not null)
             {
-                await this.Store.WriteAsync(pageNumber * this.PageSize, encoded.AsMemory(0, this.PageSize), cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                this.InvalidateAll();
-                throw;
-            }
-        }
-
-        lock (this.frameSync)
-        {
-            if (writeGeneration == this.generation)
-            {
-                this.RetainFrame(pageNumber, page);
+                PageBuffers.Return(before);
             }
         }
     }
@@ -447,6 +524,114 @@ internal sealed class Pager : PageFile
         this.frames.Add(pageNumber, new Frame(bytes));
     }
 
+    /// <summary>Replays a detached transaction without stealing pending frames.</summary>
+    /// <param name="transaction">The detached transaction.</param>
+    /// <param name="beforeFirstWrite">The last preparation before replay.</param>
+    /// <param name="cancellationToken">Cancellation before the first write.</param>
+    /// <returns>The completion.</returns>
+    internal async ValueTask CommitAsync(PagerTransaction transaction, Action beforeFirstWrite, CancellationToken cancellationToken)
+    {
+        await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            beforeFirstWrite();
+            foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
+            {
+                byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
+                await this.Store.WriteAsync(checked(entry.Key * this.PageSize), encoded.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
+            }
+
+            await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            this.InvalidateAll();
+            throw;
+        }
+        finally
+        {
+            _ = this.frameGate.Release();
+        }
+    }
+
+    /// <summary>Begins a nested write-back scope.</summary>
+    /// <returns>The scope whose final disposal flushes pending writes.</returns>
+    internal WriteScope BeginWriteScope()
+    {
+        this.ThrowIfDisposed();
+        this.scopeDepth++;
+        return new WriteScope(this);
+    }
+
+    /// <summary>Registers a page image observer.</summary>
+    /// <param name="observer">The observer.</param>
+    internal void AddWriteObserver(IPageWriteObserver observer)
+    {
+        lock (this.frameSync)
+        {
+            this.observers = [.. this.observers, observer];
+        }
+    }
+
+    /// <summary>Unregisters a page image observer.</summary>
+    /// <param name="observer">The observer.</param>
+    internal void RemoveWriteObserver(IPageWriteObserver observer)
+    {
+        lock (this.frameSync)
+        {
+            this.observers = Array.FindAll(this.observers, item => !ReferenceEquals(item, observer));
+        }
+    }
+
+    /// <summary>Ends one scope, flushing only the outermost scope.</summary>
+    /// <returns>The completion.</returns>
+    internal async ValueTask EndWriteScopeAsync()
+    {
+        if (--this.scopeDepth != 0 || this.journal is not null)
+        {
+            return;
+        }
+
+        await this.frameGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await this.DrainDirtyPagesAsync().ConfigureAwait(false);
+            await this.Store.FlushAsync(false, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            this.InvalidateAll();
+            throw;
+        }
+        finally
+        {
+            _ = this.frameGate.Release();
+        }
+    }
+
+    private async ValueTask DrainDirtyPagesAsync()
+    {
+        try
+        {
+            foreach (KeyValuePair<long, byte[]> entry in this.dirtyPages)
+            {
+                byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
+                await this.Store.WriteAsync(checked(entry.Key * this.PageSize), encoded.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            this.InvalidateAll();
+            throw;
+        }
+        finally
+        {
+            this.dirtyPages.Clear();
+            this.bufferedPageCount = this.PhysicalPageCount;
+        }
+    }
+
     private sealed class Frame(byte[] bytes)
     {
         internal byte[] Bytes { get; } = bytes;
@@ -473,7 +658,7 @@ internal sealed class Pager : PageFile
         internal JournalGate(Pager owner) => this.owner = owner;
 
         /// <summary>Gets the attached journal, or <see langword="null"/>.</summary>
-        internal PageJournal? Current => this.Owner.journal;
+        internal PagerTransaction? Current => this.Owner.journal;
 
         /// <summary>
         /// Gets the physical length of the file, which a new journal takes as
@@ -500,7 +685,7 @@ internal sealed class Pager : PageFile
         /// <summary>Attaches <paramref name="journal"/>, so later writes and appends are buffered in it.</summary>
         /// <param name="journal">The new transaction's journal.</param>
         /// <exception cref="InvalidOperationException">A journal is already attached.</exception>
-        internal void Attach(PageJournal journal)
+        internal void Attach(PagerTransaction journal)
         {
             Pager pager = this.Owner;
             if (pager.journal is not null)

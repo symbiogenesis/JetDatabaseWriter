@@ -1,4 +1,4 @@
-namespace JetDatabaseWriter.Pages;
+namespace JetDatabaseWriter.Pages.Paging;
 
 using System;
 using System.Collections.Generic;
@@ -30,14 +30,14 @@ using JetDatabaseWriter.Infrastructure;
 /// Not thread-safe. Callers serialize access via the writer's I/O gate.
 /// </para>
 /// </remarks>
-internal sealed class PageJournal
+internal sealed class PagerTransaction
 {
     private readonly SortedDictionary<long, byte[]> pages = [];
     private readonly int pageSize;
     private readonly int maxPages;
     private long appendedCount;
 
-    public PageJournal(long baseFileLengthBytes, int pageSize, int maxPages)
+    public PagerTransaction(long baseFileLengthBytes, int pageSize, int maxPages)
     {
         Guard.Positive(pageSize, nameof(pageSize));
         Guard.Positive(maxPages, nameof(maxPages));

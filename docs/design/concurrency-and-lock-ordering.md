@@ -47,7 +47,7 @@ its transaction journal and plaintext frame cache.
 A writer cache fill or write holds `frameGate`. It may briefly take `IoGate` to
 consult or modify the journal, then releases `IoGate` before calling the store.
 A physical write encodes its scratch buffer first, takes its per-page byte-range
-lock, then takes the store's `ioGate` for seek/write/flush. The page lock is
+lock, then takes the store's `ioGate` for seek/write. The page lock is
 released after the store gate. AES transforms never run under the store gate.
 A physical read releases the store gate before decoding.
 
@@ -86,18 +86,17 @@ work phase (row encode, index maintenance, page allocation)
      attached journal and buffers into it while holding frameGate and briefly IoGate for the
      buffer swap.
   └─ insertPageHintLock and ownedMapSetsLock may be taken briefly (leaf, memory only;
-     the owned-map policy's MSysObjects scan runs outside its lock). The writer's file never
-     caches owned pages or TDEF bytes, so the writer never takes ownedDataPagesCacheLock
-     or tdefBytesCacheLock.
+     the owned-map policy's MSysObjects scan runs outside its lock). The writer does not memoize TDEF bytes. Its owner index follows logical page writes;
+     observer updates take only a leaf lock and never read through the pager.
 
 CommitTransactionAsync
   ├─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach(); ActiveTransaction = null ──▶ dispose the lease
   ├─ ByteRangeLock commit-lock sentinel  ◀── held across the entire replay
   │     last cancellation check (nothing written yet)
-  │     foreach buffered page (ascending page order), with CancellationToken.None:
-  │         WritePageAsync
-  │           └─ frameGate ──▶ encode ──▶ ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write/flush
-  │     FlushDurableAsync (CancellationToken.None)
+  │     Pager.CommitAsync takes frameGate for replay:
+  │         foreach buffered page (ascending page order), with CancellationToken.None:
+  │           encode ──▶ ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
+  │         one durable store flush (CancellationToken.None)
   └─ release commit-lock (finally)
 
 RollbackTransactionAsync  (auto-commit calls it when the work throws)
@@ -119,11 +118,14 @@ before-image or redo log, so the pages written before a failure stay written.
 
 ### Writer non-transactional (default `UseTransactionalWrites = false`)
 
-No journal, no commit-lock. Each page mutation flushes immediately:
+No transaction journal or commit-lock. A reference-counted write scope buffers logical page mutations, exposes them to subsequent reads, and notifies observers. The outer scope writes dirty pages in ascending order and flushes once; it spills dirty images at max(64, cache capacity / 2) pages. Scope exit still drains after a failed operation, so these calls are not statement-atomic.
 
 ```
 WritePageAsync
-  └─ frameGate ──▶ encode ──▶ ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write/flush
+  └─ frameGate ──▶ buffer plaintext ──▶ notify logical-write observers
+Outer WriteScope.DisposeAsync (or threshold spill)
+  └─ frameGate ──▶ encode sorted dirty images ──▶ ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
+  └─ one non-durable store flush at outer scope exit
 ```
 
 ### Reader operation

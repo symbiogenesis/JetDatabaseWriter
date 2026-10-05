@@ -4,13 +4,13 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
 /// Represents an explicit, in-memory write transaction against a single
 /// <see cref="AccessWriter"/>. Page mutations performed inside a transaction
-/// are buffered in a <see cref="PageJournal"/> (the new contents of each dirty
+/// are buffered in a <see cref="PagerTransaction"/> (the new contents of each dirty
 /// page) until <see cref="CommitAsync"/> writes them over the database file in
 /// place. <see cref="RollbackAsync"/> (and <see cref="DisposeAsync"/> on an
 /// uncommitted transaction) discards the journal: nothing reaches the file
@@ -46,7 +46,7 @@ public sealed class JetTransaction : IAsyncDisposable
 
     private readonly TransactionLifecycle lifecycle;
 
-    internal JetTransaction(TransactionLifecycle lifecycle, PageJournal journal)
+    internal JetTransaction(TransactionLifecycle lifecycle, PagerTransaction journal)
     {
         this.lifecycle = lifecycle;
         this.Journal = journal;
@@ -70,7 +70,7 @@ public sealed class JetTransaction : IAsyncDisposable
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
     public int JournaledPageCount => this.Journal.Count;
 
-    internal PageJournal Journal { get; }
+    internal PagerTransaction Journal { get; }
 
     /// <summary>Gets a value indicating whether a commit failed after it had started writing pages.</summary>
     internal bool IsCommitFailed { get; private set; }

@@ -58,7 +58,7 @@ public sealed class ServiceGraphTests
     /// in-place TDEF write-backs. Only the writer's graph may hold or name them.
     /// </summary>
     private static readonly Type[] WriteCapabilities =
-        [typeof(Pager), typeof(Pager.JournalGate), typeof(PageJournal), typeof(JetByteRangeLock), typeof(TDefWriter)];
+        [typeof(Pager), typeof(Pager.JournalGate), typeof(PagerTransaction), typeof(JetByteRangeLock), typeof(TDefWriter)];
 
     public static TheoryData<Type> CompositionRoots => [typeof(ReaderServices), typeof(WriterServices)];
 

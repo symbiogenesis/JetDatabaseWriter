@@ -664,10 +664,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The number of free pages scrubbed.</returns>
-    public ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken = default)
     {
         this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
-        return this.services.PageAllocator.ScrubFreePagesAsync(cancellationToken);
+        await using WriteScope scope = this.services.Transactions.BeginWriteScope();
+        return await this.services.PageAllocator.ScrubFreePagesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -677,10 +678,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The number of pages removed from the end of the file.</returns>
-    public ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken = default)
     {
         this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
-        return this.services.PageAllocator.ShrinkDatabaseAsync(cancellationToken);
+        await using WriteScope scope = this.services.Transactions.BeginWriteScope();
+        return await this.services.PageAllocator.ShrinkDatabaseAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -718,6 +720,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // accurately reflects "database still in use" while we re-encrypt.
         await this.lockFileCoordinator.DisposeAfterAsync(
             this.services.Transactions.DisposeActiveTransactionAsync,
+            this.services.Transactions.FlushPendingWritesAsync,
             this.RewrapAndCloseOuterEncryptedStreamAsync,
             this.Database.DisposeAsync).ConfigureAwait(false);
     }
@@ -764,6 +767,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask InitializeFreshDatabaseAsync(bool fullCatalogSchema, CancellationToken cancellationToken)
     {
+        await using WriteScope scope = this.services.Transactions.BeginWriteScope();
         long coreSystemTableStartPage = await this.services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(fullCatalogSchema, cancellationToken).ConfigureAwait(false);
         await this.services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(fullCatalogSchema, cancellationToken).ConfigureAwait(false);
         await this.services.ComplexColumns.ScaffoldSystemTablesAsync(fullCatalogSchema, coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);

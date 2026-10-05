@@ -232,10 +232,10 @@ public sealed class PagerTests
         {
             Assert.Null(gate.Current);
             Assert.Equal(stream.Length, gate.PhysicalLengthBytes);
-            var journal = new PageJournal(gate.PhysicalLengthBytes, pager.PageSize, maxPages: 4);
+            var journal = new PagerTransaction(gate.PhysicalLengthBytes, pager.PageSize, maxPages: 4);
             gate.Attach(journal);
             Assert.Same(journal, gate.Current);
-            _ = Assert.Throws<InvalidOperationException>(() => gate.Attach(new PageJournal(gate.PhysicalLengthBytes, pager.PageSize, maxPages: 4)));
+            _ = Assert.Throws<InvalidOperationException>(() => gate.Attach(new PagerTransaction(gate.PhysicalLengthBytes, pager.PageSize, maxPages: 4)));
             gate.Detach();
             Assert.Null(gate.Current);
         }

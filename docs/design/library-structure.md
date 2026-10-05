@@ -148,13 +148,16 @@ JetDatabaseWriter/
 │   ├── DataPageRows.cs                    (a data page's row directory: live rows, overflow headers, slot bounds)
 │   ├── IOwnedMapPolicy.cs                 (whose owned-page usage maps the writer may extend; captured and restored by transactions)
 │   ├── OwnedDataPages.cs                  (a table's owned data pages from its usage map or the whole-file index, and its live rows, overflow rows included)
+│   ├── OwnedPageIndex.cs                  (owner lookup maintained from logical page writes and invalidated on rollback)
 │   ├── PageAllocator.cs                   (global free-map reuse, freed-page scrubbing, tail shrink)
 │   ├── ReservedPageRuns.cs                (page runs an index operation reserved but has not linked; released on a bail or throw)
 │   ├── ReaderPageCache.cs                 (the reader's page and row-directory LRU caches)
 │   ├── UsageMap.cs                        (INLINE/REFERENCE usage-map parsing, bitmaps, pointer/row emission)
 │   ├── UsageMapEditor.cs                  (the writer's usage-map rows: marks pages, writes index rows, promotes INLINE rows to REFERENCE)
-│   ├── PageJournal.cs                     (in-memory after-images of a transaction's pages, replayed in place on commit)
 │   ├── Paging/                            (one open file's page I/O)
+│   │   ├── IPageWriteObserver.cs           (plaintext before/after images and derived-state invalidation)
+│   │   ├── WriteScope.cs                   (nested per-call write-back lifetime)
+│   │   ├── PagerTransaction.cs             (transaction after-images replayed by the pager)
 │   │   ├── IPageSource.cs                 (read decrypted pages: the interface read-side code depends on)
 │   │   ├── PageBuffers.cs                 (pooled page-buffer return and caller-owned page copies)
 │   │   ├── PageFile.cs                    (read-only page I/O over IPageStore and IPageCodec)
@@ -164,7 +167,7 @@ JetDatabaseWriter/
 │   │   ├── StoreCapabilities.cs
 │   │   ├── PageReadHint.cs
 │   │   ├── PagerStatistics.cs
-│   │   └── Pager.cs                       (writer frame cache, writes, appends, transaction journal and JournalGate)
+│   │   └── Pager.cs                       (writer frame cache, per-call write-back, transaction replay and JournalGate)
 │   └── Models/
 │       ├── DataPageInserterState.cs       (the insert hint, restored on rollback)
 │       ├── LocatedRow.cs                  (a decoded row paired with the location it was read from)
@@ -446,7 +449,7 @@ No collaborator receives a facade, `AccessBase`, or a composition root, and none
 - the collaborator graph reachable from each composition root is acyclic;
 - walking the live object graph from an open facade's services never reaches the facade;
 - the live service graphs hold the facade's exact `JetFormat`, `PageFile`, `TableDefReader` and `OwnedDataPages` instances, with no `DatabaseFile`; writer services use exactly one `Pager` and hold no `AccessReader`;
-- the reader's graph holds no `Pager`, `PageJournal`, `JetByteRangeLock` or `TDefWriter`, and no type in it names one in an instance member's signature;
+- the reader's graph holds no `Pager`, `PagerTransaction`, `JetByteRangeLock` or `TDefWriter`, and no type in it names one in an instance member's signature;
 - no collaborator takes or holds `DatabaseFile`; only the facades, composition roots and composite itself may use it; and
 - the facades declare no internal members.
 
@@ -544,7 +547,7 @@ ReaderServices (root) → every reader collaborator
 WriterServices (root) → every writer collaborator
 ```
 
-Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Linq` ↔ `Queries`, `Pages` ↔ `Schema`, `Pages` ↔ `Transactions` (the writer's `Pager` takes the byte-range locks; `TransactionLifecycle` attaches the `PageJournal`), and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
+Because folders group by domain, several pairs reference each other: `Catalog` ↔ `Indexes`, `Catalog` ↔ `Pages`, `Catalog` ↔ `Schema`, `Catalog` ↔ `Tables`, `Catalog` ↔ `ValueDecoding`, `Catalog` ↔ `ValueEncoding`, `ComplexColumns` ↔ `Tables`, `Encryption` ↔ `Schema`, `Indexes` ↔ `Schema`, `Indexes` ↔ `Tables`, `Linq` ↔ `Queries`, `Pages` ↔ `Schema`, `Pages` ↔ `Transactions` (the writer's `Pager` takes the byte-range locks; `TransactionLifecycle` attaches the `PagerTransaction`), and `Relationships` ↔ `Tables`. Each pair comes from different classes in the two folders using one another (for example, `IndexMaintainer` in `Indexes/` uses `TableRowStore` in `Tables/`, while `TableDataWriter` in `Tables/` uses `IndexMaintainer`; `CatalogReader` decodes `MSysObjects` rows through `RowDecoder`, while the value decoders read `TableDef` from `Catalog.Models`). The reader's and writer's table-level workflow services all live in `Tables/`, so the read path adds only the `Catalog` ↔ `ValueDecoding` pair. The acyclicity guarantee applies to the two collaborator graphs above, not to the folder map. The library is a single project, so there are no project-level cycles. `Infrastructure/` and the pure layout and value helpers remain stable leaf dependencies.
 
 ---
 
@@ -625,7 +628,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Builder** | `TDefPageBuilder`, `IndexBTreeBuilder`, `ColumnPropertyBlockBuilder`, `DirectRowDecoderBuilder` | Constructs complex page buffers incrementally |
 | **Cursor / Editor** | `IndexCursor`, `IndexBTreeEditor`, `IndexPageCodec` | Keeps read-only B-tree descent and in-place mutation planning separate from TDEF/catalog orchestration |
 | **Strategy via layout structs** | `JetFormat` holding `DataPageLayout`, `LvalPageLayout`, `TDefHeaderLayout`, `ColumnDescriptorLayout`, `RowFieldSizes`, `IndexLayout`, `IndexPageLayout` and the capability flags | Format-version polymorphism (Jet3 vs Jet4 vs ACE) without virtual dispatch; one immutable profile per open file, built from its header |
-| **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PageJournal` | Dedicated page-level I/O: the reader's read-only `PageFile` with its 256-page LRU eviction cache, and the writer's `Pager` with an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
+| **Pager** | `PageFile` / `Pager` + `ReaderPageCache` (`LruCache`) + `PagerTransaction` | Dedicated page-level I/O: the reader's read-only `PageFile` with its 256-page LRU eviction cache, and the writer's `Pager` with an in-memory transaction journal. Unlike SQLite's pager, the journal holds after-images only and commit writes them in place, so a commit is not crash-atomic |
 | **Allocator** | `PageAllocator`, `ReservedPageRuns` | Centralizes Access global free-map reuse, freed-page headers, secure erase, and tail-only shrink; index paths record each run they reserve until a TDEF or usage-map write links it, and give back any run they abandon |
 | **Usage Map Codec** | `UsageMap`, `UsageMapEditor` | Centralizes INLINE/REFERENCE ownership and free-map row parsing, bitmap traversal, bit mutation, pointer emission, and inline row serialization; `UsageMapEditor` grows the writer's rows past one INLINE window by promoting them to REFERENCE and allocating their bitmap pages |
 | **Row Decode Plan** | `RowDecodePlan` | Centralizes row-layout preflight, projection masks, string-row materialization, typed fixed/variable slice decoding, direct-decoder slice resolution, calculated payload handling, and partial key-column reads |

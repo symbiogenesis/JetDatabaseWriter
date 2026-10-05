@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Transactions;
 
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -52,6 +51,14 @@ internal sealed class TransactionLifecycle(
     /// </summary>
     private WriterState? stateAtBegin;
 
+    /// <summary>Begins call write-back for creation and maintenance.</summary>
+    /// <returns>The reference-counted scope.</returns>
+    internal WriteScope BeginWriteScope() => pager.BeginWriteScope();
+
+    /// <summary>Flushes pending writes before a container rewrap.</summary>
+    /// <returns>The completion.</returns>
+    internal ValueTask FlushPendingWritesAsync() => pager.FlushAsync(false, CancellationToken.None);
+
     /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
     internal JetTransaction? ActiveTransaction { get; private set; }
 
@@ -74,7 +81,7 @@ internal sealed class TransactionLifecycle(
                 "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
         }
 
-        var journal = new PageJournal(gate.PhysicalLengthBytes, format.PageSize, options.MaxTransactionPageBudget);
+        var journal = new PagerTransaction(gate.PhysicalLengthBytes, format.PageSize, options.MaxTransactionPageBudget);
         var tx = new JetTransaction(this, journal);
         this.stateAtBegin = new WriterState(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
         gate.Attach(journal);
@@ -94,6 +101,7 @@ internal sealed class TransactionLifecycle(
     {
         if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || pager.IsDisposed)
         {
+            await using WriteScope scope = pager.BeginWriteScope();
             await work(cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -136,6 +144,7 @@ internal sealed class TransactionLifecycle(
     {
         if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || pager.IsDisposed)
         {
+            await using WriteScope scope = pager.BeginWriteScope();
             return await work(cancellationToken).ConfigureAwait(false);
         }
 
@@ -200,7 +209,7 @@ internal sealed class TransactionLifecycle(
 
         pager.ThrowIfDisposed();
 
-        PageJournal journal;
+        PagerTransaction journal;
         WriterState? state;
 
         // The detach is memory-only, and the I/O gate is held only briefly per
@@ -243,13 +252,7 @@ internal sealed class TransactionLifecycle(
 
             // Set before the first write: a write that fails may already have
             // changed part of its page.
-            replayStarted = true;
-            foreach (KeyValuePair<long, byte[]> entry in journal.EnumerateInOrder())
-            {
-                await pager.WritePageAsync(entry.Key, entry.Value, CancellationToken.None).ConfigureAwait(false);
-            }
-
-            await this.FlushDurableAsync(CancellationToken.None).ConfigureAwait(false);
+            await pager.CommitAsync(journal, () => replayStarted = true, cancellationToken).ConfigureAwait(false);
             transaction.MarkCommitted();
         }
         catch
@@ -332,13 +335,6 @@ internal sealed class TransactionLifecycle(
             this.stateAtBegin = null;
         }
     }
-
-    /// <summary>
-    /// Flushes the underlying stream durably.
-    /// </summary>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask FlushDurableAsync(CancellationToken cancellationToken)
-        => await pager.FlushAsync(toDisk: true, cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// Returns the writer's in-memory state to <paramref name="state"/> after

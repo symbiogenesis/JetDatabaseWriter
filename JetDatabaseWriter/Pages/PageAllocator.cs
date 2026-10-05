@@ -21,6 +21,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterOptions options)
 {
     private const int GlobalUsageMapPageNumber = 1;
+    private List<long>? cachedFreePages;
+    private long freePageGeneration = -1;
 
     internal async ValueTask<long> AllocatePageAsync(byte[] page, CancellationToken cancellationToken)
     {
@@ -321,6 +323,11 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
 
     private async ValueTask<List<long>> EnumerateMappedFreePagesAsync(CancellationToken cancellationToken)
     {
+        if (this.cachedFreePages is not null && this.freePageGeneration == pager.InvalidationGeneration)
+        {
+            return [.. this.cachedFreePages];
+        }
+
         byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -346,7 +353,10 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 return [];
             }
 
-            return await this.FilterPhysicallyReusablePagesAsync(mappedFreePages, cancellationToken).ConfigureAwait(false);
+            List<long> reusable = await this.FilterPhysicallyReusablePagesAsync(mappedFreePages, cancellationToken).ConfigureAwait(false);
+            this.cachedFreePages = reusable;
+            this.freePageGeneration = pager.InvalidationGeneration;
+            return [.. reusable];
         }
         finally
         {
@@ -406,6 +416,29 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
     }
 
     private async ValueTask SetPageFreeStateAsync(long pageNumber, bool free, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await this.SetPageFreeStateCoreAsync(pageNumber, free, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            this.cachedFreePages = null;
+            throw;
+        }
+
+        if (this.cachedFreePages is not null)
+        {
+            _ = this.cachedFreePages.Remove(pageNumber);
+            if (free)
+            {
+                this.cachedFreePages.Add(pageNumber);
+                this.cachedFreePages.Sort();
+            }
+        }
+    }
+
+    private async ValueTask SetPageFreeStateCoreAsync(long pageNumber, bool free, CancellationToken cancellationToken)
     {
         byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
         try
