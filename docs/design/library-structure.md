@@ -639,7 +639,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `UsageMap` only parses/emits usage-map rows and bits; `DataPageInserter` only manages page insertion; `TransactionLifecycle` only handles begin/commit/rollback |
 | **Open/Closed (OCP)** | Adding a new column type means extending `JetTypeInfo` (`GetClrType`, `ReadFixedTyped`), `RowEncoder`, and type metadata helpers — not modifying the orchestrator |
 | **Interface Segregation (ISP)** | `IAccessReader`, `IAccessSchema` (DDL), and `IAccessWriter` (DML) are separated; consumers depend only on what they use |
-| **Dependency Inversion (DIP)** | Reader and writer collaborators receive their dependencies through constructors from `ReaderServices` / `WriterServices`; they depend on the `DatabaseFile` page I/O and format context, not on the facade that owns them |
+| **Dependency Inversion (DIP)** | Reader and writer collaborators receive their dependencies through constructors from `ReaderServices` / `WriterServices`; they receive the `JetFormat`, page source, `TableDefReader` and `OwnedDataPages` parts they use |
 
 ### Package design principles (Robert C. Martin)
 
@@ -648,7 +648,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Common Closure (CCP)** | Classes that change together live together. All index concerns in `Indexes/`; all encryption in `Encryption/` |
 | **Common Reuse (CRP)** | Classes used together live together. `CatalogEntry`, `CatalogRow`, `TableDef` always consumed as a group → `Catalog/Models/` |
 | **Acyclic Dependencies (ADP)** | Applied at the class level to both facades: the collaborator graphs built by `ReaderServices` and `WriterServices` have no cycles, and `ServiceGraphTests` enforces it. Folders are domain groupings and do reference each other in both directions (see the dependency map). |
-| **Stable Dependencies (SDP)** | Pure helpers (`Infrastructure/`, layout structs, codec primitives) stay stable. Reader and writer services depend on `DatabaseFile` for coordinated page I/O and format state, which is more stable than any service and never depends on one. |
+| **Stable Dependencies (SDP)** | Pure helpers (`Infrastructure/`, layout structs, codec primitives) stay stable. Reader and writer services depend on the immutable `JetFormat` and the page, TDEF and owned-page services; those parts never depend on the workflows that use them. |
 
 ---
 
