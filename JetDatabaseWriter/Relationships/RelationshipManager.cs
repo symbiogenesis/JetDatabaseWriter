@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
@@ -81,7 +82,7 @@ internal sealed class RelationshipManager(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown when a key column is missing from its table, or, before anything is read, when the relationship name breaks the Access naming rules (<see cref="AccessObjectName"/>) or a name is not in a Jet3 database's code page.</exception>
-    /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a relationship with the same name already exists or existing rows violate its enforced constraint.</exception>
     /// <remarks>
     /// Per <see href="docs/design/index-and-relationship-format-notes.md" /> §7. The
@@ -92,6 +93,8 @@ internal sealed class RelationshipManager(
     /// engine are emitted by <see cref="EmitFkPerTdefEntriesAsync"/> on
     /// every format, in the shape Access writes for that format.
     /// </remarks>
+    /// <exception cref="JetObjectExistsException">The operation is refused with a structured <see cref="JetObjectExistsException"/>.</exception>
+    /// <exception cref="JetObjectNotFoundException">A relationship key column is missing.</exception>
     internal async ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken)
     {
         Guard.NotNull(relationship, nameof(relationship));
@@ -117,16 +120,12 @@ internal sealed class RelationshipManager(
         {
             if (primaryDef.FindColumnIndex(relationship.PrimaryColumns[i]) < 0)
             {
-                throw new ArgumentException(
-                    $"Column '{relationship.PrimaryColumns[i]}' was not found on table '{relationship.PrimaryTable}'.",
-                    nameof(relationship));
+                throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{relationship.PrimaryColumns[i]}' was not found on table '{relationship.PrimaryTable}'.", nameof(relationship), new JetErrorInfo { TableName = relationship.PrimaryTable, ColumnName = relationship.PrimaryColumns[i], RelationshipName = relationship.Name });
             }
 
             if (foreignDef.FindColumnIndex(relationship.ForeignColumns[i]) < 0)
             {
-                throw new ArgumentException(
-                    $"Column '{relationship.ForeignColumns[i]}' was not found on table '{relationship.ForeignTable}'.",
-                    nameof(relationship));
+                throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{relationship.ForeignColumns[i]}' was not found on table '{relationship.ForeignTable}'.", nameof(relationship), new JetErrorInfo { TableName = relationship.ForeignTable, ColumnName = relationship.ForeignColumns[i], RelationshipName = relationship.Name });
             }
         }
 
@@ -144,10 +143,7 @@ internal sealed class RelationshipManager(
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
-            throw new NotSupportedException(
-                "The database does not contain a 'MSysRelationships' table. Full-catalog ACCDB databases " +
-                "created by AccessWriter.CreateDatabaseAsync include it, but Jet/MDB outputs and slim " +
-                "catalog databases may require an Access-authored source before calling CreateRelationshipAsync.");
+            throw new JetNotSupportedException(JetErrorCode.SystemTableMissing, "The database does not contain a 'MSysRelationships' table. Full-catalog ACCDB databases created by AccessWriter.CreateDatabaseAsync include it, but Jet/MDB outputs and slim catalog databases may require an Access-authored source before calling CreateRelationshipAsync.", new JetErrorInfo { ObjectName = "MSysRelationships" });
         }
 
         TableDef msysRelDef = await this.tableDefs.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
@@ -156,7 +152,7 @@ internal sealed class RelationshipManager(
         HashSet<string> existingNames = await this.catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
         if (existingNames.Contains(relationship.Name))
         {
-            throw new InvalidOperationException($"A relationship named '{relationship.Name}' already exists.");
+            throw new JetObjectExistsException(JetErrorCode.RelationshipExists, $"A relationship named '{relationship.Name}' already exists.", new JetErrorInfo { RelationshipName = relationship.Name });
         }
 
         await this.ValidateExistingRowsAsync(relationship, primaryTable, foreignTable, cancellationToken).ConfigureAwait(false);
@@ -204,7 +200,7 @@ internal sealed class RelationshipManager(
     /// <param name="primaryTable">The resolved parent table.</param>
     /// <param name="foreignTable">The resolved child table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">An existing foreign key has no matching parent key.</exception>
+    /// <exception cref="JetConstraintException">An existing foreign key has no matching parent key.</exception>
     private async ValueTask ValidateExistingRowsAsync(
         RelationshipDefinition relationship,
         ResolvedTable primaryTable,
@@ -260,8 +256,7 @@ internal sealed class RelationshipManager(
 
         if (foreignKeys.Count != 0)
         {
-            throw new InvalidOperationException(
-                $"Cannot create relationship '{relationship.Name}': existing rows in '{relationship.ForeignTable}' violate referential integrity because no matching row exists in '{relationship.PrimaryTable}'.");
+            throw JetErrors.Constraint(JetErrorCode.ForeignKeyMissingParent, $"Cannot create relationship '{relationship.Name}': existing rows in '{relationship.ForeignTable}' violate referential integrity because no matching row exists in '{relationship.PrimaryTable}'.", new JetErrorInfo { TableName = relationship.ForeignTable, RelationshipName = relationship.Name });
         }
     }
 
@@ -1029,15 +1024,14 @@ internal sealed class RelationshipManager(
     /// <param name="state">The state captured before the rewrite.</param>
     /// <param name="mapColumnName">Maps each current column name to its name after the rewrite, or to <see langword="null"/> for a dropped column.</param>
     /// <exception cref="InvalidOperationException">Thrown when a relationship key column would be dropped.</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     internal static void EnsureKeyColumnsSurvive(RelationshipRewriteState state, Func<string, string?> mapColumnName)
     {
         foreach (RelationshipKeyColumn key in state.KeyColumns)
         {
             if (mapColumnName(key.ColumnName) is null)
             {
-                throw new InvalidOperationException(
-                    $"Column '{key.ColumnName}' of table '{state.TableName}' is a key column of relationship '{key.RelationshipName}'. " +
-                    "Drop the relationship before dropping the column.");
+                throw new JetOperationException(JetErrorCode.KeyColumnInRelationship, $"Column '{key.ColumnName}' of table '{state.TableName}' is a key column of relationship '{key.RelationshipName}'. Drop the relationship before dropping the column.", errorInfo: new JetErrorInfo { TableName = state.TableName, ColumnName = key.ColumnName, RelationshipName = key.RelationshipName });
             }
         }
 
@@ -1047,9 +1041,7 @@ internal sealed class RelationshipManager(
             {
                 if (mapColumnName(column) is null)
                 {
-                    throw new InvalidOperationException(
-                        $"Column '{column}' of table '{state.TableName}' is a key column of foreign-key index '{entry.Name}'. " +
-                        "Drop the relationship before dropping the column.");
+                    throw new JetOperationException(JetErrorCode.KeyColumnInRelationship, $"Column '{column}' of table '{state.TableName}' is a key column of foreign-key index '{entry.Name}'. Drop the relationship before dropping the column.", errorInfo: new JetErrorInfo { TableName = state.TableName, ColumnName = column, IndexName = entry.Name });
                 }
             }
         }
@@ -1537,6 +1529,7 @@ internal sealed class RelationshipManager(
     /// <param name="tableName">The table being dropped.</param>
     /// <param name="relationshipNames">The relationships that name it, from <see cref="FindRelationshipNamesForTableAsync"/>.</param>
     /// <exception cref="InvalidOperationException">Thrown when any relationship names the table.</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     internal static void EnsureTableHasNoRelationships(string tableName, IReadOnlyList<string> relationshipNames)
     {
         if (relationshipNames.Count == 0)
@@ -1551,9 +1544,7 @@ internal sealed class RelationshipManager(
         }
 
         string list = string.Join(", ", quoted);
-        throw new InvalidOperationException(relationshipNames.Count == 1
-            ? $"Table '{tableName}' participates in relationship {list}. Drop the relationship before dropping the table."
-            : $"Table '{tableName}' participates in relationships {list}. Drop the relationships before dropping the table.");
+        throw new JetOperationException(JetErrorCode.TableInRelationship, relationshipNames.Count == 1 ? $"Table '{tableName}' participates in relationship {list}. Drop the relationship before dropping the table." : $"Table '{tableName}' participates in relationships {list}. Drop the relationships before dropping the table.", errorInfo: new JetErrorInfo { TableName = tableName });
     }
 
     /// <summary>
@@ -1734,8 +1725,9 @@ internal sealed class RelationshipManager(
     /// <param name="relationshipName">The case-insensitive relationship name to delete.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
     /// <exception cref="InvalidOperationException">Thrown when no relationship has the supplied name.</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     internal async ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(relationshipName, nameof(relationshipName));
@@ -1745,8 +1737,7 @@ internal sealed class RelationshipManager(
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
-            throw new NotSupportedException(
-                "The database does not contain a 'MSysRelationships' table; nothing to drop.");
+            throw new JetNotSupportedException(JetErrorCode.SystemTableMissing, "The database does not contain a 'MSysRelationships' table; nothing to drop.", new JetErrorInfo { ObjectName = "MSysRelationships" });
         }
 
         TableDef msysRelDef = await this.tableDefs.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
@@ -1767,7 +1758,7 @@ internal sealed class RelationshipManager(
 
         if (matches.Count == 0)
         {
-            throw new InvalidOperationException($"No relationship named '{relationshipName}' was found.");
+            throw new JetOperationException(JetErrorCode.RelationshipNotFound, $"No relationship named '{relationshipName}' was found.", errorInfo: new JetErrorInfo { RelationshipName = relationshipName });
         }
 
         await this.ForEachRelationshipFkPairAsync(
@@ -1821,9 +1812,11 @@ internal sealed class RelationshipManager(
     /// <param name="newName">The new relationship name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="NotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
+    /// <exception cref="JetNotSupportedException">Thrown when the database has no <c>MSysRelationships</c> table.</exception>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="newName"/> is already taken, no relationship is named <paramref name="oldName"/>, or <c>MSysRelationships</c> has no <c>szRelationship</c> column.</exception>
     /// <exception cref="ArgumentException">Thrown, before anything is read, when <paramref name="newName"/> breaks the Access naming rules (<see cref="AccessObjectName"/>) or is not in a Jet3 database's code page.</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
+    /// <exception cref="JetObjectExistsException">The operation is refused with a structured <see cref="JetObjectExistsException"/>.</exception>
     internal async ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(oldName, nameof(oldName));
@@ -1840,8 +1833,7 @@ internal sealed class RelationshipManager(
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
-            throw new NotSupportedException(
-                "The database does not contain a 'MSysRelationships' table; nothing to rename.");
+            throw new JetNotSupportedException(JetErrorCode.SystemTableMissing, "The database does not contain a 'MSysRelationships' table; nothing to rename.", new JetErrorInfo { ObjectName = "MSysRelationships" });
         }
 
         TableDef msysRelDef = await this.tableDefs.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
@@ -1850,7 +1842,7 @@ internal sealed class RelationshipManager(
         HashSet<string> existing = await this.catalog.ReadExistingRelationshipNamesAsync(msysRelTdefPage, msysRelDef, cancellationToken).ConfigureAwait(false);
         if (existing.Contains(newName))
         {
-            throw new InvalidOperationException($"A relationship named '{newName}' already exists.");
+            throw new JetObjectExistsException(JetErrorCode.RelationshipExists, $"A relationship named '{newName}' already exists.", new JetErrorInfo { RelationshipName = newName });
         }
 
         List<RelationshipRowSnapshot> allRows = await this.catalog.CollectRowsAsync(
@@ -1870,13 +1862,13 @@ internal sealed class RelationshipManager(
 
         if (matches.Count == 0)
         {
-            throw new InvalidOperationException($"No relationship named '{oldName}' was found.");
+            throw new JetOperationException(JetErrorCode.RelationshipNotFound, $"No relationship named '{oldName}' was found.", new JetErrorInfo { RelationshipName = oldName });
         }
 
         int szRelIdx = msysRelDef.FindColumnIndex("szRelationship");
         if (szRelIdx < 0)
         {
-            throw new InvalidOperationException("MSysRelationships does not expose a 'szRelationship' column.");
+            throw new JetOperationException(JetErrorCode.SystemTableMissing, "MSysRelationships does not expose a 'szRelationship' column.");
         }
 
         var replacementRows = new List<object[]>(allRows.Count);

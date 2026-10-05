@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -56,13 +57,13 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         {
             await writer.InsertRowAsync(TableName, WideRow(format, 1), this.ct);
 
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(TableName, WideRow(format, 1, salt: 7), this.ct));
             Assert.Contains("UX_00", ex.Message, StringComparison.Ordinal);
             Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
             // A duplicate inside one batch is caught too.
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowsAsync(TableName, [WideRow(format, 2), WideRow(format, 2, salt: 7)], this.ct));
         }
 
@@ -81,7 +82,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         {
             _ = await writer.InsertRowsAsync(TableName, [WideRow(format, 1), WideRow(format, 2)], this.ct);
 
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(TableName, "C000", 2, new Dictionary<string, object?> { ["C000"] = 1 }, this.ct));
             Assert.Contains("UX_00", ex.Message, StringComparison.Ordinal);
         }
@@ -184,9 +185,9 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             await writer.InsertRowAsync(TableName, WideRow(format, 6), this.ct);
 
             // Duplicates of a committed key and of a key written inside the transaction.
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(TableName, WideRow(format, 2, salt: 7), this.ct));
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(TableName, WideRow(format, 5, salt: 7), this.ct));
 
             await tx.CommitAsync(this.ct);
@@ -236,9 +237,9 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         {
             _ = await writer.InsertRowsAsync(TableName, Enumerable.Range(1, 12).Select(k => WideRow(format, k)).ToList(), this.ct);
 
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(TableName, WideRow(format, 4, salt: 7), this.ct));
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(TableName, "C000", 5, new Dictionary<string, object?> { ["C000"] = 6 }, this.ct));
 
             Assert.Equal(1, await writer.UpdateRowsAsync(TableName, "C000", 5, new Dictionary<string, object?> { ["C000"] = 500 }, this.ct));
@@ -274,7 +275,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             await writer.AddColumnAsync(TableName, new ColumnDefinition("Extra", typeof(int)), this.ct);
 
             object[] duplicate = [.. WideRow(format, 4, salt: 7), 1];
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(TableName, duplicate, this.ct));
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync(TableName, duplicate, this.ct));
 
             await writer.InsertRowAsync(TableName, [.. WideRow(format, 11), 2], this.ct);
             Assert.Equal(1, await writer.DeleteRowsAsync(TableName, "C000", 5, this.ct));
@@ -325,7 +326,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             orphan[101] = 42;
             _ = await Assert.ThrowsAnyAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(TableName, orphan, this.ct));
             _ = await Assert.ThrowsAnyAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("Child", [5, 999], this.ct));
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(TableName, WideRow(format, 15, salt: 7), this.ct));
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync(TableName, WideRow(format, 15, salt: 7), this.ct));
 
             Assert.Equal(1, await writer.DeleteRowsAsync(TableName, "C000", 3, this.ct));
         }
@@ -358,7 +359,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         await using (AccessWriter writer = await AccessWriter.OpenAsync(path, writerOptions, this.ct))
         {
             _ = await writer.InsertRowsAsync(TableName, [WideRow(format, 1), WideRow(format, 2), WideRow(format, 3)], this.ct);
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(TableName, WideRow(format, 3, salt: 7), this.ct));
             Assert.Equal(1, await writer.DeleteRowsAsync(TableName, "C000", 2, this.ct));
         }

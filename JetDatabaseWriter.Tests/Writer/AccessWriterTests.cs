@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -376,7 +377,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () => await writer.DeleteRowsAsync(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345", TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetObjectNotFoundException>(async () => await writer.DeleteRowsAsync(tableName, "NONEXISTENT_COLUMN_XYZ", "IMPOSSIBLE_VALUE_12345", TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -1176,7 +1177,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.DropTableAsync("NoSuchTable_XYZ_999", TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropTableAsync("NoSuchTable_XYZ_999", TestContext.Current.CancellationToken));
     }
 
     [Theory]
@@ -1190,7 +1191,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object?> { ["SomeCol"] = "value" };
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<JetObjectNotFoundException>(async () =>
             await writer.UpdateRowsAsync(tableName, "NONEXISTENT_COL_XYZ", "anything", updates, TestContext.Current.CancellationToken));
     }
 
@@ -1214,7 +1215,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object?> { ["NONEXISTENT_COL_XYZ"] = "value" };
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<JetObjectNotFoundException>(async () =>
             await writer.UpdateRowsAsync(tableName, predicateCol, predicateVal, updates, TestContext.Current.CancellationToken));
     }
 
@@ -1536,7 +1537,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetObjectExistsException>(async () =>
             await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken));
     }
 
@@ -1830,7 +1831,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.InsertRowAsync("NoSuchTable_XYZ_999", [1], TestContext.Current.CancellationToken));
     }
 
@@ -1914,7 +1915,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         var updates = new Dictionary<string, object?> { ["Col"] = "val" };
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.UpdateRowsAsync("NoSuchTable_XYZ_999", "Col", "val", updates, TestContext.Current.CancellationToken));
     }
 
@@ -1972,7 +1973,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.DeleteRowsAsync("NoSuchTable_XYZ_999", "Col", "val", TestContext.Current.CancellationToken));
     }
 

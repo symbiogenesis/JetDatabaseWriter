@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -209,7 +210,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
             // The relationship is still enforced through MSysRelationships, and
             // a cascade delete keeps the child's indexes in step.
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(Child, [100, parentIds.Max() + 1000], this.ct));
+            await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync(Child, [100, parentIds.Max() + 1000], this.ct));
             Assert.Equal(1, await writer.DeleteRowsAsync(Parent, ParentKey, parentIds[0], this.ct));
             await this.AssertIndexesCoverRowsAsync(writer, Child, Parent);
         }
@@ -409,7 +410,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             await writer.CreateTableAsync("E", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("Boss", typeof(int))], this.ct);
             await writer.InsertRowsAsync("E", [[1, null], [2, 1], [3, 1]], this.ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition("EB", "E", "Id", "E", "Boss") { CascadeDeletes = true }, this.ct);
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("E", [4, 9], this.ct));
+            await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync("E", [4, 9], this.ct));
             await writer.InsertRowAsync("E", [4, 2], this.ct);
         }
 
@@ -445,7 +446,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             await writer.InsertRowsAsync("P2", [[1, 1], [1, 2]], this.ct);
             await writer.InsertRowsAsync("C2", [[1, 1, 2], [2, 1, 1]], this.ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition("PK2", "P2", ["K1", "K2"], "C2", ["R1", "R2"]), this.ct);
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("C2", [3, 2, 1], this.ct));
+            await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync("C2", [3, 2, 1], this.ct));
         }
 
         IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, "P2"), i => i.Kind == IndexKind.ForeignKey);

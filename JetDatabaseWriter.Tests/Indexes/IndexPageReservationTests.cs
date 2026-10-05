@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -239,9 +240,12 @@ public sealed class IndexPageReservationTests
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);
         long pageCountBefore = harness.Database.Pages.PageCount;
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(
             () => harness.Services.Indexes.RebuildIndexesAsync(tdefPage, tableDef, TableName, writtenRows, this.ct).AsTask());
 
+        Assert.Equal(JetErrorCode.UniqueViolation, ex.ErrorCode);
+        Assert.Equal(TableName, ex.ErrorInfo.TableName);
+        Assert.Equal("UQ_Name", ex.ErrorInfo.IndexName);
         Assert.Contains("Unique index violation", ex.Message, StringComparison.Ordinal);
         Assert.True(harness.Database.Pages.PageCount > pageCountBefore, "The first index's rebuild should have reserved pages at the end of the file.");
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);

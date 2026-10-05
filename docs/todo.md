@@ -156,7 +156,7 @@ Each of these needs structural work rather than a local fix; the bugs above are 
 - **Format knowledge is scattered.** 47 library files import `JetTypeInfo` with `using static`, and its per-type answers (fixed sizes, variable storage, CLR mappings, display names) are spread over separate switches. The immutable `JetFormat` profile answers the per-format layouts, the text codecs and the capability flags, and `FormatKnowledgeTests` keeps `DatabaseFormat` comparisons in JetFormat.cs, Enums/, Encryption/ and the facades, but Jet3 `LvProp` text hard-codes Windows-1252 (above). Planned in wave 2: format-profile-b.
 - **The read API does not compose.** `TableReader`'s read loops agree on results but share no scan primitive. `IndexRowReader` returns nothing for linked tables (`ListIndexesAsync`, `EnumerateIndexRowsAsync`). `CatalogReader.ResolveTableAsync` rescans `MSysObjects` for a system table (above). An unknown table reads as empty in the reader, while the writer throws. Planned in wave 2: read-composition-a and read-composition-b.
 - **Encryption is not a page layer.** Flat Agile and the CFB Office Crypto formats (Agile CFB and Standard) are decrypted whole into memory on open rather than page by page, and the writer has no page cipher for flat Agile (above). Planned in wave 2: encryption-flat-agile makes flat Agile a page layer, and encryption-containers makes the CFB containers durable and atomic. The CFB containers stay decrypted whole into memory: a segment-addressable reader for them is deferred, not planned in wave 2.
-- **Failures are not modeled.** `JetLimitationException` is the only custom exception type, so callers tell a refusal, an unenforceable constraint, a corrupt page, an unreadable long value and a torn commit apart only by exception type and message text, and `LastDiagnostics` is typed only internally. Planned in wave 2: failure-model-a, encryption-flat-agile, failure-model-b1 and failure-model-b2.
+- **Failures are not modeled.** Lock, transaction, encryption, corruption and limitation paths still lack complete structured failures, and `LastDiagnostics` is typed only internally. Constraint, lookup and schema refusals already carry error codes, but their coverage does not extend to every deliberate throw. Planned in wave 2: atomicity-a, encryption-flat-agile, failure-model-b1 and failure-model-b2.
 - **The LINQ layer has no query plan.** `EntityMap` is the one property-to-column mapping and `ValueCoercer` the one value conversion, but:
   - read materializers are compiled on every call, not cached per table definition or row shape: `RowMapper<T>.Build` runs in `TableReader.EnumerateMappedRowsAsync`, `IndexRowReader.ReadIndexRowsAsync` and `LinkedTableReader`, and `DirectRowDecoderBuilder.TryBuild` compiles again; only the insert delegate is cached (`RowMapper.WriteCache`);
   - index walks do not stream: `IndexCursor.FindRowLocationsForCriteriaAsync` builds a `List` of every matching row location before the first row is materialized;
@@ -233,7 +233,7 @@ The remaining wave-2 packages address the items above in stages 4-17. This secti
 
 | Stage | Packages (∥ = in parallel) |
 |---|---|
-| 4 | pager-b ∥ failure-model-a |
+| 4 | pager-b |
 | 5 | atomicity-a ∥ linq-c |
 | 6 | atomicity-b ∥ schema-model-core |
 | 7 | crash-journal ∥ write-pipeline-a1 |
@@ -275,23 +275,14 @@ The remaining wave-2 packages address the items above in stages 4-17. This secti
 - LINQ: async-only `Query<T>`; unsupported operators throw, pointing to `AsAsyncEnumerable()`; aggregates take expressions only; a static materializer cache of 64 shapes per T.
 - Repair: only an explicit `RepairAsync` with a dry run; it fixes stray bytes b=1..4, chain headers and the Jet3 header, and refuses a table whose index settings are lost {RepairRefused}.
 
-#### pager-b (stage 4; ∥ failure-model-a)
+#### pager-b (stage 4)
 
 1. `perf: reuse validated owned-page results across writer calls`: extend the observer-maintained owner index to avoid re-reading every mapped data page on each lookup. Preserve corruption checks and invalidate on rollback, failed replay, truncation and shrink. Tests: compare page results with a physical scan after inserts, updates, deletes, schema edits and rollback; ensure repeated lookups do not revalidate unchanged pages. Closes **An update, and a session's first insert into a table whose TDEF is at page 1024 or below**.
 2. `perf: reserve zeroed frames without writing provisional page images`: a new page receives a logical page number and readable zero image without flushing zeros when the dirty threshold is reached, then its initialized image is written once. Tests: reservation across the spill threshold, release on failure, and rollback; compare AccessWriterPageIoBenchmarks against the branch point.
 
 Done when: the usage-map validation does not repeat for unchanged pages, reserved pages are never written as provisional zeros, and AccessReaderOwnedPageDiscoveryBenchmarks does not regress.
 
-#### failure-model-a (stage 4; ∥ pager-b)
-
-Starts **Failures are not modeled**. Also fixes a bug with no item: a unique violation can name an FK index such as '.rC'.
-1. `feat(errors): add the exception model and type constraint violations`: every public type now: IJetException, JetErrorCode (below), JetErrorInfo, internal JetErrors factories, and the JetOperation, JetConstraint, JetObjectNotFound, JetObjectExists, JetArgument, JetValidationRule, JetIO, JetLock, JetAccessDenied, JetCorruptData and JetNotSupported exceptions, each on its site's BCL base; JetLimitationException implements IJetException. The preflight throws {IndexesUnmaintainable} or {UnsupportedTextCollation}. Convert the unique, FK, cascade-depth, NOT NULL and rule sites with byte-identical messages, naming the PK or unique index where logical indexes share a real one. Tests: ExceptionModelContractTests; JetErrorsMessageTests (golden); ConstraintViolationErrorTests (formats × modes); exact-type `Assert.Throws` migrated.
-2. `feat(errors): type lookup, already-exists and schema-rule failures`: the not-found, exists, LastColumn, KeyColumnInRelationship, SystemTableMissing and row sites, and the wave-1 refusals TableInRelationship, ColumnReferencedByExpression, InvalidObjectName, DefaultNotAllowed and RelationshipTargetNotFound. Tests: LookupErrorTests.
-3. `fix(writer): surface parent-table read failures instead of a false foreign-key violation`: probably already true on main, so likely test-only; add the test first. Insert_WhenParentRowsCannotBeDecoded_ThrowsTheDecodeError (modes): in a copy of nwind.mdb set Shippers.CompanyName's type byte 0x0A to 0x48; inserting Orders {ShipVia = 1} throws a non-constraint error naming CompanyName, Orders unchanged. Jet3 FK checks seek instead of decoding, so force the snapshot path (a parent key no index covers).
-
-Done when: every converted site throws an IJetException with the right code and properties; messages are byte-identical; no exact-type BCL assertion remains at a converted site. Later packages add factories to JetErrors.cs; JetErrorCode.cs gains no codes after this package (failure-model-b2 #3 only drops codes left without a producer). Codes, numbered from each group's first: None 0; 101 TableNotFound, ColumnNotFound, IndexNotFound, RelationshipNotFound, RowNotFound, RowNotUnique, CatalogObjectNotFound, SystemTableMissing, ComplexItemNotFound, RelationshipTargetNotFound; 201 TableExists, ColumnExists, RelationshipExists, ObjectExists; 301 UniqueViolation, ForeignKeyMissingParent, ForeignKeyRestrictDelete, ForeignKeyRestrictUpdate, CascadeDepthExceeded, NotNullViolation, ValidationRuleViolation, TableValidationRuleViolation; 401 LastColumn, KeyColumnInRelationship, InvalidExpression, UnsupportedExpression, ColumnReferencedByExpression, TableInRelationship, InvalidObjectName, DefaultNotAllowed; 501 DatabaseInUse, LockFileFull, LockTimeout, TransactionAlreadyActive, TransactionEnded, TransactionNotActive, DatabaseFileExists, HotJournalConflict, WriterFaulted, ReentrantWriterCall; 601 PasswordRequired, PasswordIncorrect, LinkedSourceNotPermitted, NotEncrypted, AlreadyEncrypted; 701 CorruptCatalog, CorruptTableDefinition, UnreadableLongValue, MalformedValue, CorruptComplexColumn, CorruptIndex, CorruptEncryptedPackage, UnknownColumnType; 801 ValueTooLarge, RowTooLarge, JournalBudgetExceeded, IndexesUnmaintainable, NumericOverflow, IndexEntryTooLarge, PasswordTooLong, UnsupportedTextCollation, ColumnCountLimit; 901 FeatureNotSupported, 902 unused, 903 LinkedTableHasNoIndexes, OdbcRowsNotAvailable, VersionHistoryNotEditable, ComplexColumnsNotSupported; 1001 CatalogIndexMaintenanceFailed, SystemIndexMaintenanceFailed, RepairRefused.
-
-#### atomicity-a (stage 5; needs pager-b, failure-model-a; ∥ linq-c)
+#### atomicity-a (stage 5; needs pager-b; ∥ linq-c)
 
 Closes the savepoint part of **Transactions are not atomic**.
 1. `feat(errors): type lock, file and transaction-state failures`: {DatabaseInUse}, {LockFileFull}, {LockTimeout} (with PageNumber), {DatabaseFileExists}, {TransactionAlreadyActive}, {TransactionEnded}, {TransactionNotActive}; transaction catches narrow by code. Tests: LockAndTransactionErrorTests.
@@ -300,7 +291,7 @@ Closes the savepoint part of **Transactions are not atomic**.
 
 Done when: a failed call inside an explicit transaction leaves no trace, the allocator's free set included, and the transaction stays usable. Savepoints stay internal.
 
-#### linq-c (stage 5; needs failure-model-a; ∥ atomicity-a)
+#### linq-c (stage 5; ∥ atomicity-a)
 
 Closes the materializer and index-walk bullets of **The LINQ layer has no query plan** and the materializer half of **`Rows<T>(predicate)` compiles its predicate and lists the table's indexes on every call**.
 1. `perf: cache typed materializers per entity type and row shape`: `RowShape` (a lazy `TableDef.Shape`, which schema-model-core keeps) and a static `MaterializerCache` (64 shapes per T) used by table, index and linked reads and by `RowMapper.ToRow` for typed inserts; the shape `RowMapper.ToRow` keys on includes each column's AutoNumber flag (`ColumnInfo.IsAutoNumber`), since its delegate turns a non-nullable property left at 0 into `DbDefault.Value` only on an AutoNumber column. Tests: MaterializerCacheTests (reuse across opens; same names in another layout; a new shape after AddColumn or rename; concurrent first use; eviction); TypedInsertShapeTests (two tables with the same column names and types, one with an AutoNumber `Id` and one without, share no delegate).
@@ -370,7 +361,7 @@ Closes **The reader's system-table lookups rescan and decode all of `MSysObjects
 
 Done when: repeated metadata, count, miss and seek calls read 0 bytes after warm-up; only ReaderOperations holds the gate; every table read and seek goes through TableScan.
 
-#### encryption-flat-agile (stage 8; needs crash-journal, failure-model-a; ∥ write-pipeline-a2, read-composition-a)
+#### encryption-flat-agile (stage 8; needs crash-journal; ∥ write-pipeline-a2, read-composition-a)
 
 Closes **`AccessWriter` cannot open Access-native flat Agile ACCDB files** and the flat-Agile part of **Encryption is not a page layer**; part of **Failures are not modeled**. Also fixes lock-slot gaps with no item: `AccessReader` returns before `lockFile.Acquire()` for an AES-CFB-wrapped file and opens flat Agile with an empty path, so neither takes a lock-file slot. The Agile CFB and Standard CFB containers, which also open with an empty path, keep the gap (**A reader of an Agile CFB or Standard CFB container takes no lock-file slot**).
 1. `feat: open flat Agile ACCDB files in place for reading`: `FlatAgileCbcPageCodec`: IV_n = SHA-512(keyDataSalt ‖ LE32(n XOR encodingKey))[..16], AES-256-CBC over the whole page, through the one PBKDF chain; other chaining or blockSize ≠ 16 throws NotSupportedException; checked first, on ACE only; core-split-a's `PageFile.ReadHeaderAsync` returns the whole 4,096-byte page (today 0x80 bytes). Tests: FlatAgilePageCodecTests (every page byte-identical; bad chaining, block size and password refused); an open reads at most 4 pages and takes a lock slot.
@@ -391,7 +382,7 @@ Closes **A unique index that is not the primary key refuses a second Null key**,
 
 Done when: IndexInvariants Strict holds on writer-maintained trees; the ladder is gone; the batch and 10k-insert benchmarks are within 10%. Must not touch WriterServices.cs (constraints-a's in this stage). Needs atomicity-b #2's removal of CatalogWriter's compensation. The rest of **Replaced index trees stay allocated** is not planned.
 
-#### read-composition-b (stage 9; needs read-composition-a, failure-model-a, encryption-flat-agile; ∥ write-pipeline-b, constraints-a)
+#### read-composition-b (stage 9; needs read-composition-a, encryption-flat-agile; ∥ write-pipeline-b, constraints-a)
 
 #6 deletes **The read API does not compose**.
 1. `feat: read indexes and complex columns of linked Access tables from their source database`: through OpenLinkedSourceAsync; text links list no indexes and their seeks throw {LinkedTableHasNoIndexes}; planners list only local indexes. Tests: LinkedTableIndexReadTests.
@@ -403,7 +394,7 @@ Done when: IndexInvariants Strict holds on writer-maintained trees; the ladder i
 
 Done when: linked Access tables answer index and complex APIs from their source; unknown names throw on all 18 members; system scans share TableScan. Touches AccessWriter.cs only at the linked-table writer's callers.
 
-#### constraints-a (stage 9; needs schema-model-core, failure-model-a; ∥ write-pipeline-b, read-composition-b)
+#### constraints-a (stage 9; needs schema-model-core; ∥ write-pipeline-b, read-composition-b)
 
 Closes **The writer does not enforce every constraint stored in the file**, the rule half of **A column rename leaves the table-level `ValidationRule`, `Filter` and `OrderBy` naming the old column** and the table-rule part of **Cascade updates with non-null keys rewrite child rows without the child table's checks**; part of **Constraints live in the process, not the file**.
 1. `fix(constraints): rebuild a stale constraint list from the file instead of skipping every check`: compare count and names by position; rebuild from the TableSchema, carrying CLR policy by name and reseeding AutoNumber; a row of the wrong length throws. Tests: ConstraintRegistryTests.
@@ -421,7 +412,7 @@ Closes the update-time Null write-back in **Fixed-length Text columns read as Nu
 
 Done when: a non-key update writes one data page and no index page; MEMO rows stop growing the file; update and delete by key at 10k rows read at most 20 pages, and their benchmarks stay about flat from 1k to 10k rows. Must not touch `RowDecodePlan.cs` (value-model-b's).
 
-#### value-model-b (stage 10; needs write-pipeline-a2, read-composition-b, failure-model-a; ∥ write-pipeline-c)
+#### value-model-b (stage 10; needs write-pipeline-a2, read-composition-b; ∥ write-pipeline-c)
 
 Closes **`UpdateRowsAsync` and `DeleteRowsAsync` compare a `byte[]` criteria value by reference** and **Attachments and multi-value items can be added but not removed or replaced one at a time**.
 1. `fix: resolve complex-column parent rows by typed comparison`: a shared `JetValueComparer` (byte[] by content; a string against a Guid parsed; an unreadable long value throws); criteria compare text ordinally, complex parent keys ignoring case. Tests: ComplexColumnsParentKeyTests (every key type, ACCDB × modes); Binary criteria in Update and Delete (formats × modes).

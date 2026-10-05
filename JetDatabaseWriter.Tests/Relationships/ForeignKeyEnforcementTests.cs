@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -39,7 +40,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
 
         // Parent is empty; child insert with ParentId=42 must be rejected.
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync(child, [1, 42], TestContext.Current.CancellationToken));
         Assert.Contains("FK_Missing", ex.Message, StringComparison.Ordinal);
     }
@@ -164,7 +165,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.UpdateRowsAsync(
                 child,
                 "Id",
@@ -190,7 +191,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.DeleteRowsAsync(parent, "Id", 5, TestContext.Current.CancellationToken));
         Assert.Contains("FK_DelNoCasc", ex.Message, StringComparison.Ordinal);
     }
@@ -246,7 +247,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
         await writer.InsertRowAsync(child, [1, 5], TestContext.Current.CancellationToken);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.UpdateRowsAsync(
                 parent,
                 "Id",
@@ -396,7 +397,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             TestContext.Current.CancellationToken);
 
         // Wrong B value → reject.
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync(child, [1, 1, 99], TestContext.Current.CancellationToken));
 
         // Correct tuple → succeed.
@@ -465,7 +466,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 [108, 8],
             ];
 
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowsAsync(child, batch, TestContext.Current.CancellationToken));
         }
 
@@ -517,7 +518,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(child, [1, parentRowCount - 7], TestContext.Current.CancellationToken);
 
             // Missing parent key → must throw.
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(child, [2, parentRowCount + 100], TestContext.Current.CancellationToken));
             Assert.Contains("FK_Seek_Big", ex.Message, StringComparison.Ordinal);
         }
@@ -553,7 +554,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
             await writer.InsertRowAsync(child, [1, "bravo"], TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(child, [2, "delta"], TestContext.Current.CancellationToken));
         }
 

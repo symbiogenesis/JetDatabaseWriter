@@ -472,6 +472,8 @@ public sealed class UnmaintainableIndexWriteTests
 
     private static void AssertNamesFirstPhantomIndex(JetLimitationException ex, DamagedTable layout)
     {
+        Assert.Equal(JetErrorCode.IndexesUnmaintainable, ex.ErrorCode);
+        Assert.Equal(TableName, ex.ErrorInfo.TableName);
         Assert.Contains($"'{TableName}'", ex.Message, StringComparison.Ordinal);
         Assert.Contains($"'{IndexName(layout, ExpectedPhantomIndexes(layout)[0])}'", ex.Message, StringComparison.Ordinal);
     }

@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -123,8 +124,11 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 3 }, Ct));
+                Assert.Equal(JetErrorCode.ForeignKeyRestrictUpdate, ex.ErrorCode);
+                Assert.Equal("P", ex.ErrorInfo.TableName);
+                Assert.Equal("FK_D_P", ex.ErrorInfo.RelationshipName);
                 Assert.Equal(
                     "UPDATE on 'P' violates foreign-key constraint 'FK_D_P': 1 dependent row(s) in 'D' reference the old key(s) and cascade-update is not enabled.",
                     ex.Message);
@@ -214,7 +218,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
                 // moves no key loads them first.
                 Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 2), new RowValues { ["Name"] = "deux" }, Ct));
                 counting.Reset();
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 3 }, Ct));
                 pagesRead = counting.PagesRead(4096);
                 Assert.Equal(
@@ -295,7 +299,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 2 }, Ct));
                 Assert.StartsWith("Unique index violation on table 'P'", ex.Message, StringComparison.Ordinal);
             });
@@ -474,7 +478,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("Tree", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct));
                 Assert.Equal(
                     "UPDATE on 'Tree' violates foreign-key constraint 'FK_Tree_Self': 2 dependent row(s) in 'Tree' reference the old key(s) and cascade-update is not enabled.",
@@ -507,7 +511,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("Tree", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5, ["ParentId"] = 3 }, Ct));
                 Assert.Equal(
                     "UPDATE on 'Tree' violates foreign-key constraint 'FK_Tree_Self': 1 dependent row(s) in 'Tree' reference the old key(s) and cascade-update is not enabled.",
@@ -569,7 +573,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("Tree", RowCriteria.Where("A", 1), new RowValues { ["A"] = 5 }, Ct));
                 Assert.Equal(
                     "UPDATE on 'Tree' violates foreign-key constraint 'FK_Tree_Self': 2 dependent row(s) in 'Tree' reference the old key(s) and cascade-update is not enabled.",

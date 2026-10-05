@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -109,7 +110,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(
                     Child,
                     RowValues.Create().Set("Id", 20).Set("ParentRef", 99),
@@ -151,7 +152,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(
                     Child,
                     RowValues.Create().Set("Id", 20).Set("PARENTID", 99),
@@ -179,7 +180,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         {
             await CreateParentAndChildAsync(writer);
 
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () =>
                 await writer.DropColumnAsync(
                     dropParentKey ? Parent : Child,
                     dropParentKey ? "Id" : "ParentId",
@@ -238,7 +239,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(tree, RowValues.Create().Set("Id", 9).Set("ParentId", 99), TestContext.Current.CancellationToken));
             await writer.DeleteRowsAsync(tree, "Id", 1, TestContext.Current.CancellationToken);
         }
@@ -296,7 +297,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             // Parent 2 still has a child in the non-cascading relationship.
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.DeleteRowsAsync(Parent, "Id", 2, TestContext.Current.CancellationToken));
         }
     }
@@ -428,7 +429,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 20).Set(childKey, 99), TestContext.Current.CancellationToken));
 
             // The FK check seeks parent 3, inserted inside the transaction, in
@@ -482,7 +483,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 20).Set("ParentId", 1), TestContext.Current.CancellationToken));
             Assert.Equal(1, await writer.DeleteRowsAsync(Parent, "Id", 2, TestContext.Current.CancellationToken));
         }
@@ -564,7 +565,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 1).Set("ParentId", 1), TestContext.Current.CancellationToken));
             await writer.InsertRowAsync(Parent, RowValues.Create().Set("Id", 1), TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 1).Set("ParentId", 1), TestContext.Current.CancellationToken);
@@ -1045,7 +1046,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     {
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 20).Set("ParentId", 99), TestContext.Current.CancellationToken));
 
             Assert.Equal(1, await writer.DeleteRowsAsync(Parent, "Id", 1, TestContext.Current.CancellationToken));

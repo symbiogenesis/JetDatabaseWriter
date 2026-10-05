@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -131,7 +132,7 @@ public sealed class RenameColumnExpressionTests
             await RunAsync(writer, mode, async () =>
             {
                 await writer.RenameColumnAsync("R", "Code", "Sku", Ct);
-                ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("R", [2, "ABCD", DbDefault.Value], Ct));
+                JetValidationRuleException rejected = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync("R", [2, "ABCD", DbDefault.Value], Ct));
                 Assert.Contains("3 chars", rejected.Message, StringComparison.Ordinal);
                 await writer.InsertRowAsync("R", [3, "XYZ", DbDefault.Value], Ct);
             });
@@ -139,7 +140,7 @@ public sealed class RenameColumnExpressionTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("R", [4, "WXYZ", DbDefault.Value], Ct));
+            JetValidationRuleException rejected = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync("R", [4, "WXYZ", DbDefault.Value], Ct));
             Assert.Contains("Len([Sku]) = 3", rejected.Message, StringComparison.Ordinal);
             await writer.InsertRowAsync("R", [5, "UVW", DbDefault.Value], Ct);
         }
@@ -289,7 +290,7 @@ public sealed class RenameColumnExpressionTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException exception = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.RenameColumnAsync("T", "Price", "Pr]ice", Ct));
 
             Assert.Equal("newColumnName", exception.ParamName);
@@ -350,7 +351,7 @@ public sealed class RenameColumnExpressionTests
         {
             await RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException exception = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.DropColumnAsync("T", "Price", Ct));
 
                 Assert.Contains("'Price'", exception.Message, StringComparison.Ordinal);
@@ -390,7 +391,7 @@ public sealed class RenameColumnExpressionTests
             await writer.CreateTableAsync("D", [new("Id", typeof(int)), new("Code", typeof(string), maxLength: 10), other], Ct);
             await writer.InsertRowAsync("D", [1, "ABC", "x"], Ct);
 
-            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetOperationException exception = await Assert.ThrowsAsync<JetOperationException>(async () =>
                 await writer.DropColumnAsync("D", "code", Ct));
 
             Assert.Contains($"the {property} of column 'Other'", exception.Message, StringComparison.Ordinal);
@@ -448,7 +449,7 @@ public sealed class RenameColumnExpressionTests
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
             // Twice names Total, so Total can go only after Twice.
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.DropColumnAsync("T", "Total", Ct));
+            await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropColumnAsync("T", "Total", Ct));
             await writer.DropColumnAsync("T", "Twice", Ct);
             await writer.DropColumnAsync("T", "Total", Ct);
             await writer.InsertRowAsync("T", [2, 3d, 2, null, null], Ct);

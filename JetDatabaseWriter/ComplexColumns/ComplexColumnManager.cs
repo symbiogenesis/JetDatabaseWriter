@@ -11,6 +11,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -418,6 +419,7 @@ internal sealed class ComplexColumnManager(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ArgumentException">Thrown when a multi-value column does not declare its element type.</exception>
     /// <exception cref="NotSupportedException">Thrown when complex columns are declared for a non-ACE database or a catalog missing <c>MSysComplexColumns</c>.</exception>
+    /// <exception cref="JetNotSupportedException">The complex-column system table is missing.</exception>
     public async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
         IReadOnlyList<ColumnDefinition> columns,
         CancellationToken cancellationToken)
@@ -454,10 +456,7 @@ internal sealed class ComplexColumnManager(
         long msysComplexPg = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (msysComplexPg == 0)
         {
-            throw new NotSupportedException(
-                "The database does not contain a 'MSysComplexColumns' table. Create the database via " +
-                "AccessWriter.CreateDatabaseAsync (which scaffolds it automatically) before declaring complex columns, " +
-                "or open an Access-authored .accdb that already contains the catalog.");
+            throw new JetNotSupportedException(JetErrorCode.SystemTableMissing, "The database does not contain a 'MSysComplexColumns' table. Create the database via AccessWriter.CreateDatabaseAsync (which scaffolds it automatically) before declaring complex columns, or open an Access-authored .accdb that already contains the catalog.", new JetErrorInfo { ObjectName = "MSysComplexColumns" });
         }
 
         int nextId = await this.GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
@@ -725,6 +724,7 @@ internal sealed class ComplexColumnManager(
     /// <param name="complexTypeObjectId">The complex type object id.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when the <c>MSysComplexColumns</c> table is missing.</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     private async ValueTask InsertMSysComplexColumnsRowAsync(
         string parentColumnName,
         int complexId,
@@ -736,7 +736,7 @@ internal sealed class ComplexColumnManager(
         long pg = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         if (pg == 0)
         {
-            throw new InvalidOperationException("MSysComplexColumns table is missing.");
+            throw new JetOperationException(JetErrorCode.SystemTableMissing, "MSysComplexColumns table is missing.", new JetErrorInfo { ObjectName = Constants.SystemTableNames.ComplexColumns });
         }
 
         TableDef msysComplex = await this.tableDefs.ReadRequiredTableDefAsync(pg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
@@ -790,7 +790,7 @@ internal sealed class ComplexColumnManager(
         TableDef parentDef = parentTable.Definition;
 
         ColumnInfo complexCol = parentDef.FindColumn(columnName)
-            ?? throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
+            ?? throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName), errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = columnName });
 
         bool isComplexCol = complexCol.Type is AttachmentType or ComplexType;
         if (!isComplexCol)
@@ -803,8 +803,7 @@ internal sealed class ComplexColumnManager(
         long flatTdefPage = await seeds.ResolveFlatTableTdefPageAsync(columnName, complexCol.Misc, cancellationToken).ConfigureAwait(false);
         if (flatTdefPage <= 0)
         {
-            throw new InvalidOperationException(
-                $"No MSysComplexColumns row was found for column '{tableName}.{columnName}'.");
+            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, $"No MSysComplexColumns row was found for column '{tableName}.{columnName}'.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = columnName });
         }
 
         TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
@@ -836,7 +835,7 @@ internal sealed class ComplexColumnManager(
             int idx = parentDef.FindColumnIndex(kvp.Key);
             if (idx < 0)
             {
-                throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(parentRowKey));
+                throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(parentRowKey), errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = kvp.Key });
             }
 
             predIndexes[pi] = idx;
@@ -912,10 +911,11 @@ internal sealed class ComplexColumnManager(
     /// <param name="flatTdefPage">The flat TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or has no row for <paramref name="flatTdefPage"/>.</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     private async ValueTask<string> ResolveFlatTableNameAsync(long flatTdefPage, CancellationToken cancellationToken)
     {
         TableDef? msys = await this.tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("MSysObjects catalog table is missing.");
+            ?? throw new JetOperationException(JetErrorCode.SystemTableMissing, "MSysObjects catalog table is missing.", new JetErrorInfo { ObjectName = Constants.SystemTableNames.Objects });
 
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)
@@ -926,8 +926,7 @@ internal sealed class ComplexColumnManager(
             }
         }
 
-        throw new InvalidOperationException(
-            $"No MSysObjects row was found for flat-child TDEF page {flatTdefPage}.");
+        throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, $"No MSysObjects row was found for flat-child TDEF page {flatTdefPage}.");
     }
 
     private async ValueTask<RowLocation> FindUniqueParentRowAsync(
@@ -964,8 +963,7 @@ internal sealed class ComplexColumnManager(
 
                 if (found)
                 {
-                    throw new InvalidOperationException(
-                        $"Parent row key matches more than one row in '{tableName}'.");
+                    throw new JetOperationException(JetErrorCode.RowNotUnique, $"Parent row key matches more than one row in '{tableName}'.", errorInfo: new JetErrorInfo { TableName = tableName });
                 }
 
                 match = row.Location;
@@ -976,7 +974,7 @@ internal sealed class ComplexColumnManager(
 
         if (!found)
         {
-            throw new InvalidOperationException($"No row in '{tableName}' matches the supplied parent row key.");
+            throw new JetOperationException(JetErrorCode.RowNotFound, $"No row in '{tableName}' matches the supplied parent row key.", errorInfo: new JetErrorInfo { TableName = tableName });
         }
 
         return match;

@@ -101,7 +101,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="values">The row, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="JetOperationException">
     /// A foreign key has no matching parent row, or a relationship that
     /// constrains the row names a table or column that cannot be found.
     /// </exception>
@@ -143,7 +143,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="rows">Each matching row's location, and the row before and after the update, in table-column order.</param>
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="JetOperationException">
     /// A changed foreign key has no matching parent row, or its relationship
     /// names a primary table or column that cannot be found.
     /// </exception>
@@ -207,7 +207,7 @@ internal sealed class RelationshipEnforcer(
     /// The dependent rows to delete, by relationship, deepest cascades first,
     /// for <see cref="ApplyCascadeDeletesAsync"/>.
     /// </returns>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="JetOperationException">
     /// A deleted key has dependent rows and the relationship does not cascade
     /// deletes, a relationship with a non-null deleted key names a table or
     /// column that cannot be found, or the cascades nest deeper than
@@ -304,7 +304,7 @@ internal sealed class RelationshipEnforcer(
     /// The child rows to rewrite, by table, in the order the relationships
     /// first reach the tables, for <see cref="ApplyCascadeUpdatesAsync"/>.
     /// </returns>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="JetOperationException">
     /// A changed key has dependent rows and the relationship does not cascade
     /// updates, or a relationship whose key changes names a foreign table or
     /// column that cannot be found.
@@ -318,6 +318,7 @@ internal sealed class RelationshipEnforcer(
     /// past what its column stores.
     /// </exception>
     /// <exception cref="OverflowException">A rewritten child row holds a value that does not fit its column's type.</exception>
+    /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     public async ValueTask<List<CascadeUpdate>> PlanCascadeUpdatesAsync(
         string primaryTable,
         TableDef primaryDef,
@@ -373,9 +374,7 @@ internal sealed class RelationshipEnforcer(
                     + await this.CountDependentRowsOfKeyChangeAsync(change, self ? ownRows : null, ctx, cancellationToken).ConfigureAwait(false);
                 if (dependentCount > 0)
                 {
-                    throw new InvalidOperationException(
-                        $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
-                        $"{dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.");
+                    throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
                 }
 
                 continue;
@@ -521,7 +520,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="names">The key columns on that side of the relationship.</param>
     /// <param name="definition">The table definition.</param>
     /// <returns>The ordinals, in the order of <paramref name="names"/>.</returns>
-    /// <exception cref="InvalidOperationException">A key column is not in the table.</exception>
+    /// <exception cref="JetOperationException">A key column is not in the table.</exception>
     private static int[] RequireColumns(FkRelationship rel, string table, IReadOnlyList<string> names, TableDef definition)
     {
         int[] ordinals = new int[names.Count];
@@ -546,8 +545,8 @@ internal sealed class RelationshipEnforcer(
     /// <param name="rel">The relationship.</param>
     /// <param name="problem">What is missing.</param>
     /// <returns>The exception to throw.</returns>
-    private static InvalidOperationException RelationshipCannotBeEnforced(FkRelationship rel, string problem)
-        => new($"Foreign-key constraint '{rel.Name}' cannot be enforced: {problem}. DropRelationshipAsync removes the relationship.");
+    private static JetOperationException RelationshipCannotBeEnforced(FkRelationship rel, string problem)
+        => new(JetErrorCode.RelationshipTargetNotFound, $"Foreign-key constraint '{rel.Name}' cannot be enforced: {problem}. DropRelationshipAsync removes the relationship.", errorInfo: new JetErrorInfo { TableName = rel.ForeignTable, RelationshipName = rel.Name, Reason = problem });
 
     /// <summary>Returns whether <paramref name="rel"/> relates a table to itself.</summary>
     /// <param name="rel">The relationship.</param>
@@ -580,16 +579,12 @@ internal sealed class RelationshipEnforcer(
     /// <param name="foreignTable">The table being written.</param>
     /// <param name="kind">Whether an insert or an update supplied the key.</param>
     /// <returns>The exception to throw.</returns>
-    private static InvalidOperationException ForeignKeyViolation(FkRelationship rel, string foreignTable, FkCheckKind kind)
+    /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
+    private static JetConstraintException ForeignKeyViolation(FkRelationship rel, string foreignTable, FkCheckKind kind)
     {
         string columns = string.Join(", ", rel.ForeignColumns);
         return kind == FkCheckKind.Update
-            ? new InvalidOperationException(
-                $"UPDATE of '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
-                $"no matching row in '{rel.PrimaryTable}' for the new {columns} value(s).")
-            : new InvalidOperationException(
-                $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': " +
-                $"no matching row in '{rel.PrimaryTable}' for the supplied {columns} value(s).");
+            ? JetErrors.Constraint(JetErrorCode.ForeignKeyMissingParent, $"UPDATE of '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the new {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name }) : JetErrors.Constraint(JetErrorCode.ForeignKeyMissingParent, $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the supplied {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name });
     }
 
     /// <summary>
@@ -606,7 +601,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="kind">Whether an insert or an update supplied the key.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">No parent row has the key.</exception>
+    /// <exception cref="JetConstraintException">No parent row has the key.</exception>
     private async ValueTask RequireParentKeyAsync(
         FkRelationship rel,
         string foreignTable,
@@ -660,7 +655,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The parent keys.</returns>
-    /// <exception cref="InvalidOperationException">The primary table or a primary column cannot be found.</exception>
+    /// <exception cref="JetOperationException">The primary table or a primary column cannot be found.</exception>
     private async ValueTask<HashSet<string>> GetParentKeySetAsync(FkRelationship rel, FkContext ctx, CancellationToken cancellationToken)
     {
         if (ctx.ParentKeySets.TryGetValue(rel.Name, out HashSet<string>? cached))
@@ -696,7 +691,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The table's catalog entry and definition.</returns>
-    /// <exception cref="InvalidOperationException">No table has that name.</exception>
+    /// <exception cref="JetOperationException">No table has that name.</exception>
     private async ValueTask<ResolvedTable> ResolveRelationshipTableAsync(FkRelationship rel, string role, string tableName, CancellationToken cancellationToken)
     {
         ResolvedTable? resolved = await tableCatalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null
@@ -724,12 +719,13 @@ internal sealed class RelationshipEnforcer(
     /// <param name="cascaded">The rows <paramref name="cascades"/> deletes.</param>
     /// <param name="complexChildren">A group of the statement's flat rows, from which each cascade's own, still empty, group is made.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="JetOperationException">
     /// A deleted key has dependent rows and the relationship does not cascade
     /// deletes, a relationship with a non-null deleted key names a table or
     /// column that cannot be found, or <paramref name="depth"/> exceeds
     /// <see cref="RelationshipCascadePolicy.MaxDepth"/>.
     /// </exception>
+    /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     private async ValueTask PlanCascadeDeletesAsync(
         string primaryTable,
         TableDef primaryDef,
@@ -769,9 +765,7 @@ internal sealed class RelationshipEnforcer(
 
             if (!rel.CascadeDeletes)
             {
-                throw new InvalidOperationException(
-                    $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': " +
-                    $"{dependents.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.");
+                throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictDelete, $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependents.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
             }
 
             var dependentValues = new List<object?[]>(dependents.Count);
@@ -922,7 +916,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="ctx">The call's relationship state.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The relationships and their key changes, in <see cref="FkContext.All"/> order.</returns>
-    /// <exception cref="InvalidOperationException">A relationship whose key changes names a foreign table or column that cannot be found.</exception>
+    /// <exception cref="JetOperationException">A relationship whose key changes names a foreign table or column that cannot be found.</exception>
     private async ValueTask<List<ReferencedKeyChange>> ResolveReferencedKeyChangesAsync(
         string primaryTable,
         TableDef primaryDef,

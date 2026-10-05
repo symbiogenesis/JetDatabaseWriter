@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using Xunit;
 
@@ -88,7 +89,7 @@ public sealed class AccessObjectNameTests
     [Fact]
     public void ThrowIfInvalid_Violation_MessageNamesRuleAndEscapesControlChars()
     {
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => AccessObjectName.ThrowIfInvalid("a\u0001b", "newColumnName", "column"));
+        JetArgumentException ex = Assert.Throws<JetArgumentException>(() => AccessObjectName.ThrowIfInvalid("a\u0001b", "newColumnName", "column"));
 
         Assert.Equal("newColumnName", ex.ParamName);
         Assert.Contains("The column name 'a\\u0001b' is not valid: it contains the control character U+0001.", ex.Message, StringComparison.Ordinal);
@@ -101,7 +102,7 @@ public sealed class AccessObjectNameTests
     [InlineData("")]
     public void ThrowIfInvalidMember_MissingName_ThrowsArgumentExceptionNamingPosition(string? name)
     {
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => AccessObjectName.ThrowIfInvalidMember(name, "columns", "column", 2));
+        JetArgumentException ex = Assert.Throws<JetArgumentException>(() => AccessObjectName.ThrowIfInvalidMember(name, "columns", "column", 2));
 
         Assert.Equal("columns", ex.ParamName);
         Assert.Equal("The column at position 2 has no name. (Parameter 'columns')", ex.Message);
@@ -110,7 +111,7 @@ public sealed class AccessObjectNameTests
     [Fact]
     public void ThrowIfInvalidMember_Violation_MessageNamesKindAndPosition()
     {
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => AccessObjectName.ThrowIfInvalidMember("ix.Name", "indexes", "index", 0));
+        JetArgumentException ex = Assert.Throws<JetArgumentException>(() => AccessObjectName.ThrowIfInvalidMember("ix.Name", "indexes", "index", 0));
 
         Assert.Equal("indexes", ex.ParamName);
         Assert.StartsWith("The index name 'ix.Name' at position 0 is not valid: it contains '.'.", ex.Message, StringComparison.Ordinal);
@@ -119,10 +120,10 @@ public sealed class AccessObjectNameTests
     [Fact]
     public void ThrowIfInvalidMember_SingleDefinition_OmitsPosition()
     {
-        ArgumentException missing = Assert.Throws<ArgumentException>(() => AccessObjectName.ThrowIfInvalidMember(null, "column", "column"));
+        JetArgumentException missing = Assert.Throws<JetArgumentException>(() => AccessObjectName.ThrowIfInvalidMember(null, "column", "column"));
         Assert.StartsWith("The column has no name.", missing.Message, StringComparison.Ordinal);
 
-        ArgumentException invalid = Assert.Throws<ArgumentException>(() => AccessObjectName.ThrowIfInvalidMember(" x", "column", "column"));
+        JetArgumentException invalid = Assert.Throws<JetArgumentException>(() => AccessObjectName.ThrowIfInvalidMember(" x", "column", "column"));
         Assert.StartsWith("The column name ' x' is not valid: it starts with a space.", invalid.Message, StringComparison.Ordinal);
     }
 }

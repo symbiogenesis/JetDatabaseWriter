@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 
@@ -27,7 +28,7 @@ internal sealed class RowCriteriaEvaluator
     /// <param name="tableName">The table name, for error messages.</param>
     /// <param name="parameterName">The public parameter name, for <see cref="ArgumentException"/>.</param>
     /// <returns>A compiled evaluator.</returns>
-    /// <exception cref="ArgumentException">Thrown when a predicate names a column not in the table.</exception>
+    /// <exception cref="JetObjectNotFoundException">Thrown when a predicate names a column not in the table.</exception>
     public static RowCriteriaEvaluator Compile(
         RowCriteria criteria,
         TableDef tableDef,
@@ -44,9 +45,7 @@ internal sealed class RowCriteriaEvaluator
             int columnIndex = tableDef.FindColumnIndex(predicate.ColumnName);
             if (columnIndex < 0)
             {
-                throw new ArgumentException(
-                    $"Column '{predicate.ColumnName}' was not found in table '{tableName}'.",
-                    parameterName);
+                throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{predicate.ColumnName}' was not found in table '{tableName}'.", parameterName, new JetErrorInfo { TableName = tableName, ColumnName = predicate.ColumnName });
             }
 
             compiled[i] = new CompiledPredicate(columnIndex, predicate);

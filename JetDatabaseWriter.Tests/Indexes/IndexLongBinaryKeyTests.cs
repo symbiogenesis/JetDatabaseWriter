@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -181,7 +182,7 @@ public sealed class IndexLongBinaryKeyTests
 
         await writer.InsertRowAsync("UniqueLongBin", [1, payload], this.ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("UniqueLongBin", [2, payload.ToArray()], this.ct));
     }
 

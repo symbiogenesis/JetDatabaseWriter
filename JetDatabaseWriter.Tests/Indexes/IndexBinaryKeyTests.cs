@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -96,7 +97,7 @@ public sealed class IndexBinaryKeyTests
         await writer.InsertRowAsync("BinUnique", [1, payload], this.ct);
 
         // Inserting the same byte payload again must trip the unique check.
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("BinUnique", [2, payload.ToArray()], this.ct));
     }
 

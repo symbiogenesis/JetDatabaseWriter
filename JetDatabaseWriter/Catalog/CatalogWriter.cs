@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -414,7 +415,7 @@ internal sealed class CatalogWriter(
             cancellationToken).ConfigureAwait(false);
 
         long replacementTdefPage = tdefPage ?? deleted.FirstTDefPage
-            ?? throw new InvalidOperationException(missingMessage ?? $"Catalog row for '{existingName}' was not found.");
+            ?? throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, missingMessage ?? $"Catalog row for '{existingName}' was not found.", new JetErrorInfo { ObjectName = existingName });
 
         await this.InsertCatalogEntryAsync(
             replacementName,
@@ -486,7 +487,7 @@ internal sealed class CatalogWriter(
         {
             if (throwIfNotFound)
             {
-                throw new InvalidOperationException(missingMessage ?? $"Catalog row for '{tableName}' was not found.");
+                throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, missingMessage ?? $"Catalog row for '{tableName}' was not found.", errorInfo: new JetErrorInfo { TableName = tableName });
             }
 
             return new UserTableCatalogDeletionResult(0, [], null, 0);
@@ -548,7 +549,7 @@ internal sealed class CatalogWriter(
                 || (parentId == Constants.SystemObjects.TablesParentId && row.ParentId == 0);
             if (sameParent && string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException($"An object named '{objectName}' already exists.");
+                throw new JetObjectExistsException(JetErrorCode.ObjectExists, $"An object named '{objectName}' already exists.", errorInfo: new JetErrorInfo { ObjectName = objectName });
             }
         }
     }

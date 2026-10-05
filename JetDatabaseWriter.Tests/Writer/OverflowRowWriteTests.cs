@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -338,7 +339,7 @@ public sealed class OverflowRowWriteTests
         await using MemoryStream ms = await CopyAsync(TestDatabases.NorthwindTraders);
         await using AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        JetObjectExistsException ex = await Assert.ThrowsAsync<JetObjectExistsException>(
             async () => await writer.CreateTableAsync("Orders", [new ColumnDefinition("Id", typeof(int))], Ct));
         Assert.Contains("already exists", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -434,7 +435,7 @@ public sealed class OverflowRowWriteTests
         await using AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct);
         Assert.Equal(1, await writer.UpdateRowsAsync("OrderDetails", "OrderDetailID", 1, new Dictionary<string, object?> { ["Quantity"] = 3 }, Ct));
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(
             async () => await writer.InsertRowAsync("OrderDetails", missingOrder, Ct));
         Assert.Contains("foreign-key", ex.Message, StringComparison.OrdinalIgnoreCase);
 

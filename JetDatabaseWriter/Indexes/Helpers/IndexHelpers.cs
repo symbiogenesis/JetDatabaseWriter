@@ -398,8 +398,7 @@ internal static class IndexHelpers
 
             if (unnamed is not null)
             {
-                throw new JetLimitationException(
-                    $"Index '{idx.Name}' cannot be carried through the schema change: it names column number {unnamed.ColumnNumber}, which the table does not have. The table is unchanged.");
+                throw new JetLimitationException(JetErrorCode.IndexesUnmaintainable, $"Index '{idx.Name}' cannot be carried through the schema change: it names column number {unnamed.ColumnNumber}, which the table does not have. The table is unchanged.", new JetErrorInfo { IndexName = idx.Name, Reason = "The index names a column the table does not have" });
             }
 
             if (idx.Kind == IndexKind.PrimaryKey)

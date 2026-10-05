@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -64,7 +65,7 @@ public sealed class NamedRowAndCriteriaTests
         await using var ms = new MemoryStream();
         await using AccessWriter writer = await CreateSeededAsync(ms, leaveOpen: false);
 
-        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        JetObjectNotFoundException ex = await Assert.ThrowsAsync<JetObjectNotFoundException>(async () =>
             await writer.InsertRowAsync(
                 TableName,
                 new RowValues { ["Id"] = 1, ["Nonexistent"] = "x" },

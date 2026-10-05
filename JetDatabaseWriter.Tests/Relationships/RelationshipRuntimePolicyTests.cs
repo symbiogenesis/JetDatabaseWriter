@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Relationships;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Relationships;
 using Xunit;
 
@@ -13,9 +14,13 @@ public sealed class RelationshipRuntimePolicyTests
     [Fact]
     public void CascadeDepthPolicy_RejectsBeyondConfiguredLimit()
     {
-        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+        JetConstraintException exception = Assert.Throws<JetConstraintException>(
             () => RelationshipCascadePolicy.ThrowIfDepthExceeded(RelationshipCascadePolicy.MaxDepth + 1));
 
+        Assert.Equal(JetErrorCode.CascadeDepthExceeded, exception.ErrorCode);
+        Assert.NotNull(exception.ErrorInfo);
+        Assert.Null(exception.ErrorInfo.TableName);
+        Assert.Null(exception.ErrorInfo.RelationshipName);
         Assert.Contains("cascade depth", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 

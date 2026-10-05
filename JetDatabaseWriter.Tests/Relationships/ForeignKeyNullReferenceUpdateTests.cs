@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -46,7 +47,7 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException error = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 2), new RowValues { ["Name"] = null }, Ct));
                 Assert.Contains("cascade-update is not enabled", error.Message, StringComparison.Ordinal);
             });
@@ -91,7 +92,7 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException error = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 2), new RowValues { ["Name"] = null }, Ct));
                 Assert.Contains("NOT NULL", error.Message, StringComparison.Ordinal);
             });
@@ -135,7 +136,7 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException error = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 2), new RowValues { ["Name"] = null }, Ct));
                 Assert.Contains("NOT NULL", error.Message, StringComparison.Ordinal);
             });

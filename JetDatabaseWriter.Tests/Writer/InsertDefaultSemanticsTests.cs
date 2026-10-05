@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -125,10 +126,10 @@ public sealed class InsertDefaultSemanticsTests
         for (int session = 0; session < 2; session++)
         {
             await using AccessWriter writer = await OpenWriterAsync(stream);
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(Table, [10 + session, null], ct));
             Assert.Contains("cannot be set to null", ex.Message, StringComparison.Ordinal);
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(Table, new RowValues { ["Id"] = 20 + session, ["Score"] = DBNull.Value }, ct));
 
             await writer.InsertRowAsync(Table, [1 + (2 * session), DbDefault.Value], ct);

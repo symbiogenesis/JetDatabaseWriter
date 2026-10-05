@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
@@ -104,7 +105,7 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
                 mode,
                 async () =>
                 {
-                    await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("SeekChild", [9, "missing"], ct));
+                    await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync("SeekChild", [9, "missing"], ct));
                     await writer.InsertRowAsync("SeekChild", [3, "\u0152uvre"], ct);
                     Assert.Equal(1, await writer.UpdateRowsAsync("SeekParent", "Code", "\u0152uvre", new Dictionary<string, object?> { ["Code"] = "caf\u00e9" }, ct));
                     Assert.Equal(1, await writer.DeleteRowsAsync("SeekParent", "Code", "r\u00e9sum\u00e9", ct));

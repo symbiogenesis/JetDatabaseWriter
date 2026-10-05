@@ -95,7 +95,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     }
 
     private static JetLimitationException CreateUnenforceableException(string tableName, string reason)
-        => new($"Unique indexes on table '{tableName}' cannot be enforced: {reason}. The table is unchanged.");
+        => new(JetErrorCode.IndexesUnmaintainable, $"Unique indexes on table '{tableName}' cannot be enforced: {reason}. The table is unchanged.", new JetErrorInfo { TableName = tableName, Reason = reason });
 
     /// <summary>
     /// Encodes the composite index key for one row using a previously
@@ -200,6 +200,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     /// <param name="pendingRows">The pending rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when a pending insert would duplicate a unique key.</exception>
+    /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     private async ValueTask CheckUniqueIndexesFastPathAsync(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,
@@ -231,9 +232,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
                 if (!seenSets[d].Add(key)
                     || await cursor.ContainsKeyAsync(descriptor.RootPage, key, cancellationToken).ConfigureAwait(false))
                 {
-                    throw new InvalidOperationException(
-                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
-                        "The conflict was detected before any row was written; the table is unchanged.");
+                    throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
                 }
             }
         }
@@ -341,6 +340,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     /// <param name="pendingInsertRows">The pending insert rows.</param>
     /// <param name="replaceAtRowIndex">Post-update rows keyed by their position in <paramref name="existingRows"/>.</param>
     /// <exception cref="InvalidOperationException">Thrown when the effective post-mutation row set contains a duplicate unique key.</exception>
+    /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     private void CheckUniqueIndexesCore(
         string tableName,
         List<UniqueIndexDescriptor> descriptors,
@@ -372,9 +372,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
                 if (!seen.Add(key))
                 {
-                    throw new InvalidOperationException(
-                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
-                        "The conflict was detected before any row was written; the table is unchanged.");
+                    throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
                 }
             }
 
@@ -384,9 +382,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
                 if (!seen.Add(key))
                 {
-                    throw new InvalidOperationException(
-                        $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. " +
-                        "The conflict was detected before any row was written; the table is unchanged.");
+                    throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
                 }
             }
         }

@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -127,7 +128,7 @@ public sealed class ColumnConstraintTests
             ],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken));
 
         await writer.InsertRowAsync(table, [2, "Alice"], TestContext.Current.CancellationToken);
@@ -154,7 +155,7 @@ public sealed class ColumnConstraintTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(table, [1, DBNull.Value], TestContext.Current.CancellationToken));
 
             await writer.InsertRowAsync(table, [2, "Alice"], TestContext.Current.CancellationToken);
@@ -185,7 +186,7 @@ public sealed class ColumnConstraintTests
 
         await writer.InsertRowAsync(table, [1, 50], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
             await writer.InsertRowAsync(table, [2, 250], TestContext.Current.CancellationToken));
     }
 
@@ -209,14 +210,14 @@ public sealed class ColumnConstraintTests
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [1, "x"], TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Name"] = null }, TestContext.Current.CancellationToken));
         }
 
         // A later writer hydrates NOT NULL from the persisted Required property.
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Name"] = DBNull.Value }, TestContext.Current.CancellationToken));
 
             Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Name"] = "y" }, TestContext.Current.CancellationToken));
@@ -247,13 +248,13 @@ public sealed class ColumnConstraintTests
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [DBNull.Value, "a"], TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(table, "Name", "a", new Dictionary<string, object?> { ["Id"] = null }, TestContext.Current.CancellationToken));
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(table, "Name", "a", new Dictionary<string, object?> { ["Id"] = null }, TestContext.Current.CancellationToken));
         }
 
@@ -317,7 +318,7 @@ public sealed class ColumnConstraintTests
                 TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [1, 50], TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 250 }, TestContext.Current.CancellationToken));
 
             Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 75 }, TestContext.Current.CancellationToken));
@@ -369,7 +370,7 @@ public sealed class ColumnConstraintTests
                 ? null
                 : await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(table, RowCriteria.All(), new RowValues { ["Name"] = null }, TestContext.Current.CancellationToken));
 
             if (transaction is not null)
@@ -445,7 +446,7 @@ public sealed class ColumnConstraintTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetValidationRuleException ex = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync(table, [1, -5], TestContext.Current.CancellationToken));
             Assert.Contains("Score must be 0..100.", ex.Message, StringComparison.Ordinal);
 
@@ -458,9 +459,9 @@ public sealed class ColumnConstraintTests
         // A later writer reads the rule from MSysObjects.LvProp.
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync(table, [3, 500], TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 101 }, TestContext.Current.CancellationToken));
 
             Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = 99 }, TestContext.Current.CancellationToken));
@@ -577,9 +578,9 @@ public sealed class ColumnConstraintTests
 
             await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1 }, TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [2, before.AddDays(-1)], TestContext.Current.CancellationToken);
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync(table, [3, new DateTime(2000, 1, 1)], TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 2, new Dictionary<string, object?> { ["Due"] = new DateTime(2000, 1, 1) }, TestContext.Current.CancellationToken));
         });
         DateTime after = DateTimeOffset.Now.DateTime.Date;
@@ -627,9 +628,9 @@ public sealed class ColumnConstraintTests
             }
 
             await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1, ["Mask"] = 255 }, TestContext.Current.CancellationToken);
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync(table, [2, "x", 256], TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Mask"] = 300 }, TestContext.Current.CancellationToken));
         });
 
@@ -779,7 +780,7 @@ public sealed class ColumnConstraintTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync("NonFinite", [new("Id", typeof(int)), column], TestContext.Current.CancellationToken));
             Assert.Contains("'Value'", ex.Message, StringComparison.Ordinal);
             Assert.Equal("columns", ex.ParamName);
@@ -808,7 +809,7 @@ public sealed class ColumnConstraintTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync("Unstorable", [new("Id", typeof(int)), UnstorableNumericDefault(kind)], TestContext.Current.CancellationToken));
             Assert.Contains("'Value'", ex.Message, StringComparison.Ordinal);
             Assert.Equal("columns", ex.ParamName);
@@ -838,7 +839,7 @@ public sealed class ColumnConstraintTests
             await writer.CreateTableAsync(table, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [1], TestContext.Current.CancellationToken);
 
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.AddColumnAsync(table, UnstorableNumericDefault("DoubleTooLargeForSingle"), TestContext.Current.CancellationToken));
             Assert.Contains("'Value'", ex.Message, StringComparison.Ordinal);
             Assert.Equal("column", ex.ParamName);
@@ -889,7 +890,7 @@ public sealed class ColumnConstraintTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync(table, [new("Id", typeof(int)), GeneratedColumnWithDefault(kind)], TestContext.Current.CancellationToken));
             Assert.Contains("'Gen'", ex.Message, StringComparison.Ordinal);
             Assert.Equal("columns", ex.ParamName);
@@ -927,7 +928,7 @@ public sealed class ColumnConstraintTests
             await writer.CreateTableAsync(table, [new("Id", typeof(int)), new("Name", typeof(string), maxLength: 20)], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync(table, [1, "a"], TestContext.Current.CancellationToken);
 
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.AddColumnAsync(table, GeneratedColumnWithDefault(kind), TestContext.Current.CancellationToken));
             Assert.Contains("'Gen'", ex.Message, StringComparison.Ordinal);
             Assert.Equal("column", ex.ParamName);
@@ -967,7 +968,7 @@ public sealed class ColumnConstraintTests
                 ],
                 TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(table, new RowValues { ["Id"] = 1 }, TestContext.Current.CancellationToken));
         }
 
@@ -1059,9 +1060,9 @@ public sealed class ColumnConstraintTests
         {
             await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync(table, [2, 11], TestContext.Current.CancellationToken));
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = -1 }, TestContext.Current.CancellationToken));
             await writer.InsertRowAsync(table, [3, DbDefault.Value], TestContext.Current.CancellationToken);
 
@@ -1104,11 +1105,11 @@ public sealed class ColumnConstraintTests
         {
             await writer.InsertRowAsync("Products", new RowValues { ["ProductName"] = "Default probe" }, TestContext.Current.CancellationToken);
 
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetValidationRuleException ex = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync("Products", new RowValues { ["ProductName"] = "Bad price", ["UnitPrice"] = -1m }, TestContext.Current.CancellationToken));
             Assert.Contains("You must enter a positive number.", ex.Message, StringComparison.Ordinal);
 
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.UpdateRowsAsync("Order Details", RowCriteria.All(), new RowValues { ["Discount"] = 2f }, TestContext.Current.CancellationToken));
         }
 
@@ -1131,7 +1132,7 @@ public sealed class ColumnConstraintTests
         await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.NorthwindTraders);
 
         await using AccessWriter writer = await OpenWriterAsync(stream);
-        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        JetValidationRuleException ex = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
             await writer.UpdateRowsAsync("OrderDetails", RowCriteria.All(), new RowValues { ["Quantity"] = 0 }, TestContext.Current.CancellationToken));
         Assert.Contains("Quantity should be greater than zero.", ex.Message, StringComparison.Ordinal);
     }

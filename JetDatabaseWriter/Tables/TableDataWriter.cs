@@ -82,7 +82,7 @@ internal sealed class TableDataWriter(
     /// <param name="row">The named-column values.</param>
     /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
     /// <returns>The positional row values.</returns>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="row"/> names a column not in the table.</exception>
+    /// <exception cref="JetObjectNotFoundException">Thrown when <paramref name="row"/> names a column not in the table.</exception>
     private static object[] ResolveNamedRow(TableDef tableDef, string tableName, RowValues row, string paramName)
     {
         Guard.NotNull(row, paramName);
@@ -95,9 +95,11 @@ internal sealed class TableDataWriter(
             int columnIndex = tableDef.FindColumnIndex(pair.Key);
             if (columnIndex < 0)
             {
-                throw new ArgumentException(
+                throw new JetObjectNotFoundException(
+                    JetErrorCode.ColumnNotFound,
                     $"Column '{pair.Key}' was not found in table '{tableName}'.",
-                    paramName);
+                    paramName,
+                    new JetErrorInfo { TableName = tableName, ColumnName = pair.Key });
             }
 
             values[columnIndex] = pair.Value ?? DBNull.Value;
@@ -245,7 +247,7 @@ internal sealed class TableDataWriter(
             int columnIndex = tableDef.FindColumnIndex(kvp.Key);
             if (columnIndex < 0)
             {
-                throw new ArgumentException($"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues));
+                throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{kvp.Key}' was not found in table '{tableName}'.", nameof(updatedValues), new JetErrorInfo { TableName = tableName, ColumnName = kvp.Key });
             }
 
             if (kvp.Value is DbDefault)

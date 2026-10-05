@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -165,7 +166,7 @@ public sealed class IndexWriterAdvancedTests
         await writer.InsertRowAsync("T", [1], this.ct);
         await writer.InsertRowAsync("T", [2], this.ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1], this.ct));
     }
 
@@ -246,7 +247,7 @@ public sealed class IndexWriterAdvancedTests
         await writer.InsertRowAsync("T", [1, 10], this.ct);
         await writer.InsertRowAsync("T", [1, 20], this.ct); // (1,10) ≠ (1,20) — fine
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1, 10], this.ct));
     }
 
@@ -346,7 +347,7 @@ public sealed class IndexWriterAdvancedTests
         await writer.InsertRowAsync("T", [dup], this.ct);
         await writer.InsertRowAsync("T", [Guid.NewGuid()], this.ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [dup], this.ct));
     }
 
@@ -399,7 +400,7 @@ public sealed class IndexWriterAdvancedTests
         await writer.InsertRowAsync("T", [1.50m], this.ct);
         await writer.InsertRowAsync("T", [2m], this.ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1.5m], this.ct));
     }
 

@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -231,7 +232,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetOperationException>(async () =>
                 await writer.InsertRowAsync(tree, RowValues.Create().Set("Id", 9).Set("ParentId", 99), Ct));
             await writer.DropRelationshipAsync(relationship, Ct);
             await writer.DropTableAsync(tree, Ct);
@@ -453,7 +454,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
 
     private static async ValueTask<InvalidOperationException> AssertDropRefusedAsync(AccessWriter writer, string table, string relationship)
     {
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.DropTableAsync(table, Ct));
+        JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropTableAsync(table, Ct));
         Assert.Contains("participates in", ex.Message, StringComparison.Ordinal);
         Assert.Contains($"'{relationship}'", ex.Message, StringComparison.Ordinal);
         Assert.Contains($"'{table}'", ex.Message, StringComparison.Ordinal);
@@ -534,7 +535,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     {
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetOperationException>(async () =>
                 await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 20).Set("ParentId", 99), Ct));
 
             Assert.Equal(1, await writer.DeleteRowsAsync(Parent, "Id", 1, Ct));

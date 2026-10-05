@@ -188,7 +188,7 @@ public sealed class Jet3LongRowTests
                 _ = await writer.InsertRowsAsync(TableName, [.. Enumerable.Range(1, 5).Select(LongRow)], ct);
                 Assert.Equal(1, await writer.UpdateRowsAsync(TableName, "C000", 3, new Dictionary<string, object?> { ["C000"] = 33, ["C199"] = -1 }, ct));
                 Assert.Equal(1, await writer.DeleteRowsAsync(TableName, "C000", 4, ct));
-                _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(TableName, LongRow(5), ct));
+                _ = await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync(TableName, LongRow(5), ct));
             },
             ct);
 

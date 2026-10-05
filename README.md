@@ -988,6 +988,8 @@ await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOpti
 
 ## Error Handling
 
+Constraint, lookup and schema refusals implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship and page context. These exceptions retain their previous BCL base types and messages. Other failure paths are being converted separately; callers should still handle ordinary I/O and argument errors.
+
 ```csharp
 try { var dt = await reader.ReadTableAsync("Orders"); }
 catch (FileNotFoundException)   { /* file missing */ }

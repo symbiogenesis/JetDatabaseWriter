@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -542,7 +543,7 @@ public sealed class IndexMaintenanceTests
         await writer.InsertRowAsync("T", [1], this.ct);
 
         // Inserting the same PK value a second time must throw.
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        await Assert.ThrowsAsync<JetConstraintException>(
             () => writer.InsertRowAsync("T", [1], this.ct).AsTask());
     }
 

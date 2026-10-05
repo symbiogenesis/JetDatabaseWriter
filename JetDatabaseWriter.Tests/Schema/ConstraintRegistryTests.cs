@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Expressions;
@@ -442,7 +443,7 @@ public sealed class ConstraintRegistryTests
             ("Score", Constants.ColumnPropertyNames.DefaultValue, "-1"),
             ("Score", Constants.ColumnPropertyNames.ValidationRule, ">=0")));
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
             await registry.ApplyAsync("T", tableDef, [DbDefault.Value], TestContext.Current.CancellationToken));
     }
 
@@ -515,7 +516,7 @@ public sealed class ConstraintRegistryTests
         // B already violates its rule; an update that assigns only A is still checked only on A.
         await registry.ApplyUpdateAsync("T", tableDef, [5, -1], [0], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
             await registry.ApplyUpdateAsync("T", tableDef, [-5, 1], [0], TestContext.Current.CancellationToken));
     }
 
@@ -531,7 +532,7 @@ public sealed class ConstraintRegistryTests
         }
         else
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetValidationRuleException ex = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
             Assert.Contains(rule, ex.Message, StringComparison.Ordinal);
         }

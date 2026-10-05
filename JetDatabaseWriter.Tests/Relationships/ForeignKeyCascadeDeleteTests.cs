@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -48,8 +49,11 @@ public sealed class ForeignKeyCascadeDeleteTests(DatabaseCache db) : IClassFixtu
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
+                Assert.Equal(JetErrorCode.ForeignKeyRestrictDelete, ex.ErrorCode);
+                Assert.Equal("P", ex.ErrorInfo.TableName);
+                Assert.Equal("FK_D_P", ex.ErrorInfo.RelationshipName);
                 Assert.Contains(
                     "DELETE on 'P' violates foreign-key constraint 'FK_D_P': 1 dependent row(s) in 'D' reference the deleted key(s)",
                     ex.Message,

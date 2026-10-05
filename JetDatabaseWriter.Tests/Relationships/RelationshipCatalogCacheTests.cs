@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -101,7 +102,7 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
                 await writer.InsertRowAsync("C", [1, 1], Ct);
                 await writer.RenameColumnAsync("P", "Id", "PKey", Ct);
 
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("P", "PKey", 1, new Dictionary<string, object?> { ["PKey"] = 5 }, Ct));
                 Assert.Contains($"foreign-key constraint '{Relationship}'", ex.Message, StringComparison.Ordinal);
                 Assert.Contains("cascade-update is not enabled", ex.Message, StringComparison.Ordinal);
@@ -123,7 +124,7 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
                 await writer.InsertRowAsync("C", [1, 1], Ct);
                 await writer.RenameRelationshipAsync(Relationship, "PC2", Ct);
 
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.DeleteRowsAsync("P", "Id", 1, Ct));
                 Assert.Contains("foreign-key constraint 'PC2'", ex.Message, StringComparison.Ordinal);
             });
@@ -376,7 +377,7 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
     /// <param name="foreignColumn">The child key column the error names.</param>
     private static async Task AssertOrphanInsertRejectedAsync(AccessWriter writer, string foreignColumn)
     {
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("C", [42, 99], Ct));
         Assert.Contains($"violates foreign-key constraint '{Relationship}'", ex.Message, StringComparison.Ordinal);
         Assert.Contains(foreignColumn, ex.Message, StringComparison.Ordinal);

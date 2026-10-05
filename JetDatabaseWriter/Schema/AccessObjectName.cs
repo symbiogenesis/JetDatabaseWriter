@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
@@ -81,12 +82,13 @@ internal static class AccessObjectName
     /// <param name="kind">The kind of object, for the message: "table", "column" or "relationship".</param>
     /// <exception cref="ArgumentNullException"><paramref name="name"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="name"/> is empty or breaks one of the rules.</exception>
+    /// <exception cref="JetArgumentException">The operation is refused with a structured <see cref="JetArgumentException"/>.</exception>
     internal static void ThrowIfInvalid([NotNull] string? name, string paramName, string kind)
     {
         Guard.NotNullOrEmpty(name, paramName);
         if (FindViolation(name) is { } reason)
         {
-            throw new ArgumentException(Describe(name, kind, position: null, reason), paramName);
+            throw new JetArgumentException(JetErrorCode.InvalidObjectName, Describe(name, kind, position: null, reason), paramName, new JetErrorInfo { ObjectName = name, Reason = reason });
         }
     }
 
@@ -101,18 +103,17 @@ internal static class AccessObjectName
     /// <param name="kind">The kind of object, for the message: "column" or "index".</param>
     /// <param name="position">The definition's position in its list, or <see langword="null"/> for a single definition.</param>
     /// <exception cref="ArgumentException"><paramref name="name"/> is <see langword="null"/>, empty or breaks one of the rules.</exception>
+    /// <exception cref="JetArgumentException">The operation is refused with a structured <see cref="JetArgumentException"/>.</exception>
     internal static void ThrowIfInvalidMember(string? name, string paramName, string kind, int? position = null)
     {
         if (string.IsNullOrEmpty(name))
         {
-            throw new ArgumentException(
-                position is { } index ? $"The {kind} at position {index} has no name." : $"The {kind} has no name.",
-                paramName);
+            throw new JetArgumentException(JetErrorCode.InvalidObjectName, position is { } index ? $"The {kind} at position {index} has no name." : $"The {kind} has no name.", paramName);
         }
 
         if (FindViolation(name) is { } reason)
         {
-            throw new ArgumentException(Describe(name, kind, position, reason), paramName);
+            throw new JetArgumentException(JetErrorCode.InvalidObjectName, Describe(name, kind, position, reason), paramName, new JetErrorInfo { ObjectName = name, Reason = reason });
         }
     }
 
@@ -129,11 +130,12 @@ internal static class AccessObjectName
     /// <param name="kind">The kind of object, for the message: "table", "column", "index" or "relationship".</param>
     /// <param name="position">The definition's position in its list, or <see langword="null"/>.</param>
     /// <exception cref="ArgumentException"><paramref name="name"/> holds a character the database's code page does not have.</exception>
+    /// <exception cref="JetArgumentException">The operation is refused with a structured <see cref="JetArgumentException"/>.</exception>
     internal static void ThrowIfNotStorable(JetFormat format, string name, string paramName, string kind, int? position = null)
     {
         if (format.DescribeUnstorableCharacter(name) is { } character)
         {
-            throw new ArgumentException(format.UnstorableTextMessage($"The {kind} name '{Display(name)}'{At(position)}", character), paramName);
+            throw new JetArgumentException(JetErrorCode.InvalidObjectName, format.UnstorableTextMessage($"The {kind} name '{Display(name)}'{At(position)}", character), paramName, new JetErrorInfo { ObjectName = name, Reason = "The name is outside the database code page" });
         }
     }
 

@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -37,7 +38,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await writer.InsertRowAsync("T", [1], this.ct);
         await writer.InsertRowAsync("T", [2], this.ct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1], this.ct));
 
         // Error message must indicate the conflict was caught BEFORE the
@@ -73,7 +74,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         await writer.InsertRowsAsync("T", rows, this.ct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [rowCount], this.ct));
 
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
@@ -98,7 +99,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         await writer.InsertRowAsync("T", ["duplicate memo key"], this.ct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", ["duplicate memo key"], this.ct));
 
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
@@ -128,7 +129,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await writer.InsertRowAsync("T", [DBNull.Value, 200], this.ct); // Id=2
 
         // Duplicate Tag=100 → must throw before consuming Id=3.
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [DBNull.Value, 100], this.ct));
 
         // Next successful insert should use Id=3, not Id=4.
@@ -163,7 +164,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 [4],
             ];
 
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowsAsync("T", batch, this.ct));
             Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
         }
@@ -197,7 +198,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
             new() { Tag = 100 },
         ];
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowsAsync("T", duplicateBatch, this.ct));
 
         await writer.InsertRowAsync("T", new UniqueTagRow { Tag = 300 }, this.ct);
@@ -235,7 +236,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 this.ct);
 
             // Try to update Id=2 so its Code collides with Id=1's Code.
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.UpdateRowsAsync(
                     "T",
                     "Id",
@@ -273,7 +274,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await writer.InsertRowAsync("T", [1, 20], this.ct); // different B → ok
         await writer.InsertRowAsync("T", [2, 10], this.ct); // different A → ok
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1, 10], this.ct));
     }
 
@@ -290,7 +291,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         await writer.InsertRowAsync("T", [1], this.ct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1], this.ct));
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
     }

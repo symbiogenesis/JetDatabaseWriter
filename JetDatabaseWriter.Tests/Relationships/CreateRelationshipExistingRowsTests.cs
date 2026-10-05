@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -29,7 +30,7 @@ public sealed class CreateRelationshipExistingRowsTests(DatabaseCache db) : ICla
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException exception = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_P", "P", "Id", "C", "ParentId"), Ct));
                 Assert.Contains("FK_C_P", exception.Message, StringComparison.Ordinal);
                 Assert.Equal(before, ms.ToArray());
@@ -96,7 +97,7 @@ public sealed class CreateRelationshipExistingRowsTests(DatabaseCache db) : ICla
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
-                await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_P", "P", ["First", "Second"], "C", ["First", "Second"]), Ct)));
         }
 

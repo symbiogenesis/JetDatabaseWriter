@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -93,7 +94,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.DropRelationshipAsync("FK_Definitely_Not_Present_" + Guid.NewGuid().ToString("N"), TestContext.Current.CancellationToken));
     }
 
@@ -164,7 +165,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
                 new RelationshipDefinition(nameB, parent, "Id", child, "PB"),
                 TestContext.Current.CancellationToken);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await Assert.ThrowsAsync<JetObjectExistsException>(async () =>
                 await writer.RenameRelationshipAsync(nameA, nameB, TestContext.Current.CancellationToken));
         }
     }
@@ -175,7 +176,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.RenameRelationshipAsync("FK_Missing_" + Guid.NewGuid().ToString("N"), "FK_New", TestContext.Current.CancellationToken));
     }
 

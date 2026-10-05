@@ -144,6 +144,7 @@ internal sealed class TableSchemaEditor(
     /// <returns>A task that completes when the table is in the catalog.</returns>
     /// <exception cref="ArgumentException">Thrown when <paramref name="columns"/> is empty.</exception>
     /// <exception cref="InvalidOperationException">Thrown when a table named <paramref name="tableName"/> already exists.</exception>
+    /// <exception cref="JetObjectExistsException">The operation is refused with a structured <see cref="JetObjectExistsException"/>.</exception>
     internal async ValueTask CreateTableAsync(
         string tableName,
         IReadOnlyList<ColumnDefinition> columns,
@@ -176,7 +177,7 @@ internal sealed class TableSchemaEditor(
 
         if (await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) != null)
         {
-            throw new InvalidOperationException($"Table '{tableName}' already exists.");
+            throw new JetObjectExistsException(JetErrorCode.TableExists, $"Table '{tableName}' already exists.", errorInfo: new JetErrorInfo { TableName = tableName });
         }
 
         // Complex columns (Attachment / MultiValue) declared by the user have
@@ -274,7 +275,7 @@ internal sealed class TableSchemaEditor(
             {
                 if (existing.Exists(c => string.Equals(c.Name, column.Name, StringComparison.OrdinalIgnoreCase)))
                 {
-                    throw new InvalidOperationException($"Column '{column.Name}' already exists in table '{tableName}'.");
+                    throw new JetObjectExistsException(JetErrorCode.ColumnExists, $"Column '{column.Name}' already exists in table '{tableName}'.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
                 }
 
                 return [.. existing, column];
@@ -304,12 +305,12 @@ internal sealed class TableSchemaEditor(
                 dropIndex = existing.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
                 if (dropIndex < 0)
                 {
-                    throw new ArgumentException($"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName));
+                    throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName), errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = columnName });
                 }
 
                 if (existing.Count == 1)
                 {
-                    throw new InvalidOperationException($"Cannot drop the last remaining column from table '{tableName}'.");
+                    throw new JetOperationException(JetErrorCode.LastColumn, $"Cannot drop the last remaining column from table '{tableName}'.", errorInfo: new JetErrorInfo { TableName = tableName });
                 }
 
                 var next = new List<ColumnDefinition>(existing);
@@ -355,7 +356,7 @@ internal sealed class TableSchemaEditor(
             int current = table.Definition.FindColumnIndex(oldColumnName);
             if (current < 0)
             {
-                throw new ArgumentException($"Column '{oldColumnName}' was not found in table '{tableName}'.", nameof(oldColumnName));
+                throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{oldColumnName}' was not found in table '{tableName}'.", nameof(oldColumnName), errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = oldColumnName });
             }
 
             if (string.Equals(table.Definition.Columns[current].Name, newColumnName, StringComparison.Ordinal))
@@ -371,7 +372,7 @@ internal sealed class TableSchemaEditor(
                 int idx = existing.FindIndex(c => string.Equals(c.Name, oldColumnName, StringComparison.OrdinalIgnoreCase));
                 if (idx < 0)
                 {
-                    throw new ArgumentException($"Column '{oldColumnName}' was not found in table '{tableName}'.", nameof(oldColumnName));
+                    throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{oldColumnName}' was not found in table '{tableName}'.", nameof(oldColumnName), errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = oldColumnName });
                 }
 
                 // Access compares column names ignoring case. The renamed
@@ -380,7 +381,7 @@ internal sealed class TableSchemaEditor(
                 {
                     if (i != idx && string.Equals(existing[i].Name, newColumnName, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new InvalidOperationException($"Column '{newColumnName}' already exists in table '{tableName}'.");
+                        throw new JetObjectExistsException(JetErrorCode.ColumnExists, $"Column '{newColumnName}' already exists in table '{tableName}'.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = newColumnName });
                     }
                 }
 
@@ -488,6 +489,7 @@ internal sealed class TableSchemaEditor(
     /// <param name="column">The column being declared.</param>
     /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
     /// <exception cref="ArgumentException">The column declares a default it cannot have.</exception>
+    /// <exception cref="JetArgumentException">The operation is refused with a structured <see cref="JetArgumentException"/>.</exception>
     private static void ValidateDeclaredDefault(ColumnDefinition? column, string paramName)
     {
         if (column?.DeclaresDefault != true)
@@ -499,16 +501,14 @@ internal sealed class TableSchemaEditor(
         {
             if (column.DefaultValue is double d ? !double.IsFinite(d) : column.DefaultValue is float f && !float.IsFinite(f))
             {
-                throw new ArgumentException($"Column '{column.Name}': a floating-point DefaultValue must be finite; Access has no literal for NaN or an infinity.", paramName);
+                throw new JetArgumentException(JetErrorCode.DefaultNotAllowed, $"Column '{column.Name}': a floating-point DefaultValue must be finite; Access has no literal for NaN or an infinity.", paramName, new JetErrorInfo { ColumnName = column.Name });
             }
 
             if (string.IsNullOrWhiteSpace(column.DefaultValueExpression)
                 && ColumnDefaultValue.TryReadBackNumber(column.DefaultValue, column.ClrType, out object? stored)
                 && stored is null)
             {
-                throw new ArgumentException(
-                    $"Column '{column.Name}': the {column.DefaultValue!.GetType().Name} DefaultValue {JetExpressionConverter.ToJetExpression(column.DefaultValue)} cannot be stored in a {column.ClrType.Name} column.",
-                    paramName);
+                throw new JetArgumentException(JetErrorCode.DefaultNotAllowed, $"Column '{column.Name}': the {column.DefaultValue!.GetType().Name} DefaultValue {JetExpressionConverter.ToJetExpression(column.DefaultValue)} cannot be stored in a {column.ClrType.Name} column.", paramName, new JetErrorInfo { ColumnName = column.Name });
             }
 
             return;
@@ -528,7 +528,7 @@ internal sealed class TableSchemaEditor(
             reason = "an Attachment or multi-value column cannot have a DefaultValue or DefaultValueExpression; its items are stored in a hidden child table";
         }
 
-        throw new ArgumentException($"Column '{column.Name}': {reason}.", paramName);
+        throw new JetArgumentException(JetErrorCode.DefaultNotAllowed, $"Column '{column.Name}': {reason}.", paramName, errorInfo: new JetErrorInfo { ColumnName = column.Name });
     }
 
     /// <summary>
@@ -649,8 +649,7 @@ internal sealed class TableSchemaEditor(
     {
         if (ExpressionFieldReferences.References(expression, droppedColumn, tableName))
         {
-            throw new InvalidOperationException(
-                $"Cannot drop column '{droppedColumn}' from table '{tableName}': the {property} of column '{survivor.Name}' ('{expression}') names it. Change or drop that column first.");
+            throw new JetOperationException(JetErrorCode.ColumnReferencedByExpression, $"Cannot drop column '{droppedColumn}' from table '{tableName}': the {property} of column '{survivor.Name}' ('{expression}') names it. Change or drop that column first.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = droppedColumn });
         }
     }
 
@@ -746,6 +745,7 @@ internal sealed class TableSchemaEditor(
     /// <exception cref="ArgumentException">Thrown, before anything is written, when a renamed column's new name would push an expression that names it past the expression limits.</exception>
     /// <exception cref="System.IO.InvalidDataException">Thrown, before anything is written, when a row holds a MEMO or OLE value in a kept column whose stored data cannot be read.</exception>
     /// <exception cref="JetLimitationException">Thrown, before anything is written, when an index of the table names a column the table does not have, or the index section of its table definition cannot be parsed or runs past the end of it (<see cref="IndexMaintainer.ThrowIfIndexesUnmaintainableAsync"/>).</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     private async ValueTask RewriteTableAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -809,7 +809,7 @@ internal sealed class TableSchemaEditor(
         List<ColumnDefinition> newDefs = projectColumns(existingDefs, tableDef);
         if (newDefs.Count == 0)
         {
-            throw new InvalidOperationException($"Table '{tableName}' must retain at least one column.");
+            throw new JetOperationException(JetErrorCode.LastColumn, $"Table '{tableName}' must retain at least one column.", errorInfo: new JetErrorInfo { TableName = tableName });
         }
 
         this.ThrowIfTooManyColumns(tableName, newDefs.Count);

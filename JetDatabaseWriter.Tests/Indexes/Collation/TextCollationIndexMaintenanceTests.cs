@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Linq;
@@ -80,7 +81,7 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
                     mode,
                     async () =>
                     {
-                        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(table, row, ct));
+                        JetConstraintException error = await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync(table, row, ct));
                         Assert.Contains("unique", error.Message, StringComparison.OrdinalIgnoreCase);
                     },
                     ct);

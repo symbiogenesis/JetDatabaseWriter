@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -205,7 +206,7 @@ public sealed class TransactionReadVisibilityTests
             {
                 await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_VisChild_VisParent", "VisParent", "Id", "VisChild", "ParentId"), Ct);
 
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.InsertRowAsync("VisChild", [1, 999], Ct));
                 Assert.Contains("FK_VisChild_VisParent", ex.Message, StringComparison.Ordinal);
 

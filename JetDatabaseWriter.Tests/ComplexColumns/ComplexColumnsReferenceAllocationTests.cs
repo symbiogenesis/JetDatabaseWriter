@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -353,7 +354,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
             await RunAsync(writer, mode, async () =>
             {
-                _ = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowsAsync("Docs", [[4, DBNull.Value], [4, DBNull.Value]], Ct));
+                _ = await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowsAsync("Docs", [[4, DBNull.Value], [4, DBNull.Value]], Ct));
                 await writer.InsertRowAsync("Docs", [5, DBNull.Value], Ct);
             });
         }

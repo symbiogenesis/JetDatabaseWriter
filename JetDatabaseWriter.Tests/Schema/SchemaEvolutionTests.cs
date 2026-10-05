@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -149,7 +150,7 @@ public sealed class SchemaEvolutionTests
             [new("Only", typeof(int))],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.DropColumnAsync(table, "Only", TestContext.Current.CancellationToken));
     }
 
@@ -167,7 +168,7 @@ public sealed class SchemaEvolutionTests
             [new("Id", typeof(int)), new("Name", typeof(string), maxLength: 20)],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetObjectExistsException>(async () =>
             await writer.AddColumnAsync(table, new ColumnDefinition("name", typeof(string), 20), TestContext.Current.CancellationToken));
     }
 
@@ -579,7 +580,7 @@ public sealed class SchemaEvolutionTests
             await writer.DropColumnAsync(table, "Tag", TestContext.Current.CancellationToken);
 
             // The carried unique index still refuses a duplicate.
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(
+            _ = await Assert.ThrowsAsync<JetConstraintException>(
                 async () => await writer.InsertRowAsync(table, [3, 10], TestContext.Current.CancellationToken));
         }
 

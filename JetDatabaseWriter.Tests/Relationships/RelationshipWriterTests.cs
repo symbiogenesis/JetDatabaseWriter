@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -154,7 +155,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         var def = new RelationshipDefinition(relName, parent, "Id", child, "ParentId");
         await writer.CreateRelationshipAsync(def, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetObjectExistsException>(async () =>
             await writer.CreateRelationshipAsync(def, TestContext.Current.CancellationToken));
     }
 
@@ -167,7 +168,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_Nope", parent, "Id", "DoesNotExist", "Id"),
                 TestContext.Current.CancellationToken));
@@ -185,7 +186,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         await writer.CreateTableAsync(parent, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(child, [new("Id", typeof(int))], TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await Assert.ThrowsAsync<JetObjectNotFoundException>(async () =>
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_BadCol", parent, "Id", child, "Missing"),
                 TestContext.Current.CancellationToken));

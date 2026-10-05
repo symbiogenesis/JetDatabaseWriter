@@ -33,8 +33,8 @@ internal static class IndexCatalogReader
     /// unique on the returned <see cref="RealIdxEntry"/> values
     /// even when their physical <c>flags &amp; 0x01</c> bit is clear — and
     /// (b) when <paramref name="logIdxNames"/> is supplied, capture a
-    /// best-effort name per real-idx (first logical-idx referencing that
-    /// real-idx wins).
+    /// best-effort name per real-idx, preferring a primary key or an ordinary
+    /// logical index over a foreign-key index sharing the same real index.
     /// </summary>
     /// <param name="tdefBuffer">Full decoded TDEF buffer.</param>
     /// <param name="layout">Per-format real-idx / logical-idx layout descriptor.</param>
@@ -88,7 +88,15 @@ internal static class IndexCatalogReader
 
             if (logIdxNames is not null && li < logIdxNames.Count)
             {
-                nameByRealIdx.TryAdd(realIdxNum, logIdxNames[li]);
+                if (entry.IndexType == IndexKind.PrimaryKey ||
+                    (entry.IndexType != IndexKind.ForeignKey && !pkRealIdxNums.Contains(realIdxNum)))
+                {
+                    nameByRealIdx[realIdxNum] = logIdxNames[li];
+                }
+                else
+                {
+                    nameByRealIdx.TryAdd(realIdxNum, logIdxNames[li]);
+                }
             }
         }
 
@@ -354,7 +362,7 @@ internal static class IndexCatalogReader
     /// </summary>
     /// <param name="RealIdxByNum">Real-idx slot number → decoded entry. <see cref="RealIdxEntry.IsUnique"/> reflects the physical <c>flags &amp; 0x01</c> bit OR a PK promotion (any logical-idx with <c>index_type = 0x01</c> referencing this slot via <c>index_num2</c>).</param>
     /// <param name="PkRealIdxNums">Set of real-idx slot numbers backing a primary-key logical-idx.</param>
-    /// <param name="NameByRealIdx">Best-effort logical-idx name per real-idx slot (first logical-idx referencing that slot wins). Empty when <c>logIdxNames</c> was not supplied to <see cref="Read"/>.</param>
+    /// <param name="NameByRealIdx">Best-effort logical-idx name per real-idx slot, preferring primary keys and ordinary indexes over foreign-key indexes. Empty when <c>logIdxNames</c> was not supplied to <see cref="Read"/>.</param>
     public sealed record IndexCatalog(
         Dictionary<int, RealIdxEntry> RealIdxByNum,
         HashSet<int> PkRealIdxNums,

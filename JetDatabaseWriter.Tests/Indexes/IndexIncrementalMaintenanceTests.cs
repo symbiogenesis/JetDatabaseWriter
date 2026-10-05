@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -362,7 +363,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await writer.InsertRowAsync("T", [1], this.ct);
         await writer.InsertRowAsync("T", [2], this.ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1], this.ct));
     }
 

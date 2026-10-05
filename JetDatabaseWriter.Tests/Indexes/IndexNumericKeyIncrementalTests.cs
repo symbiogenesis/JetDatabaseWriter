@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -238,7 +239,7 @@ public sealed class IndexNumericKeyIncrementalTests
             this.ct);
 
         await writer.InsertRowAsync("T", [1.50m], this.ct);
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [1.5m], this.ct));
     }
 
@@ -260,7 +261,7 @@ public sealed class IndexNumericKeyIncrementalTests
 
         await writer.InsertRowAsync("T", [1.4m], this.ct); // → 1 at scale 0
         await writer.InsertRowAsync("T", [1.6m], this.ct); // → 2 at scale 0
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowAsync("T", [2.0m], this.ct));
     }
 

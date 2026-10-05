@@ -1,6 +1,6 @@
 namespace JetDatabaseWriter.Relationships;
 
-using System;
+using JetDatabaseWriter.Exceptions;
 
 internal static class RelationshipCascadePolicy
 {
@@ -15,8 +15,7 @@ internal static class RelationshipCascadePolicy
     {
         if (depth > MaxDepth)
         {
-            throw new InvalidOperationException(
-                $"Foreign-key cascade depth exceeded {MaxDepth}. Possible cyclic relationship.");
+            throw JetErrors.Constraint(JetErrorCode.CascadeDepthExceeded, $"Foreign-key cascade depth exceeded {MaxDepth}. Possible cyclic relationship.");
         }
     }
 }

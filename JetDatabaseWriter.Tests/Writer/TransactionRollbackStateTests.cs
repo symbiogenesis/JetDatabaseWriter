@@ -103,7 +103,7 @@ public sealed class TransactionRollbackStateTests
             await writer.InsertRowAsync("X", [1, "In transaction"], TestContext.Current.CancellationToken);
             await tx.RollbackAsync(TestContext.Current.CancellationToken);
 
-            InvalidOperationException missing = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetOperationException missing = await Assert.ThrowsAsync<JetOperationException>(async () =>
                 await writer.InsertRowAsync("X", [2, "After rollback"], TestContext.Current.CancellationToken));
             Assert.Contains("'X'", missing.Message, StringComparison.Ordinal);
 
@@ -191,7 +191,7 @@ public sealed class TransactionRollbackStateTests
             await ChangeSchemaAsync(writer, schemaChange, "Other");
             await tx.RollbackAsync(TestContext.Current.CancellationToken);
 
-            _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync("T", [DBNull.Value, DBNull.Value, 2], TestContext.Current.CancellationToken));
 
             await writer.InsertRowAsync("T", [DBNull.Value, "b", 3], TestContext.Current.CancellationToken);
@@ -238,7 +238,7 @@ public sealed class TransactionRollbackStateTests
             await writer.AddColumnAsync("T", new ColumnDefinition("Late", typeof(int)), TestContext.Current.CancellationToken);
 
             await writer.InsertRowAsync("T", [1, DbDefault.Value, 5, DBNull.Value], TestContext.Current.CancellationToken);
-            _ = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync("T", [2, -1, 5, DBNull.Value], TestContext.Current.CancellationToken));
         }
 

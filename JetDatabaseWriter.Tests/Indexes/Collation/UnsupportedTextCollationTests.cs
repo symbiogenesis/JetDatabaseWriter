@@ -102,6 +102,9 @@ public sealed class UnsupportedTextCollationTests(DatabaseCache cache) : IClassF
                                 throw new InvalidOperationException(operation);
                         }
                     });
+                    Assert.Equal(JetErrorCode.UnsupportedTextCollation, error.ErrorCode);
+                    Assert.Equal("Bad", error.ErrorInfo.TableName);
+                    Assert.Equal("Note", error.ErrorInfo.ColumnName);
                     Assert.Contains("Bad", error.Message, StringComparison.Ordinal);
                 },
                 ct);

@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
@@ -1102,7 +1103,7 @@ public sealed class LinkedTextTableTests : IDisposable
             [new("Id", typeof(int))],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<JetObjectExistsException>(() =>
             writer.CreateLinkedTextTableAsync(
                 "LocalTable",
                 @"C:\Data",

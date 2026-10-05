@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -238,7 +239,7 @@ public sealed class LinkedTableTests : IDisposable
             [new("Id", typeof(int))],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<JetObjectExistsException>(() =>
             writer.CreateLinkedOdbcTableAsync("LocalTable", "ODBC;DSN=Y", "T2", TestContext.Current.CancellationToken).AsTask());
     }
 

@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
@@ -328,7 +329,7 @@ public sealed class ComplexColumnsRowApiTests
             ],
             TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.AddAttachmentAsync(
                 "Documents",
                 "Files",

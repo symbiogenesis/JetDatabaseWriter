@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -476,7 +477,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
         await writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<JetObjectExistsException>(() =>
             writer.CreateLinkedOdbcTableAsync("LinkedData", "ODBC;DSN=Other", "dbo.Data", ct).AsTask());
     }
 
@@ -573,7 +574,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
 
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        JetObjectExistsException ex = await Assert.ThrowsAsync<JetObjectExistsException>(() =>
             InsertCatalogObjectAsync(writer, -501, "lowlevelduplicate", ct).AsTask());
 
         Assert.Contains("already exists", ex.Message, StringComparison.Ordinal);

@@ -7,6 +7,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -84,7 +85,7 @@ public sealed class ForeignKeyUpdateScopeTests(DatabaseCache db) : IClassFixture
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("C", RowCriteria.All(), new RowValues { ["ParentId"] = 42, ["Note"] = "z" }, Ct));
                 Assert.Contains($"UPDATE of 'C' violates foreign-key constraint '{Relationship}'", ex.Message, StringComparison.Ordinal);
                 Assert.Contains("no matching row in 'P' for the new ParentId value(s)", ex.Message, StringComparison.Ordinal);

@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -92,9 +93,10 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when no user table is named <paramref name="tableName"/>.</exception>
+    /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     internal async ValueTask<CatalogEntry> GetRequiredCatalogEntryAsync(string tableName, CancellationToken cancellationToken = default)
         => await this.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"Table '{tableName}' was not found.");
+            ?? throw new JetOperationException(JetErrorCode.TableNotFound, $"Table '{tableName}' was not found.", errorInfo: new JetErrorInfo { TableName = tableName });
 
     /// <summary>
     /// Resolves a user table's catalog entry and table definition, or throws when

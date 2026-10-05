@@ -95,7 +95,7 @@ public sealed class Jet3CodePageTextTests
         {
             byte[] before = ms.ToArray();
 
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () => await invoke(writer, text));
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () => await invoke(writer, text));
 
             Assert.Equal(paramName, ex.ParamName);
             Assert.Contains(Cp1252Message, ex.Message, StringComparison.Ordinal);
@@ -117,8 +117,8 @@ public sealed class Jet3CodePageTextTests
         await using MemoryStream ms = await CreateJet3TableAsync();
         await using (AccessWriter writer = await OpenWriterAsync(ms))
         {
-            _ = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync("顧客", [new("Id", typeof(int))], Ct));
-            _ = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync("日本", [new("Id", typeof(int))], Ct));
+            _ = await Assert.ThrowsAsync<JetArgumentException>(async () => await writer.CreateTableAsync("顧客", [new("Id", typeof(int))], Ct));
+            _ = await Assert.ThrowsAsync<JetArgumentException>(async () => await writer.CreateTableAsync("日本", [new("Id", typeof(int))], Ct));
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms);

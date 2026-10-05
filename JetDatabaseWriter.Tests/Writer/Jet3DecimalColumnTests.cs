@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -427,7 +428,7 @@ public sealed class Jet3DecimalColumnTests
                     [new IndexDefinition("UX_Amt", "Amt") { IsUnique = true }],
                     ct);
                 await writer.InsertRowAsync(TableName, [1, 12.34m], ct);
-                await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync(TableName, [2, 12.34m], ct));
+                await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync(TableName, [2, 12.34m], ct));
                 await writer.InsertRowAsync(TableName, [3, 12.35m], ct);
             },
             ct);

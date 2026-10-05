@@ -59,7 +59,7 @@ internal sealed class IndexMaintainer(
     {
         if (column.Type is TextType or MemoType && !column.TextSortOrder.IsSupported)
         {
-            throw new JetLimitationException($"The indexes of table '{tableName}' cannot be maintained: column '{column.Name}' uses unsupported text sort order 0x{column.TextSortOrder.Value:X4}, version {column.TextSortOrder.Version}.");
+            throw new JetLimitationException(JetErrorCode.UnsupportedTextCollation, $"The indexes of table '{tableName}' cannot be maintained: column '{column.Name}' uses unsupported text sort order 0x{column.TextSortOrder.Value:X4}, version {column.TextSortOrder.Version}.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
         }
     }
 
@@ -237,7 +237,7 @@ internal sealed class IndexMaintainer(
     /// <param name="tableName">The table name.</param>
     /// <param name="reason">Why the indexes cannot be maintained.</param>
     private static JetLimitationException CreateUnmaintainableIndexesException(string tableName, string reason)
-        => new($"The indexes of table '{tableName}' cannot be maintained: {reason}.");
+        => new(JetErrorCode.IndexesUnmaintainable, $"The indexes of table '{tableName}' cannot be maintained: {reason}.", new JetErrorInfo { TableName = tableName, Reason = reason });
 
     private int ReadTableUsageMapPage(byte[] tdefBuffer)
         => UsageMap.ReadUInt24(tdefBuffer, format.TDef.UsedPagesPage);
@@ -559,6 +559,7 @@ internal sealed class IndexMaintainer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when a unique index violation is detected after a row mutation.</exception>
     /// <exception cref="JetLimitationException">Thrown when the TDEF's index section cannot be parsed or an index names a column the table does not have, so the indexes cannot be rebuilt.</exception>
+    /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     internal async ValueTask RebuildIndexesAsync(
         long tdefPage,
         TableDef tableDef,
@@ -675,10 +676,7 @@ internal sealed class IndexMaintainer(
                     {
                         if (IndexHelpers.CompareKeyBytes(entries[e - 1].Key, entries[e].Key) == 0)
                         {
-                            throw new InvalidOperationException(
-                                $"Unique index violation on table '{tableName}': duplicate key detected after row mutation. " +
-                                "The duplicate row has been written but the index B-tree was not rebuilt; " +
-                                "remove one of the offending rows and retry the operation.");
+                            throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key detected after row mutation. The duplicate row has been written but the index B-tree was not rebuilt; remove one of the offending rows and retry the operation.", errorInfo: new JetErrorInfo { TableName = tableName, IndexName = catalog.Catalog.GetNameOrFallback(rieKey) });
                         }
                     }
                 }

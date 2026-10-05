@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -46,7 +47,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.InsertRowAsync("C", [3, 1, "x"], Ct));
                 AssertCannotBeEnforced(ex, "FK_Dangling", "primary table 'NoSuchParent' was not found");
 
@@ -73,7 +74,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
             {
                 Assert.Equal(2, await writer.UpdateRowsAsync("C", RowCriteria.All(), new RowValues { ["Note"] = "z" }, Ct));
 
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.UpdateRowsAsync("C", RowCriteria.Where("Id", 2), new RowValues { ["ParentId"] = 5 }, Ct));
                 AssertCannotBeEnforced(ex, "FK_Dangling", "primary table 'NoSuchParent' was not found");
 
@@ -95,11 +96,11 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException insert = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException insert = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.InsertRowAsync("C", [3, 1, "x"], Ct));
                 AssertCannotBeEnforced(insert, "FK_NoColumn", "table 'P' has no column 'NoSuchColumn'");
 
-                InvalidOperationException delete = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException delete = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
                 AssertCannotBeEnforced(delete, "FK_NoColumn", "table 'P' has no column 'NoSuchColumn'");
 
@@ -123,11 +124,11 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException insert = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException insert = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.InsertRowAsync("C", [3, 1, "x"], Ct));
                 AssertCannotBeEnforced(insert, "FK_NoFkColumn", "table 'C' has no column 'NoSuchFk'");
 
-                InvalidOperationException delete = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException delete = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
                 AssertCannotBeEnforced(delete, "FK_NoFkColumn", "table 'C' has no column 'NoSuchFk'");
 
@@ -152,11 +153,11 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException delete = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException delete = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
                 AssertCannotBeEnforced(delete, "FK_NoChild", "foreign table 'NoSuchChild' was not found");
 
-                InvalidOperationException update = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException update = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 8 }, Ct));
                 AssertCannotBeEnforced(update, "FK_NoChild", "foreign table 'NoSuchChild' was not found");
 
@@ -187,7 +188,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 8 }, Ct));
                 AssertCannotBeEnforced(ex, "FK_NoFkColumn", "table 'C' has no column 'NoSuchFk'");
             });
@@ -215,7 +216,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
                 AssertCannotBeEnforced(ex, "FK_NoColumn", "table 'P' has no column 'NoSuchColumn'");
             });
@@ -248,7 +249,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () =>
                     await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
                 AssertCannotBeEnforced(ex, "FK_NoChild", "foreign table 'NoSuchChild' was not found");
             });
@@ -294,7 +295,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.InsertRowsAsync("Tree", [[5, null], [6, 5], [7, 99]], Ct));
                 Assert.Contains("violates foreign-key constraint 'FK_Tree_Self': no matching row in 'Tree'", ex.Message, StringComparison.Ordinal);
 
@@ -332,14 +333,14 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
             {
                 Assert.Equal(1, await writer.UpdateRowsAsync("OrderDetails", RowCriteria.Where("OrderDetailID", 1), new RowValues { ["OrderID"] = 2 }, Ct));
 
-                InvalidOperationException update = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException update = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("OrderDetails", RowCriteria.Where("OrderDetailID", 1), new RowValues { ["OrderID"] = 99999 }, Ct));
                 Assert.Contains(
                     "UPDATE of 'OrderDetails' violates foreign-key constraint 'New_New_OrdersOrderDetails': no matching row in 'Orders'",
                     update.Message,
                     StringComparison.Ordinal);
 
-                InvalidOperationException delete = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException delete = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.DeleteRowsAsync("OrderStatus", RowCriteria.Where("OrderStatusID", 3), Ct));
                 Assert.Contains("DELETE on 'OrderStatus' violates foreign-key constraint 'New_New_OrdersStatusOrders'", delete.Message, StringComparison.Ordinal);
                 Assert.Contains("dependent row(s) in 'Orders'", delete.Message, StringComparison.Ordinal);
@@ -385,7 +386,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
             {
                 Assert.Equal(1, await writer.UpdateRowsAsync("Table1", RowCriteria.Where("otherfk2", 10), new RowValues { ["otherfk2"] = 13 }, Ct));
 
-                InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.UpdateRowsAsync("Table1", RowCriteria.Where("otherfk2", 13), new RowValues { ["otherfk2"] = 999 }, Ct));
                 Assert.Contains(
                     "UPDATE of 'Table1' violates foreign-key constraint 'Table3Table1': no matching row in 'Table3'",

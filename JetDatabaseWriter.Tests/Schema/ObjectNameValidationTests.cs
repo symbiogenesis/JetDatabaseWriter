@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -101,7 +102,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync(name, [new("Id", typeof(int))], Ct));
 
             Assert.Equal("tableName", ex.ParamName);
@@ -120,7 +121,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync("T", [new("Id", typeof(int)), new(name, typeof(string), maxLength: 10)], Ct));
 
             Assert.Equal("columns", ex.ParamName);
@@ -147,11 +148,11 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException nullName = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException nullName = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync("T", [new("Id", typeof(int)), new(null!, typeof(string), maxLength: 10)], Ct));
             Assert.Equal("columns", nullName.ParamName);
 
-            ArgumentException emptyName = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException emptyName = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync("T", [new(string.Empty, typeof(int))], Ct));
             Assert.Equal("columns", emptyName.ParamName);
 
@@ -199,7 +200,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateTableAsync("T", [new("Id", typeof(int))], [new IndexDefinition(name, "Id")], Ct));
 
             Assert.Equal("indexes", ex.ParamName);
@@ -217,7 +218,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateTableWithRowAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.AddColumnAsync("T", new ColumnDefinition(name, typeof(int)), Ct));
 
             Assert.Equal("column", ex.ParamName);
@@ -234,7 +235,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateTableWithRowAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.RenameColumnAsync("T", "Name", name, Ct));
 
             Assert.Equal("newColumnName", ex.ParamName);
@@ -263,7 +264,7 @@ public sealed class ObjectNameValidationTests
 
             foreach (Func<ValueTask> create in creates)
             {
-                ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () => await create());
+                JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () => await create());
                 Assert.Equal("linkedTableName", ex.ParamName);
                 Assert.Contains("table name", ex.Message, StringComparison.Ordinal);
             }
@@ -313,7 +314,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateParentChildAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
                 await writer.CreateRelationshipAsync(new RelationshipDefinition(name, "Parent", "Id", "Child", "ParentId"), Ct));
 
             Assert.Equal("relationship.Name", ex.ParamName);
@@ -331,7 +332,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct);
 
-        ArgumentException ex = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () =>
             await writer.RenameRelationshipAsync("ParentChild", name, Ct));
 
         Assert.Equal("newName", ex.ParamName);
@@ -456,9 +457,9 @@ public sealed class ObjectNameValidationTests
         {
             await RunAsync(writer, mode, async () =>
             {
-                await Assert.ThrowsAsync<ArgumentException>(async () => await writer.CreateTableAsync(" Bad", [new("Id", typeof(int))], Ct));
+                await Assert.ThrowsAsync<JetArgumentException>(async () => await writer.CreateTableAsync(" Bad", [new("Id", typeof(int))], Ct));
                 await writer.CreateTableAsync("Good", [new("Id", typeof(int)), new("Name", typeof(string), maxLength: 10)], Ct);
-                await Assert.ThrowsAsync<ArgumentException>(async () => await writer.AddColumnAsync("Good", new ColumnDefinition("a.b", typeof(int)), Ct));
+                await Assert.ThrowsAsync<JetArgumentException>(async () => await writer.AddColumnAsync("Good", new ColumnDefinition("a.b", typeof(int)), Ct));
                 await writer.InsertRowAsync("Good", [1, "one"], Ct);
             });
         }

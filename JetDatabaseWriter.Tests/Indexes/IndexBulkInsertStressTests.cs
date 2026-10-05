@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using Xunit;
@@ -125,7 +126,7 @@ public sealed class IndexBulkInsertStressTests
             [4],
         ];
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
             await writer.InsertRowsAsync("T", batch, this.ct));
     }
 
@@ -170,7 +171,7 @@ public sealed class IndexBulkInsertStressTests
 
             // The validation predicate rejects this row before any data is
             // written — the autonumber counter must NOT advance for it.
-            await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync("T", [DBNull.Value, "REJECT"], this.ct));
 
             // Next successful insert must use Id == 3, not 4.

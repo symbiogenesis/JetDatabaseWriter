@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -66,9 +67,9 @@ public sealed class RenameColumnCaseTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync("T", [3, "WXYZ", DbDefault.Value], Ct));
+            JetValidationRuleException rejected = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync("T", [3, "WXYZ", DbDefault.Value], Ct));
             Assert.Contains("Len([CODE]) = 3", rejected.Message, StringComparison.Ordinal);
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("T", [4, "ABC", DbDefault.Value], Ct));
+            await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync("T", [4, "ABC", DbDefault.Value], Ct));
             await writer.InsertRowAsync("T", [5, "UVW", DbDefault.Value], Ct);
         }
 
@@ -160,7 +161,7 @@ public sealed class RenameColumnCaseTests
             await writer.RenameColumnAsync("T", "Code", "code", Ct);
             foreach (string taken in TakenNames)
             {
-                InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                JetObjectExistsException exception = await Assert.ThrowsAsync<JetObjectExistsException>(async () =>
                     await writer.RenameColumnAsync("T", "code", taken, Ct));
                 Assert.Equal($"Column '{taken}' already exists in table 'T'.", exception.Message);
             }
@@ -193,11 +194,11 @@ public sealed class RenameColumnCaseTests
         {
             await writer.RenameColumnAsync("T", "Code", "Code", Ct);
 
-            ArgumentException missingColumn = await Assert.ThrowsAsync<ArgumentException>(async () =>
+            JetObjectNotFoundException missingColumn = await Assert.ThrowsAsync<JetObjectNotFoundException>(async () =>
                 await writer.RenameColumnAsync("T", "Missing", "Missing", Ct));
             Assert.Equal("oldColumnName", missingColumn.ParamName);
 
-            InvalidOperationException missingTable = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            JetOperationException missingTable = await Assert.ThrowsAsync<JetOperationException>(async () =>
                 await writer.RenameColumnAsync("Nope", "Code", "Code", Ct));
             Assert.Contains("'Nope'", missingTable.Message, StringComparison.Ordinal);
         }

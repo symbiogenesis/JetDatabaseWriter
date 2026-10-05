@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -394,7 +395,7 @@ internal sealed class IndexRowReader(
         List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(format, tdefBytes, td.Columns);
 
         IndexMetadata? index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ArgumentException($"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName));
+            ?? throw new JetObjectNotFoundException(JetErrorCode.IndexNotFound, $"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName), errorInfo: new JetErrorInfo { TableName = tableName, IndexName = indexName });
 
         if (index.FirstDp <= 0 || index.Columns.Count == 0)
         {
