@@ -62,7 +62,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <summary>Gets the immutable format, byte layouts and text codecs.</summary>
     internal JetFormat Format { get; }
 
-    /// <summary>Gets the file's read-only page interface; the writer owns its pager separately.</summary>
+    /// <summary>Gets the file's read-only page interface; the writer receives its pager separately.</summary>
     internal PageFile Pages { get; }
 
     /// <summary>Gets the table-definition reader, cached only for read-only files.</summary>
@@ -146,5 +146,4 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.TableDefs.Dispose();
         this.OwnedPages.Dispose();
     }
-
 }
