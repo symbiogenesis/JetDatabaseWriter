@@ -39,6 +39,7 @@ internal sealed class Pager : PageFile
     private IPageWriteObserver[] observers = [];
     private PagerTransaction? journal;
     private int scopeDepth;
+    private bool scopeHasWrites;
     private long bufferedPageCount;
     private int clockHand;
     private long storeReads;
@@ -211,6 +212,7 @@ internal sealed class Pager : PageFile
             await this.DrainDirtyPagesAsync().ConfigureAwait(false);
             this.InvalidateAll();
             await this.Store.SetLengthAsync(length, cancellationToken).ConfigureAwait(false);
+            this.scopeHasWrites = true;
             this.bufferedPageCount = this.PhysicalPageCount;
         }
         finally
@@ -443,6 +445,7 @@ internal sealed class Pager : PageFile
 
             if (!pending && this.scopeDepth != 0)
             {
+                this.scopeHasWrites = true;
                 this.dirtyPages[pageNumber] = page.AsSpan(0, this.PageSize).ToArray();
                 this.bufferedPageCount = Math.Max(this.PageCount, pageNumber + 1);
                 pending = true;
@@ -524,6 +527,27 @@ internal sealed class Pager : PageFile
         this.frames.Add(pageNumber, new Frame(bytes));
     }
 
+    /// <summary>Flushes outstanding call pages before disposal, with no extra flush after a completed replay.</summary>
+    /// <returns>The completion.</returns>
+    internal async ValueTask FlushPendingWritesAsync()
+    {
+        await this.frameGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (this.dirtyPages.Count == 0)
+            {
+                return;
+            }
+
+            await this.DrainDirtyPagesAsync().ConfigureAwait(false);
+            await this.Store.FlushAsync(false, CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            _ = this.frameGate.Release();
+        }
+    }
+
     /// <summary>Replays a detached transaction without stealing pending frames.</summary>
     /// <param name="transaction">The detached transaction.</param>
     /// <param name="beforeFirstWrite">The last preparation before replay.</param>
@@ -560,6 +584,11 @@ internal sealed class Pager : PageFile
     internal WriteScope BeginWriteScope()
     {
         this.ThrowIfDisposed();
+        if (this.scopeDepth == 0)
+        {
+            this.scopeHasWrites = false;
+        }
+
         this.scopeDepth++;
         return new WriteScope(this);
     }
@@ -588,7 +617,7 @@ internal sealed class Pager : PageFile
     /// <returns>The completion.</returns>
     internal async ValueTask EndWriteScopeAsync()
     {
-        if (--this.scopeDepth != 0 || this.journal is not null)
+        if (--this.scopeDepth != 0 || this.journal is not null || !this.scopeHasWrites)
         {
             return;
         }

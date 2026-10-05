@@ -15,7 +15,7 @@ public sealed class PageAllocatorStateTests
     [Fact]
     public async Task Reservations_ReuseFreeSet_AndWriteFinalImage()
     {
-        JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         await using var stream = new MemoryStream();
         stream.SetLength(format.PageSize * 3);
 #pragma warning disable CA2000 // The awaited pager owns its codec.

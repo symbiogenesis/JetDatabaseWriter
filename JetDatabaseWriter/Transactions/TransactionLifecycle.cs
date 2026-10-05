@@ -57,7 +57,7 @@ internal sealed class TransactionLifecycle(
 
     /// <summary>Flushes pending writes before a container rewrap.</summary>
     /// <returns>The completion.</returns>
-    internal ValueTask FlushPendingWritesAsync() => pager.FlushAsync(false, CancellationToken.None);
+    internal ValueTask FlushPendingWritesAsync() => pager.FlushPendingWritesAsync();
 
     /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
     internal JetTransaction? ActiveTransaction { get; private set; }

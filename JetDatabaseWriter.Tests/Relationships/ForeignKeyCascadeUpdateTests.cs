@@ -205,7 +205,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         var counting = new CountingStream(ms);
         HashSet<long> pagesRead = [];
         ms.Position = 0;
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, ForeignKeyTestDatabase.WriterOptions(mode), leaveOpen: true, Ct))
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = mode == WriteMode.AutoCommit, PageCacheSize = 0 }, leaveOpen: true, Ct))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {

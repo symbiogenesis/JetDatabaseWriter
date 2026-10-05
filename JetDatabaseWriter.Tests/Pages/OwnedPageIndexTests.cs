@@ -21,7 +21,7 @@ public sealed class OwnedPageIndexTests
     [Fact]
     public async Task PendingWrites_AndRollback_KeepIndexCurrent()
     {
-        JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         await using var stream = new MemoryStream();
         stream.SetLength(format.PageSize * 4);
 #pragma warning disable CA2000 // The awaited pager owns its codec.
@@ -63,11 +63,15 @@ public sealed class OwnedPageIndexTests
         await using var stream = new MemoryStream();
         await stream.WriteAsync(image, TestContext.Current.CancellationToken);
         await using var trace = new PageTraceStream(stream, 2048);
-        await using AccessWriter writer = await AccessWriter.OpenAsync(trace, new AccessWriterOptions
-        {
-            UseLockFile = false,
-            UseByteRangeLocks = false,
-        }, true, TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
+            trace,
+            new AccessWriterOptions
+            {
+                UseLockFile = false,
+                UseByteRangeLocks = false,
+            },
+            true,
+            TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("Shippers", new RowValues { ["CompanyName"] = "Pager first" }, TestContext.Current.CancellationToken);
         trace.Reset();
         await writer.InsertRowAsync("Shippers", new RowValues { ["CompanyName"] = "Pager second" }, TestContext.Current.CancellationToken);

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Pages.Paging;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
@@ -21,7 +22,7 @@ public sealed class WriteBackTests
 #pragma warning disable CA2000 // The awaited pager owns the codec.
         await using var pager = new Pager(stream, 16, new NoPageCodec(), leaveOpen: true, typeof(AccessWriter), cacheSize: 0);
 #pragma warning restore CA2000
-        await using (var scope = pager.BeginWriteScope())
+        await using (WriteScope scope = pager.BeginWriteScope())
         {
             byte[] page = new byte[16];
             page[0] = 17;
@@ -51,10 +52,10 @@ public sealed class WriteBackTests
 #pragma warning restore CA2000
         var observer = new Observer();
         pager.AddWriteObserver(observer);
-        await using (var outer = pager.BeginWriteScope())
+        await using (WriteScope outer = pager.BeginWriteScope())
         {
             await pager.WritePageAsync(3, new byte[16], TestContext.Current.CancellationToken);
-            await using (var inner = pager.BeginWriteScope())
+            await using (WriteScope inner = pager.BeginWriteScope())
             {
                 await pager.WritePageAsync(1, new byte[16], TestContext.Current.CancellationToken);
                 await pager.WritePageAsync(3, new byte[16], TestContext.Current.CancellationToken);
@@ -121,6 +122,63 @@ public sealed class WriteBackTests
 
         Assert.Equal(0, stream.ToArray()[16]);
     }
+
+    /// <summary>Spills retain plaintext visibility and flush once for encrypted stores too.</summary>
+    /// <param name="encrypted">Whether the physical pages use AES.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Spill_PreservesPlaintext_AndFlushesOnce(bool encrypted)
+    {
+        await using var stream = new CountingStream();
+        stream.SetLength(16);
+#pragma warning disable CA2000 // The awaited pager owns the selected codec.
+        await using var pager = new Pager(stream, 16, encrypted ? new AesEcbPageCodec(new byte[16]) : new NoPageCodec(), true, typeof(AccessWriter), 0);
+#pragma warning restore CA2000
+        byte[] page = Enumerable.Repeat((byte)37, 16).ToArray();
+        await using (pager.BeginWriteScope())
+        {
+            for (int number = 1; number <= 65; number++)
+            {
+                Assert.Equal(number, await pager.AppendPageAsync(page, TestContext.Current.CancellationToken));
+            }
+
+            Assert.Equal(64, stream.Writes);
+            Assert.Equal(0, stream.Flushes);
+            byte[] pending = await pager.ReadPageAsync(65, PageReadHint.NoCache, TestContext.Current.CancellationToken);
+            Assert.Equal(page, pending.AsSpan(0, 16).ToArray());
+            PageBuffers.Return(pending);
+        }
+
+        Assert.Equal(65, stream.Writes);
+        Assert.Equal(1, stream.Flushes);
+        Assert.Equal(Enumerable.Range(1, 65).Select(number => number * 16L), stream.Offsets);
+        pager.InvalidateAll();
+        byte[] stored = await pager.ReadPageAsync(1, TestContext.Current.CancellationToken);
+        Assert.Equal(page, stored.AsSpan(0, 16).ToArray());
+        PageBuffers.Return(stored);
+        if (encrypted)
+        {
+            Assert.NotEqual(page, stream.ToArray().AsSpan(16, 16).ToArray());
+        }
+    }
+
+    /// <summary>Disposal does not retry the flush of a failed transaction replay.</summary>
+    [Fact]
+    public async Task FailedTransactionFlush_PendingFlushDoesNotRetry()
+    {
+        await using var stream = new CountingStream { FailFlush = true };
+        stream.SetLength(32);
+#pragma warning disable CA2000 // The awaited pager owns the codec.
+        await using var pager = new Pager(stream, 16, new NoPageCodec(), true, typeof(AccessWriter));
+#pragma warning restore CA2000
+        var transaction = new PagerTransaction(32, 16, 4);
+        transaction.Write(1, new byte[16]);
+        await Assert.ThrowsAsync<IOException>(() => pager.CommitAsync(transaction, () => { }, TestContext.Current.CancellationToken).AsTask());
+        await pager.FlushPendingWritesAsync();
+        Assert.Equal(1, stream.Flushes);
+    }
+
     private sealed class Observer : IPageWriteObserver
     {
         internal List<long> Pages { get; } = [];
@@ -148,6 +206,8 @@ public sealed class WriteBackTests
 
         internal bool FailWrite { get; set; }
 
+        internal bool FailFlush { get; set; }
+
         public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (this.FailWrite)
@@ -163,7 +223,7 @@ public sealed class WriteBackTests
         public override Task FlushAsync(CancellationToken cancellationToken)
         {
             this.Flushes++;
-            return base.FlushAsync(cancellationToken);
+            return this.FailFlush ? Task.FromException(new IOException("Injected flush failure.")) : base.FlushAsync(cancellationToken);
         }
     }
 }

@@ -191,19 +191,19 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// <param name="pageWritesBeforeCancel">How many page writes the batch makes before the token is cancelled.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
-    [InlineData(1)] // after the first row's data-page write, before its TDEF row-count write
-    [InlineData(2)] // between the first and second rows
+    [InlineData(1)] // during the first spill of the batch's distinct dirty pages
+    [InlineData(2)] // during the same spill, before the next row
     [InlineData(7)]
     public async Task InsertRows_CancelledWhileWritingRows_RollsBackBatch(int pageWritesBeforeCancel)
     {
         await using var stream = new CancelAfterWritesStream();
         using var cts = new CancellationTokenSource();
 
-        await using (AccessWriter writer = await CreateCancellationTestTableAsync(stream))
+        await using (AccessWriter writer = await CreateCancellationTestTableAsync(stream, wideRows: true))
         {
             stream.CancelAfterWrites(pageWritesBeforeCancel, cts);
             await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                await writer.InsertRowsAsync("T", CancellationTestBatch(), cts.Token));
+                await writer.InsertRowsAsync("T", Enumerable.Range(1, 100).Select(id => Enumerable.Repeat<object?>(new string('Ж', 200), 8).Prepend(id).ToArray()), cts.Token));
             stream.Disarm();
         }
 
@@ -2159,22 +2159,29 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// with a primary key on <c>Id</c> and one row, <c>Id = 0</c>.
     /// </summary>
     /// <param name="stream">The stream to create the database in.</param>
-    private static async Task<AccessWriter> CreateCancellationTestTableAsync(Stream stream)
+    /// <param name="wideRows">Whether to add padding columns and spill after 64 distinct pages.</param>
+    private static async Task<AccessWriter> CreateCancellationTestTableAsync(Stream stream, bool wideRows = false)
     {
         AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
+            new AccessWriterOptions { UseLockFile = false, PageCacheSize = wideRows ? 0 : 256 },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
         try
         {
+            var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
+            if (wideRows)
+            {
+                columns.AddRange(Enumerable.Range(0, 8).Select(id => new ColumnDefinition($"Padding{id}", typeof(string), 200)));
+            }
+
             await writer.CreateTableAsync(
                 "T",
-                [new ColumnDefinition("Id", typeof(int))],
+                columns,
                 [new IndexDefinition("PK", "Id") { IsPrimaryKey = true }],
                 TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("T", [0], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("T", wideRows ? Enumerable.Repeat<object?>(string.Empty, 8).Prepend(0).ToArray() : [0], TestContext.Current.CancellationToken);
             return writer;
         }
         catch

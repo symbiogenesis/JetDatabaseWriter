@@ -25,8 +25,8 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private const string PageCacheFieldName = "pageCache";
     private const string RowBoundsCacheFieldName = "rowBoundsCache";
     private const string CatalogCacheFieldName = "userTables";
-    private const string OwnedDataPageIndexFieldName = "ownedDataPageIndex";
-    private const string AsyncLazyValueFieldName = "value";
+    private const string OwnedDataPageIndexFieldName = "ownerIndex";
+    private const string OwnedPageIndexInitializedFieldName = "initialized";
 
     [Fact]
     public async Task OpenAsync_WithZeroPageCacheSize_DoesNotAllocateCache()
@@ -212,7 +212,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         object? ownedDataPageIndex = ReadPrivateField(reader.Database.OwnedPages, OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
-        Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));
+        Assert.False(Assert.IsType<bool>(ReadPrivateField(ownedDataPageIndex, OwnedPageIndexInitializedFieldName)));
     }
 
     [Fact]
@@ -240,7 +240,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         object? ownedDataPageIndex = ReadPrivateField(reader.Database.OwnedPages, OwnedDataPageIndexFieldName);
         Assert.Equal(rowCount, actualRows);
         Assert.NotNull(ownedDataPageIndex);
-        Assert.Null(ReadPrivateField(ownedDataPageIndex, AsyncLazyValueFieldName));
+        Assert.False(Assert.IsType<bool>(ReadPrivateField(ownedDataPageIndex, OwnedPageIndexInitializedFieldName)));
     }
 
     [Fact]

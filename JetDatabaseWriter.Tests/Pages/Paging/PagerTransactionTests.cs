@@ -25,7 +25,7 @@ public sealed class PagerTransactionTests
         page[0] = 37;
         transaction.Write(1, page);
         using var source = new CancellationTokenSource();
-        source.Cancel();
+        await source.CancelAsync();
         bool prepared = false;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pager.CommitAsync(transaction, () => prepared = true, source.Token).AsTask());
         Assert.False(prepared);
