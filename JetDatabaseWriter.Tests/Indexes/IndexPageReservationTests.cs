@@ -341,7 +341,7 @@ public sealed class IndexPageReservationTests
     }
 
     [Fact]
-    public async Task ReserveContiguousPages_AppendFails_ReleasesPagesAlreadyAppended()
+    public async Task ReservedRun_InitializerFails_ReleasesAllPages()
     {
         await using var stream = new WriteFaultStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -359,14 +359,34 @@ public sealed class IndexPageReservationTests
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(harness.Database, allocator, this.ct);
         long pageCountBefore = harness.Database.Pages.PageCount;
 
-        // A fresh file has no free run, so the reservation appends; the
-        // second appended page fails.
+        var reservations = new ReservedPageRuns(allocator);
+        long firstPage = await reservations.ReserveAsync(3, this.ct);
+        Assert.Equal(pageCountBefore, firstPage);
+        byte[] initialized = new byte[harness.Database.Format.PageSize];
+        initialized[0] = Constants.PageTypes.Data;
         stream.FailOnWrite(2);
-        _ = await Assert.ThrowsAsync<IOException>(() => allocator.ReserveContiguousPagesAsync(3, this.ct).AsTask());
+        _ = await Assert.ThrowsAsync<IOException>(async () =>
+        {
+            try
+            {
+                for (int offset = 0; offset < 3; offset++)
+                {
+                    await harness.Pager.WritePageAsync(firstPage + offset, initialized, this.ct);
+                }
+            }
+            finally
+            {
+                await reservations.ReleaseAsync();
+            }
+        });
 
         Assert.True(stream.Faulted);
-        Assert.True(harness.Database.Pages.PageCount > pageCountBefore, "The first page should have been appended before the fault.");
-        Assert.True(await allocator.IsPageFreeAsync(pageCountBefore, this.ct), $"Page {pageCountBefore}, appended before the fault, should be free again.");
+        Assert.Equal(pageCountBefore + 3, harness.Database.Pages.PageCount);
+        for (int offset = 0; offset < 3; offset++)
+        {
+            Assert.True(await allocator.IsPageFreeAsync(firstPage + offset, this.ct), $"Reserved page {firstPage + offset} should be free after initialization fails.");
+        }
+
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(harness.Database, allocator, this.ct);
         Assert.Empty(allocatedAfter.Except(allocatedBefore));
         Assert.Empty(allocatedBefore.Except(allocatedAfter));
