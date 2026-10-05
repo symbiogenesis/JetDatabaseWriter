@@ -1,12 +1,5 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
-using JetDatabaseWriter.Catalog;
-using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
@@ -16,6 +9,13 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 
 /// <summary>
