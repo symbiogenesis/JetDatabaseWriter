@@ -2371,9 +2371,10 @@ internal sealed class RelationshipManager(
             return false;
         }
 
-        int numCols = Ru16(td, this.format.TDef.NumCols);
-        int numIdx = Ri32(td, this.format.TDef.NumIdx);
-        int numRealIdx = Ri32(td, this.format.TDef.NumRealIdx);
+        var header = TDefCodec.ReadCounts(this.format, td);
+        int numCols = header.ColumnCount;
+        int numIdx = header.LogicalIndexCount;
+        int numRealIdx = header.RealIndexCount;
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns
             || numIdx < 0 || numIdx > Constants.TableDefinition.MaxIndexes
             || numRealIdx < 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)

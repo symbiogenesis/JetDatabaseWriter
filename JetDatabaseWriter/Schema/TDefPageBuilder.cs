@@ -588,7 +588,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             // MSysObjects; if they disagree it aborts compact with
             // "could not find the object 'MSysDb'" — see
             // docs/design/round-trip-openrecordset-hypothesis.md.
-            int numRealIdx = Ri32(page, format.TDef.NumRealIdx);
+            int numRealIdx = TDefCodec.ReadCounts(format, page).RealIndexCount;
             if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
             {
                 int slotEnd = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);

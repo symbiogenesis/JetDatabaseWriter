@@ -1,10 +1,11 @@
-namespace JetDatabaseWriter.Indexes;
+namespace JetDatabaseWriter.Tests.Schema;
 
+using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -17,7 +18,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// no longer re-implement the same ~50-line decode each.
 /// <para>
 /// Callers pass the logical TDEF buffer (every page of the chain, as
-/// <see cref="Schema.TableDefReader.ReadTDefBytesAsync"/> stitches it) and locate
+/// <see cref="JetDatabaseWriter.Schema.TableDefReader.ReadTDefBytesAsync"/> stitches it) and locate
 /// <c>realIdxDescStart</c> with <see cref="LocateRealIdxDescStart"/>, which
 /// walks the per-format column-name block.
 /// Pass <c>logIdxNames</c> when the caller needs best-effort
@@ -25,8 +26,65 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// the real-idx → key-list map and PK-promotion set are required.
 /// </para>
 /// </summary>
-internal static class IndexCatalogReader
+internal static class LegacyIndexCatalogReader
 {
+    /// <summary>Freezes the old physical/logical descriptor loops without calling the codec.</summary>
+    internal static void ReadImageIndexes(
+        JetFormat format,
+        byte[] td,
+        out List<(RealIdxSlot Slot, uint Root, List<KeyColumn> Columns, byte[] Raw)> physical,
+        out List<(LogicalIdxEntry Entry, string Name, byte[] Raw)> logical)
+    {
+        physical = [];
+        logical = [];
+        int columnCount = Ru16(td, format.TDef.NumCols);
+        int realCount = Ri32(td, format.TDef.NumRealIdx);
+        int logicalCount = Ri32(td, format.TDef.NumIdx);
+        if (logicalCount is < 0 or > Constants.TableDefinition.MaxIndexes)
+        {
+            return;
+        }
+
+        if (realCount is < 0 or > Constants.TableDefinition.MaxIndexes)
+        {
+            realCount = 0;
+        }
+
+        int start = LocateRealIdxDescStart(format, td, columnCount, realCount);
+        if (start < 0)
+        {
+            return;
+        }
+
+        IndexSectionAnchors anchors = format.Index.GetIndexSection(start, realCount, logicalCount);
+        if (anchors.LogIdxNamesStart > td.Length)
+        {
+            return;
+        }
+
+        for (int i = 0; i < realCount; i++)
+        {
+            if (!format.Index.TryReadRealIdxSlotWithKeyColumns(td, start, i, out RealIdxSlot slot, out List<KeyColumn>? columns))
+            {
+                break;
+            }
+
+            physical.Add((slot, Ru32(td, slot.FirstDpOffset), columns, td.AsSpan(slot.PhysStart, format.Index.RealIdxPhysSize).ToArray()));
+        }
+
+        int position = anchors.LogIdxNamesStart;
+        for (int i = 0; i < logicalCount; i++)
+        {
+            if (!format.Index.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out LogicalIdxEntry entry))
+            {
+                break;
+            }
+
+            format.ReadColumnName(td, ref position, out string name);
+            int offset = anchors.LogIdxStart + (i * format.Index.LogicalEntrySize);
+            logical.Add((entry, name, td.AsSpan(offset, format.Index.LogicalEntrySize).ToArray()));
+        }
+    }
     /// <summary>
     /// Reads every populated real-idx slot, then walks logical-idx entries to
     /// (a) collect the set of real-idx slots backing a primary-key
@@ -129,10 +187,9 @@ internal static class IndexCatalogReader
     /// <param name="columns">The table's parsed columns, used to resolve key-column names (honouring deleted-column gaps).</param>
     public static List<IndexMetadata> ReadMetadata(JetFormat format, byte[] td, IReadOnlyList<ColumnInfo> columns)
     {
-        var header = TDefCodec.ReadCounts(format, td);
-        int numCols = header.ColumnCount;
-        int numIdx = header.LogicalIndexCount;
-        int numRealIdx = header.RealIndexCount;
+        int numCols = Ru16(td, format.TDef.NumCols);
+        int numIdx = Ri32(td, format.TDef.NumIdx);
+        int numRealIdx = Ri32(td, format.TDef.NumRealIdx);
 
         // Defensive bounds: corrupt TDEFs can report absurd counts.
         if (numIdx is <= 0 or > Constants.TableDefinition.MaxIndexes)
@@ -167,7 +224,19 @@ internal static class IndexCatalogReader
         }
 
         // Pre-walk index names so we can pair each logical-idx entry with its name.
-        List<string> names = TDefCodec.ReadLogicalIndexNames(format, td, anchors.LogIdxNamesStart, numIdx, preserveSlots: true);
+        string[] names = new string[numIdx];
+        int npos = anchors.LogIdxNamesStart;
+        for (int i = 0; i < numIdx; i++)
+        {
+            if (format.ReadColumnName(td, ref npos, out string n) < 0)
+            {
+                names[i] = string.Empty;
+            }
+            else
+            {
+                names[i] = n;
+            }
+        }
 
         var result = new List<IndexMetadata>(numIdx);
         for (int i = 0; i < numIdx; i++)
@@ -245,7 +314,19 @@ internal static class IndexCatalogReader
     /// <param name="numCols">The number of columns.</param>
     /// <param name="numRealIdx">The number of real indexes.</param>
     public static int LocateRealIdxDescStart(JetFormat format, byte[] td, int numCols, int numRealIdx)
-        => TDefCodec.LocateRealIndexDescriptors(format, td, numCols, numRealIdx);
+    {
+        int colStart = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
+        int pos = colStart + (numCols * format.ColumnDescriptor.Size);
+        for (int i = 0; i < numCols; i++)
+        {
+            if (format.ReadColumnName(td, ref pos, out _) < 0)
+            {
+                return -1;
+            }
+        }
+
+        return pos;
+    }
 
     /// <summary>
     /// Materializes the logical-idx-name list that starts at
@@ -257,7 +338,21 @@ internal static class IndexCatalogReader
     /// <param name="logIdxNamesStart">The logical-idx name section start.</param>
     /// <param name="numIdx">The number of logical indexes.</param>
     public static List<string> ReadLogicalIdxNames(JetFormat format, byte[] td, int logIdxNamesStart, int numIdx)
-        => TDefCodec.ReadLogicalIndexNames(format, td, logIdxNamesStart, numIdx);
+    {
+        var list = new List<string>(numIdx);
+        int pos = logIdxNamesStart;
+        for (int i = 0; i < numIdx; i++)
+        {
+            if (format.ReadColumnName(td, ref pos, out string n) < 0)
+            {
+                break;
+            }
+
+            list.Add(n);
+        }
+
+        return list;
+    }
 
     /// <summary>
     /// Builds the <c>ColNum → snapshot row index</c> lookup that every

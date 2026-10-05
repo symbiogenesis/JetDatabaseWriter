@@ -104,9 +104,9 @@ public sealed class ColumnDefinitionArgumentTests
     [InlineData(DatabaseFormat.Jet3Mdb, "CurrencyNotDecimal")]
     [InlineData(DatabaseFormat.Jet4Mdb, "CurrencyNotDecimal")]
     [InlineData(DatabaseFormat.AceAccdb, "CurrencyNotDecimal")]
-    [InlineData(DatabaseFormat.Jet3Mdb, "PrecisionAbove28")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "PrecisionAbove28")]
-    [InlineData(DatabaseFormat.AceAccdb, "PrecisionAbove28")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "ExtendedDateNotDateTime")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "ExtendedDateNotDateTime")]
+    [InlineData(DatabaseFormat.AceAccdb, "ExtendedDateNotDateTime")]
     public async Task CreateLinkedOdbcTable_InvalidSourceDefinition_ReportsSourceColumns(DatabaseFormat format, string kind)
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);

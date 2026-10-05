@@ -205,8 +205,9 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
             return null;
         }
 
-        int numColumns = Ru16(tableDefinition, format.TDef.NumCols);
-        int numRealIndexes = Ri32(tableDefinition, format.TDef.NumRealIdx);
+        var header = TDefCodec.ReadCounts(format, tableDefinition);
+        int numColumns = header.ColumnCount;
+        int numRealIndexes = header.RealIndexCount;
         if (numColumns < 0 || numColumns > Constants.TableDefinition.MaxColumns
             || numRealIndexes <= 0 || numRealIndexes > Constants.TableDefinition.MaxIndexes)
         {

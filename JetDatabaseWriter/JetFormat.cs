@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -151,6 +152,9 @@ internal sealed class JetFormat
 
     /// <summary>Gets per-format byte offsets within a TDEF block plus real-idx entry size — see <see cref="TDefHeaderLayout"/>.</summary>
     internal TDefHeaderLayout TDef { get; }
+
+    /// <summary>Gets the complete table definition layout.</summary>
+    internal TDefFormat TDefFormat => new(this.TDef, this.ColumnDescriptor, this.Index);
 
     /// <summary>Gets per-format byte offsets within one column descriptor — see <see cref="ColumnDescriptorLayout"/>.</summary>
     internal ColumnDescriptorLayout ColumnDescriptor { get; }

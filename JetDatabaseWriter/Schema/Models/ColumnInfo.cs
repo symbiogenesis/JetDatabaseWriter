@@ -1,11 +1,33 @@
 namespace JetDatabaseWriter.Schema.Models;
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
 using static JetDatabaseWriter.Enums.ColumnType;
 
-internal sealed class ColumnInfo
+internal sealed record ColumnInfo
 {
+    private readonly IReadOnlyList<byte> rawDescriptor = Array.Empty<byte>();
+
+    /// <summary>Initializes a new instance of the <see cref="ColumnInfo"/> class without a source descriptor.</summary>
+    internal ColumnInfo()
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="ColumnInfo"/> class with an owned source descriptor.</summary>
+    /// <param name="descriptor">The original descriptor bytes.</param>
+    internal ColumnInfo(ReadOnlySpan<byte> descriptor)
+        => this.rawDescriptor = Array.AsReadOnly(descriptor.ToArray());
+
+    /// <summary>Gets an immutable copy of the original descriptor, including unknown bytes.</summary>
+    internal IReadOnlyList<byte> RawDescriptor
+    {
+        get => this.rawDescriptor;
+        init => this.rawDescriptor = value.Count == 0 ? Array.Empty<byte>() : Array.AsReadOnly(value.ToArray());
+    }
+
     public ColumnType Type { get; init; }
 
     /// <summary>
@@ -115,22 +137,8 @@ internal sealed class ColumnInfo
     /// </summary>
     public byte NumericScale { get; init; }
 
-    public ColumnInfo WithCalculatedResultType(ColumnType calculatedResultType) => new()
-    {
-        Type = this.Type,
-        ColNum = this.ColNum,
-        VarIdx = this.VarIdx,
-        FixedOff = this.FixedOff,
-        Size = this.Size,
-        Flags = this.Flags,
-        ExtraFlags = this.ExtraFlags,
-        CalculatedResultType = calculatedResultType,
-        Name = this.Name,
-        Misc = this.Misc,
-        TextSortOrder = this.TextSortOrder,
-        NumericPrecision = this.NumericPrecision,
-        NumericScale = this.NumericScale,
-    };
+    public ColumnInfo WithCalculatedResultType(ColumnType calculatedResultType)
+        => this with { CalculatedResultType = calculatedResultType };
 
     /// <summary>
     /// Gets a value indicating whether a column's data is stored in the fixed or variable

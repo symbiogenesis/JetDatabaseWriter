@@ -271,8 +271,9 @@ internal sealed class IndexMaintainer(
             return false;
         }
 
-        int numCols = Ru16(td, format.TDef.NumCols);
-        int numRealIdx = Ri32(td, format.TDef.NumRealIdx);
+        var header = TDefCodec.ReadCounts(format, td);
+        int numCols = header.ColumnCount;
+        int numRealIdx = header.RealIndexCount;
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
         {
             return false;
@@ -367,9 +368,10 @@ internal sealed class IndexMaintainer(
         LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] buffer = chain.Bytes;
 
-        int numCols = Ru16(buffer, format.TDef.NumCols);
-        int numIdx = Ri32(buffer, format.TDef.NumIdx);
-        int numRealIdx = Ri32(buffer, format.TDef.NumRealIdx);
+        var header = TDefCodec.ReadCounts(format, buffer);
+        int numCols = header.ColumnCount;
+        int numIdx = header.LogicalIndexCount;
+        int numRealIdx = header.RealIndexCount;
 
         if (numIdx <= 0 || numRealIdx <= 0)
         {

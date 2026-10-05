@@ -48,9 +48,10 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         byte[] tdefBuffer = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"The table definition of '{tableName}' at page {tdefPage} could not be read.");
 
-        int numCols = Ru16(tdefBuffer, format.TDef.NumCols);
-        int numIdx = Ri32(tdefBuffer, format.TDef.NumIdx);
-        int numRealIdx = Ri32(tdefBuffer, format.TDef.NumRealIdx);
+        var header = TDefCodec.ReadCounts(format, tdefBuffer);
+        int numCols = header.ColumnCount;
+        int numIdx = header.LogicalIndexCount;
+        int numRealIdx = header.RealIndexCount;
         if (numIdx <= 0 || numRealIdx <= 0)
         {
             return result;

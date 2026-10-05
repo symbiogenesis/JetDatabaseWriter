@@ -115,41 +115,19 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             return [];
         }
 
-        int numCols = Ru16(td, format.TDef.NumCols);
-        int numRealIdx = Ri32(td, format.TDef.NumRealIdx);
-        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
+        List<ColumnInfo>? columns = TDefCodec.ReadColumns(format, td, out _, out _, out _, out _);
+        if (columns is null)
         {
-            numRealIdx = 0;
+            return [];
         }
 
-        int colStart = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
-
         var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
-        for (int i = 0; i < numCols; i++)
+        foreach (ColumnInfo column in columns)
         {
-            int offset = colStart + (i * format.ColumnDescriptor.Size);
-            if (offset + format.ColumnDescriptor.Size > td.Length)
+            if (column.Type is ComplexType or AttachmentType && column.Misc > 0)
             {
-                break;
+                byComplexId[column.Misc] = (column.Name, column.Type);
             }
-
-            var type = (ColumnType)td[offset + format.ColumnDescriptor.TypeOff];
-            if (type is not ComplexType and not AttachmentType)
-            {
-                continue;
-            }
-
-            int complexId = Ri32(td, offset + format.ColumnDescriptor.MiscOff);
-            if (complexId <= 0)
-            {
-                continue;
-            }
-
-            int colNum = Ru16(td, offset + format.ColumnDescriptor.NumOff);
-
-            ColumnInfo? info = resolved.Definition.Columns.Find(c => c.ColNum == colNum);
-            string name = info?.Name ?? string.Empty;
-            byComplexId[complexId] = (name, type);
         }
 
         return byComplexId.Count == 0
