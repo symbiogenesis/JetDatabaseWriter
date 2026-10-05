@@ -11,6 +11,7 @@ using System.Runtime.Versioning;
 #endif
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 
 /// <summary>
 /// Cooperative byte-range locking against the database file using the JET
@@ -250,8 +251,8 @@ internal sealed class JetByteRangeLock
     private void ThrowTimeout(long offset, long length)
     {
         long pageNumber = length > 0 ? offset / length : -1;
-        throw new IOException(
-            $"Timed out after {this.lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.");
+        throw new JetLockException(JetErrorCode.LockTimeout,
+            $"Timed out after {this.lockTimeoutMs} ms acquiring JET byte-range lock on page {pageNumber} (offset 0x{offset:X}). Another opener is holding the lock.", new JetErrorInfo { PageNumber = pageNumber });
     }
 
     /// <summary>

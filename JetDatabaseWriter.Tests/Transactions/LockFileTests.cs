@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Transactions;
 using Xunit;
@@ -295,7 +296,7 @@ public sealed class LockFileTests : IDisposable
 
         var options = new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = true };
 
-        await Assert.ThrowsAsync<IOException>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<JetLockException>(async () => await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken));
     }
 
     [Theory]

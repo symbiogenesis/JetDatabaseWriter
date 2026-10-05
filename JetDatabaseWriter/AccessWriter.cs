@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
@@ -210,7 +211,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         if (File.Exists(path))
         {
-            throw new IOException($"Database file already exists: {path}");
+            throw new JetIOException(JetErrorCode.DatabaseFileExists, $"Database file already exists: {path}");
         }
 
         byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options.WriteFullCatalogSchema);
@@ -700,8 +701,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public async ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken = default)
     {
         this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
-        await using WriteScope scope = this.services.Transactions.BeginWriteScope();
-        return await this.services.PageAllocator.ScrubFreePagesAsync(cancellationToken).ConfigureAwait(false);
+        return await this.RunAutoCommitAsync(token => this.services.PageAllocator.ScrubFreePagesAsync(token), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -714,8 +714,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public async ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken = default)
     {
         this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
-        await using WriteScope scope = this.services.Transactions.BeginWriteScope();
-        return await this.services.PageAllocator.ShrinkDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        return await this.services.Transactions.RunMutationAsync(async () =>
+        {
+            await using WriteScope scope = this.services.Transactions.BeginWriteScope();
+            return await this.services.PageAllocator.ShrinkDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -751,11 +754,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         // and unconditionally releases the .ldb / .laccdb slot last.
         // Lock-file release runs after the agile re-wrap so the lock-file
         // accurately reflects "database still in use" while we re-encrypt.
-        await this.lockFileCoordinator.DisposeAfterAsync(
+        await this.services.Transactions.RunDisposalAsync(() => this.lockFileCoordinator.DisposeAfterAsync(
             this.services.Transactions.DisposeActiveTransactionAsync,
             this.services.Transactions.FlushPendingWritesAsync,
             this.RewrapAndCloseOuterEncryptedStreamAsync,
-            this.Database.DisposeAsync).ConfigureAwait(false);
+            this.Database.DisposeAsync)).ConfigureAwait(false);
     }
 
     private static FileStream CreateStream(string path) =>

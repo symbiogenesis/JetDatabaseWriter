@@ -65,7 +65,7 @@ public sealed class JetTransactionTests
         await using JetTransaction first = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(first);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await writer.BeginTransactionAsync(TestContext.Current.CancellationToken));
     }
 
@@ -202,7 +202,7 @@ public sealed class JetTransactionTests
         JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await tx.CommitAsync(TestContext.Current.CancellationToken));
     }
 
@@ -302,7 +302,7 @@ public sealed class JetTransactionTests
         Assert.Equal(1, CountChangedPages(before, after));
         Assert.Equal(FormatVersionByte(before), FormatVersionByte(after));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
             await tx.RollbackAsync(TestContext.Current.CancellationToken));
         await using JetTransaction next = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         Assert.False(next.IsRolledBack);

@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Transactions;
 using Xunit;
 
@@ -103,7 +104,9 @@ public sealed class JetByteRangeLockTests : IDisposable
 
         using IDisposable held = holder.AcquirePageLock(pageNumber: 3, pageSize: 4096);
 
-        IOException ex = Assert.Throws<IOException>(() => contender.AcquirePageLock(pageNumber: 3, pageSize: 4096));
+        JetLockException ex = Assert.Throws<JetLockException>(() => contender.AcquirePageLock(pageNumber: 3, pageSize: 4096));
+        Assert.Equal(JetErrorCode.LockTimeout, ex.ErrorCode);
+        Assert.Equal(3, ex.ErrorInfo.PageNumber);
         Assert.Contains("Timed out", ex.Message, StringComparison.Ordinal);
     }
 
@@ -123,7 +126,7 @@ public sealed class JetByteRangeLockTests : IDisposable
 
         using IDisposable held = await holder.AcquirePageLockAsync(pageNumber: 4, pageSize: 4096, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<IOException>(async () =>
+        await Assert.ThrowsAsync<JetLockException>(async () =>
             await contender.AcquirePageLockAsync(pageNumber: 4, pageSize: 4096, TestContext.Current.CancellationToken));
     }
 

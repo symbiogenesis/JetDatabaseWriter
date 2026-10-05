@@ -65,8 +65,7 @@ public sealed class AccessWriterOptions : AccessOptions
     /// memory before the next page write throws a
     /// <see cref="Exceptions.JetLimitationException"/>. An implicit transaction
     /// is then rolled back automatically; an explicit one stays active, with the
-    /// failed operation possibly half-applied to its journal, and should be
-    /// rolled back. Each journaled page costs
+    /// failed operation rolled back to its internal savepoint. Each journaled page costs
     /// <see cref="AccessBase.PageSize"/> bytes of process memory.
     /// Must be at least <c>1</c>: <c>OpenAsync</c> and <c>CreateDatabaseAsync</c>
     /// throw <see cref="System.ArgumentOutOfRangeException"/> (parameter

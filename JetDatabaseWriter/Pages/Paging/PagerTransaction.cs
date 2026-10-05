@@ -15,7 +15,7 @@ using JetDatabaseWriter.Infrastructure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is not a rollback or write-ahead log. No before-images are kept and
+/// Savepoint prior images only rewind the in-memory journal. No commit undo images are kept and
 /// nothing is written to a separate log first, so a commit interrupted by a
 /// crash or I/O error leaves the pages written so far in the file, and there
 /// is no recovery pass.
@@ -36,6 +36,7 @@ internal sealed class PagerTransaction
     private readonly HashSet<long> zeroReservations = [];
     private readonly int pageSize;
     private readonly int maxPages;
+    private readonly Stack<SavepointFrame> savepoints = [];
     private long appendedCount;
 
     public PagerTransaction(long baseFileLengthBytes, int pageSize, int maxPages)
@@ -77,6 +78,8 @@ internal sealed class PagerTransaction
             throw new ArgumentException("Page length mismatch.", nameof(page));
         }
 
+        this.CapturePrior(pageNumber);
+
         if (this.pages.TryGetValue(pageNumber, out byte[]? existing))
         {
             page.CopyTo(existing);
@@ -86,9 +89,9 @@ internal sealed class PagerTransaction
 
         if (this.pages.Count >= this.maxPages)
         {
-            throw new JetLimitationException(string.Format(
+            throw JetErrors.Limitation(JetErrorCode.JournalBudgetExceeded, string.Format(
                 CultureInfo.InvariantCulture,
-                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation that hit the limit may be partly applied to the journal; roll back the transaction.",
+                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation was rolled back; the transaction is still active.",
                 this.maxPages));
         }
 
@@ -112,9 +115,9 @@ internal sealed class PagerTransaction
         // Pre-check budget so we don't increment _appendedCount on failure.
         if (!this.pages.ContainsKey(pageNumber) && this.pages.Count >= this.maxPages)
         {
-            throw new JetLimitationException(string.Format(
+            throw JetErrors.Limitation(JetErrorCode.JournalBudgetExceeded, string.Format(
                 CultureInfo.InvariantCulture,
-                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation that hit the limit may be partly applied to the journal; roll back the transaction.",
+                "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation was rolled back; the transaction is still active.",
                 this.maxPages));
         }
 
@@ -171,5 +174,79 @@ internal sealed class PagerTransaction
                 yield return page;
             }
         }
+    }
+
+    /// <summary>Starts an internal statement frame.</summary>
+    internal void BeginSavepoint() => this.savepoints.Push(new SavepointFrame(this.appendedCount));
+
+    /// <summary>Merges the child frame into its parent.</summary>
+    internal void ReleaseSavepoint()
+    {
+        SavepointFrame frame = this.savepoints.Pop();
+        if (this.savepoints.Count == 0)
+        {
+            return;
+        }
+
+        SavepointFrame parent = this.savepoints.Peek();
+        foreach (KeyValuePair<long, PriorImage> prior in frame.Priors)
+        {
+            if (!parent.Priors.ContainsKey(prior.Key))
+            {
+                parent.Priors.Add(prior.Key, prior.Value);
+            }
+        }
+    }
+
+    /// <summary>Restores the journal and append boundary captured by the frame.</summary>
+    internal void RollbackSavepoint()
+    {
+        SavepointFrame frame = this.savepoints.Pop();
+        foreach (KeyValuePair<long, PriorImage> prior in frame.Priors)
+        {
+            if (prior.Value.Bytes is { } bytes)
+            {
+                this.pages[prior.Key] = bytes;
+            }
+            else
+            {
+                _ = this.pages.Remove(prior.Key);
+            }
+
+            if (prior.Value.ZeroReservation)
+            {
+                _ = this.zeroReservations.Add(prior.Key);
+            }
+            else
+            {
+                _ = this.zeroReservations.Remove(prior.Key);
+            }
+        }
+
+        this.appendedCount = frame.AppendedCount;
+    }
+
+    private void CapturePrior(long pageNumber)
+    {
+        if (this.savepoints.Count == 0)
+        {
+            return;
+        }
+
+        SavepointFrame frame = this.savepoints.Peek();
+        if (!frame.Priors.ContainsKey(pageNumber))
+        {
+            byte[]? prior = this.TryGet(pageNumber);
+            frame.Priors.Add(pageNumber, new PriorImage(prior is null ? null : (byte[])prior.Clone(), this.zeroReservations.Contains(pageNumber)));
+        }
+    }
+
+    private sealed record PriorImage(byte[]? Bytes, bool ZeroReservation);
+
+    private sealed class SavepointFrame(long appendedCount)
+    {
+        internal long AppendedCount { get; } = appendedCount;
+
+        internal Dictionary<long, PriorImage> Priors { get; } = [];
     }
 }

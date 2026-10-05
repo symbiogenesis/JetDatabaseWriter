@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -356,7 +357,7 @@ public sealed class CreateDatabaseTests
 
         try
         {
-            await Assert.ThrowsAsync<IOException>(() =>
+            await Assert.ThrowsAsync<JetIOException>(() =>
                 AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.Jet4Mdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
         }
         finally

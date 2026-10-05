@@ -292,7 +292,7 @@ JetDatabaseWriter/
 │       └── ColumnPropertyUnknownChunk.cs
 │
 ├── Transactions/                          (lifecycle, locking, journaling)
-│   ├── TransactionLifecycle.cs            (begin/commit/rollback orchestration)
+│   ├── TransactionLifecycle.cs            (serialized mutations, statement savepoints, begin/commit/rollback)
 │   ├── LockFileCoordinator.cs             (multi-process lock file management)
 │   ├── LockFileSlotWriter.cs              (writes process slot into .ldb/.laccdb)
 │   └── JetByteRangeLock.cs                (filesystem byte-range lock primitives)
@@ -654,7 +654,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 
 | Principle | How applied |
 |-----------|-------------|
-| **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `UsageMap` only parses/emits usage-map rows and bits; `DataPageInserter` only manages page insertion; `TransactionLifecycle` only handles begin/commit/rollback |
+| **Single Responsibility (SRP)** | Each file/class owns one concern. `RowEncoder` only serializes rows; `UsageMap` only parses/emits usage-map rows and bits; `DataPageInserter` only manages page insertion; `TransactionLifecycle` handles serialized mutations, statement savepoints and begin/commit/rollback |
 | **Open/Closed (OCP)** | Adding a new column type means extending `JetTypeInfo` (`GetClrType`, `ReadFixedTyped`), `RowEncoder`, and type metadata helpers — not modifying the orchestrator |
 | **Interface Segregation (ISP)** | `IAccessReader`, `IAccessSchema` (DDL), and `IAccessWriter` (DML) are separated; consumers depend only on what they use |
 | **Dependency Inversion (DIP)** | Reader and writer collaborators receive their dependencies through constructors from `ReaderServices` / `WriterServices`; they receive the `JetFormat`, page source, `TableDefReader` and `OwnedDataPages` parts they use |

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Transactions;
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
@@ -189,7 +190,7 @@ internal sealed class LockFileSlotWriter : IDisposable
 
         if (respectExisting && File.Exists(lockPath) && !ActiveLockFiles.ContainsKey(lockPath))
         {
-            throw new IOException($"Database is already in use. A lockfile exists at: {lockPath}");
+            throw new JetLockException(JetErrorCode.DatabaseInUse, $"Database is already in use. A lockfile exists at: {lockPath}");
         }
 
         FileStream? stream = null;
@@ -358,7 +359,7 @@ internal sealed class LockFileSlotWriter : IDisposable
             }
         }
 
-        throw new IOException(
+        throw new JetLockException(JetErrorCode.LockFileFull,
             $"Cannot open the database. The database has been opened by another user, or you have reached your limit of concurrent users (max {MaxSlots} slots in lock-file).");
     }
 

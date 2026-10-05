@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Infrastructure;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -14,6 +15,28 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class PageAudit
 {
+    /// <summary>Finds data pages claimed by more than one user table's owned map.</summary>
+    /// <param name="harness">The active writer graph.</param>
+    /// <param name="cancellationToken">The token used for reads.</param>
+    /// <returns>The multiply owned page numbers.</returns>
+    public static async ValueTask<SortedSet<long>> FindMultiplyOwnedDataPagesAsync(WriterHarness harness, CancellationToken cancellationToken)
+    {
+        var owned = new HashSet<long>();
+        var duplicates = new SortedSet<long>();
+        foreach (CatalogEntry table in await harness.Services.Catalog.GetUserTablesAsync(cancellationToken))
+        {
+            foreach (long page in await harness.Database.OwnedPages.GetOwnedDataPagesAsync(table.TDefPage, cancellationToken))
+            {
+                if (!owned.Add(page))
+                {
+                    _ = duplicates.Add(page);
+                }
+            }
+        }
+
+        return duplicates;
+    }
+
     /// <summary>
     /// Returns every page from 3 up to the end of file that the global usage
     /// map does not list as free, except the bitmap pages of the global map

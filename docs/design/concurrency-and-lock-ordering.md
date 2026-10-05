@@ -28,6 +28,7 @@ its transaction journal and plaintext frame cache.
 | Primitive | Owner | Responsibility |
 |---|---|---|
 | `operationGate` | `ReaderServices.Operations` | Reentrant reader-operation leases and disposal drain |
+| `mutationGate` | `TransactionLifecycle` | Serializes writer mutations, begin, commit, rollback, shrink and disposal; rejects callback re-entry |
 | `IoGate` | `PageFile`, used by `Pager.JournalGate` | Journal reads, attach and detach; never held across a store operation |
 | `frameGate` | `Pager` | Serializes cache fills, writes, append allocation, truncation and journal transitions |
 | `frameSync` | `Pager` | Frame dictionary, CLOCK bookkeeping, counters and invalidation generation; memory only |
@@ -43,6 +44,8 @@ its transaction journal and plaintext frame cache.
 | Lock-file slot | `LockFileCoordinator` | `.ldb` / `.laccdb` slot held until disposal finishes |
 
 ## Acquisition order
+
+The writer's `mutationGate` is outermost and spans the entire public mutation or transaction-lifecycle call. The `AsyncLocal` mutation marker rejects a callback that re-enters the same writer with `ReentrantWriterCall` before it waits for the gate. Internal auto-commit and disposal paths call the lifecycle cores under the gate they already hold.
 
 A writer cache fill or write holds `frameGate`. It may briefly take `IoGate` to
 consult or modify the journal, then releases `IoGate` before calling the store.
@@ -74,7 +77,7 @@ spans the open database lifetime.
 
 `InsertRowsAsync` → `RunAutoCommitAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs))
 → `TransactionLifecycle.RunAutoCommitAsync` ([TransactionLifecycle.cs](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs))
-→ `BeginTransactionAsync` → *work* → `tx.CommitAsync`.
+→ `mutationGate` → `BeginTransactionCoreAsync` → *work* → `CommitTransactionCoreAsync`.
 
 ```
 BeginTransactionAsync
@@ -116,9 +119,13 @@ hint and the owned-map policy's refusals, and puts the policy's writable set
 back, and leaves the transaction neither committed nor rolled back. The replay is not crash-atomic: there is no
 before-image or redo log, so the pages written before a failure stay written.
 
+### Failed calls inside an explicit transaction
+
+Under `mutationGate`, `RunInSavepointAsync` captures the insert hint, owned-map policy and constraint registry, then begins a journal frame under `JournalGate`. Each first page mutation in that frame keeps the prior journal bytes and zero-reservation state; child frames merge their first-touch priors into their parent. Failure restores the frame and append boundary under `JournalGate` with `CancellationToken.None`, invalidates pager observers and the catalog, and restores the captured writer state. The allocator reloads its free-page view after the pager invalidation generation changes. Earlier successful calls remain buffered and the explicit transaction stays active.
+
 ### Writer non-transactional (default `UseTransactionalWrites = false`)
 
-No transaction journal or commit-lock. A reference-counted write scope buffers logical page mutations, exposes them to subsequent reads, and notifies observers. The outer scope writes dirty pages in ascending order and flushes once; it spills dirty images at max(64, cache capacity / 2) pages. Scope exit still drains after a failed operation, so these calls are not statement-atomic.
+The mutation gate still covers the call; there is no transaction journal or commit-lock. A reference-counted write scope buffers logical page mutations, exposes them to subsequent reads, and notifies observers. The outer scope writes dirty pages in ascending order and flushes once; it spills dirty images at max(64, cache capacity / 2) pages. Scope exit still drains after a failed operation, so these calls are not statement-atomic.
 
 ```
 WritePageAsync
@@ -194,8 +201,7 @@ operationGate.TryBeginDispose(out waitForOperations)
   └─ operationGate.CompleteDispose()
 ```
 
-Writer — `DisposeAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)) (no
-operation gate; the writer is single-writer by construction):
+Writer — `DisposeAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)) waits for `mutationGate` and checks disposal again under the gate before teardown:
 
 ```
 lockFileCoordinator.DisposeAfterAsync(
@@ -211,6 +217,7 @@ lockFileCoordinator.DisposeAfterAsync(
 | Primitive | Reentrant? | Mechanism / consequence |
 |-----------|-----------|--------------------------|
 | `operationGate` | Yes | `AsyncLocal<int> operationDepth`; nested calls on one async flow join the active root operation |
+| `mutationGate` | No | `AsyncLocal` rejects same-flow writer callback re-entry before the semaphore wait |
 | `ownedDataPageIndex` gate | No | Binary `SemaphoreSlim(1,1)` — the index build only reads pages; it must never ask for the owned-page index itself |
 | `frameGate` / store `ioGate` | No | Binary semaphores; never re-enter on the same flow |
 | `IoGate` | No | Binary `SemaphoreSlim(1,1)` — re-entering on the same flow self-deadlocks; never hold it, or a `Pager.JournalGate` lease, across a `*PageAsync` call |
@@ -232,8 +239,8 @@ open:
 | Plaintext page frames, bounded by `PageCacheSize` | `Pager` | CLOCK eviction; transaction attach/detach, failed writes and truncation invalidate all frames. Each write refreshes its retained frame. |
 | Validated owned data pages and usage-map dependencies | `OwnedDataPages` | Data-page ownership changes update the result; TDEF owned-map pointer, owned-map row or REFERENCE bitmap changes discard it; writes to sibling map rows keep it. Rollback, failed replay, truncation and shrink discard all results through the pager observer. |
 | User-table list and calculated result types | `TableCatalog` | `Invalidate`: every catalog write (create, drop or rewrite a table, add a catalog object), a rollback, a failed `UseTransactionalWrites` call and a failed commit. Each call also moves `TableCatalog.Generation` on. |
-| Insert-page hint | `DataPageInserter` | Restored to its state at `BeginTransactionAsync` on a rollback; forgotten after a commit that fails during replay. |
-| The TDEF pages whose owned-page maps the writer may extend, and those it found it may not | `CatalogOwnedMapPolicy` | Restored to their state at `BeginTransactionAsync` on a rollback. After a commit that fails during replay the writable set is restored and the refusals are forgotten. A table the writer creates drops a refusal for its TDEF page. |
+| Insert-page hint | `DataPageInserter` | Restored to its state at the transaction or statement savepoint on a rollback; forgotten after a commit that fails during replay. |
+| The TDEF pages whose owned-page maps the writer may extend, and those it found it may not | `CatalogOwnedMapPolicy` | Restored to their state at the transaction or statement savepoint on a rollback. After a commit that fails during replay the writable set is restored and the refusals are forgotten. A table the writer creates drops a refusal for its TDEF page. |
 | Constraint lists, AutoNumber `NextAutoValue` and complex-reference counters | `ConstraintRegistry` | Re-registered by schema changes; restored on a rollback. A commit that fails during replay keeps them, so counters never move back over values that may be on disk. |
 | Enforced relationships, which every insert, update and delete checks | `RelationshipCatalogStore` | Every `MSysRelationships` write through the store (create, drop or rename a relationship, rename a key column), and whenever `TableCatalog.Generation` has moved on since the set was loaded, so a rollback or failed commit reloads it. |
 

@@ -1,10 +1,12 @@
 namespace JetDatabaseWriter.Transactions;
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -35,6 +37,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="dataPages">Owns the insert-page hint, restored on rollback.</param>
 /// <param name="ownedMaps">Decides whose owned-page usage maps the writer may extend; its decisions are restored on rollback.</param>
 /// <param name="constraints">The writer's constraint registry, restored on rollback.</param>
+[SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "The mutation semaphore never creates a wait handle and remains alive for queued calls, including concurrent disposal; disposing it would race those callers.")]
 internal sealed class TransactionLifecycle(
     JetFormat format,
     Pager pager,
@@ -45,11 +48,66 @@ internal sealed class TransactionLifecycle(
     IOwnedMapPolicy ownedMaps,
     ConstraintRegistry constraints)
 {
+    private readonly SemaphoreSlim mutationGate = new(1, 1);
+    private readonly AsyncLocal<MutationContext?> mutationActive = new();
+
     /// <summary>
     /// The writer's in-memory state when <see cref="ActiveTransaction"/> began,
     /// put back if it rolls back. Set and cleared together with it.
     /// </summary>
     private WriterState? stateAtBegin;
+
+    /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
+    internal JetTransaction? ActiveTransaction { get; private set; }
+
+    /// <summary>Serializes public mutations and rejects callback re-entry.</summary>
+    /// <param name="work">The operation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous completion.</returns>
+    internal ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
+        => this.RunSerializedAsync(() => this.RunAutoCommitCoreAsync(work, cancellationToken), cancellationToken);
+
+    /// <summary>Serializes a result-producing mutation.</summary>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="work">The operation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous completion.</returns>
+    internal ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
+        => this.RunSerializedAsync(() => this.RunAutoCommitCoreAsync(work, cancellationToken), cancellationToken);
+
+    /// <summary>Serializes disposal with outstanding mutations.</summary>
+    /// <param name="work">The complete teardown.</param>
+    /// <returns>The asynchronous completion.</returns>
+    internal ValueTask RunDisposalAsync(Func<ValueTask> work)
+        => this.RunSerializedAsync(() => pager.IsDisposed ? default : work(), CancellationToken.None);
+
+    /// <summary>Serializes maintenance that cannot use a journal.</summary>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="work">The operation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous completion.</returns>
+    internal ValueTask<TResult> RunMutationAsync<TResult>(Func<ValueTask<TResult>> work, CancellationToken cancellationToken)
+        => this.RunSerializedAsync(work, cancellationToken);
+
+    /// <summary>Begins a serialized explicit transaction.</summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous completion.</returns>
+    internal ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+        => this.RunSerializedAsync(() => this.BeginTransactionCoreAsync(cancellationToken), cancellationToken);
+
+    /// <summary>Commits under the mutation gate.</summary>
+    /// <param name="transaction">The transaction.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous completion.</returns>
+    internal ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+        => this.RunSerializedAsync(() => this.CommitTransactionCoreAsync(transaction, cancellationToken), CancellationToken.None);
+
+    /// <summary>Rolls back under the mutation gate.</summary>
+    /// <param name="transaction">The transaction.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous completion.</returns>
+    internal ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+        => this.RunSerializedAsync(() => this.RollbackTransactionCoreAsync(transaction, cancellationToken), cancellationToken);
 
     /// <summary>Begins call write-back for creation and maintenance.</summary>
     /// <returns>The reference-counted scope.</returns>
@@ -59,8 +117,31 @@ internal sealed class TransactionLifecycle(
     /// <returns>The completion.</returns>
     internal ValueTask FlushPendingWritesAsync() => pager.FlushPendingWritesAsync();
 
-    /// <summary>Gets the active explicit transaction, or <see langword="null"/> when none is active.</summary>
-    internal JetTransaction? ActiveTransaction { get; private set; }
+    /// <summary>
+    /// Drops any in-flight transaction so its journal does not survive
+    /// dispose. Nothing has been written to disk for an uncommitted
+    /// transaction, so this is equivalent to an implicit rollback.
+    /// </summary>
+    internal async ValueTask DisposeActiveTransactionAsync()
+    {
+        if (this.ActiveTransaction is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await this.RollbackTransactionCoreAsync(this.ActiveTransaction, CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The rollback above detaches the journal under the gate; when it
+            // fails, the journal is dropped here without waiting for the gate.
+            pager.ForceDetachJournal();
+            this.ActiveTransaction = null;
+            this.stateAtBegin = null;
+        }
+    }
 
     /// <summary>
     /// Begins an explicit page-buffered transaction against the owning writer.
@@ -68,7 +149,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown when another transaction is already active on the writer.</exception>
-    internal async ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+    private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken)
     {
         pager.ThrowIfDisposed();
 
@@ -77,7 +158,7 @@ internal sealed class TransactionLifecycle(
         using Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
         if (this.ActiveTransaction is not null)
         {
-            throw new InvalidOperationException(
+            throw JetErrors.Operation(JetErrorCode.TransactionAlreadyActive,
                 "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
         }
 
@@ -97,20 +178,26 @@ internal sealed class TransactionLifecycle(
     /// </summary>
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
+    private async ValueTask RunAutoCommitCoreAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
-        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || pager.IsDisposed)
+        if (this.ActiveTransaction is { } active)
+        {
+            await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!options.UseTransactionalWrites || pager.IsDisposed)
         {
             await using WriteScope scope = pager.BeginWriteScope();
             await work(cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        JetTransaction tx = await this.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await this.BeginTransactionCoreAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await work(cancellationToken).ConfigureAwait(false);
-            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await this.CommitTransactionCoreAsync(tx, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -118,10 +205,10 @@ internal sealed class TransactionLifecycle(
             {
                 if (!tx.IsTerminated)
                 {
-                    await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    await this.RollbackTransactionCoreAsync(tx, CancellationToken.None).ConfigureAwait(false);
                 }
             }
-            catch (InvalidOperationException)
+            catch (JetOperationException ex) when (ex.ErrorCode is JetErrorCode.TransactionEnded or JetErrorCode.TransactionNotActive)
             {
                 // Already terminated by a concurrent commit/rollback path.
             }
@@ -140,19 +227,24 @@ internal sealed class TransactionLifecycle(
     /// <typeparam name="TResult">The result type produced by <paramref name="work"/>.</typeparam>
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
+    private async ValueTask<TResult> RunAutoCommitCoreAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
-        if (!options.UseTransactionalWrites || this.ActiveTransaction is not null || pager.IsDisposed)
+        if (this.ActiveTransaction is { } active)
+        {
+            return await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!options.UseTransactionalWrites || pager.IsDisposed)
         {
             await using WriteScope scope = pager.BeginWriteScope();
             return await work(cancellationToken).ConfigureAwait(false);
         }
 
-        JetTransaction tx = await this.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await this.BeginTransactionCoreAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             TResult? result = await work(cancellationToken).ConfigureAwait(false);
-            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await this.CommitTransactionCoreAsync(tx, cancellationToken).ConfigureAwait(false);
             return result;
         }
         catch
@@ -161,10 +253,10 @@ internal sealed class TransactionLifecycle(
             {
                 if (!tx.IsTerminated)
                 {
-                    await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    await this.RollbackTransactionCoreAsync(tx, CancellationToken.None).ConfigureAwait(false);
                 }
             }
-            catch (InvalidOperationException)
+            catch (JetOperationException ex) when (ex.ErrorCode is JetErrorCode.TransactionEnded or JetErrorCode.TransactionNotActive)
             {
                 // Already terminated.
             }
@@ -203,9 +295,14 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">A token used to cancel the operation before replay starts.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
-    internal async ValueTask CommitTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+    private async ValueTask CommitTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
         Guard.NotNull(transaction, nameof(transaction));
+
+        if (transaction.IsTerminated)
+        {
+            throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+        }
 
         pager.ThrowIfDisposed();
 
@@ -221,12 +318,12 @@ internal sealed class TransactionLifecycle(
         {
             if (transaction.IsTerminated)
             {
-                throw new InvalidOperationException(JetTransaction.TerminatedMessage);
+                throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
             }
 
             if (!ReferenceEquals(this.ActiveTransaction, transaction))
             {
-                throw new InvalidOperationException("The transaction is not active on this writer.");
+                throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
             }
 
             journal = transaction.Journal;
@@ -286,21 +383,26 @@ internal sealed class TransactionLifecycle(
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when <paramref name="transaction"/> is terminated or is not active on this writer.</exception>
-    internal async ValueTask RollbackTransactionAsync(JetTransaction transaction, CancellationToken cancellationToken)
+    private async ValueTask RollbackTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
         Guard.NotNull(transaction, nameof(transaction));
+
+        if (transaction.IsTerminated)
+        {
+            throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
 
         using Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
         if (transaction.IsTerminated)
         {
-            throw new InvalidOperationException(JetTransaction.TerminatedMessage);
+            throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
         }
 
         if (!ReferenceEquals(this.ActiveTransaction, transaction))
         {
-            throw new InvalidOperationException("The transaction is not active on this writer.");
+            throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
         }
 
         gate.Detach();
@@ -310,29 +412,69 @@ internal sealed class TransactionLifecycle(
         transaction.MarkRolledBack();
     }
 
-    /// <summary>
-    /// Drops any in-flight transaction so its journal does not survive
-    /// dispose. Nothing has been written to disk for an uncommitted
-    /// transaction, so this is equivalent to an implicit rollback.
-    /// </summary>
-    internal async ValueTask DisposeActiveTransactionAsync()
+    private async ValueTask RunSerializedAsync(Func<ValueTask> work, CancellationToken cancellationToken)
     {
-        if (this.ActiveTransaction is null)
+        if (this.mutationActive.Value is { IsActive: true })
         {
-            return;
+            throw JetErrors.Operation(JetErrorCode.ReentrantWriterCall, "A writer mutation cannot be called from another writer mutation's callback.");
+        }
+
+        await this.mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var context = new MutationContext();
+        this.mutationActive.Value = context;
+        try
+        {
+            await work().ConfigureAwait(false);
+        }
+        finally
+        {
+            context.End();
+            this.mutationActive.Value = null;
+            _ = this.mutationGate.Release();
+        }
+    }
+
+    private async ValueTask<TResult> RunSerializedAsync<TResult>(Func<ValueTask<TResult>> work, CancellationToken cancellationToken)
+    {
+        TResult result = default!;
+        await this.RunSerializedAsync(async () =>
+        {
+            result = await work().ConfigureAwait(false);
+        }, cancellationToken).ConfigureAwait(false);
+        return result;
+    }
+
+    private async ValueTask RunInSavepointAsync(JetTransaction transaction, Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
+    {
+        await this.RunInSavepointAsync<object?>(transaction, async token =>
+        {
+            await work(token).ConfigureAwait(false);
+            return null;
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<TResult> RunInSavepointAsync<TResult>(JetTransaction transaction, Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
+    {
+        WriterState state = new(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
+        using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            transaction.Journal.BeginSavepoint();
         }
 
         try
         {
-            await this.ActiveTransaction.DisposeAsync().ConfigureAwait(false);
+            TResult result = await work(cancellationToken).ConfigureAwait(false);
+            using Pager.JournalGate gate = await pager.EnterJournalGateAsync(CancellationToken.None).ConfigureAwait(false);
+            transaction.Journal.ReleaseSavepoint();
+            return result;
         }
-        finally
+        catch
         {
-            // The rollback above detaches the journal under the gate; when it
-            // fails, the journal is dropped here without waiting for the gate.
-            pager.ForceDetachJournal();
-            this.ActiveTransaction = null;
-            this.stateAtBegin = null;
+            using Pager.JournalGate gate = await pager.EnterJournalGateAsync(CancellationToken.None).ConfigureAwait(false);
+            transaction.Journal.RollbackSavepoint();
+            pager.InvalidateAll();
+            this.RestoreWriterState(state);
+            throw;
         }
     }
 
@@ -377,6 +519,15 @@ internal sealed class TransactionLifecycle(
 
         dataPages.RestoreState(new DataPageInserterState(HintTDefPage: -1, HintPageNumber: -1));
         ownedMaps.Restore(state.OwnedMaps with { RefusedTdefs = [] });
+    }
+
+    private sealed class MutationContext
+    {
+        private int active = 1;
+
+        internal bool IsActive => Volatile.Read(ref this.active) != 0;
+
+        internal void End() => Volatile.Write(ref this.active, 0);
     }
 
     /// <summary>The writer's in-memory state that a transaction can change.</summary>

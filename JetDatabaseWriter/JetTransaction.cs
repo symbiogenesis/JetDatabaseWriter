@@ -26,15 +26,17 @@ using JetDatabaseWriter.Transactions;
 /// </para>
 /// <para>
 /// Only one transaction may be active at a time per <see cref="AccessWriter"/>;
+
 /// a second concurrent <see cref="AccessWriter.BeginTransactionAsync"/> call
 /// throws <see cref="InvalidOperationException"/>.
 /// </para>
 /// <para>
 /// The journal grows in process memory at <c>PageSize</c> bytes per dirty page.
 /// <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> caps the journal;
+
 /// exceeding the cap throws <see cref="JetLimitationException"/> from the next
 /// page write. The transaction stays active, but the operation that hit the
-/// cap may be partly applied to the journal, so roll it back. An implicit
+/// cap is rolled back to its internal savepoint. The transaction remains usable. An implicit
 /// <see cref="AccessWriterOptions.UseTransactionalWrites"/> transaction is
 /// rolled back automatically.
 /// </para>
@@ -136,7 +138,7 @@ public sealed class JetTransaction : IAsyncDisposable
         {
             await this.RollbackAsync().ConfigureAwait(false);
         }
-        catch (InvalidOperationException)
+        catch (JetOperationException ex) when (ex.ErrorCode is JetErrorCode.TransactionEnded or JetErrorCode.TransactionNotActive)
         {
             // Already terminated by another caller — DisposeAsync is best-effort.
         }
