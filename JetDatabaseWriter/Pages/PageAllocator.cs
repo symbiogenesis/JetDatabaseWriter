@@ -68,27 +68,28 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 for (; marked < pageCount; marked++)
                 {
                     await this.SetPageFreeStateAsync(reusableStart + marked, free: false, cancellationToken).ConfigureAwait(false);
+                    _ = await pager.ReserveZeroedPageAsync(cancellationToken, reusableStart + marked).ConfigureAwait(false);
                 }
             }
             catch
             {
                 // The page whose update threw may or may not be marked; the
                 // run was free a moment ago, so marking it free again is safe.
-                await this.RestoreFreeStateAsync(reusableStart, Math.Min(marked + 1, pageCount)).ConfigureAwait(false);
+                await this.ReleaseReservedPagesAsync(reusableStart, marked).ConfigureAwait(false);
+                await this.RestoreFreeStateAsync(reusableStart + marked, 1).ConfigureAwait(false);
                 throw;
             }
 
             return reusableStart;
         }
 
-        byte[] blankPage = new byte[format.PageSize];
         long firstAppendedPage = -1;
         int appended = 0;
         try
         {
             for (int offset = 0; offset < pageCount; offset++)
             {
-                long appendedPage = await pager.AppendPageAsync(blankPage, cancellationToken).ConfigureAwait(false);
+                long appendedPage = await pager.ReserveZeroedPageAsync(cancellationToken).ConfigureAwait(false);
                 if (offset == 0)
                 {
                     firstAppendedPage = appendedPage;

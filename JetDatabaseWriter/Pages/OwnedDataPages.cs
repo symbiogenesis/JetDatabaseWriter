@@ -17,12 +17,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// maps every data page to its owner. The read-only reader memoizes the
 /// whole-file pass and each table's owned pages, whichever of the two gave
 /// them, so it reads and validates a table's map once, even a map it rejects;
-/// the writer maintains the fallback owner index from logical page writes but
-/// revalidates usage maps on each lookup. The constructor refuses per-table
-/// result caching over a <see cref="Pager"/>. Row visits follow overflow pointers
+/// the writer maintains both the fallback owner index and validated table
+/// results from logical page writes. The constructor refuses reader-style
+/// lifetime caching over a <see cref="Pager"/>. Row visits follow overflow pointers
 /// to the moved row bytes.
 /// </summary>
-internal sealed class OwnedDataPages : IDisposable
+internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
 {
     private readonly IPageSource pages;
     private readonly OwnedPageIndex ownerIndex;
@@ -34,6 +34,8 @@ internal sealed class OwnedDataPages : IDisposable
     private readonly object ownedDataPagesCacheLock = new();
 #endif
     private readonly Dictionary<long, long[]> ownedDataPagesByTdef = [];
+    private readonly Dictionary<long, Dictionary<long, int>> mapDependencies = [];
+    private long cacheEpoch;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="OwnedDataPages"/> class.
@@ -60,6 +62,7 @@ internal sealed class OwnedDataPages : IDisposable
         if (pages is Pager pager)
         {
             pager.AddWriteObserver(this.ownerIndex);
+            pager.AddWriteObserver(this);
         }
 
         this.format = format;
@@ -94,6 +97,7 @@ internal sealed class OwnedDataPages : IDisposable
         if (this.pages is Pager pager)
         {
             pager.RemoveWriteObserver(this.ownerIndex);
+            pager.RemoveWriteObserver(this);
         }
     }
 
@@ -113,18 +117,25 @@ internal sealed class OwnedDataPages : IDisposable
             return [];
         }
 
-        bool canUseCache = this.cacheResults;
+        bool canUseCache = this.cacheResults || this.pages is Pager;
         if (canUseCache && this.TryGetCachedOwnedDataPages(tdefPage, out long[] cachedPages))
         {
             return cachedPages;
         }
 
-        long[]? mappedPages = await this.TryGetOwnedDataPagesFromUsageMapAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        long loadedEpoch;
+        lock (this.ownedDataPagesCacheLock)
+        {
+            loadedEpoch = this.cacheEpoch;
+        }
+
+        Dictionary<long, int>? dependencies = this.pages is Pager ? [] : null;
+        long[]? mappedPages = await this.TryGetOwnedDataPagesFromUsageMapAsync(tdefPage, dependencies, cancellationToken).ConfigureAwait(false);
         if (mappedPages is not null)
         {
             if (canUseCache)
             {
-                this.CacheOwnedDataPages(tdefPage, mappedPages);
+                this.CacheOwnedDataPages(tdefPage, mappedPages, dependencies, loadedEpoch);
             }
 
             return mappedPages;
@@ -135,7 +146,7 @@ internal sealed class OwnedDataPages : IDisposable
         {
             // The map was rejected: remember the index's answer too, so the
             // next call does not read and validate the map again.
-            this.CacheOwnedDataPages(tdefPage, indexedPages);
+            this.CacheOwnedDataPages(tdefPage, indexedPages, dependencies, loadedEpoch);
         }
 
         return indexedPages;
@@ -370,6 +381,90 @@ internal sealed class OwnedDataPages : IDisposable
         }
     }
 
+    /// <inheritdoc/>
+    public void OnInvalidateAll()
+    {
+        lock (this.ownedDataPagesCacheLock)
+        {
+            this.cacheEpoch++;
+            this.ownedDataPagesByTdef.Clear();
+            this.mapDependencies.Clear();
+        }
+    }
+
+    /// <inheritdoc/>
+    public void OnPageWritten(long pageNumber, ReadOnlySpan<byte> before, ReadOnlySpan<byte> after)
+    {
+        long oldOwner = !before.IsEmpty && before[0] == Constants.PageTypes.Data ? Ri32(before, this.format.DataPage.TDefOff) : 0;
+        long newOwner = after[0] == Constants.PageTypes.Data ? Ri32(after, this.format.DataPage.TDefOff) : 0;
+        lock (this.ownedDataPagesCacheLock)
+        {
+            this.cacheEpoch++;
+            List<long>? invalidated = null;
+            foreach (KeyValuePair<long, Dictionary<long, int>> entry in this.mapDependencies)
+            {
+                // Row counts change during a rewrite and cannot validate a previously
+                // accepted map. Only the TDEF's type and owned-map pointer affect it.
+                bool pointerChanged = entry.Key == pageNumber
+                    && (before.IsEmpty || before[0] != after[0]
+                        || !before.Slice(this.format.TDef.UsedPages, 4).SequenceEqual(after.Slice(this.format.TDef.UsedPages, 4)));
+                bool mapChanged = entry.Value.TryGetValue(pageNumber, out int mapRow)
+                    && (mapRow < 0 ? !before.SequenceEqual(after) : !this.SameMapRow(before, after, mapRow));
+                if (pointerChanged || mapChanged)
+                {
+                    (invalidated ??= []).Add(entry.Key);
+                }
+            }
+
+            if (invalidated is not null)
+            {
+                foreach (long owner in invalidated)
+                {
+                    this.ownedDataPagesByTdef.Remove(owner);
+                    this.mapDependencies.Remove(owner);
+                }
+            }
+
+            if (oldOwner == newOwner)
+            {
+                return;
+            }
+
+            if (oldOwner > 0 && this.ownedDataPagesByTdef.TryGetValue(oldOwner, out long[]? oldPages))
+            {
+                var updated = new List<long>(oldPages);
+                updated.Remove(pageNumber);
+                this.ownedDataPagesByTdef[oldOwner] = [.. updated];
+            }
+
+            if (newOwner > 0 && this.ownedDataPagesByTdef.TryGetValue(newOwner, out long[]? newPages))
+            {
+                var updated = new List<long>(newPages);
+                int index = updated.BinarySearch(pageNumber);
+                if (index < 0)
+                {
+                    updated.Insert(~index, pageNumber);
+                }
+
+                this.ownedDataPagesByTdef[newOwner] = [.. updated];
+            }
+        }
+    }
+
+    private bool SameMapRow(ReadOnlySpan<byte> before, ReadOnlySpan<byte> after, int rowIndex)
+    {
+        if (before.IsEmpty || before[0] != Constants.PageTypes.Data || after[0] != Constants.PageTypes.Data)
+        {
+            return false;
+        }
+
+        // Other usage-map rows share this page and can change without changing
+        // the owned map. Their row directory can also move this row's bytes.
+        return UsageMap.TryGetRowBound(before, this.format.DataPage, this.format.PageSize, rowIndex, out RowBound oldBound)
+            && UsageMap.TryGetRowBound(after, this.format.DataPage, this.format.PageSize, rowIndex, out RowBound newBound)
+            && before.Slice(oldBound.RowStart, oldBound.RowSize).SequenceEqual(after.Slice(newBound.RowStart, newBound.RowSize));
+    }
+
     private bool TryGetCachedOwnedDataPages(long tdefPage, out long[] pageNumbers)
     {
         lock (this.ownedDataPagesCacheLock)
@@ -380,15 +475,22 @@ internal sealed class OwnedDataPages : IDisposable
         }
     }
 
-    private void CacheOwnedDataPages(long tdefPage, long[] pageNumbers)
+    private void CacheOwnedDataPages(long tdefPage, long[] pageNumbers, Dictionary<long, int>? dependencies, long loadedEpoch)
     {
         lock (this.ownedDataPagesCacheLock)
         {
-            this.ownedDataPagesByTdef[tdefPage] = pageNumbers;
+            if (loadedEpoch == this.cacheEpoch)
+            {
+                this.ownedDataPagesByTdef[tdefPage] = pageNumbers;
+                if (dependencies is not null)
+                {
+                    this.mapDependencies[tdefPage] = dependencies;
+                }
+            }
         }
     }
 
-    private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, CancellationToken cancellationToken)
+    private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, Dictionary<long, int>? dependencies, CancellationToken cancellationToken)
     {
         // Journal-aware: a table created or grown inside a transaction owns
         // pages appended past the physical end of the file.
@@ -415,6 +517,7 @@ internal sealed class OwnedDataPages : IDisposable
                 pointer.RowIndex,
                 declaredRows,
                 totalPages,
+                dependencies,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -429,12 +532,15 @@ internal sealed class OwnedDataPages : IDisposable
         int usageMapRow,
         uint declaredRows,
         long totalPages,
+        Dictionary<long, int>? dependencies,
         CancellationToken cancellationToken)
     {
         if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
         {
             return null;
         }
+
+        dependencies?.Add(usageMapPageNumber, usageMapRow);
 
         byte[] usageMapPage = await this.pages.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
@@ -446,6 +552,16 @@ internal sealed class OwnedDataPages : IDisposable
             }
 
             var mappedPages = new List<long>();
+            Func<long, CancellationToken, ValueTask<byte[]>> readMapPage = this.pages.ReadPageAsync;
+            if (dependencies is not null)
+            {
+                readMapPage = async (number, token) =>
+                {
+                    dependencies[number] = -1;
+                    return await this.pages.ReadPageAsync(number, token).ConfigureAwait(false);
+                };
+            }
+
             bool recognizedMap = await UsageMap.TryEnumeratePagesAsync(
                 usageMapPage,
                 rowBound,
@@ -453,7 +569,7 @@ internal sealed class OwnedDataPages : IDisposable
                 totalPages,
                 minimumPageNumber: 1,
                 strict: true,
-                this.pages.ReadPageAsync,
+                readMapPage,
                 PageBuffers.Return,
                 mappedPages,
                 cancellationToken).ConfigureAwait(false);

@@ -12,6 +12,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
@@ -51,6 +52,28 @@ public sealed class OwnedDataPagesTests
         Assert.Empty(await cached.GetOwnedDataPagesAsync(0, Ct));
     }
 
+    /// <summary>Writer results are reused until a logical mutation invalidates them.</summary>
+    [Fact]
+    public async Task WriterOwnedPages_UnchangedLookup_DoesNotReadPages()
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
+        await using var counting = new CountingStream(stream);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, new AccessWriterOptions { PageCacheSize = 0 }, cancellationToken: Ct);
+        await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct);
+        CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
+        Assert.NotNull(entry);
+        IReadOnlyList<long> first = await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct);
+        counting.Reset();
+        Assert.Equal(first, await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+        Assert.Equal(0, counting.BytesRead);
+        await harness.CreateTableAsync("Other", [new ColumnDefinition("Id", typeof(int))], [], Ct);
+        await harness.InsertRowAsync("Other", [1], Ct);
+        Assert.Equal(1, await harness.UpdateRowsAsync(TableName, "Id", 1, new Dictionary<string, object?> { ["Pad"] = "updated" }, Ct));
+        counting.Reset();
+        Assert.Equal(first, await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+        Assert.Equal(0, counting.BytesRead);
+    }
+
     [Theory]
     [MemberData(nameof(Fixtures))]
     public async Task GetOwnedDataPages_MatchesForEachOwnedDataPage(string fixture)
@@ -86,7 +109,7 @@ public sealed class OwnedDataPagesTests
     /// <summary>
     /// A caching instance remembers a table's owned pages when its usage map
     /// is rejected too, so it reads the TDEF, the map and the pages the map
-    /// lists once; an instance that does not cache, as the writer's does not,
+    /// lists once; a read-only instance that does not cache
     /// reads and validates the map, and then takes the whole-file pass, on
     /// every call.
     /// </summary>
@@ -176,7 +199,7 @@ public sealed class OwnedDataPagesTests
 
     /// <summary>
     /// The writer's owned pages, read through its <see cref="JetDatabaseWriter.Pages.Paging.Pager"/>
-    /// without caching, include the data pages a transaction appended past
+    /// with observer-maintained caching, include the pages a transaction appended past
     /// the physical end of file, and the row walk visits every row the
     /// transaction inserted, in an explicit transaction and in a
     /// <see cref="AccessWriterOptions.UseTransactionalWrites"/> call.
@@ -224,6 +247,86 @@ public sealed class OwnedDataPagesTests
 
         Assert.False(harness.Pager.IsJournalActive);
         await AssertOwnedPagesAsync(db, tdefPage, physicalPages, rowCount, Ct);
+    }
+
+    /// <summary>Observed results match a scan through writes, schema replacement and rollback.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task WriterOwnedPages_Mutations_MatchPhysicalScan(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync(format);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await AssertScanParityAsync(harness);
+        await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 100).Select(id => new object?[] { id, new string('p', 120) }), Ct);
+        await AssertScanParityAsync(harness);
+        Assert.Equal(1, await harness.UpdateRowsAsync(TableName, "Id", 1, new Dictionary<string, object?> { ["Pad"] = new string('u', 200) }, Ct));
+        await AssertScanParityAsync(harness);
+        Assert.Equal(1, await harness.DeleteRowsAsync(TableName, "Id", 2, Ct));
+        await AssertScanParityAsync(harness);
+        await harness.Services.Schema.AddColumnAsync(TableName, new ColumnDefinition("Extra", typeof(int)), Ct);
+        await AssertScanParityAsync(harness);
+        await using JetTransaction transaction = await harness.BeginTransactionAsync(Ct);
+        await harness.InsertRowsAsync(TableName, Enumerable.Range(101, 100).Select(id => new object?[] { id, new string('p', 120), id }), Ct);
+        await AssertScanParityAsync(harness);
+        await transaction.RollbackAsync(Ct);
+        await AssertScanParityAsync(harness);
+        harness.Pager.InvalidateAll();
+        await AssertScanParityAsync(harness);
+    }
+
+    /// <summary>A corrupted owned pointer and changed page owner never reuse a stale result.</summary>
+    [Fact]
+    public async Task WriterOwnedPages_CorruptPointerAndOwner_MatchScan()
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct);
+        CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
+        Assert.NotNull(entry);
+        IReadOnlyList<long> owned = await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct);
+        Assert.NotEmpty(owned);
+        byte[] tdef = await harness.Pager.ReadPageAsync(entry.TDefPage, Ct);
+        try
+        {
+            tdef.AsSpan(harness.Database.Format.TDef.UsedPages, 4).Clear();
+            await harness.Pager.WritePageAsync(entry.TDefPage, tdef, Ct);
+        }
+        finally
+        {
+            PageBuffers.Return(tdef);
+        }
+
+        await AssertScanParityAsync(harness);
+        await harness.Pager.WritePageAsync(owned[0], new byte[harness.Database.Format.PageSize], Ct);
+        await AssertScanParityAsync(harness);
+    }
+
+    private static async Task AssertScanParityAsync(WriterHarness harness)
+    {
+        CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
+        Assert.NotNull(entry);
+        var scanned = new List<long>();
+        for (long number = 3; number < harness.Pager.PageCount; number++)
+        {
+            byte[] page = await harness.Pager.ReadUncachedPageAsync(number, Ct);
+            try
+            {
+                if (page[0] == Constants.PageTypes.Data
+                    && BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(harness.Database.Format.DataPage.TDefOff, 4)) == entry.TDefPage)
+                {
+                    scanned.Add(number);
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        Assert.Equal(scanned, await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
     }
 
     private static async Task AssertOwnedPagesAsync(DatabaseFile db, long tdefPage, long physicalPagesBefore, int expectedRows, CancellationToken cancellationToken)
@@ -281,6 +384,7 @@ public sealed class OwnedDataPagesTests
             await writer.CreateTableAsync(
                 TableName,
                 [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Pad", typeof(string), maxLength: 200)],
+                [new IndexDefinition("PK_Items", "Id") { IsPrimaryKey = true }],
                 Ct);
         }
 

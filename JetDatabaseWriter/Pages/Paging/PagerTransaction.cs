@@ -33,6 +33,7 @@ using JetDatabaseWriter.Infrastructure;
 internal sealed class PagerTransaction
 {
     private readonly SortedDictionary<long, byte[]> pages = [];
+    private readonly HashSet<long> zeroReservations = [];
     private readonly int pageSize;
     private readonly int maxPages;
     private long appendedCount;
@@ -79,6 +80,7 @@ internal sealed class PagerTransaction
         if (this.pages.TryGetValue(pageNumber, out byte[]? existing))
         {
             page.CopyTo(existing);
+            _ = this.zeroReservations.Remove(pageNumber);
             return;
         }
 
@@ -121,6 +123,32 @@ internal sealed class PagerTransaction
         return pageNumber;
     }
 
+    /// <summary>Reserves a journal page without adding a replay image.</summary>
+    /// <param name="existingPageNumber">An existing free page, or null to append.</param>
+    /// <returns>The reserved page number.</returns>
+    internal long ReserveZeroedPage(long? existingPageNumber)
+    {
+        byte[] zero = new byte[this.pageSize];
+        long pageNumber;
+        if (existingPageNumber is { } existing)
+        {
+            this.Write(existing, zero);
+            pageNumber = existing;
+        }
+        else
+        {
+            pageNumber = this.Append(zero);
+        }
+
+        _ = this.zeroReservations.Add(pageNumber);
+        return pageNumber;
+    }
+
+    /// <summary>Checks whether the page has only a provisional zero image.</summary>
+    /// <param name="pageNumber">The page number.</param>
+    /// <returns>Whether the page awaits initialization.</returns>
+    internal bool IsZeroReservation(long pageNumber) => this.zeroReservations.Contains(pageNumber);
+
     /// <summary>
     /// Returns the buffered page bytes for <paramref name="pageNumber"/>, or
     /// <see langword="null"/> when the journal does not contain it.
@@ -134,5 +162,14 @@ internal sealed class PagerTransaction
     /// order. The enumeration is stable so the commit replay extends the file
     /// monotonically rather than seeking back and forth.
     /// </summary>
-    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder() => this.pages;
+    public IEnumerable<KeyValuePair<long, byte[]>> EnumerateInOrder()
+    {
+        foreach (KeyValuePair<long, byte[]> page in this.pages)
+        {
+            if (!this.zeroReservations.Contains(page.Key))
+            {
+                yield return page;
+            }
+        }
+    }
 }

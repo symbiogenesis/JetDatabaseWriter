@@ -56,7 +56,7 @@ internal static class UsageMap
     internal static bool TryGetFirstRowBound(byte[] page, DataPageLayout layout, int pageSize, out RowBound rowBound)
         => TryGetRowBound(page, layout, pageSize, rowIndex: 0, out rowBound);
 
-    internal static bool TryGetRowBound(byte[] page, DataPageLayout layout, int pageSize, int rowIndex, out RowBound rowBound)
+    internal static bool TryGetRowBound(ReadOnlySpan<byte> page, DataPageLayout layout, int pageSize, int rowIndex, out RowBound rowBound)
     {
         rowBound = default;
         if (rowIndex < 0)

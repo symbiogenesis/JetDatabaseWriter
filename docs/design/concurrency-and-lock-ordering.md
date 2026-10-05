@@ -36,7 +36,7 @@ its transaction journal and plaintext frame cache.
 | `aesGate` | `AesEcbPageCodec` | Lazy transform creation, transforms and key disposal |
 | `insertPageHintLock` | `DataPageInserter` | Insert-page hint; memory only |
 | `ownedMapSetsLock` | `CatalogOwnedMapPolicy` | Writable and refused TDEF sets; memory only |
-| `ownedDataPagesCacheLock` | `OwnedDataPages` | Reader's per-table owned-page cache; memory only |
+| `ownedDataPagesCacheLock` | `OwnedDataPages` | Per-table owned-page cache and writer observer state; memory only |
 | `tdefBytesCacheLock` | `TableDefReader` | Reader's TDEF-byte cache; memory only |
 | Owned-page index initializer | `AsyncLazyInitializer` in `OwnedDataPages` | One reader whole-file discovery pass |
 | `AsyncReentrantOperationGate.stateLock` | Reader operation gate | Drain bookkeeping; memory only |
@@ -86,7 +86,7 @@ work phase (row encode, index maintenance, page allocation)
      attached journal and buffers into it while holding frameGate and briefly IoGate for the
      buffer swap.
   └─ insertPageHintLock and ownedMapSetsLock may be taken briefly (leaf, memory only;
-     the owned-map policy's MSysObjects scan runs outside its lock). The writer does not memoize TDEF bytes. Its owner index follows logical page writes;
+     the owned-map policy's MSysObjects scan runs outside its lock). The writer does not memoize TDEF bytes. Its owner index and validated table-page results follow logical page writes;
      observer updates take only a leaf lock and never read through the pager.
 
 CommitTransactionAsync
@@ -230,6 +230,7 @@ open:
 | Cache | Owner | Dropped when |
 |-------|-------|--------------|
 | Plaintext page frames, bounded by `PageCacheSize` | `Pager` | CLOCK eviction; transaction attach/detach, failed writes and truncation invalidate all frames. Each write refreshes its retained frame. |
+| Validated owned data pages and usage-map dependencies | `OwnedDataPages` | Data-page ownership changes update the result; TDEF owned-map pointer, owned-map row or REFERENCE bitmap changes discard it; writes to sibling map rows keep it. Rollback, failed replay, truncation and shrink discard all results through the pager observer. |
 | User-table list and calculated result types | `TableCatalog` | `Invalidate`: every catalog write (create, drop or rewrite a table, add a catalog object), a rollback, a failed `UseTransactionalWrites` call and a failed commit. Each call also moves `TableCatalog.Generation` on. |
 | Insert-page hint | `DataPageInserter` | Restored to its state at `BeginTransactionAsync` on a rollback; forgotten after a commit that fails during replay. |
 | The TDEF pages whose owned-page maps the writer may extend, and those it found it may not | `CatalogOwnedMapPolicy` | Restored to their state at `BeginTransactionAsync` on a rollback. After a commit that fails during replay the writable set is restored and the refusals are forgotten. A table the writer creates drops a refusal for its TDEF page. |
@@ -237,7 +238,7 @@ open:
 | Enforced relationships, which every insert, update and delete checks | `RelationshipCatalogStore` | Every `MSysRelationships` write through the store (create, drop or rename a relationship, rename a key column), and whenever `TableCatalog.Generation` has moved on since the set was loaded, so a rollback or failed commit reloads it. |
 
 All of these are memory-only, so restoring or dropping them takes no lock
-beyond the leaf `insertPageHintLock`, `ownedMapSetsLock` and `frameSync`; the generation
+beyond the leaf `insertPageHintLock`, `ownedMapSetsLock`, `ownedDataPagesCacheLock` and `frameSync`; the generation
 counters use `Interlocked`.
 
 A writer opened by path holds the file with `FileShare.Read`, so no other

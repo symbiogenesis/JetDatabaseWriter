@@ -36,6 +36,7 @@ internal sealed class Pager : PageFile
     /// holds the I/O gate, or by <see cref="ForceDetachJournal"/> at dispose.
     /// </summary>
     private readonly SortedDictionary<long, byte[]> dirtyPages = [];
+    private readonly SortedSet<long> zeroReservations = [];
     private IPageWriteObserver[] observers = [];
     private PagerTransaction? journal;
     private int scopeDepth;
@@ -200,6 +201,42 @@ internal sealed class Pager : PageFile
         }
     }
 
+    /// <summary>Reserves a readable zero page without writing a provisional image.</summary>
+    /// <param name="cancellationToken">Cancellation before reservation.</param>
+    /// <param name="existingPageNumber">An existing free page to reserve, or null to append.</param>
+    /// <returns>The reserved logical page number.</returns>
+    internal async ValueTask<long> ReserveZeroedPageAsync(CancellationToken cancellationToken, long? existingPageNumber = null)
+    {
+        await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            this.ThrowIfDisposed();
+            long pageNumber = this.journal is { } active
+                ? active.ReserveZeroedPage(existingPageNumber) : existingPageNumber ?? this.PageCount;
+
+            lock (this.frameSync)
+            {
+                if (this.frames.TryGetValue(pageNumber, out Frame? frame))
+                {
+                    Array.Clear(frame.Bytes, 0, this.PageSize);
+                }
+            }
+
+            if (this.journal is not null)
+            {
+                return pageNumber;
+            }
+
+            _ = this.zeroReservations.Add(pageNumber);
+            this.bufferedPageCount = Math.Max(this.PageCount, checked(pageNumber + 1));
+            return pageNumber;
+        }
+        finally
+        {
+            _ = this.frameGate.Release();
+        }
+    }
+
     /// <summary>Sets the length of the backing stream and flushes it.</summary>
     /// <param name="length">The new length in bytes.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -212,8 +249,9 @@ internal sealed class Pager : PageFile
             await this.DrainDirtyPagesAsync().ConfigureAwait(false);
             this.InvalidateAll();
             await this.Store.SetLengthAsync(length, cancellationToken).ConfigureAwait(false);
+            this.zeroReservations.RemoveWhere(pageNumber => pageNumber >= length / this.PageSize);
             this.scopeHasWrites = true;
-            this.bufferedPageCount = this.PhysicalPageCount;
+            this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
         }
         finally
         {
@@ -289,6 +327,12 @@ internal sealed class Pager : PageFile
     /// <inheritdoc/>
     private protected override bool TryCopyPendingPage(long pageNumber, byte[] buffer)
     {
+        if (this.zeroReservations.Contains(pageNumber) || this.journal?.IsZeroReservation(pageNumber) == true)
+        {
+            Array.Clear(buffer, 0, this.PageSize);
+            return true;
+        }
+
         byte[]? pending = this.journal?.TryGet(pageNumber);
         if (pending is null)
         {
@@ -329,7 +373,7 @@ internal sealed class Pager : PageFile
     private protected override void OnStoreRead() => Interlocked.Increment(ref this.storeReads);
 
     /// <inheritdoc/>
-    private protected override bool HasPendingPages => this.journal is not null || this.dirtyPages.Count != 0;
+    private protected override bool HasPendingPages => this.journal is not null || this.dirtyPages.Count != 0 || this.zeroReservations.Count != 0;
 
     /// <inheritdoc/>
     internal override void DisposeManagedResources()
@@ -476,6 +520,8 @@ internal sealed class Pager : PageFile
                     throw;
                 }
             }
+
+            _ = this.zeroReservations.Remove(pageNumber);
 
             lock (this.frameSync)
             {
@@ -665,7 +711,7 @@ internal sealed class Pager : PageFile
         finally
         {
             this.dirtyPages.Clear();
-            this.bufferedPageCount = this.PhysicalPageCount;
+            this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
         }
     }
 
@@ -728,6 +774,11 @@ internal sealed class Pager : PageFile
             if (pager.journal is not null)
             {
                 throw new InvalidOperationException("A transaction journal is already attached to this file.");
+            }
+
+            if (pager.zeroReservations.Count != 0)
+            {
+                throw new InvalidOperationException("Initialize or release reserved pages before starting a transaction.");
             }
 
             pager.InvalidateAll();
