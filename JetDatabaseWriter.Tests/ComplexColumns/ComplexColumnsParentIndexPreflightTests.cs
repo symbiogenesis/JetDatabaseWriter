@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -43,7 +44,7 @@ public sealed class ComplexColumnsParentIndexPreflightTests
         stream.Position = 0;
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
         {
-            var table = await harness.Services.Catalog.ResolveRequiredTableAsync("Table1", Ct);
+            ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Table1", Ct);
             await LegacyDamageInjector.SetPhantomKeyColumnAsync(harness, table.Entry.TDefPage, realIndexNumber, Ct);
         }
 

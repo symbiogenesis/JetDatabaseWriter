@@ -204,6 +204,7 @@ internal sealed class RelationshipManager(
     /// <param name="primaryTable">The resolved parent table.</param>
     /// <param name="foreignTable">The resolved child table.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="InvalidOperationException">An existing foreign key has no matching parent key.</exception>
     private async ValueTask ValidateExistingRowsAsync(
         RelationshipDefinition relationship,
         ResolvedTable primaryTable,
