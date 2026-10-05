@@ -394,8 +394,8 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
         long relationshipsPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
         Assert.True(relationshipsPage > 0, "The database has no MSysRelationships table.");
 
-        var pages = new HashSet<long>(await harness.Database.GetOwnedDataPagesAsync(2, Ct));
-        pages.UnionWith(await harness.Database.GetOwnedDataPagesAsync(relationshipsPage, Ct));
+        var pages = new HashSet<long>(await harness.Database.OwnedPages.GetOwnedDataPagesAsync(2, Ct));
+        pages.UnionWith(await harness.Database.OwnedPages.GetOwnedDataPagesAsync(relationshipsPage, Ct));
         Assert.NotEmpty(pages);
         return pages;
     }

@@ -40,10 +40,10 @@ public sealed class PagerTests
         await using WriterHarness harness = await OpenAsync(stream, encrypted);
         DatabaseFile db = harness.Database;
         Pager pager = harness.Pager;
-        int pageSize = db.PageSizeBytes;
+        int pageSize = db.Format.PageSize;
         const long pageNumber = 2;
 
-        byte[] original = await db.ReadPageCopyAsync(pageNumber, Ct);
+        byte[] original = await db.Pages.ReadPageCopyAsync(pageNumber, Ct);
         byte[] changed = (byte[])original.Clone();
         changed[pageSize - 1] ^= 0x5A;
 
@@ -51,13 +51,13 @@ public sealed class PagerTests
         Assert.True(pager.IsJournalActive);
         await pager.WritePageAsync(pageNumber, changed, Ct);
 
-        Assert.Equal(changed, await db.ReadPageCopyAsync(pageNumber, Ct));
+        Assert.Equal(changed, await db.Pages.ReadPageCopyAsync(pageNumber, Ct));
         Assert.Equal(fileBefore, stream.ToArray());
 
         await tx.RollbackAsync(Ct);
 
         Assert.False(pager.IsJournalActive);
-        Assert.Equal(original, await db.ReadPageCopyAsync(pageNumber, Ct));
+        Assert.Equal(original, await db.Pages.ReadPageCopyAsync(pageNumber, Ct));
         Assert.Equal(fileBefore, stream.ToArray());
     }
 
@@ -78,19 +78,19 @@ public sealed class PagerTests
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
         for (int i = 0; i < 3; i++)
         {
-            long appended = await pager.AppendPageAsync(FilledPage(db.PageSizeBytes, (byte)(0x41 + i)), Ct);
+            long appended = await pager.AppendPageAsync(FilledPage(db.Format.PageSize, (byte)(0x41 + i)), Ct);
             Assert.Equal(physical + i, appended);
         }
 
         Assert.Equal(physical + 3, pager.PageCount);
-        Assert.Equal(physical + 3, db.PageCount);
+        Assert.Equal(physical + 3, db.Pages.PageCount);
         Assert.Equal(physical, pager.PhysicalPageCount);
-        Assert.Equal(FilledPage(db.PageSizeBytes, 0x43), await db.ReadPageCopyAsync(physical + 2, Ct));
+        Assert.Equal(FilledPage(db.Format.PageSize, 0x43), await db.Pages.ReadPageCopyAsync(physical + 2, Ct));
 
         await tx.RollbackAsync(Ct);
 
         Assert.Equal(physical, pager.PageCount);
-        Assert.Equal(physical * db.PageSizeBytes, stream.Length);
+        Assert.Equal(physical * db.Format.PageSize, stream.Length);
     }
 
     /// <summary>
@@ -123,13 +123,13 @@ public sealed class PagerTests
             await using WriterHarness harness = await WriterHarness.OpenAsync(path, WriterOptions(encrypted), Ct);
             DatabaseFile db = harness.Database;
             Pager pager = harness.Pager;
-            db.EnableRandomAccessPageReadsIfSupported();
+            db.Pages.EnableRandomAccessPageReadsIfSupported();
             Assert.Equal(!LibraryTarget.IsNetStandard, pager.UsesRandomAccessPageReads);
 
             const long pageNumber = 2;
-            int pageSize = db.PageSizeBytes;
+            int pageSize = db.Format.PageSize;
             long physical = pager.PhysicalPageCount;
-            byte[] original = await db.ReadPageCopyAsync(pageNumber, Ct);
+            byte[] original = await db.Pages.ReadPageCopyAsync(pageNumber, Ct);
             byte[] changed = (byte[])original.Clone();
             changed[pageSize - 1] ^= 0x5A;
             byte[] appendedPage = FilledPage(pageSize, 0x6B);
@@ -139,20 +139,20 @@ public sealed class PagerTests
             long appended = await pager.AppendPageAsync(appendedPage, Ct);
             Assert.Equal(physical, appended);
 
-            Assert.Equal(changed, await db.ReadPageCopyAsync(pageNumber, Ct));
-            Assert.Equal(appendedPage, await db.ReadPageCopyAsync(appended, Ct));
+            Assert.Equal(changed, await db.Pages.ReadPageCopyAsync(pageNumber, Ct));
+            Assert.Equal(appendedPage, await db.Pages.ReadPageCopyAsync(appended, Ct));
 
             await rolledBack.RollbackAsync(Ct);
 
             Assert.Equal(physical, pager.PageCount);
-            Assert.Equal(original, await db.ReadPageCopyAsync(pageNumber, Ct));
+            Assert.Equal(original, await db.Pages.ReadPageCopyAsync(pageNumber, Ct));
 
             JetTransaction committed = await harness.Services.Transactions.BeginTransactionAsync(Ct);
             await pager.WritePageAsync(pageNumber, changed, Ct);
             await committed.CommitAsync(Ct);
 
             Assert.False(pager.IsJournalActive);
-            Assert.Equal(changed, await db.ReadPageCopyAsync(pageNumber, Ct));
+            Assert.Equal(changed, await db.Pages.ReadPageCopyAsync(pageNumber, Ct));
         }
         finally
         {
@@ -174,7 +174,7 @@ public sealed class PagerTests
         await using (WriterHarness harness = await OpenAsync(stream, encrypted))
         {
             DatabaseFile db = harness.Database;
-            pageSize = db.PageSizeBytes;
+            pageSize = db.Format.PageSize;
             page = FilledPage(pageSize, 0x7E);
 
             JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
@@ -183,7 +183,7 @@ public sealed class PagerTests
 
             Assert.True(tx.IsCommitted);
             Assert.False(harness.Pager.IsJournalActive);
-            Assert.Equal(page, await db.ReadPageCopyAsync(appended, Ct));
+            Assert.Equal(page, await db.Pages.ReadPageCopyAsync(appended, Ct));
         }
 
         byte[] onDisk = stream.ToArray().AsSpan(checked((int)(appended * pageSize)), pageSize).ToArray();
@@ -251,14 +251,14 @@ public sealed class PagerTests
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, encrypted: false);
         await using WriterHarness writer = await OpenAsync(stream, encrypted: false);
 
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database.Profile, writer.Database.Pages, capacity: 1));
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 1));
         Assert.Equal("capacity", ex.ParamName);
 
-        using var uncached = new ReaderPageCache(writer.Database.Profile, writer.Database.Pages, capacity: 0);
+        using var uncached = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
         Assert.Equal(0, uncached.Hits);
 
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
-        using var cached = new ReaderPageCache(reader.Database.Profile, reader.Database.Pages, capacity: 8);
+        using var cached = new ReaderPageCache(reader.Database.Format, reader.Database.Pages, capacity: 8);
         Assert.Equal(0, cached.Misses);
     }
 

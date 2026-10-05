@@ -493,8 +493,8 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         stream.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
-        TableDef definition = await harness.Database.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, Ct);
-        var store = new RelationshipCatalogStore(harness.Database.Profile, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Services.Indexes, harness.Services.CatalogRows, harness.Services.Snapshots, harness.Services.Catalog);
+        TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, Ct);
+        var store = new RelationshipCatalogStore(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Services.Indexes, harness.Services.CatalogRows, harness.Services.Snapshots, harness.Services.Catalog);
         List<RelationshipRowSnapshot> rows = await store.CollectRowsAsync(page, definition, _ => true, Ct);
         List<object[]> keep = [.. rows.Where(r => !string.Equals(r.SzRelationship, relationshipName, StringComparison.OrdinalIgnoreCase)).Select(r => r.RowValues)];
         Assert.True(keep.Count < rows.Count, $"Relationship '{relationshipName}' has no MSysRelationships rows.");
@@ -617,8 +617,8 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         stream.Position = 0;
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
         CatalogEntry entry = await harness.GetCatalogEntryAsync(table, Ct) ?? throw new InvalidOperationException($"Table '{table}' not found.");
-        byte[] td = await harness.Database.ReadTDefBytesAsync(entry.TDefPage, Ct) ?? throw new InvalidOperationException($"Table '{table}' has no TDEF.");
-        return Ri32(td, harness.Database.TDef.NumRealIdx);
+        byte[] td = await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct) ?? throw new InvalidOperationException($"Table '{table}' has no TDEF.");
+        return Ri32(td, harness.Database.Format.TDef.NumRealIdx);
     }
 
     private static async ValueTask<long> GetTDefPageAsync(MemoryStream stream, string tableName)

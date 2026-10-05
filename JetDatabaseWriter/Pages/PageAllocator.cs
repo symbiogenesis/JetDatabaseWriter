@@ -338,7 +338,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 minimumPageNumber: GlobalUsageMapPageNumber + 1,
                 strict: false,
                 pager.ReadPageAsync,
-                ReturnPage,
+                PageBuffers.Return,
                 mappedFreePages,
                 cancellationToken).ConfigureAwait(false);
             if (!recognizedMap)

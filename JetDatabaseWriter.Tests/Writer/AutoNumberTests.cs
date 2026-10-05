@@ -1008,7 +1008,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, ct);
         Assert.NotNull(entry);
-        IReadOnlyList<long> owned = await harness.Database.GetOwnedDataPagesAsync(entry.TDefPage, ct);
+        IReadOnlyList<long> owned = await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, ct);
         HashSet<long> pages = [.. owned];
         Assert.True(pages.Count >= WideRowCount, $"Expected a data page per row, but the {WideRowCount} rows are on {pages.Count} pages.");
         return pages;
@@ -1076,7 +1076,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
         {
             CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, ct);
             Assert.NotNull(entry);
-            offset = (entry.TDefPage * harness.Database.PageSizeBytes) + harness.Database.TDef.AutoNumber;
+            offset = (entry.TDefPage * harness.Database.Format.PageSize) + harness.Database.Format.TDef.AutoNumber;
         }
 
         BinaryPrimitives.WriteUInt32LittleEndian(ms.GetBuffer().AsSpan(checked((int)offset), 4), value);

@@ -40,10 +40,10 @@ public sealed class LongValueReleaseTests
         await using MemoryStream ms = await CreateDatabaseAsync(format, ct);
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
-        var encoder = new LongValueEncoder(db.Profile, harness.Pager, harness.Services.PageAllocator, options);
+        var encoder = new LongValueEncoder(db.Format, harness.Pager, harness.Services.PageAllocator, options);
 
         // Two single-page values packed at the end of one LVAL page, as Access writes them.
-        int pageSize = db.PageSizeBytes;
+        int pageSize = db.Format.PageSize;
         int firstStart = pageSize - FirstRowLength;
         int secondStart = firstStart - SecondRowLength;
         byte[] page = NewLvalPage(db, [firstStart, secondStart]);
@@ -55,11 +55,11 @@ public sealed class LongValueReleaseTests
 
         byte[] after = await ReadPageCopyAsync(db, pageNumber, ct);
         Assert.Equal(Constants.PageTypes.Data, after[0]);
-        int firstSlot = Ru16(after, db.DataPage.RowsStart);
-        int secondSlot = Ru16(after, db.DataPage.RowsStart + 2);
+        int firstSlot = Ru16(after, db.Format.DataPage.RowsStart);
+        int secondSlot = Ru16(after, db.Format.DataPage.RowsStart + 2);
         Assert.Equal(firstStart | Constants.DataPage.DeletedRowFlag, firstSlot);
         Assert.Equal(secondStart, secondSlot);
-        Assert.Equal(2, Ru16(after, db.DataPage.NumRows));
+        Assert.Equal(2, Ru16(after, db.Format.DataPage.NumRows));
         Assert.True(after.AsSpan(secondStart, SecondRowLength).IndexOfAnyExcept((byte)'B') < 0, "The other value's row changed.");
         byte expectedFirst = secureErase ? (byte)0 : (byte)'A';
         Assert.True(after.AsSpan(firstStart, FirstRowLength).IndexOfAnyExcept(expectedFirst) < 0, secureErase ? "The released row was not scrubbed." : "The released row was changed.");
@@ -91,12 +91,12 @@ public sealed class LongValueReleaseTests
         await using MemoryStream ms = await CreateDatabaseAsync(format, ct);
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
-        var encoder = new LongValueEncoder(db.Profile, harness.Pager, harness.Services.PageAllocator, options);
+        var encoder = new LongValueEncoder(db.Format, harness.Pager, harness.Services.PageAllocator, options);
         CatalogEntry table = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("T", ct));
         byte[] tdefBefore = await ReadPageCopyAsync(db, table.TDefPage, ct);
 
         // A chained row whose next-row pointer names the table's TDEF page.
-        int pageSize = db.PageSizeBytes;
+        int pageSize = db.Format.PageSize;
         int rowStart = pageSize - 104;
         byte[] page = NewLvalPage(db, [rowStart]);
         Wi32(page, rowStart, unchecked((int)LongValueStore.MakeRowPointer(table.TDefPage, 0)));
@@ -126,26 +126,26 @@ public sealed class LongValueReleaseTests
     /// <returns>The page bytes.</returns>
     private static byte[] NewLvalPage(DatabaseFile db, int[] rowStarts)
     {
-        byte[] page = new byte[db.PageSizeBytes];
+        byte[] page = new byte[db.Format.PageSize];
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
         "LVAL"u8.CopyTo(page.AsSpan(4));
-        Wu16(page, db.DataPage.NumRows, rowStarts.Length);
+        Wu16(page, db.Format.DataPage.NumRows, rowStarts.Length);
         for (int row = 0; row < rowStarts.Length; row++)
         {
-            Wu16(page, db.DataPage.RowsStart + (row * 2), rowStarts[row]);
+            Wu16(page, db.Format.DataPage.RowsStart + (row * 2), rowStarts[row]);
         }
 
-        Wu16(page, 2, rowStarts[^1] - (db.DataPage.RowsStart + (rowStarts.Length * 2)));
+        Wu16(page, 2, rowStarts[^1] - (db.Format.DataPage.RowsStart + (rowStarts.Length * 2)));
         return page;
     }
 
     private static async Task<byte[]> ReadPageCopyAsync(DatabaseFile db, long pageNumber, CancellationToken cancellationToken)
     {
-        byte[] page = await db.ReadPageAsync(pageNumber, cancellationToken);
+        byte[] page = await db.Pages.ReadPageAsync(pageNumber, cancellationToken);
         try
         {
-            return page.AsSpan(0, db.PageSizeBytes).ToArray();
+            return page.AsSpan(0, db.Format.PageSize).ToArray();
         }
         finally
         {

@@ -171,7 +171,7 @@ public sealed class ComplexColumnsAttachmentFormatTests
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long flatTdefPage = CatalogValueReader.TdefPageFromId((long)flatTableId);
-        TableDef flat = Assert.IsType<TableDef>(await harness.Database.ReadTableDefAsync(flatTdefPage, Ct));
+        TableDef flat = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(flatTdefPage, Ct));
         int fileName = flat.FindColumnIndex("FileName");
         int fileType = flat.FindColumnIndex("FileType");
         int fileData = flat.FindColumnIndex("FileData");

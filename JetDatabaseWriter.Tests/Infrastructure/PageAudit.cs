@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -24,7 +25,7 @@ internal static class PageAudit
     public static async ValueTask<SortedSet<long>> FindAllocatedPagesAsync(DatabaseFile db, PageAllocator allocator, CancellationToken cancellationToken)
     {
         var allocated = new SortedSet<long>();
-        long pageCount = db.PageCount;
+        long pageCount = db.Pages.PageCount;
         for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
         {
             if (await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
@@ -32,7 +33,7 @@ internal static class PageAudit
                 continue;
             }
 
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
             if (page[0] != Constants.PageTypes.UsageMap)
             {
                 _ = allocated.Add(pageNumber);
@@ -54,10 +55,10 @@ internal static class PageAudit
     public static async ValueTask<SortedSet<long>> FindUnlinkedReservedPagesAsync(DatabaseFile db, PageAllocator allocator, CancellationToken cancellationToken)
     {
         var unlinked = new SortedSet<long>();
-        long pageCount = db.PageCount;
+        long pageCount = db.Pages.PageCount;
         for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
         {
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
             if ((page[0] == Constants.PageTypes.Freed || IsAllZero(page))
                 && !await allocator.IsPageFreeAsync(pageNumber, cancellationToken))
             {
@@ -91,7 +92,7 @@ internal static class PageAudit
         }
 
         var unreachable = new SortedSet<long>();
-        long pageCount = db.PageCount;
+        long pageCount = db.Pages.PageCount;
         for (long pageNumber = 3; pageNumber < pageCount; pageNumber++)
         {
             if (reachable.Contains(pageNumber))
@@ -99,7 +100,7 @@ internal static class PageAudit
                 continue;
             }
 
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
             if (page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf
                 && Ri32(page, 4) == tdefPage
                 && !await allocator.IsPageFreeAsync(pageNumber, cancellationToken))

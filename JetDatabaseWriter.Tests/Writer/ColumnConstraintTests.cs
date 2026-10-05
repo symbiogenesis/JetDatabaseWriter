@@ -13,6 +13,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Tests for column-level constraints: DefaultValue, IsNullable, and
@@ -1317,14 +1318,14 @@ public sealed class ColumnConstraintTests
     /// <returns>The row length in bytes, or -1 when no row has the name.</returns>
     private static async Task<int> ReadCatalogRowLengthAsync(DatabaseFile db, string name)
     {
-        TableDef msys = Assert.IsType<TableDef>(await db.ReadTableDefAsync(2, TestContext.Current.CancellationToken));
+        TableDef msys = Assert.IsType<TableDef>(await db.TableDefs.ReadTableDefAsync(2, TestContext.Current.CancellationToken));
         ColumnInfo nameColumn = msys.Columns.Single(c => c.Name == "Name");
         int length = -1;
-        await db.ForEachLiveTableRowAsync(
+        await db.OwnedPages.ForEachLiveTableRowAsync(
             2,
             (row, _) =>
             {
-                if (db.DecodeSimpleColumnValue(row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn) == name)
+                if (ScalarColumnReader.DecodeSimpleColumnValue(db.Format, row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn) == name)
                 {
                     length = row.Location.RowSize;
                 }
@@ -1426,7 +1427,7 @@ public sealed class ColumnConstraintTests
             CatalogEntry? entry = await pages.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);
             tdefPage = entry.TDefPage;
-            autoNumberOffset = pages.Database.TDef.AutoNumber;
+            autoNumberOffset = pages.Database.Format.TDef.AutoNumber;
         }
 
         // Jet4 and ACE pages are both 4 KB; the counter is a uint32 in the TDEF header.

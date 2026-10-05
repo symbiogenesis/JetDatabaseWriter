@@ -274,38 +274,28 @@ public sealed class JetFormatTests
     }
 
     /// <summary>
-    /// The database file an open reader builds takes its format members from
-    /// its profile, which it builds from the file's header, and reads row
-    /// column counts and text as the profile does from the row format it
-    /// copies from it.
+    /// The database file builds its immutable format from the open file header.
     /// </summary>
     /// <param name="fixture">The fixture name.</param>
     [Theory]
     [InlineData("Jet3Test")]
     [InlineData("NorthwindTraders")]
-    public async Task DatabaseFile_FormatMembers_ComeFromProfile(string fixture)
+    public async Task DatabaseFile_FormatComesFromHeader(string fixture)
     {
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(PathOf(fixture), cancellationToken: TestContext.Current.CancellationToken);
         DatabaseFile db = harness.Database;
         var expected = JetFormat.FromHeader(await ReadHeaderAsync(fixture));
 
-        Assert.Equal(expected.Kind, db.Profile.Kind);
-        Assert.Equal(expected.CodePage, db.Profile.CodePage);
-        Assert.Equal(db.Profile.Kind, db.Format);
-        Assert.Equal(db.Profile.PageSize, db.PageSizeBytes);
-        Assert.Equal(db.Profile.CodePage, db.CodePage);
-        Assert.Equal(db.Profile.DataPage, db.DataPage);
-        Assert.Equal(db.Profile.TDef, db.TDef);
-        Assert.Equal(db.Profile.RowFields, db.RowFields);
-        Assert.Equal(db.Profile.RowFields.NumCols, db.RowColumnCountFieldSize);
-        Assert.Same(db.Profile.AnsiEncoding, db.AnsiEncoding);
+        Assert.Equal(expected.Kind, db.Format.Kind);
+        Assert.Equal(expected.CodePage, db.Format.CodePage);
+        Assert.Equal(expected.PageSize, db.Format.PageSize);
+        Assert.Equal(expected.DataPage, db.Format.DataPage);
+        Assert.Equal(expected.TDef, db.Format.TDef);
+        Assert.Equal(expected.RowFields, db.Format.RowFields);
 
-        byte[] row = [0x34, 0x12];
-        Assert.Equal(db.Profile.ReadRowColumnCount(row, 0), db.ReadRowColumnCount(row, 0));
-
-        byte[] text = db.Profile.EncodeText(SampleText);
-        Assert.Equal(SampleText, db.DecodeTextForFormat(text, 0, text.Length));
-        Assert.Equal(string.Empty, db.DecodeTextForFormat(text, 0, 0));
+        byte[] text = db.Format.EncodeText(SampleText);
+        Assert.Equal(SampleText, db.Format.DecodeText(text, 0, text.Length));
+        Assert.Equal(string.Empty, db.Format.DecodeText(text, 0, 0));
     }
 
     /// <summary>

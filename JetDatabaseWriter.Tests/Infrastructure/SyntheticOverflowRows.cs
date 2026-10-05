@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using Xunit;
 
@@ -132,11 +133,11 @@ internal static class SyntheticOverflowRows
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, cancellationToken);
         Assert.NotNull(entry);
 
-        IReadOnlyList<long> pages = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken);
+        IReadOnlyList<long> pages = await db.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken);
         Assert.True(pages.Count >= 2, $"'{tableName}' needs at least two data pages; it has {pages.Count}.");
 
         long sourcePage = layout == OverflowRowLayout.SamePage ? pages[^1] : pages[0];
-        RowBound source = db.EnumerateLiveRowBounds(PageCopy(image, db, sourcePage)).First();
+        RowBound source = DataPageRows.EnumerateLiveRowBounds(db.Format, PageCopy(image, db, sourcePage)).First();
         byte[] rowBytes = image.AsSpan(PageOffset(db, sourcePage) + source.RowStart, source.RowSize).ToArray();
         long spill = layout == OverflowRowLayout.SamePage
             ? sourcePage
@@ -161,11 +162,11 @@ internal static class SyntheticOverflowRows
             }
 
             case OverflowRowLayout.PointerPastEndOfFile:
-                WriteHeader(image, db, sourcePage, source, 0, db.PageCount + 10);
+                WriteHeader(image, db, sourcePage, source, 0, db.Pages.PageCount + 10);
                 break;
 
             case OverflowRowLayout.PointerToOtherTable:
-                IReadOnlyList<long> catalogPages = await db.GetOwnedDataPagesAsync(2, cancellationToken);
+                IReadOnlyList<long> catalogPages = await db.OwnedPages.GetOwnedDataPagesAsync(2, cancellationToken);
                 WriteHeader(image, db, sourcePage, source, 0, catalogPages[0]);
                 break;
 
@@ -242,16 +243,16 @@ internal static class SyntheticOverflowRows
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, cancellationToken);
         Assert.NotNull(entry);
 
-        IReadOnlyList<long> pages = await db.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken);
+        IReadOnlyList<long> pages = await db.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken);
         if (pages.Count < 2)
         {
             return false;
         }
 
-        ReadOnlySpan<byte> last = image.AsSpan(PageOffset(db, pages[^1]), db.PageSizeBytes);
-        RowBound row = db.EnumerateLiveRowBounds(last.ToArray()).First();
-        int numRows = BinaryPrimitives.ReadUInt16LittleEndian(last[db.DataPage.NumRows..]);
-        int free = LowestRowStart(last, db, numRows) - (db.DataPage.RowsStart + (numRows * 2));
+        ReadOnlySpan<byte> last = image.AsSpan(PageOffset(db, pages[^1]), db.Format.PageSize);
+        RowBound row = DataPageRows.EnumerateLiveRowBounds(db.Format, last.ToArray()).First();
+        int numRows = BinaryPrimitives.ReadUInt16LittleEndian(last[db.Format.DataPage.NumRows..]);
+        int free = LowestRowStart(last, db, numRows) - (db.Format.DataPage.RowsStart + (numRows * 2));
         return free >= (2 * (row.RowSize + 2)) + 8;
     }
 
@@ -263,10 +264,10 @@ internal static class SyntheticOverflowRows
         (byte)((pageNumber >> 16) & 0xFF),
     ];
 
-    private static int PageOffset(DatabaseFile db, long pageNumber) => checked((int)(pageNumber * db.PageSizeBytes));
+    private static int PageOffset(DatabaseFile db, long pageNumber) => checked((int)(pageNumber * db.Format.PageSize));
 
     private static byte[] PageCopy(byte[] image, DatabaseFile db, long pageNumber)
-        => image.AsSpan(PageOffset(db, pageNumber), db.PageSizeBytes).ToArray();
+        => image.AsSpan(PageOffset(db, pageNumber), db.Format.PageSize).ToArray();
 
     /// <summary>
     /// Turns <paramref name="source"/>'s slot into an overflow header: the first four
@@ -284,7 +285,7 @@ internal static class SyntheticOverflowRows
         Span<byte> row = image.AsSpan(PageOffset(db, sourcePage) + source.RowStart, source.RowSize);
         row.Clear();
         Pointer(targetRow, targetPage).CopyTo(row);
-        int slotOffset = PageOffset(db, sourcePage) + db.DataPage.RowsStart + (source.RowIndex * 2);
+        int slotOffset = PageOffset(db, sourcePage) + db.Format.DataPage.RowsStart + (source.RowIndex * 2);
         BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(slotOffset), checked((ushort)(source.RowStart | OverflowFlag)));
     }
 
@@ -301,15 +302,15 @@ internal static class SyntheticOverflowRows
     private static int AppendSlot(byte[] image, DatabaseFile db, long pageNumber, byte[] bytes, int flags, out int rowStart)
     {
         int pageOffset = PageOffset(db, pageNumber);
-        Span<byte> page = image.AsSpan(pageOffset, db.PageSizeBytes);
-        int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page[db.DataPage.NumRows..]);
+        Span<byte> page = image.AsSpan(pageOffset, db.Format.PageSize);
+        int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page[db.Format.DataPage.NumRows..]);
         int firstStart = LowestRowStart(page, db, numRows);
         rowStart = firstStart - bytes.Length;
-        Assert.True(rowStart >= db.DataPage.RowsStart + ((numRows + 1) * 2), $"Page {pageNumber} has no room for {bytes.Length} more bytes.");
+        Assert.True(rowStart >= db.Format.DataPage.RowsStart + ((numRows + 1) * 2), $"Page {pageNumber} has no room for {bytes.Length} more bytes.");
 
         bytes.CopyTo(page[rowStart..]);
-        BinaryPrimitives.WriteUInt16LittleEndian(page[(db.DataPage.RowsStart + (numRows * 2))..], checked((ushort)(rowStart | flags)));
-        BinaryPrimitives.WriteUInt16LittleEndian(page[db.DataPage.NumRows..], checked((ushort)(numRows + 1)));
+        BinaryPrimitives.WriteUInt16LittleEndian(page[(db.Format.DataPage.RowsStart + (numRows * 2))..], checked((ushort)(rowStart | flags)));
+        BinaryPrimitives.WriteUInt16LittleEndian(page[db.Format.DataPage.NumRows..], checked((ushort)(numRows + 1)));
         return numRows;
     }
 
@@ -320,19 +321,19 @@ internal static class SyntheticOverflowRows
     /// <param name="raw">The raw 16-bit slot value.</param>
     private static void AppendSlotEntry(byte[] image, DatabaseFile db, long pageNumber, int raw)
     {
-        Span<byte> page = image.AsSpan(PageOffset(db, pageNumber), db.PageSizeBytes);
-        int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page[db.DataPage.NumRows..]);
-        Assert.True(LowestRowStart(page, db, numRows) >= db.DataPage.RowsStart + ((numRows + 1) * 2), $"Page {pageNumber} has no room for another slot.");
-        BinaryPrimitives.WriteUInt16LittleEndian(page[(db.DataPage.RowsStart + (numRows * 2))..], checked((ushort)raw));
-        BinaryPrimitives.WriteUInt16LittleEndian(page[db.DataPage.NumRows..], checked((ushort)(numRows + 1)));
+        Span<byte> page = image.AsSpan(PageOffset(db, pageNumber), db.Format.PageSize);
+        int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page[db.Format.DataPage.NumRows..]);
+        Assert.True(LowestRowStart(page, db, numRows) >= db.Format.DataPage.RowsStart + ((numRows + 1) * 2), $"Page {pageNumber} has no room for another slot.");
+        BinaryPrimitives.WriteUInt16LittleEndian(page[(db.Format.DataPage.RowsStart + (numRows * 2))..], checked((ushort)raw));
+        BinaryPrimitives.WriteUInt16LittleEndian(page[db.Format.DataPage.NumRows..], checked((ushort)(numRows + 1)));
     }
 
     private static int LowestRowStart(ReadOnlySpan<byte> page, DatabaseFile db, int numRows)
     {
-        int lowest = db.PageSizeBytes;
+        int lowest = db.Format.PageSize;
         for (int r = 0; r < numRows; r++)
         {
-            int start = BinaryPrimitives.ReadUInt16LittleEndian(page[(db.DataPage.RowsStart + (r * 2))..]) & OffsetMask;
+            int start = BinaryPrimitives.ReadUInt16LittleEndian(page[(db.Format.DataPage.RowsStart + (r * 2))..]) & OffsetMask;
             if (start > 0 && start < lowest)
             {
                 lowest = start;
@@ -346,9 +347,9 @@ internal static class SyntheticOverflowRows
     {
         foreach (long pageNumber in candidates)
         {
-            ReadOnlySpan<byte> page = image.AsSpan(PageOffset(db, pageNumber), db.PageSizeBytes);
-            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page[db.DataPage.NumRows..]);
-            int free = LowestRowStart(page, db, numRows) - (db.DataPage.RowsStart + ((numRows + 2) * 2));
+            ReadOnlySpan<byte> page = image.AsSpan(PageOffset(db, pageNumber), db.Format.PageSize);
+            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page[db.Format.DataPage.NumRows..]);
+            int free = LowestRowStart(page, db, numRows) - (db.Format.DataPage.RowsStart + ((numRows + 2) * 2));
             if (free >= bytesNeeded)
             {
                 return pageNumber;

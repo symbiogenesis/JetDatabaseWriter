@@ -753,7 +753,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
     private static async ValueTask<bool> CatalogObjectExistsAsync(WriterHarness writer, string objectName, CancellationToken cancellationToken)
     {
-        TableDef msys = await writer.Database.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
+        TableDef msys = await writer.Database.TableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
         List<CatalogRow> rows = await writer.Services.CatalogRows.GetCatalogRowsAsync(msys, cancellationToken);
         return rows.Any(row => string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase));
     }
@@ -870,22 +870,22 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
     private static async ValueTask<int> CountMsysObjectsIntermediateRootsAsync(DatabaseFile db, CancellationToken cancellationToken)
     {
-        byte[] tdef = await db.ReadPageAsync(2, cancellationToken);
+        byte[] tdef = await db.Pages.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, db.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.Format.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.Format.TDef.NumRealIdx);
 
-            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
+            int colStart = db.Format.TDef.BlockEnd + (numRealIdx * db.Format.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.Format.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.Format.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk MSysObjects column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            IndexLayout layout = db.IndexLayoutInfo;
+            IndexLayout layout = db.Format.Index;
             int intermediateRoots = 0;
             for (int ri = 0; ri < numRealIdx; ri++)
             {
@@ -896,7 +896,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                     continue;
                 }
 
-                byte[] root = await db.ReadPageAsync(firstDp, cancellationToken);
+                byte[] root = await db.Pages.ReadPageAsync(firstDp, cancellationToken);
                 try
                 {
                     if (root[0] == Constants.IndexLeafPage.PageTypeIntermediate)
@@ -927,28 +927,28 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(WriterHarness writer, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
-        byte[] tdef = await db.ReadPageAsync(2, cancellationToken);
+        byte[] tdef = await db.Pages.ReadPageAsync(2, cancellationToken);
         try
         {
-            int numCols = Ru16(tdef, db.TDef.NumCols);
-            int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
+            int numCols = Ru16(tdef, db.Format.TDef.NumCols);
+            int numRealIdx = Ri32(tdef, db.Format.TDef.NumRealIdx);
             Assert.True(numRealIdx > 0, "Expected MSysObjects to declare at least one real index.");
 
-            int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-            int namePos = colStart + (numCols * db.ColumnDescriptor.Size);
+            int colStart = db.Format.TDef.BlockEnd + (numRealIdx * db.Format.TDef.RealIdxEntrySz);
+            int namePos = colStart + (numCols * db.Format.ColumnDescriptor.Size);
             for (int i = 0; i < numCols; i++)
             {
-                int nameLength = db.ReadColumnName(tdef, ref namePos, out _);
+                int nameLength = db.Format.ReadColumnName(tdef, ref namePos, out _);
                 Assert.True(nameLength >= 0, $"Failed to walk MSysObjects column name {i}.");
             }
 
             int realIdxDescStart = namePos;
-            IndexLayout layout = db.IndexLayoutInfo;
+            IndexLayout layout = db.Format.Index;
             int physStart = layout.RealIdxPhysOffset(realIdxDescStart, 0);
             int firstDp = Ri32(tdef, layout.FirstDpAbsoluteOffset(physStart));
             Assert.True(firstDp > 0, "Expected MSysObjects first real-index root page to be allocated.");
 
-            byte[] root = await db.ReadPageAsync(firstDp, cancellationToken);
+            byte[] root = await db.Pages.ReadPageAsync(firstDp, cancellationToken);
             try
             {
                 Assert.True(

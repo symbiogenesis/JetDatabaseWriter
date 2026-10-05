@@ -260,7 +260,7 @@ public sealed class WarmTableReadTests : IDisposable
         {
             await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(TableName, Ct));
-            int numRows = checked((int)(entry.TDefPage * harness.Database.PageSizeBytes)) + harness.Database.TDef.NumRows;
+            int numRows = checked((int)(entry.TDefPage * harness.Database.Format.PageSize)) + harness.Database.Format.TDef.NumRows;
             BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(numRows), RowCount + 1_000);
         }
 

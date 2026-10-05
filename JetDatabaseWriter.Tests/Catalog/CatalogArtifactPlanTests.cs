@@ -82,11 +82,11 @@ public sealed class CatalogArtifactPlanTests
             cancellationToken);
         Assert.True(templatePage > 0);
 
-        byte[] page = await writer.Database.ReadPageAsync(templatePage, cancellationToken);
+        byte[] page = await writer.Database.Pages.ReadPageAsync(templatePage, cancellationToken);
         try
         {
-            for (int pointerOffset = writer.Database.TDef.UsedPages;
-                pointerOffset <= writer.Database.TDef.FreePagesPage + 2;
+            for (int pointerOffset = writer.Database.Format.TDef.UsedPages;
+                pointerOffset <= writer.Database.Format.TDef.FreePagesPage + 2;
                 pointerOffset++)
             {
                 Assert.Equal(0, page[pointerOffset]);

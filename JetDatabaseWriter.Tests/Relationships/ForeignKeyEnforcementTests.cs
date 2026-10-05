@@ -11,6 +11,7 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Runtime foreign-key enforcement on Insert / Update / Delete.
@@ -799,11 +800,11 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        TableDef def = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
         List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         RowLocation loc = Assert.Single(locations);
 
-        object?[]? values = await harness.Database.TryReadColumnValuesTypedAsync(loc, def, [0, 1], TestContext.Current.CancellationToken);
+        object?[]? values = await PartialColumnReader.TryReadColumnValuesTypedAsync(harness.Database.Format, harness.Database.Pages, loc, def, [0, 1], TestContext.Current.CancellationToken);
 
         Assert.NotNull(values);
         Assert.Equal(1, values[0]);
@@ -841,11 +842,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        TableDef def = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
         List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         RowLocation location = Assert.Single(locations);
 
-        object?[]? values = await harness.Database.TryReadColumnValuesTypedAsync(
+        object?[]? values = await PartialColumnReader.TryReadColumnValuesTypedAsync(
+            harness.Database.Format,
+            harness.Database.Pages,
             location,
             def,
             [0, 1, 2, 3, 4, 5, 6],
@@ -878,11 +881,13 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
-        TableDef def = await harness.Database.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
+        TableDef def = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
         List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
         RowLocation location = Assert.Single(locations);
 
-        object?[]? values = await harness.Database.TryReadColumnValuesTypedAsync(
+        object?[]? values = await PartialColumnReader.TryReadColumnValuesTypedAsync(
+            harness.Database.Format,
+            harness.Database.Pages,
             location,
             def,
             [0, 1],
@@ -1167,7 +1172,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             long relationshipsTdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);
-            TableDef relationshipsDef = await harness.Database.ReadRequiredTableDefAsync(
+            TableDef relationshipsDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(
                 relationshipsTdefPage,
                 Constants.SystemTableNames.Relationships,
                 TestContext.Current.CancellationToken);

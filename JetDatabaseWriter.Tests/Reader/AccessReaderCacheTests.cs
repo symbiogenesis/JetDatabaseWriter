@@ -302,10 +302,10 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             },
             TestContext.Current.CancellationToken);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
-        using var cache = new ReaderPageCache(harness.Database.Profile, harness.Database.Pages, capacity: 0);
-        int pageSize = harness.Database.PageSizeBytes;
+        using var cache = new ReaderPageCache(harness.Database.Format, harness.Database.Pages, capacity: 0);
+        int pageSize = harness.Database.Format.PageSize;
 
-        byte[] original = await harness.Database.ReadPageCopyAsync(1, TestContext.Current.CancellationToken);
+        byte[] original = await harness.Database.Pages.ReadPageCopyAsync(1, TestContext.Current.CancellationToken);
         byte[] changed = (byte[])original.Clone();
         changed[pageSize - 1] ^= 0xFF;
 

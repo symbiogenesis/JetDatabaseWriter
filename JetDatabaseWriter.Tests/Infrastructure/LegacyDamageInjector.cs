@@ -8,6 +8,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -54,20 +55,20 @@ internal static class LegacyDamageInjector
     public static async ValueTask<IReadOnlyList<int>> InjectStrayUsedPagesByteAsync(WriterHarness writer, long tdefPage, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
-        if (db.Format == DatabaseFormat.Jet3Mdb)
+        if (db.Format.Kind == DatabaseFormat.Jet3Mdb)
         {
             throw new InvalidOperationException("The stray used_pages byte was written only into Jet4 and ACE tables.");
         }
 
-        LogicalTDefChain chain = await db.ReadTDefChainAsync(tdefPage, cancellationToken);
+        LogicalTDefChain chain = await db.TableDefs.ReadTDefChainAsync(tdefPage, cancellationToken);
         byte[] td = chain.Bytes;
-        int pageSize = db.PageSizeBytes;
+        int pageSize = db.Format.PageSize;
         int realIdxDescStart = LocateRealIdxDescStart(db, td, out int numRealIdx);
 
         var strayBytes = new List<(int PageIndex, int Offset, byte Value)>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            if (!db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, ri, out RealIdxSlot slot))
+            if (!db.Format.Index.TryReadRealIdxSlot(td, realIdxDescStart, ri, out RealIdxSlot slot))
             {
                 throw new InvalidOperationException($"Real index {ri} of the table at page {tdefPage} could not be read.");
             }
@@ -100,7 +101,7 @@ internal static class LegacyDamageInjector
         foreach ((int pageIndex, int offset, byte value) in strayBytes)
         {
             long pageNumber = chain.PageNumbers[pageIndex];
-            byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
             page[offset] = value;
             await writer.Pager.WritePageAsync(pageNumber, page, cancellationToken);
         }
@@ -124,16 +125,16 @@ internal static class LegacyDamageInjector
     public static async ValueTask SetPhantomKeyColumnAsync(WriterHarness writer, long tdefPage, int realIndexNumber, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
-        LogicalTDefChain chain = await db.ReadTDefChainAsync(tdefPage, cancellationToken);
+        LogicalTDefChain chain = await db.TableDefs.ReadTDefChainAsync(tdefPage, cancellationToken);
         byte[] td = chain.Bytes;
         int realIdxDescStart = LocateRealIdxDescStart(db, td, out int numRealIdx);
         if (realIndexNumber < 0 || realIndexNumber >= numRealIdx
-            || !db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, realIndexNumber, out RealIdxSlot slot))
+            || !db.Format.Index.TryReadRealIdxSlot(td, realIdxDescStart, realIndexNumber, out RealIdxSlot slot))
         {
             throw new InvalidOperationException($"The table at page {tdefPage} has no real index {realIndexNumber}.");
         }
 
-        int slotOffset = db.IndexLayoutInfo.ColMapSlotOffset(slot.PhysStart, 1);
+        int slotOffset = db.Format.Index.ColMapSlotOffset(slot.PhysStart, 1);
         if (Ru16(td, slotOffset) != Constants.TableDefinition.ColMapPaddingSlot)
         {
             throw new InvalidOperationException($"Real index {realIndexNumber} already has a second key column.");
@@ -151,7 +152,7 @@ internal static class LegacyDamageInjector
     /// <exception cref="InvalidOperationException">The table definition cannot be read or walked.</exception>
     public static async ValueTask<IReadOnlyList<int>> FindPhantomIndexesAsync(DatabaseFile db, long tdefPage, CancellationToken cancellationToken)
     {
-        TableDef tableDef = await db.ReadTableDefAsync(tdefPage, cancellationToken)
+        TableDef tableDef = await db.TableDefs.ReadTableDefAsync(tdefPage, cancellationToken)
             ?? throw new InvalidOperationException($"The table definition at page {tdefPage} could not be read.");
         var columnNumbers = new HashSet<int>();
         foreach (ColumnInfo column in tableDef.Columns)
@@ -159,12 +160,12 @@ internal static class LegacyDamageInjector
             columnNumbers.Add(column.ColNum);
         }
 
-        byte[] td = (await db.ReadTDefChainAsync(tdefPage, cancellationToken)).Bytes;
+        byte[] td = (await db.TableDefs.ReadTDefChainAsync(tdefPage, cancellationToken)).Bytes;
         int realIdxDescStart = LocateRealIdxDescStart(db, td, out int numRealIdx);
         var phantoms = new List<int>();
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            if (db.IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, ri, out _, out List<KeyColumn> keyColumns)
+            if (db.Format.Index.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, ri, out _, out List<KeyColumn> keyColumns)
                 && keyColumns.Exists(key => !columnNumbers.Contains(key.ColNum)))
             {
                 phantoms.Add(ri);
@@ -176,9 +177,9 @@ internal static class LegacyDamageInjector
 
     private static int LocateRealIdxDescStart(DatabaseFile db, byte[] td, out int numRealIdx)
     {
-        int numCols = Ru16(td, db.TDef.NumCols);
-        numRealIdx = Ri32(td, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
+        int numCols = Ru16(td, db.Format.TDef.NumCols);
+        numRealIdx = Ri32(td, db.Format.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, td, numCols, numRealIdx);
         return realIdxDescStart >= 0
             ? realIdxDescStart
             : throw new InvalidOperationException("The column-name section of the table definition could not be walked.");

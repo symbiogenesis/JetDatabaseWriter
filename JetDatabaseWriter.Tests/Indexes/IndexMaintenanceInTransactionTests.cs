@@ -11,7 +11,9 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
@@ -22,7 +24,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// inside a transaction live in the journal, past the physical end of the
 /// file, until commit. Index splits and rebuilds that number their new pages,
 /// and bounds checks that validate page numbers, must use the journal-aware
-/// end of file (<see cref="DatabaseFile.PageCount"/>); the physical one names
+/// end of file (<see cref="IPageSource.PageCount"/>); the physical one names
 /// pages the transaction has already used. The full rebuild must also see the
 /// rows a transaction inserted into a table it created. Each scenario runs
 /// with no transaction, inside an explicit transaction, and with
@@ -452,7 +454,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         using var services = new ReaderServices(db, UncachedReaderOptions);
         CatalogEntry? entry = await services.TableCatalog.GetCatalogEntryAsync(ChildTable, cancellationToken);
         Assert.NotNull(entry);
-        TableDef? tableDef = await db.ReadTableDefAsync(entry.TDefPage, cancellationToken);
+        TableDef? tableDef = await db.TableDefs.ReadTableDefAsync(entry.TDefPage, cancellationToken);
         Assert.NotNull(tableDef);
         IndexMetadata foreignKey = Assert.Single(
             await services.Indexes.ListIndexesAsync(ChildTable, cancellationToken),
@@ -496,7 +498,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
 
         CatalogEntry? entry = await services.TableCatalog.GetCatalogEntryAsync(tableName, cancellationToken);
         Assert.NotNull(entry);
-        TableDef? tableDef = await db.ReadTableDefAsync(entry.TDefPage, cancellationToken);
+        TableDef? tableDef = await db.TableDefs.ReadTableDefAsync(entry.TDefPage, cancellationToken);
         Assert.NotNull(tableDef);
         int keyOrdinal = tableDef.FindColumnIndex(keyColumn);
 
@@ -517,7 +519,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             db, entry.TDefPage, tableDef, index.FirstDp, keyColumn, unique: true, leafBoundaryKeys, cancellationToken);
         Assert.Equal(expected, entries.Select(e => e.Key));
 
-        if (db.Format == DatabaseFormat.Jet3Mdb)
+        if (db.Format.Kind == DatabaseFormat.Jet3Mdb)
         {
             return;
         }
@@ -569,7 +571,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         List<int>? leafBoundaryKeys,
         CancellationToken cancellationToken)
     {
-        IndexPageLayout layout = db.Profile.IndexPage;
+        IndexPageLayout layout = db.Format.IndexPage;
         int keyOrdinal = tableDef.FindColumnIndex(keyColumn);
         ColumnType keyType = tableDef.Columns[keyOrdinal].Type;
         var decodePlan = RowDecodePlan.CreatePartial(tableDef, [keyOrdinal]);
@@ -578,7 +580,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         for (int depth = 0; ; depth++)
         {
             Assert.True(depth < 16, $"Index descent from root {rootPage} did not reach a leaf.");
-            byte[] page = await db.ReadPageCopyAsync(current, cancellationToken);
+            byte[] page = await db.Pages.ReadPageCopyAsync(current, cancellationToken);
             Assert.True(Ri32(page, 4) == tdefPage, $"Index page {current} is owned by page {Ri32(page, 4)}, not the table's TDEF {tdefPage}.");
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -586,7 +588,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             }
 
             Assert.True(page[0] == Constants.IndexLeafPage.PageTypeIntermediate, $"Page {current} has type 0x{page[0]:X2}, not an index page.");
-            List<DecodedIntermediateEntry> children = IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes);
+            List<DecodedIntermediateEntry> children = IndexPageCodec.DecodeIntermediateEntries(layout, page, db.Format.PageSize);
             Assert.NotEmpty(children);
             current = children[0].ChildPage;
         }
@@ -598,20 +600,20 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         while (current != 0)
         {
             Assert.True(--leafBudget > 0, "Index leaf chain does not end.");
-            byte[] leaf = await db.ReadPageCopyAsync(current, cancellationToken);
+            byte[] leaf = await db.Pages.ReadPageCopyAsync(current, cancellationToken);
             Assert.True(leaf[0] == Constants.IndexLeafPage.PageTypeLeaf, $"Leaf chain reached page {current} of type 0x{leaf[0]:X2}.");
             Assert.True(Ri32(leaf, 4) == tdefPage, $"Leaf page {current} is owned by page {Ri32(leaf, 4)}, not the table's TDEF {tdefPage}.");
 
             int leafStart = entries.Count;
-            foreach (IndexEntry indexEntry in IndexPageCodec.DecodeLeafEntries(layout, leaf, db.PageSizeBytes))
+            foreach (IndexEntry indexEntry in IndexPageCodec.DecodeLeafEntries(layout, leaf, db.Format.PageSize))
             {
                 if (!dataPages.TryGetValue(indexEntry.DataPage, out (byte[] Page, RowBound[] Rows) data))
                 {
-                    byte[] dataPage = await db.ReadPageCopyAsync(indexEntry.DataPage, cancellationToken);
+                    byte[] dataPage = await db.Pages.ReadPageCopyAsync(indexEntry.DataPage, cancellationToken);
                     Assert.True(
-                        dataPage[0] == Constants.PageTypes.Data && Ri32(dataPage, db.DataPage.TDefOff) == tdefPage,
+                        dataPage[0] == Constants.PageTypes.Data && Ri32(dataPage, db.Format.DataPage.TDefOff) == tdefPage,
                         $"Index entry points at page {indexEntry.DataPage}, which is not a data page of the table.");
-                    data = (dataPage, db.ComputeRowDirectory(dataPage));
+                    data = (dataPage, DataPageRows.ComputeRowDirectory(db.Format, dataPage));
                     dataPages.Add(indexEntry.DataPage, data);
                 }
 
@@ -619,7 +621,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                 Assert.True(rowBound.RowSize > 0, $"Index entry points at row {indexEntry.DataRow} of page {indexEntry.DataPage}, which is not a live row.");
 
                 object?[] values = new object?[1];
-                Assert.True(decodePlan.TryDecodePartialColumns(db.Profile, data.Page, rowBound.RowStart, rowBound.RowSize, values));
+                Assert.True(decodePlan.TryDecodePartialColumns(db.Format, data.Page, rowBound.RowStart, rowBound.RowSize, values));
                 int key = Assert.IsType<int>(values[0]);
                 Assert.Equal(IndexKeyEncoder.EncodeEntry(keyType, key), indexEntry.Key);
                 int order = previousKey is null ? -1 : IndexPageCodec.CompareKeyBytes(previousKey, indexEntry.Key);

@@ -97,7 +97,7 @@ public sealed class Jet3JumpTableDecodeTests
             TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
             DatabaseFile db = harness.Database;
             int checkedRows = 0;
-            await db.ForEachLiveTableRowAsync(
+            await db.OwnedPages.ForEachLiveTableRowAsync(
                 entry.TDefPage,
                 (row, _) =>
                 {
@@ -109,11 +109,11 @@ public sealed class Jet3JumpTableDecodeTests
 
                     int[] offsets = Jet3RowTrailerReference.DecodeVarOffsets(rowBytes, nullMaskSize);
                     Assert.Equal(255, offsets[^1]);
-                    Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout));
+                    Assert.True(RowDecodePlan.TryParseRowLayout(db.Format.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout));
                     Assert.Equal(255, layout.Eod);
                     foreach (ColumnInfo column in tableDef.Columns.Where(c => !c.IsFixed))
                     {
-                        ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, layout, column);
+                        ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Format.RowFields, row.Page, location.RowStart, location.RowSize, layout, column);
                         if (slice.Kind == ColumnSliceKind.Var)
                         {
                             Assert.Equal(offsets[column.VarIdx], slice.DataStart);

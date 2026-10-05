@@ -44,6 +44,6 @@ internal static class FlatTableRowCounts
         byte[] tdef = await harness.ReadPageCopyAsync(flatTdefPage, cancellationToken);
         List<RowLocation> live = await harness.Database.GetLiveRowLocationsAsync(flatTdefPage, cancellationToken);
         ms.Position = 0;
-        return (BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(harness.Database.TDef.NumRows)), live.Count);
+        return (BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(harness.Database.Format.TDef.NumRows)), live.Count);
     }
 }

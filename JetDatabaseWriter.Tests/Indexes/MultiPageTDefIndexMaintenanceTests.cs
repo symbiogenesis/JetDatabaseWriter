@@ -15,6 +15,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -447,14 +448,14 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
     private static async ValueTask<List<IndexEntry>> ReadAllLeafEntriesAsync(DatabaseFile db, IndexPageLayout layout, long rootPage, CancellationToken cancellationToken)
     {
         long pageNumber = rootPage;
-        byte[] page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+        byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
         for (int depth = 0; page[0] == Constants.IndexLeafPage.PageTypeIntermediate; depth++)
         {
             Assert.True(depth < 32, $"Index tree rooted at page {rootPage} is deeper than 32 levels.");
-            List<DecodedIntermediateEntry> children = IndexPageCodec.DecodeIntermediateEntries(layout, page, db.PageSizeBytes);
+            List<DecodedIntermediateEntry> children = IndexPageCodec.DecodeIntermediateEntries(layout, page, db.Format.PageSize);
             Assert.NotEmpty(children);
             pageNumber = children[0].ChildPage;
-            page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
         }
 
         var entries = new List<IndexEntry>();
@@ -463,7 +464,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         {
             Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, page[0]);
             Assert.True(visited.Add(pageNumber), $"Leaf chain of the index rooted at page {rootPage} revisits page {pageNumber}.");
-            entries.AddRange(IndexPageCodec.DecodeLeafEntries(layout, page, db.PageSizeBytes));
+            entries.AddRange(IndexPageCodec.DecodeLeafEntries(layout, page, db.Format.PageSize));
 
             pageNumber = IndexPageCodec.ReadNextPage(layout, page);
             if (pageNumber == 0)
@@ -471,7 +472,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
                 return entries;
             }
 
-            page = await db.ReadPageCopyAsync(pageNumber, cancellationToken);
+            page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
         }
     }
 
@@ -555,13 +556,13 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             CatalogEntry? entry = await harness.GetCatalogEntryAsync(TableName, this.ct);
             Assert.NotNull(entry);
 
-            byte[] firstTdefPage = await db.ReadPageCopyAsync(entry.TDefPage, this.ct);
+            byte[] firstTdefPage = await db.Pages.ReadPageCopyAsync(entry.TDefPage, this.ct);
             Assert.NotEqual(0, BitConverter.ToInt32(firstTdefPage, 4));
 
-            TableDef tableDef = await db.ReadRequiredTableDefAsync(entry.TDefPage, TableName, this.ct);
-            byte[]? td = await db.ReadTDefBytesAsync(entry.TDefPage, this.ct);
+            TableDef tableDef = await db.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, TableName, this.ct);
+            byte[]? td = await db.TableDefs.ReadTDefBytesAsync(entry.TDefPage, this.ct);
             Assert.NotNull(td);
-            List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(db.Profile, td, tableDef.Columns);
+            List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(db.Format, td, tableDef.Columns);
             Assert.Equal(IndexCountOf(format), indexes.Count(i => !i.IsForeignKey));
             Assert.Equal(expectedForeignKeys, indexes.Count(i => i.IsForeignKey));
 
@@ -570,15 +571,15 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             // must land in the descriptor, not in a neighbouring col_map.
             if (format != DatabaseFormat.Jet3Mdb)
             {
-                int numCols = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.TDef.NumCols));
-                int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(db.TDef.NumRealIdx));
-                int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
-                int usageMapPage = td[db.TDef.UsedPagesPage]
-                    | (td[db.TDef.UsedPagesPage + 1] << 8)
-                    | (td[db.TDef.UsedPagesPage + 2] << 16);
+                int numCols = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.Format.TDef.NumCols));
+                int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(db.Format.TDef.NumRealIdx));
+                int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, td, numCols, numRealIdx);
+                int usageMapPage = td[db.Format.TDef.UsedPagesPage]
+                    | (td[db.Format.TDef.UsedPagesPage + 1] << 8)
+                    | (td[db.Format.TDef.UsedPagesPage + 2] << 16);
                 foreach (int realIdxNum in indexes.Select(i => i.RealIndexNumber).Distinct())
                 {
-                    Assert.True(db.IndexLayoutInfo.TryReadRealIdxSlot(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot));
+                    Assert.True(db.Format.Index.TryReadRealIdxSlot(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot));
                     int usedPagesOffset = slot.FirstDpOffset - 4;
                     Assert.Equal(realIdxNum + 2, td[usedPagesOffset]);
                     Assert.Equal(usageMapPage, td[usedPagesOffset + 1] | (td[usedPagesOffset + 2] << 8) | (td[usedPagesOffset + 3] << 16));

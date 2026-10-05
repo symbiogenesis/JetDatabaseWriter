@@ -448,7 +448,7 @@ public sealed class SchemaRewritePropertyPreservationTests
         await harness.Services.CatalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan([], [])
             {
-                CatalogReplacements = [new UserTableCatalogReplacementArtifact(table, table, entry.TDefPage, builder.ToBytes(harness.Database.Format))],
+                CatalogReplacements = [new UserTableCatalogReplacementArtifact(table, table, entry.TDefPage, builder.ToBytes(harness.Database.Format.Kind))],
             },
             Ct);
     }

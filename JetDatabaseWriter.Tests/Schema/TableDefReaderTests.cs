@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -48,7 +49,7 @@ public sealed class TableDefReaderTests
     /// <summary>
     /// Gets the SHA-256 of each fixture's descriptor text (see
     /// <see cref="AppendDescriptors"/>), captured from
-    /// <c>DatabaseFile.ReadTableDefAsync</c> before the TDEF parser moved into
+    /// the original composite TDEF reader before the parser moved into
     /// <see cref="TableDefReader"/>.
     /// </summary>
     public static TheoryData<string, string?, string> PinnedFixtures => new()
@@ -76,7 +77,7 @@ public sealed class TableDefReaderTests
     {
         var options = new AccessReaderOptions(password) { UseLockFile = false };
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(FixturePath(fixture), options, Ct);
-        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults: false);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: false);
 
         var text = new StringBuilder();
         IReadOnlyList<string> tables = await harness.Services.Schema.ListTablesAsync(Ct);
@@ -102,7 +103,7 @@ public sealed class TableDefReaderTests
     {
         var options = new AccessReaderOptions(password) { UseLockFile = false };
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(FixturePath(fixture), options, Ct);
-        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults: false);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: false);
 
         IReadOnlyList<string> tables = await harness.Services.Schema.ListTablesAsync(Ct);
         Assert.NotEmpty(tables);
@@ -149,8 +150,8 @@ public sealed class TableDefReaderTests
         await using var file = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, Ct));
         await using var counting = new CountingStream(file);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
-        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults);
-        int pageSize = harness.Database.PageSizeBytes;
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults);
+        int pageSize = harness.Database.Format.PageSize;
 
         for (int read = 0; read < 2; read++)
         {
@@ -187,8 +188,8 @@ public sealed class TableDefReaderTests
         await using MemoryStream stream = await CreateWideTableAsync(format);
         await using var counting = new CountingStream(stream);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
-        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Profile, cacheResults: true);
-        int pageSize = harness.Database.PageSizeBytes;
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: true);
+        int pageSize = harness.Database.Format.PageSize;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(WideTable, Ct);
         Assert.NotNull(entry);
 
@@ -226,10 +227,10 @@ public sealed class TableDefReaderTests
         await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
 
         ArgumentException ex = Assert.Throws<ArgumentException>(
-            () => new TableDefReader(writer.Database.Pages, writer.Database.Profile, cacheResults: true));
+            () => new TableDefReader(writer.Database.Pages, writer.Database.Format, cacheResults: true));
         Assert.Equal("cacheResults", ex.ParamName);
 
-        using var uncached = new TableDefReader(writer.Database.Pages, writer.Database.Profile, cacheResults: false);
+        using var uncached = new TableDefReader(writer.Database.Pages, writer.Database.Format, cacheResults: false);
         CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);
         Assert.NotNull(entry);
         Assert.NotNull(await uncached.ReadTableDefAsync(entry.TDefPage, Ct));
@@ -243,7 +244,7 @@ public sealed class TableDefReaderTests
     /// journal while the file keeps the old bytes, and the commit writes it.
     /// The original value is written back, and the table then reads as before.
     /// (The in-place TDEF writes stay on <see cref="DatabaseFile"/> until
-    /// core-split-b gives the writer its TDEF writer.)
+    /// the writer owns its separate TDEF writer.)
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="inTransaction">Whether the write runs inside an explicit transaction.</param>
@@ -260,8 +261,8 @@ public sealed class TableDefReaderTests
         await using MemoryStream stream = await CreateWideTableAsync(format);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
-        using var tableDefs = new TableDefReader(db.Pages, db.Profile, cacheResults: false);
-        int pageSize = db.PageSizeBytes;
+        using var tableDefs = new TableDefReader(db.Pages, db.Format, cacheResults: false);
+        int pageSize = db.Format.PageSize;
 
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);
         Assert.NotNull(entry);
@@ -283,7 +284,7 @@ public sealed class TableDefReaderTests
         byte[]? logical = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct);
         Assert.NotNull(logical);
         Assert.Equal(patched, BitConverter.ToInt32(logical, logicalOffset));
-        Assert.Equal(patched, BitConverter.ToInt32(await db.ReadPageCopyAsync(continuationPage, Ct), 16));
+        Assert.Equal(patched, BitConverter.ToInt32(await db.Pages.ReadPageCopyAsync(continuationPage, Ct), 16));
         int onDiskOffset = checked((int)(continuationPage * pageSize)) + 16;
         if (tx is not null)
         {

@@ -13,6 +13,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -45,21 +46,21 @@ public sealed class IndexPageReservationTests
         PageAllocator allocator = harness.Services.PageAllocator;
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         List<IndexEntry> entries = BuildLongKeyEntries(1000);
-        int treePages = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, db.PageCount).Pages.Count;
+        int treePages = IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, db.Pages.PageCount).Pages.Count;
         Assert.True(treePages > 1, "The tree should span several pages.");
 
         // A free run the size of the tree makes the reservation reuse it, so
         // the tree is rebuilt at the run's first page; that rebuild fails.
         long freeRun = await CreateFreeRunAsync(harness, treePages, this.ct);
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
-        long pageCountBefore = db.PageCount;
+        long pageCountBefore = db.Pages.PageCount;
 
         int calls = 0;
         var runs = new ReservedPageRuns(allocator);
-        IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db.Profile, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+        IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db.Format, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage => ++calls == 2
                 ? throw new ArgumentOutOfRangeException(nameof(firstPage), "Injected relocation failure.")
-                : IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, firstPage),
+                : IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, firstPage),
             runs,
             this.ct);
 
@@ -71,7 +72,7 @@ public sealed class IndexPageReservationTests
             Assert.True(await allocator.IsPageFreeAsync(page, this.ct), $"Page {page} of the reused run should be free again.");
         }
 
-        Assert.Equal(pageCountBefore, db.PageCount);
+        Assert.Equal(pageCountBefore, db.Pages.PageCount);
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
         Assert.Empty(allocatedAfter.Except(allocatedBefore));
     }
@@ -98,7 +99,7 @@ public sealed class IndexPageReservationTests
         PageAllocator allocator = harness.Services.PageAllocator;
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         List<IndexEntry> entries = BuildLongKeyEntries(1000);
-        int treePages = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, db.PageCount).Pages.Count;
+        int treePages = IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, db.Pages.PageCount).Pages.Count;
         _ = await CreateFreeRunAsync(harness, treePages, this.ct);
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
 
@@ -106,16 +107,16 @@ public sealed class IndexPageReservationTests
         // fault on the second page write of the tree.
         long relocatedTo = -1;
         var runs = new ReservedPageRuns(allocator);
-        _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db.Profile, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+        _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db.Format, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage =>
             {
-                if (firstPage != db.PageCount)
+                if (firstPage != db.Pages.PageCount)
                 {
                     relocatedTo = firstPage;
                     stream.FailOnWrite(2);
                 }
 
-                return IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, firstPage);
+                return IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, firstPage);
             },
             runs,
             this.ct).AsTask());
@@ -126,7 +127,7 @@ public sealed class IndexPageReservationTests
         for (long page = relocatedTo; page < relocatedTo + treePages; page++)
         {
             Assert.True(await allocator.IsPageFreeAsync(page, this.ct), $"Page {page} of the run should be free again.");
-            Assert.Equal(Constants.PageTypes.Freed, (await db.ReadPageCopyAsync(page, this.ct))[0]);
+            Assert.Equal(Constants.PageTypes.Freed, (await db.Pages.ReadPageCopyAsync(page, this.ct))[0]);
         }
 
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
@@ -146,16 +147,16 @@ public sealed class IndexPageReservationTests
         {
             DatabaseFile db = harness.Database;
             PageAllocator allocator = harness.Services.PageAllocator;
-            treePages = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, db.PageCount).Pages.Count;
+            treePages = IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, db.Pages.PageCount).Pages.Count;
             freeRun = await CreateFreeRunAsync(harness, treePages, this.ct);
             allocatedBefore = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
 
             JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(this.ct);
             int calls = 0;
-            _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db.Profile, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+            _ = await Assert.ThrowsAsync<IOException>(() => new IndexBTreeEditor(db.Format, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
                 firstPage => ++calls == 2
                     ? throw new IOException("Injected failure after the reservation.")
-                    : IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, firstPage),
+                    : IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, firstPage),
                 new ReservedPageRuns(allocator),
                 this.ct).AsTask());
 
@@ -203,13 +204,13 @@ public sealed class IndexPageReservationTests
         }
 
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);
-        long pageCountBefore = harness.Database.PageCount;
+        long pageCountBefore = harness.Database.Pages.PageCount;
 
         bool incremental = await harness.Services.Indexes.TryMaintainIndexesIncrementalAsync(tdefPage, tableDef, hints, deletedRows: null, this.ct);
 
         Assert.False(incremental);
         Assert.StartsWith("C6", harness.Services.Indexes.LastIncrementalBail, StringComparison.Ordinal);
-        Assert.True(harness.Database.PageCount > pageCountBefore, "The primary key's rebuild should have reserved pages at the end of the file.");
+        Assert.True(harness.Database.Pages.PageCount > pageCountBefore, "The primary key's rebuild should have reserved pages at the end of the file.");
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);
         Assert.Empty(allocatedAfter.Except(allocatedBefore));
         Assert.Empty(allocatedBefore.Except(allocatedAfter));
@@ -236,13 +237,13 @@ public sealed class IndexPageReservationTests
         }
 
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);
-        long pageCountBefore = harness.Database.PageCount;
+        long pageCountBefore = harness.Database.Pages.PageCount;
 
         InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => harness.Services.Indexes.RebuildIndexesAsync(tdefPage, tableDef, TableName, writtenRows, this.ct).AsTask());
 
         Assert.Contains("Unique index violation", ex.Message, StringComparison.Ordinal);
-        Assert.True(harness.Database.PageCount > pageCountBefore, "The first index's rebuild should have reserved pages at the end of the file.");
+        Assert.True(harness.Database.Pages.PageCount > pageCountBefore, "The first index's rebuild should have reserved pages at the end of the file.");
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);
         Assert.Empty(allocatedAfter.Except(allocatedBefore));
         Assert.Empty(allocatedBefore.Except(allocatedAfter));
@@ -352,7 +353,7 @@ public sealed class IndexPageReservationTests
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
         PageAllocator allocator = harness.Services.PageAllocator;
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(harness.Database, allocator, this.ct);
-        long pageCountBefore = harness.Database.PageCount;
+        long pageCountBefore = harness.Database.Pages.PageCount;
 
         // A fresh file has no free run, so the reservation appends; the
         // second appended page fails.
@@ -360,7 +361,7 @@ public sealed class IndexPageReservationTests
         _ = await Assert.ThrowsAsync<IOException>(() => allocator.ReserveContiguousPagesAsync(3, this.ct).AsTask());
 
         Assert.True(stream.Faulted);
-        Assert.True(harness.Database.PageCount > pageCountBefore, "The first page should have been appended before the fault.");
+        Assert.True(harness.Database.Pages.PageCount > pageCountBefore, "The first page should have been appended before the fault.");
         Assert.True(await allocator.IsPageFreeAsync(pageCountBefore, this.ct), $"Page {pageCountBefore}, appended before the fault, should be free again.");
         SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(harness.Database, allocator, this.ct);
         Assert.Empty(allocatedAfter.Except(allocatedBefore));
@@ -491,23 +492,23 @@ public sealed class IndexPageReservationTests
 
     private static async Task StampPageTypeAsync(WriterHarness writer, long pageNumber, byte pageType, CancellationToken cancellationToken)
     {
-        byte[] page = await writer.Database.ReadPageCopyAsync(pageNumber, cancellationToken);
+        byte[] page = await writer.Database.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
         page[0] = pageType;
         await writer.Pager.WritePageAsync(pageNumber, page, cancellationToken);
     }
 
     private static async Task<int> CountMsysObjectsIntermediateRootsAsync(DatabaseFile db, CancellationToken cancellationToken)
     {
-        byte[] tdef = (await db.ReadTDefBytesAsync(2, cancellationToken))!;
-        int numCols = Ru16(tdef, db.TDef.NumCols);
-        int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tdef, numCols, numRealIdx);
+        byte[] tdef = (await db.TableDefs.ReadTDefBytesAsync(2, cancellationToken))!;
+        int numCols = Ru16(tdef, db.Format.TDef.NumCols);
+        int numRealIdx = Ri32(tdef, db.Format.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, tdef, numCols, numRealIdx);
         int count = 0;
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            int phys = db.IndexLayoutInfo.RealIdxPhysOffset(realIdxDescStart, ri);
-            long root = (uint)Ri32(tdef, db.IndexLayoutInfo.FirstDpAbsoluteOffset(phys));
-            byte[] page = await db.ReadPageCopyAsync(root, cancellationToken);
+            int phys = db.Format.Index.RealIdxPhysOffset(realIdxDescStart, ri);
+            long root = (uint)Ri32(tdef, db.Format.Index.FirstDpAbsoluteOffset(phys));
+            byte[] page = await db.Pages.ReadPageCopyAsync(root, cancellationToken);
             if (page[0] == Constants.PageTypes.IndexIntermediate)
             {
                 count++;

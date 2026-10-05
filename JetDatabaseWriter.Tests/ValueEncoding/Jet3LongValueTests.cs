@@ -511,18 +511,18 @@ public sealed class Jet3LongValueTests
 
     private static async Task<List<LongValueDescriptor>> ReadDescriptorsAsync(DatabaseFile db, long tdefPage, string columnName, CancellationToken cancellationToken)
     {
-        TableDef tableDef = Assert.IsType<TableDef>(await db.ReadTableDefAsync(tdefPage, cancellationToken));
+        TableDef tableDef = Assert.IsType<TableDef>(await db.TableDefs.ReadTableDefAsync(tdefPage, cancellationToken));
         ColumnInfo column = tableDef.Columns.Single(c => c.Name == columnName);
         bool hasVarColumns = tableDef.Columns.Any(c => !c.IsFixed);
         var descriptors = new List<LongValueDescriptor>();
-        await db.ForEachLiveTableRowAsync(
+        await db.OwnedPages.ForEachLiveTableRowAsync(
             tdefPage,
             (row, _) =>
             {
                 RowLocation location = row.Location;
-                if (RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns, out RowLayout layout))
+                if (RowDecodePlan.TryParseRowLayout(db.Format.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns, out RowLayout layout))
                 {
-                    ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, layout, column);
+                    ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Format.RowFields, row.Page, location.RowStart, location.RowSize, layout, column);
                     if (slice.Kind is ColumnSliceKind.Fixed or ColumnSliceKind.Var
                         && LongValueDescriptor.TryRead(row.Page.AsSpan(location.RowStart + slice.DataStart, slice.DataLen), out LongValueDescriptor descriptor))
                     {

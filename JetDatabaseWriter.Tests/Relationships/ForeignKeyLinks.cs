@@ -48,14 +48,14 @@ internal static class ForeignKeyLinks
             }
 
             TableDef? definition = await harness.ReadTableDefAsync(page, TestContext.Current.CancellationToken);
-            byte[]? tdef = await harness.Database.ReadTDefBytesAsync(page, TestContext.Current.CancellationToken);
+            byte[]? tdef = await harness.Database.TableDefs.ReadTDefBytesAsync(page, TestContext.Current.CancellationToken);
             if (definition is null || tdef is null)
             {
                 result[page] = [];
                 continue;
             }
 
-            List<IndexMetadata> fks = [.. IndexCatalogReader.ReadMetadata(harness.Database.Profile, tdef, definition.Columns).Where(i => i.Kind == IndexKind.ForeignKey && i.IsForeignKey)];
+            List<IndexMetadata> fks = [.. IndexCatalogReader.ReadMetadata(harness.Database.Format, tdef, definition.Columns).Where(i => i.Kind == IndexKind.ForeignKey && i.IsForeignKey)];
             result[page] = fks;
             foreach (IndexMetadata fk in fks)
             {

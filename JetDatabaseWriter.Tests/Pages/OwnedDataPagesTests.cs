@@ -14,6 +14,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Pins the owned-page and row-directory seams split out of
@@ -39,14 +40,14 @@ public sealed class OwnedDataPagesTests
         await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
 
         ArgumentException ex = Assert.Throws<ArgumentException>(
-            () => new OwnedDataPages(writer.Database.Pages, writer.Database.Profile, cacheResults: true));
+            () => new OwnedDataPages(writer.Database.Pages, writer.Database.Format, cacheResults: true));
         Assert.Equal("cacheResults", ex.ParamName);
 
-        using var uncached = new OwnedDataPages(writer.Database.Pages, writer.Database.Profile, cacheResults: false);
+        using var uncached = new OwnedDataPages(writer.Database.Pages, writer.Database.Format, cacheResults: false);
         Assert.Empty(await uncached.GetOwnedDataPagesAsync(0, Ct));
 
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
-        using var cached = new OwnedDataPages(reader.Database.Pages, reader.Database.Profile, cacheResults: true);
+        using var cached = new OwnedDataPages(reader.Database.Pages, reader.Database.Format, cacheResults: true);
         Assert.Empty(await cached.GetOwnedDataPagesAsync(0, Ct));
     }
 
@@ -56,7 +57,7 @@ public sealed class OwnedDataPagesTests
     {
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(PathOf(fixture), cancellationToken: Ct);
         DatabaseFile db = harness.Database;
-        using var uncached = new OwnedDataPages(db.Pages, db.Profile, cacheResults: false);
+        using var uncached = new OwnedDataPages(db.Pages, db.Format, cacheResults: false);
 
         foreach (string table in await harness.Services.Schema.ListTablesAsync(Ct))
         {
@@ -101,7 +102,7 @@ public sealed class OwnedDataPagesTests
             CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
             Assert.NotNull(entry);
             tdefPage = entry.TDefPage;
-            numRowsOffset = checked((int)(tdefPage * writer.Database.PageSizeBytes)) + writer.Database.TDef.NumRows;
+            numRowsOffset = checked((int)(tdefPage * writer.Database.Format.PageSize)) + writer.Database.Format.TDef.NumRows;
         }
 
         // Declare more rows than the mapped pages hold, so the map is rejected.
@@ -112,8 +113,8 @@ public sealed class OwnedDataPagesTests
         await using var counting = new CountingStream(backing);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
-        using var cached = new OwnedDataPages(db.Pages, db.Profile, cacheResults: true);
-        using var uncached = new OwnedDataPages(db.Pages, db.Profile, cacheResults: false);
+        using var cached = new OwnedDataPages(db.Pages, db.Format, cacheResults: true);
+        using var uncached = new OwnedDataPages(db.Pages, db.Format, cacheResults: false);
 
         // The first call reads the TDEF page, the map and the pages it lists,
         // and the rejected map sends it on to the whole-file pass, which reads
@@ -122,14 +123,14 @@ public sealed class OwnedDataPagesTests
         IReadOnlyList<long> owned = await cached.GetOwnedDataPagesAsync(tdefPage, Ct);
         long firstCallBytes = counting.BytesRead;
         Assert.NotEmpty(owned);
-        int pageCount = bytes.Length / db.PageSizeBytes;
+        int pageCount = bytes.Length / db.Format.PageSize;
         Assert.True(
-            counting.PagesRead(db.PageSizeBytes).IsSupersetOf(Enumerable.Range(3, pageCount - 3).Select(page => (long)page)),
+            counting.PagesRead(db.Format.PageSize).IsSupersetOf(Enumerable.Range(3, pageCount - 3).Select(page => (long)page)),
             "The first call did not take the whole-file owned-page pass, so the usage map was not rejected.");
 
         counting.Reset();
         Assert.Equal(owned, await cached.GetOwnedDataPagesAsync(tdefPage, Ct));
-        Assert.True(counting.BytesRead == 0, $"The second call read pages {string.Join(", ", counting.PagesRead(db.PageSizeBytes).Order())}.");
+        Assert.True(counting.BytesRead == 0, $"The second call read pages {string.Join(", ", counting.PagesRead(db.Format.PageSize).Order())}.");
 
         // An instance that does not cache reads the TDEF page, the map and the
         // pages it lists again before the whole-file pass: as many bytes as the
@@ -144,10 +145,10 @@ public sealed class OwnedDataPagesTests
     {
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(PathOf(fixture), cancellationToken: Ct);
         DatabaseFile db = harness.Database;
-        JetFormat format = db.Profile;
+        JetFormat format = db.Format;
         int dataPages = 0;
 
-        for (long pageNumber = 1; pageNumber < db.PageCount; pageNumber++)
+        for (long pageNumber = 1; pageNumber < db.Pages.PageCount; pageNumber++)
         {
             byte[] page = await harness.ReadPageCopyAsync(pageNumber, Ct);
             if (page[0] != Constants.PageTypes.Data)
@@ -196,7 +197,7 @@ public sealed class OwnedDataPagesTests
         var options = new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = transactionalWrites };
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, options, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
-        long physicalPages = stream.Length / db.PageSizeBytes;
+        long physicalPages = stream.Length / db.Format.PageSize;
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
         Assert.NotNull(entry);
         long tdefPage = entry.TDefPage;
@@ -229,15 +230,15 @@ public sealed class OwnedDataPagesTests
     {
         IReadOnlyList<long> owned = await db.OwnedPages.GetOwnedDataPagesAsync(tdefPage, cancellationToken);
         Assert.Contains(owned, pageNumber => pageNumber >= physicalPagesBefore);
-        Assert.All(owned, pageNumber => Assert.InRange(pageNumber, 1, db.PageCount - 1));
+        Assert.All(owned, pageNumber => Assert.InRange(pageNumber, 1, db.Pages.PageCount - 1));
 
-        TableDef tableDef = await db.ReadRequiredTableDefAsync(tdefPage, TableName, cancellationToken);
+        TableDef tableDef = await db.TableDefs.ReadRequiredTableDefAsync(tdefPage, TableName, cancellationToken);
         var ids = new List<int>();
         await db.OwnedPages.ForEachLiveTableRowAsync(
             tdefPage,
             async (row, token) =>
             {
-                object?[]? values = await db.TryReadColumnValuesTypedAsync(row.Location, tableDef, [0], token);
+                object?[]? values = await PartialColumnReader.TryReadColumnValuesTypedAsync(db.Format, db.Pages, row.Location, tableDef, [0], token);
                 ids.Add(Assert.IsType<int>(values?[0]));
                 return true;
             },

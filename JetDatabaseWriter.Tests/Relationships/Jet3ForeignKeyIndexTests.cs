@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -267,7 +268,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             Assert.Equal(2, roots.Count);
             foreach (long root in roots)
             {
-                Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, (await harness.Database.ReadPageCopyAsync(root, this.ct))[0]);
+                Assert.Equal(Constants.IndexLeafPage.PageTypeIntermediate, (await harness.Database.Pages.ReadPageCopyAsync(root, this.ct))[0]);
             }
 
             unreachableBefore = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
@@ -601,9 +602,9 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.DoesNotContain(await this.ListIndexesAsync(stream, Child), i => i.Kind == IndexKind.ForeignKey);
         List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, childPage, this.ct);
         var allocatedLeaves = new List<long>();
-        for (long page = 3; page < harness.Database.PageCount; page++)
+        for (long page = 3; page < harness.Database.Pages.PageCount; page++)
         {
-            byte[] bytesOfPage = await harness.Database.ReadPageCopyAsync(page, this.ct);
+            byte[] bytesOfPage = await harness.Database.Pages.ReadPageCopyAsync(page, this.ct);
             if (bytesOfPage[0] == Constants.IndexLeafPage.PageTypeLeaf
                 && Ri32(bytesOfPage, 4) == childPage
                 && !await harness.Services.PageAllocator.IsPageFreeAsync(page, this.ct))
@@ -753,28 +754,28 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     {
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
-        Assert.Equal(DatabaseFormat.Jet3Mdb, db.Format);
+        Assert.Equal(DatabaseFormat.Jet3Mdb, db.Format.Kind);
         CatalogEntry entry = await harness.GetCatalogEntryAsync(table, this.ct) ?? throw new InvalidOperationException($"Table '{table}' not found.");
-        byte[] td = (await db.ReadTDefBytesAsync(entry.TDefPage, this.ct))!;
-        int numCols = Ru16(td, db.TDef.NumCols);
-        int numIdx = Ri32(td, db.TDef.NumIdx);
-        int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
-        IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        byte[] td = (await db.TableDefs.ReadTDefBytesAsync(entry.TDefPage, this.ct))!;
+        int numCols = Ru16(td, db.Format.TDef.NumCols);
+        int numIdx = Ri32(td, db.Format.TDef.NumIdx);
+        int numRealIdx = Ri32(td, db.Format.TDef.NumRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, td, numCols, numRealIdx);
+        IndexSectionAnchors anchors = db.Format.Index.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
         var names = new List<string>(numIdx);
         var nameStarts = new List<int>(numIdx);
         int pos = anchors.LogIdxNamesStart;
         for (int i = 0; i < numIdx; i++)
         {
             nameStarts.Add(pos);
-            Assert.True(db.ReadColumnName(td, ref pos, out string name) > 0);
+            Assert.True(db.Format.ReadColumnName(td, ref pos, out string name) > 0);
             names.Add(name);
         }
 
         var entries = new List<byte[]>(numIdx);
         for (int i = 0; i < numIdx; i++)
         {
-            entries.Add(td.AsSpan(db.IndexLayoutInfo.LogicalIdxEntryOffset(anchors.LogIdxStart, i), db.IndexLayoutInfo.LogicalEntrySize).ToArray());
+            entries.Add(td.AsSpan(db.Format.Index.LogicalIdxEntryOffset(anchors.LogIdxStart, i), db.Format.Index.LogicalEntrySize).ToArray());
         }
 
         int end = Ri32(td, 8) + 8;

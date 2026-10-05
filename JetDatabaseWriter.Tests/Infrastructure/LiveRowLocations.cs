@@ -23,7 +23,7 @@ internal static class LiveRowLocations
     public static async ValueTask<List<RowLocation>> GetLiveRowLocationsAsync(this DatabaseFile db, long tdefPage, CancellationToken cancellationToken)
     {
         var result = new List<RowLocation>();
-        await db.ForEachLiveTableRowAsync(
+        await db.OwnedPages.ForEachLiveTableRowAsync(
             tdefPage,
             (row, _) =>
             {

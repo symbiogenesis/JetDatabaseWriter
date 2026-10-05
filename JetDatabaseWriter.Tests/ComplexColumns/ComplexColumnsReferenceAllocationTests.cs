@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -547,12 +548,12 @@ public sealed class ComplexColumnsReferenceAllocationTests
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("T", Ct)).Entry.TDefPage;
-        byte[] before = await harness.Database.ReadPageCopyAsync(tdefPage, Ct);
-        var autoNumbers = new AutoNumberMaintainer(harness.Database.Profile, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager);
+        byte[] before = await harness.Database.Pages.ReadPageCopyAsync(tdefPage, Ct);
+        var autoNumbers = new AutoNumberMaintainer(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager);
 
         await autoNumbers.RaiseComplexHighWaterAsync(tdefPage, 99, Ct);
 
-        Assert.Equal(before, await harness.Database.ReadPageCopyAsync(tdefPage, Ct));
+        Assert.Equal(before, await harness.Database.Pages.ReadPageCopyAsync(tdefPage, Ct));
         Assert.Equal(0, await autoNumbers.ReadComplexHighWaterAsync(tdefPage, Ct));
     }
 
@@ -603,7 +604,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct)).Entry.TDefPage;
-        byte[] tdef = await harness.Database.ReadPageCopyAsync(tdefPage, Ct);
+        byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(tdefPage, Ct);
         tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
         await harness.Pager.WritePageAsync(tdefPage, tdef, Ct);
     }

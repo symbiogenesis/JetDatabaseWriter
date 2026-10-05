@@ -191,7 +191,7 @@ public sealed class EncryptedGoldenFixtureTests
             Ct);
 
         var digests = new List<string>();
-        for (long page = 1; page < harness.Database.PageCount; page++)
+        for (long page = 1; page < harness.Database.Pages.PageCount; page++)
         {
             digests.Add(Sha256Hex(await harness.ReadPageCopyAsync(page, Ct)));
         }

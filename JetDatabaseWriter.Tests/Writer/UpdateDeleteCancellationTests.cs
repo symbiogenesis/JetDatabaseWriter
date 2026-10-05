@@ -555,7 +555,7 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
         Assert.NotNull(entry);
         byte[] tdef = await harness.ReadPageCopyAsync(entry.TDefPage, Ct);
         ms.Position = 0;
-        return BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(harness.Database.TDef.AutoNumber));
+        return BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(harness.Database.Format.TDef.AutoNumber));
     }
 
     /// <summary>

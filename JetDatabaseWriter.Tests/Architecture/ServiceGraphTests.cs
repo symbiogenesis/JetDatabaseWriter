@@ -26,7 +26,7 @@ using Xunit;
 /// Guards how both facades are composed. Each facade owns a
 /// <see cref="DatabaseFile"/> and builds its collaborators once in a
 /// composition root (<see cref="ReaderServices"/> / <see cref="WriterServices"/>)
-/// that hands every collaborator the database file plus the specific siblings
+/// that hands every collaborator the file parts plus the specific siblings
 /// it uses, and the writer's <see cref="Pager"/> only to the writer services
 /// that write pages. No collaborator may hold or receive a facade,
 /// <see cref="AccessBase"/>, or a composition root; each collaborator graph
@@ -61,6 +61,19 @@ public sealed class ServiceGraphTests
         [typeof(Pager), typeof(Pager.JournalGate), typeof(PageJournal), typeof(JetByteRangeLock), typeof(TDefWriter)];
 
     public static TheoryData<Type> CompositionRoots => [typeof(ReaderServices), typeof(WriterServices)];
+
+    [Fact]
+    public void DatabaseFile_ExposesOnlyPartsAndLifetime()
+    {
+        string[] properties = [.. typeof(DatabaseFile).GetProperties(DeclaredMembers).Select(property => property.Name).Order(StringComparer.Ordinal)];
+        Assert.Equal(["DatabasePath", "Format", "OwnedPages", "Pages", "TableDefs"], properties);
+
+        string[] methods = [.. typeof(DatabaseFile).GetMethods(DeclaredMembers)
+            .Where(method => !method.IsStatic && !method.IsSpecialName)
+            .Select(method => method.Name)
+            .Order(StringComparer.Ordinal)];
+        Assert.Equal(["DisposeAsync", "DisposeManagedResources"], methods);
+    }
 
     [Fact]
     public void Collaborators_DoNotReferenceFacadesOrCompositionRoots()
@@ -247,7 +260,7 @@ public sealed class ServiceGraphTests
     }
 
     [Fact]
-    public async Task OpenWriter_SnapshotReadsGoThroughTheWritersDatabaseFile()
+    public async Task OpenWriter_SnapshotReadsUseTheWritersPartsWithoutCaching()
     {
         await using MemoryStream stream = await CreateDatabaseAsync();
         await using AccessWriter writer = await AccessWriter.OpenAsync(
@@ -257,13 +270,11 @@ public sealed class ServiceGraphTests
             TestContext.Current.CancellationToken);
 
         HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
-        object database = FacadeDatabase(writer);
+        DatabaseFile database = FacadeDatabase(writer);
 
-        // Every database file and page cache the writer's services hold is the
-        // writer's own: no second file is opened to read rows back, and no
-        // page cache keeps pages between calls.
-        Assert.Single(reachable, item => item is DatabaseFile);
-        Assert.Contains(database, reachable);
+        // Every part comes from the writer's own file, and snapshot page
+        // caches keep nothing between calls.
+        AssertSharesDatabaseParts(database, reachable);
         Assert.All(reachable.OfType<ReaderPageCache>(), cache => Assert.Null(ReadField(cache, "pageCache")));
         Assert.DoesNotContain(reachable, item => item is AccessReader);
     }
@@ -330,7 +341,7 @@ public sealed class ServiceGraphTests
         HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(reader));
 
         Assert.DoesNotContain(reader, reachable);
-        Assert.Contains(FacadeDatabase(reader), reachable);
+        AssertSharesDatabaseParts(FacadeDatabase(reader), reachable);
 
         // The reader's graph cannot write: no pager, journal, byte-range lock
         // or TDEF writer.
@@ -353,7 +364,7 @@ public sealed class ServiceGraphTests
         HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
 
         Assert.DoesNotContain(writer, reachable);
-        Assert.Contains(FacadeDatabase(writer), reachable);
+        AssertSharesDatabaseParts(FacadeDatabase(writer), reachable);
     }
 
     /// <summary>
@@ -390,10 +401,10 @@ public sealed class ServiceGraphTests
             await using (ReaderHarness harness = await ReaderHarness.OpenAsync(path, readerOptions, TestContext.Current.CancellationToken))
             {
                 DatabaseFile db = FacadeDatabase(reader);
-                Assert.Equal(positional, db.UsesRandomAccessPageReads);
-                Assert.True(db.ReadsInlineOnThreadPool, $"{mode}: a path-opened reader reads inline on pool threads.");
-                Assert.Equal(positional, harness.Database.UsesRandomAccessPageReads);
-                Assert.True(harness.Database.ReadsInlineOnThreadPool, $"{mode}: ReaderHarness opens a path as the reader does.");
+                Assert.Equal(positional, db.Pages.UsesRandomAccessPageReads);
+                Assert.True(db.Pages.ReadsInlineOnThreadPool, $"{mode}: a path-opened reader reads inline on pool threads.");
+                Assert.Equal(positional, harness.Database.Pages.UsesRandomAccessPageReads);
+                Assert.True(harness.Database.Pages.ReadsInlineOnThreadPool, $"{mode}: ReaderHarness opens a path as the reader does.");
             }
 
             await using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess))
@@ -401,13 +412,13 @@ public sealed class ServiceGraphTests
                 await using (AccessReader reader = await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, TestContext.Current.CancellationToken))
                 {
                     DatabaseFile db = FacadeDatabase(reader);
-                    Assert.False(db.UsesRandomAccessPageReads, $"{mode}: a reader over a caller's stream reads positionally.");
-                    Assert.False(db.ReadsInlineOnThreadPool, $"{mode}: a reader over a caller's stream reads inline.");
+                    Assert.False(db.Pages.UsesRandomAccessPageReads, $"{mode}: a reader over a caller's stream reads positionally.");
+                    Assert.False(db.Pages.ReadsInlineOnThreadPool, $"{mode}: a reader over a caller's stream reads inline.");
                 }
 
                 await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, readerOptions, leaveOpen: true, TestContext.Current.CancellationToken);
-                Assert.False(harness.Database.UsesRandomAccessPageReads);
-                Assert.False(harness.Database.ReadsInlineOnThreadPool);
+                Assert.False(harness.Database.Pages.UsesRandomAccessPageReads);
+                Assert.False(harness.Database.Pages.ReadsInlineOnThreadPool);
             }
 
             foreach (bool transactional in (bool[])[false, true])
@@ -417,12 +428,12 @@ public sealed class ServiceGraphTests
                     new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = transactional },
                     TestContext.Current.CancellationToken);
                 DatabaseFile db = FacadeDatabase(writer);
-                Assert.False(db.ReadsInlineOnThreadPool);
+                Assert.False(db.Pages.ReadsInlineOnThreadPool);
                 await writer.InsertRowAsync("Items", [transactional ? 3 : 2], TestContext.Current.CancellationToken);
-                Assert.False(db.ReadsInlineOnThreadPool);
+                Assert.False(db.Pages.ReadsInlineOnThreadPool);
 
                 await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-                Assert.False(db.ReadsInlineOnThreadPool);
+                Assert.False(db.Pages.ReadsInlineOnThreadPool);
                 await transaction.RollbackAsync(TestContext.Current.CancellationToken);
             }
         }
@@ -499,6 +510,15 @@ public sealed class ServiceGraphTests
         }
 
         throw new MissingFieldException(instance.GetType().FullName, fieldName);
+    }
+
+    private static void AssertSharesDatabaseParts(DatabaseFile database, HashSet<object> reachable)
+    {
+        Assert.DoesNotContain(reachable, item => item is DatabaseFile);
+        Assert.Same(database.Format, Assert.Single(reachable.OfType<JetFormat>()));
+        Assert.Same(database.Pages, Assert.Single(reachable.OfType<PageFile>()));
+        Assert.Same(database.TableDefs, Assert.Single(reachable.OfType<TableDefReader>()));
+        Assert.Same(database.OwnedPages, Assert.Single(reachable.OfType<OwnedDataPages>()));
     }
 
     private static async ValueTask<MemoryStream> CreateDatabaseAsync()

@@ -14,6 +14,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -211,16 +212,16 @@ public sealed partial class CatalogDiagnosticsTests
         TableDef? msys = await harness.ReadTableDefAsync(2, cancellationToken);
         Assert.NotNull(msys);
 
-        List<CatalogRow> rows = await new CatalogRowReader(db.Profile, db.TableDefs, db.OwnedPages).GetCatalogRowsAsync(msys, cancellationToken);
+        List<CatalogRow> rows = await new CatalogRowReader(db.Format, db.TableDefs, db.OwnedPages).GetCatalogRowsAsync(msys, cancellationToken);
         CatalogRow target = rows.Last(row => row.IsDecoded && row.ObjectType == 1 && !row.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase));
 
         byte[] page = await harness.ReadPageCopyAsync(target.PageNumber, cancellationToken);
-        RowBound bound = db.EnumerateLiveRowBounds(page).Single(b => b.RowIndex == target.RowIndex);
-        int rowOffset = checked((int)(target.PageNumber * db.PageSizeBytes)) + bound.RowStart;
-        bytes.AsSpan(rowOffset, db.RowColumnCountFieldSize).Clear();
+        RowBound bound = DataPageRows.EnumerateLiveRowBounds(db.Format, page).Single(b => b.RowIndex == target.RowIndex);
+        int rowOffset = checked((int)(target.PageNumber * db.Format.PageSize)) + bound.RowStart;
+        bytes.AsSpan(rowOffset, db.Format.RowFields.NumCols).Clear();
 
         byte[] tdef = await harness.ReadPageCopyAsync(2, cancellationToken);
-        return BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(db.TDef.NumRows));
+        return BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(db.Format.TDef.NumRows));
     }
 
     [GeneratedRegex(@"Total rows scanned: (\d+)")]
