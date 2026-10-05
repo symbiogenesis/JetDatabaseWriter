@@ -658,7 +658,7 @@ internal sealed class RowEncoder(JetFormat format)
                 return null;
             }
 
-            bytes = format.AnsiEncoding.GetBytes(stringValue);
+            bytes = format.EncodeAnsiText(stringValue);
         }
 
         if (maxSize > 0 && bytes.Length > maxSize)

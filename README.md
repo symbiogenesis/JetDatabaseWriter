@@ -505,6 +505,8 @@ For large databases, prefer streaming each table from `ListTablesAsync()` with `
 >
 > Jet3 stores text and object names in the database's code page. New Jet3 files use Windows-1252, as Access 97 does. .NET would write a character outside the code page as its closest match or `?` (`Łódź` as `Lódz`, `中文` as `??`), so the writer refuses it before writing anything: a name throws `ArgumentException`, and a Text or Memo value in an insert or update throws `JetLimitationException`. Jet4 and ACE store text as UTF-16, which holds any character.
 
+Strings supplied to Binary columns use the database's code page on every format. A character that cannot be represented exactly throws `EncoderFallbackException` before that row is written; supply a `byte[]` to store arbitrary bytes.
+
 ```csharp
 await using var writer = await AccessWriter.OpenAsync("database.mdb");
 ```
