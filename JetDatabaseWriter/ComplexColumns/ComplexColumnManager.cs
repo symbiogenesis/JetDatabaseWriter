@@ -1670,7 +1670,7 @@ internal sealed class ComplexColumnManager(
                     && !dropping.Contains((row.Location.PageNumber, row.Location.RowIndex)))
                 {
                     // Do not follow a corrupted row into a sibling's flat table.
-                    _ = candidates.Remove(CatalogValueReader.TdefPageFromId(flat));
+                    candidates.Remove(CatalogValueReader.TdefPageFromId(flat));
                 }
 
                 return new ValueTask<bool>(true);
