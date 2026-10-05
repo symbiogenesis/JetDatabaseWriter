@@ -409,6 +409,8 @@ public sealed class DaoStorageMaintenanceTests
         byte[] largeAttachmentPayload = BuildPayload(12 * 1024, 0x6A);
         byte[] extraAttachmentPayload = BuildPayload(8 * 1024, 0x2B);
         byte[] secondParentAttachmentPayload = BuildPayload(10 * 1024, 0x3C);
+        byte[] textAttachmentPayload = BuildPayload(6 * 1024, 0x41);
+        byte[] extensionlessAttachmentPayload = BuildPayload(7 * 1024, 0x51);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             session.SourcePath,
@@ -435,6 +437,18 @@ public sealed class DaoStorageMaintenanceTests
                 secondParentKey,
                 new AttachmentInput("fixture-second.jpg", secondParentAttachmentPayload),
                 TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync(
+                tableName,
+                attachmentColumn,
+                firstParentKey,
+                new AttachmentInput("fixture-compressed.txt", textAttachmentPayload),
+                TestContext.Current.CancellationToken);
+            await writer.AddAttachmentAsync(
+                tableName,
+                attachmentColumn,
+                secondParentKey,
+                new AttachmentInput("fixture-extensionless", extensionlessAttachmentPayload),
+                TestContext.Current.CancellationToken);
         }
 
         session.RunDaoCompact();
@@ -457,7 +471,7 @@ public sealed class DaoStorageMaintenanceTests
         Assert.False(string.IsNullOrEmpty(attachmentInfo.FlatTableName));
 
         IReadOnlyList<AttachmentRecord> attachments = await reader.GetAttachmentsAsync(tableName, attachmentColumn, TestContext.Current.CancellationToken);
-        Assert.True(attachments.Count >= 5, $"Expected the two fixture attachments plus three writer-added attachments, got {attachments.Count}.");
+        Assert.True(attachments.Count >= 7, $"Expected the two fixture attachments plus five writer-added attachments, got {attachments.Count}.");
         AttachmentRecord largeAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fixture-complex.jpg", StringComparison.Ordinal));
         AttachmentRecord extraAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fixture-complex-extra.jpg", StringComparison.Ordinal));
         AttachmentRecord secondParentAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fixture-second.jpg", StringComparison.Ordinal));
@@ -466,6 +480,14 @@ public sealed class DaoStorageMaintenanceTests
         Assert.Equal(secondParentAttachmentPayload, secondParentAttachment.FileData);
         Assert.Equal(largeAttachment.ConceptualTableId, extraAttachment.ConceptualTableId);
         Assert.NotEqual(largeAttachment.ConceptualTableId, secondParentAttachment.ConceptualTableId);
+        AttachmentRecord textAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fixture-compressed.txt", StringComparison.Ordinal));
+        AttachmentRecord extensionlessAttachment = Assert.Single(attachments, attachment => string.Equals(attachment.FileName, "fixture-extensionless", StringComparison.Ordinal));
+        Assert.Equal(textAttachmentPayload, textAttachment.FileData);
+        Assert.Equal(extensionlessAttachmentPayload, extensionlessAttachment.FileData);
+        Assert.Equal("txt", textAttachment.FileType);
+        Assert.Equal(string.Empty, extensionlessAttachment.FileType);
+        Assert.Equal(largeAttachment.ConceptualTableId, textAttachment.ConceptualTableId);
+        Assert.Equal(secondParentAttachment.ConceptualTableId, extensionlessAttachment.ConceptualTableId);
 
         IReadOnlyList<IndexMetadata> attachmentIndexes = await reader.ListIndexesAsync(attachmentInfo.FlatTableName, TestContext.Current.CancellationToken);
         Assert.Equal(3, attachmentIndexes.Count);
