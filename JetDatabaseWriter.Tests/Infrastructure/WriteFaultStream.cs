@@ -59,6 +59,7 @@ internal sealed class WriteFaultStream : MemoryStream
         this.FailOnWrite(nthWrite);
         this.partialWriteFault = true;
     }
+
     /// <summary>Arms a one-shot flush failure.</summary>
     /// <param name="nthFlush">The flush to fail, starting at one.</param>
     public void FailOnFlush(int nthFlush)
@@ -87,6 +88,7 @@ internal sealed class WriteFaultStream : MemoryStream
 
         return base.FlushAsync(cancellationToken);
     }
+
     /// <summary>
     /// Arms the stream so it cancels <paramref name="source"/> once its
     /// <paramref name="nthWrite"/>-th write from now has reached the stream.

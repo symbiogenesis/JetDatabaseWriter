@@ -18,7 +18,7 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void Parse_TruncatedHeaderOrDescriptors_ReturnsNull(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         Assert.Null(TDefCodec.Parse(format, null));
         Assert.Null(TDefCodec.Parse(format, new byte[format.TDef.BlockEnd - 1]));
         byte[] td = new byte[format.TDef.BlockEnd];
@@ -37,7 +37,7 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.AceAccdb, int.MaxValue)]
     public void Parse_InvalidRealIndexCount_ClampsForColumnsAndRetainsDeclaredCount(DatabaseFormat kind, int count)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
         Wi32(td, format.TDef.NumRealIdx, count);
         TDefImage? image = TDefCodec.Parse(format, td);
@@ -45,7 +45,7 @@ public sealed class TDefCodecMalformedInputTests
         Assert.Equal(count, image.Header.RealIndexCount);
         Assert.True(image.Issues.HasFlag(TDefParseIssues.InvalidRealIndexCount));
         var legacy = new LegacyTDefParsers(format);
-        Assert.Equal(legacy.Parse(td)!.Columns[0], image.Columns[0] with { RawDescriptor = Array.Empty<byte>() });
+        Assert.Equal(legacy.Parse(td)!.Columns[0], image.Columns[0] with { RawDescriptor = [] });
     }
 
     [Theory]
@@ -54,7 +54,7 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void Parse_TruncatedName_KeepsColumnAndReportsIssue(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
         int name = format.TDef.BlockEnd + format.ColumnDescriptor.Size;
         td[name] = 255;
@@ -71,7 +71,7 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void Parse_SourceAndReturnedCopiesCannotMutateImage(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
         TDefImage? image = TDefCodec.Parse(format, td);
         Assert.NotNull(image);
@@ -100,7 +100,7 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.AceAccdb, 1, int.MaxValue)]
     public void ReadMetadata_MalformedIndexCounts_PreservesLegacyEmptyBail(DatabaseFormat kind, int logicalCount, int realCount)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
         Wi32(td, format.TDef.NumIdx, logicalCount);
         Wi32(td, format.TDef.NumRealIdx, realCount);
@@ -117,7 +117,7 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void Parse_TruncatedIndexSection_KeepsColumnsAndMetadataBails(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
         Wi32(td, format.TDef.NumIdx, 1);
         TDefImage? image = TDefCodec.Parse(format, td);
@@ -127,13 +127,14 @@ public sealed class TDefCodecMalformedInputTests
         Assert.Null(image.IndexSection);
         Assert.Empty(IndexCatalogReader.ReadMetadata(format, td, image.Columns));
     }
+
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public void ReadMetadata_ShortHeaderWithZeroIndexCount_PreservesLegacyEmptyBail(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] td = new byte[format.TDef.NumRealIdx + sizeof(int)];
         Assert.Empty(LegacyIndexCatalogReader.ReadMetadata(format, td, []));
         Assert.Empty(IndexCatalogReader.ReadMetadata(format, td, []));
@@ -145,17 +146,18 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void ReadColumns_MalformedIndexData_IsIndependentOfIndexParsing(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
         Wi32(td, format.TDef.NumIdx, int.MaxValue);
         List<ColumnInfo>? columns = TDefCodec.ReadColumns(format, td, out TDefHeader header, out _, out TDefParseIssues issues, out _);
         Assert.NotNull(columns);
         Assert.Equal(int.MaxValue, header.LogicalIndexCount);
         Assert.Equal(TDefParseIssues.None, issues);
-        Assert.Equal(new LegacyTDefParsers(format).Parse(td)!.Columns[0], Assert.Single(columns) with { RawDescriptor = Array.Empty<byte>() });
+        Assert.Equal(new LegacyTDefParsers(format).Parse(td)!.Columns[0], Assert.Single(columns) with { RawDescriptor = [] });
         td[format.TDef.BlockEnd] = 255;
         Assert.NotEqual((byte)255, columns[0].RawDescriptor[0]);
     }
+
     private static byte[] OneColumn(JetFormat format)
     {
         byte[] name = format.EncodeTDefNameRecord("C");

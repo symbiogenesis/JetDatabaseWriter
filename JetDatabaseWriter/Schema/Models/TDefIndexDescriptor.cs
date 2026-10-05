@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Schema.Models;
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using JetDatabaseWriter.Indexes.Models;
 
 /// <summary>An immutable physical index descriptor, preserving uninterpreted descriptor bytes.</summary>

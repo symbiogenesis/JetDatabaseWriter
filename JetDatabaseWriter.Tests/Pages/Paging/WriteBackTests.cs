@@ -174,9 +174,11 @@ public sealed class WriteBackTests
 #pragma warning restore CA2000
         var transaction = new PagerTransaction(32, 16, 4);
         transaction.Write(1, new byte[16]);
-        await Assert.ThrowsAsync<IOException>(() => pager.CommitAsync(transaction, () => { }, TestContext.Current.CancellationToken).AsTask());
+        AggregateException failure = await Assert.ThrowsAsync<AggregateException>(() => pager.CommitAsync(transaction, () => { }, TestContext.Current.CancellationToken).AsTask());
+        Assert.Collection(failure.InnerExceptions, error => Assert.IsType<IOException>(error), error => Assert.IsType<IOException>(error));
+        Assert.True(pager.IsFaulted);
         await pager.FlushPendingWritesAsync();
-        Assert.Equal(1, stream.Flushes);
+        Assert.Equal(2, stream.Flushes);
     }
 
     private sealed class Observer : IPageWriteObserver

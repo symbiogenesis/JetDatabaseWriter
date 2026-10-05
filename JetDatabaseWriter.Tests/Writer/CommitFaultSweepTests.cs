@@ -139,6 +139,7 @@ public class CommitFaultSweepTests
         Assert.Equal(before, stream.ToArray());
         await writer.InsertRowAsync("Items", [999, "After"], TestContext.Current.CancellationToken);
     }
+
     /// <summary>Successful commit undo rewinds cached AutoNumber state.</summary>
     /// <param name="automatic">Whether to use a private transaction.</param>
     /// <returns>The asynchronous completion.</returns>
@@ -190,6 +191,7 @@ public class CommitFaultSweepTests
         Assert.Equal(1, table.Rows[0]["Id"]);
         Assert.Equal(2, table.Rows[1]["Id"]);
     }
+
     /// <summary>An unsuccessful undo prohibits mutations and disposal writes.</summary>
     /// <returns>The asynchronous completion.</returns>
     [Fact]

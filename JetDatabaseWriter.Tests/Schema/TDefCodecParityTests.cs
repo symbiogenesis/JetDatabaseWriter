@@ -3,12 +3,12 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -24,14 +24,14 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
 {
     public static TheoryData<string> Fixtures => TestDatabases.JackcessAll;
 
-    public static TheoryData<string> ProjectFixtures => new()
-    {
+    public static TheoryData<string> ProjectFixtures =>
+    [
         TestDatabases.Jet3Test,
         TestDatabases.AdventureWorks,
         TestDatabases.NorthwindTraders,
         TestDatabases.ComplexFields,
         TestDatabases.CompositeTextIndex,
-    };
+    ];
 
     [Theory]
     [MemberData(nameof(Fixtures))]
@@ -136,13 +136,13 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
         for (int i = 0; i < expected.Columns.Count; i++)
         {
             ColumnInfo column = actual.Columns[i];
-            Assert.Equal(expected.Columns[i], column with { RawDescriptor = Array.Empty<byte>() });
+            Assert.Equal(expected.Columns[i], column with { RawDescriptor = [] });
             Assert.Equal(format.ColumnDescriptor.Size, column.RawDescriptor.Count);
         }
 
         List<IndexMetadata> indexes = LegacyIndexCatalogReader.ReadMetadata(format, bytes, expected.Columns);
         Assert.Equivalent(indexes, IndexCatalogReader.ReadMetadata(format, bytes, actual.Columns), strict: true);
-        LegacyIndexCatalogReader.ReadImageIndexes(format, bytes, out var physical, out var logical);
+        LegacyIndexCatalogReader.ReadImageIndexes(format, bytes, out List<(RealIdxSlot Slot, uint Root, List<KeyColumn> Columns, byte[] Raw)> physical, out List<(LogicalIdxEntry Entry, string Name, byte[] Raw)> logical);
         Assert.Equal(physical.Count, actual.RealIndexes.Count);
         for (int i = 0; i < physical.Count; i++)
         {

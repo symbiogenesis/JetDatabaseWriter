@@ -11,6 +11,7 @@ using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -205,7 +206,7 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
             return null;
         }
 
-        var header = TDefCodec.ReadCounts(format, tableDefinition);
+        TDefCounts header = TDefCodec.ReadCounts(format, tableDefinition);
         int numColumns = header.ColumnCount;
         int numRealIndexes = header.RealIndexCount;
         if (numColumns < 0 || numColumns > Constants.TableDefinition.MaxColumns

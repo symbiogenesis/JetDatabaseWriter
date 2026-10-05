@@ -129,7 +129,7 @@ internal static class IndexCatalogReader
     /// <param name="columns">The table's parsed columns, used to resolve key-column names (honouring deleted-column gaps).</param>
     public static List<IndexMetadata> ReadMetadata(JetFormat format, byte[] td, IReadOnlyList<ColumnInfo> columns)
     {
-        var header = TDefCodec.ReadCounts(format, td);
+        TDefCounts header = TDefCodec.ReadCounts(format, td);
         int numCols = header.ColumnCount;
         int numIdx = header.LogicalIndexCount;
         int numRealIdx = header.RealIndexCount;

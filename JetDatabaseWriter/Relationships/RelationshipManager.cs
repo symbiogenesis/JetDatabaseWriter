@@ -2371,7 +2371,7 @@ internal sealed class RelationshipManager(
             return false;
         }
 
-        var header = TDefCodec.ReadCounts(this.format, td);
+        TDefCounts header = TDefCodec.ReadCounts(this.format, td);
         int numCols = header.ColumnCount;
         int numIdx = header.LogicalIndexCount;
         int numRealIdx = header.RealIndexCount;

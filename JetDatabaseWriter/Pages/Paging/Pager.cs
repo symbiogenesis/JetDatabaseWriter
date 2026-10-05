@@ -629,7 +629,6 @@ internal sealed class Pager : PageFile
                     await this.Store.ReadAsync(offset, before, false, cancellationToken).ConfigureAwait(false);
                     image.BeforeImages.Add(new(offset, before));
                 }
-
             }
 
             cancellationToken.ThrowIfCancellationRequested();

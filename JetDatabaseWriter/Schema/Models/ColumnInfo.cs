@@ -9,7 +9,8 @@ using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed record ColumnInfo
 {
-    private readonly IReadOnlyList<byte> rawDescriptor = Array.Empty<byte>();
+    private static readonly IReadOnlyList<byte> emptyDescriptor = [];
+    private readonly IReadOnlyList<byte> rawDescriptor = emptyDescriptor;
 
     /// <summary>Initializes a new instance of the <see cref="ColumnInfo"/> class without a source descriptor.</summary>
     internal ColumnInfo()
@@ -25,7 +26,7 @@ internal sealed record ColumnInfo
     internal IReadOnlyList<byte> RawDescriptor
     {
         get => this.rawDescriptor;
-        init => this.rawDescriptor = value.Count == 0 ? Array.Empty<byte>() : Array.AsReadOnly(value.ToArray());
+        init => this.rawDescriptor = value.Count == 0 ? emptyDescriptor : Array.AsReadOnly(value.ToArray());
     }
 
     public ColumnType Type { get; init; }

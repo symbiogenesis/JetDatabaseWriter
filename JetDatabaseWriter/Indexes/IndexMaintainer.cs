@@ -271,7 +271,7 @@ internal sealed class IndexMaintainer(
             return false;
         }
 
-        var header = TDefCodec.ReadCounts(format, td);
+        TDefCounts header = TDefCodec.ReadCounts(format, td);
         int numCols = header.ColumnCount;
         int numRealIdx = header.RealIndexCount;
         if (numCols < 0 || numCols > Constants.TableDefinition.MaxColumns || numRealIdx <= 0 || numRealIdx > Constants.TableDefinition.MaxIndexes)
@@ -368,7 +368,7 @@ internal sealed class IndexMaintainer(
         LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         byte[] buffer = chain.Bytes;
 
-        var header = TDefCodec.ReadCounts(format, buffer);
+        TDefCounts header = TDefCodec.ReadCounts(format, buffer);
         int numCols = header.ColumnCount;
         int numIdx = header.LogicalIndexCount;
         int numRealIdx = header.RealIndexCount;

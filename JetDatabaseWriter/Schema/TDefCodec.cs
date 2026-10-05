@@ -3,6 +3,8 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -23,7 +25,7 @@ internal static class TDefCodec
     /// <returns>The declared header.</returns>
     internal static TDefHeader ReadHeader(JetFormat format, byte[] td)
     {
-        var layout = format.TDefFormat.Header;
+        TDefHeaderLayout layout = format.TDefFormat.Header;
         return new TDefHeader(
             Ru16(td, layout.NumCols),
             Ri32(td, layout.NumIdx),
@@ -60,14 +62,14 @@ internal static class TDefCodec
             numRealIdx = 0;
         }
 
-        JetDatabaseWriter.Indexes.Models.IndexSectionAnchors? section = null;
+        IndexSectionAnchors? section = null;
         if (header.LogicalIndexCount is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
             issues |= TDefParseIssues.InvalidLogicalIndexCount;
         }
         else if (namePos >= 0)
         {
-            var anchors = format.Index.GetIndexSection(namePos, numRealIdx, header.LogicalIndexCount);
+            IndexSectionAnchors anchors = format.Index.GetIndexSection(namePos, numRealIdx, header.LogicalIndexCount);
             if (anchors.LogIdxNamesStart <= td.Length)
             {
                 section = anchors;
@@ -84,7 +86,7 @@ internal static class TDefCodec
         {
             for (int i = 0; i < numRealIdx; i++)
             {
-                if (!format.Index.TryReadRealIdxSlotWithKeyColumns(td, indexSection.RealIdxDescStart, i, out var slot, out var keys))
+                if (!format.Index.TryReadRealIdxSlotWithKeyColumns(td, indexSection.RealIdxDescStart, i, out RealIdxSlot slot, out List<KeyColumn> keys))
                 {
                     issues |= TDefParseIssues.TruncatedIndexDescriptors;
                     break;
@@ -96,7 +98,7 @@ internal static class TDefCodec
             int indexNamePosition = indexSection.LogIdxNamesStart;
             for (int i = 0; i < header.LogicalIndexCount; i++)
             {
-                if (!format.Index.TryReadLogicalEntry(td, indexSection.LogIdxStart, i, out var entry))
+                if (!format.Index.TryReadLogicalEntry(td, indexSection.LogIdxStart, i, out LogicalIdxEntry entry))
                 {
                     issues |= TDefParseIssues.TruncatedIndexDescriptors;
                     break;

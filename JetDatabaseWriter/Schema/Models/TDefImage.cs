@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Schema.Models;
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using JetDatabaseWriter.Indexes.Models;
 
 /// <summary>An owned immutable projection of one logical table definition, including uninterpreted bytes.</summary>

@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
-using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
@@ -9,6 +8,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>The frozen pre-codec column parser used as an independent parity oracle.</summary>
+/// <param name="format">The database format profile.</param>
 internal sealed class LegacyTDefParsers(JetFormat format)
 {
     private readonly JetFormat format = format;
@@ -127,6 +127,7 @@ internal sealed class LegacyTDefParsers(JetFormat format)
         tableDef.InitializeColumnMetadata();
         return tableDef;
     }
+
     /// <summary>One column descriptor as stored, before its name is read.</summary>
     /// <param name="Type">The column type.</param>
     /// <param name="ColNum">The column number.</param>

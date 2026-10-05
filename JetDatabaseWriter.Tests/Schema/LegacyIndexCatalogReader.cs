@@ -29,6 +29,10 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal static class LegacyIndexCatalogReader
 {
     /// <summary>Freezes the old physical/logical descriptor loops without calling the codec.</summary>
+    /// <param name="format">The database format profile.</param>
+    /// <param name="td">The logical definition bytes.</param>
+    /// <param name="physical">The physical descriptor projections.</param>
+    /// <param name="logical">The logical descriptor projections.</param>
     internal static void ReadImageIndexes(
         JetFormat format,
         byte[] td,
@@ -85,6 +89,7 @@ internal static class LegacyIndexCatalogReader
             logical.Add((entry, name, td.AsSpan(offset, format.Index.LogicalEntrySize).ToArray()));
         }
     }
+
     /// <summary>
     /// Reads every populated real-idx slot, then walks logical-idx entries to
     /// (a) collect the set of real-idx slots backing a primary-key
@@ -422,7 +427,7 @@ internal static class LegacyIndexCatalogReader
     /// <param name="RealIdxByNum">Real-idx slot number → decoded entry. <see cref="RealIdxEntry.IsUnique"/> reflects the physical <c>flags &amp; 0x01</c> bit OR a PK promotion (any logical-idx with <c>index_type = 0x01</c> referencing this slot via <c>index_num2</c>).</param>
     /// <param name="PkRealIdxNums">Set of real-idx slot numbers backing a primary-key logical-idx.</param>
     /// <param name="NameByRealIdx">Best-effort logical-idx name per real-idx slot, preferring primary keys and ordinary indexes over foreign-key indexes. Empty when <c>logIdxNames</c> was not supplied to <see cref="Read"/>.</param>
-    public sealed record IndexCatalog(
+    internal sealed record IndexCatalog(
         Dictionary<int, RealIdxEntry> RealIdxByNum,
         HashSet<int> PkRealIdxNums,
         Dictionary<int, string> NameByRealIdx)
@@ -460,7 +465,7 @@ internal static class LegacyIndexCatalogReader
     /// <param name="Catalog">Decoded catalog (real-idx slots, PK promotion, optional names).</param>
     /// <param name="SnapshotIndexByColNum">ColNum → snapshot row index lookup over the same <c>tableColumns</c> passed to <see cref="ReadResolved"/>.</param>
     /// <param name="KeyColumnInfosByRealIdx">Pre-resolved key columns per real-idx slot. A real-idx present in <see cref="IndexCatalog.RealIdxByNum"/> but absent here failed resolution (deleted-column gap); callers decide whether that's a skip or a bail.</param>
-    public sealed record ResolvedIndexCatalog(
+    internal sealed record ResolvedIndexCatalog(
         IndexCatalog Catalog,
         Dictionary<int, int> SnapshotIndexByColNum,
         Dictionary<int, List<KeyColumnInfo>> KeyColumnInfosByRealIdx)
