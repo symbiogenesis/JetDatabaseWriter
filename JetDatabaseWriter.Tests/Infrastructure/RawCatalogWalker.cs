@@ -1,15 +1,15 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Schema.Models;
 using Xunit;
-using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Lists the user tables of a database straight from the <c>MSysObjects</c> data

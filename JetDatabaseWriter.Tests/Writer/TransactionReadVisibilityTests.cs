@@ -1,5 +1,12 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -7,14 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.Pages.Paging;
-using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
-using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Writer workflows that read the table they are about to change (update,

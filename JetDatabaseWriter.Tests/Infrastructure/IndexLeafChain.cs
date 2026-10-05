@@ -1,14 +1,14 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Indexes;
-using JetDatabaseWriter.Indexes.Models;
-using JetDatabaseWriter.Pages.Models;
 using Xunit;
-using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
