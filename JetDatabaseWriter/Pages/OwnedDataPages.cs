@@ -596,7 +596,9 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         }
     }
 
-    // Isolate the closure so read-only map validation never allocates writer tracking.
+    /// <summary>Creates a writer-only dependency reader without allocating tracking for readers.</summary>
+    /// <param name="dependencies">The map pages read during validation.</param>
+    /// <returns>The reader that records each map page before reading it.</returns>
     private Func<long, CancellationToken, ValueTask<byte[]>> CreateMapPageReader(Dictionary<long, int> dependencies)
         => (number, token) =>
         {
