@@ -34,7 +34,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     private readonly object ownedDataPagesCacheLock = new();
 #endif
     private readonly Dictionary<long, long[]> ownedDataPagesByTdef = [];
-    private readonly Dictionary<long, Dictionary<long, int>>? mapDependencies;
+    private readonly WriterDependencies? mapDependencies;
     private long cacheEpoch;
 
     /// <summary>
@@ -61,7 +61,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         this.ownerIndex = new OwnedPageIndex(pages, format);
         if (pages is Pager pager)
         {
-            this.mapDependencies = [];
+            this.mapDependencies = new WriterDependencies();
             pager.AddWriteObserver(this.ownerIndex);
             pager.AddWriteObserver(this);
         }
@@ -410,18 +410,27 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         {
             this.cacheEpoch++;
             List<long>? invalidated = null;
-            foreach (KeyValuePair<long, Dictionary<long, int>> entry in this.mapDependencies)
+
+            // A TDEF write affects its own result; row counts can change during
+            // rewrites, so only its type and owned-map pointer invalidate it.
+            if (this.ownedDataPagesByTdef.ContainsKey(pageNumber)
+                && (before.IsEmpty || before[0] != after[0]
+                    || !before.Slice(this.format.TDef.UsedPages, 4).SequenceEqual(after.Slice(this.format.TDef.UsedPages, 4))))
             {
-                // Row counts change during a rewrite and cannot validate a previously
-                // accepted map. Only the TDEF's type and owned-map pointer affect it.
-                bool pointerChanged = entry.Key == pageNumber
-                    && (before.IsEmpty || before[0] != after[0]
-                        || !before.Slice(this.format.TDef.UsedPages, 4).SequenceEqual(after.Slice(this.format.TDef.UsedPages, 4)));
-                bool mapChanged = entry.Value.TryGetValue(pageNumber, out int mapRow)
-                    && (mapRow < 0 ? !before.SequenceEqual(after) : !this.SameMapRow(before, after, mapRow));
-                if (pointerChanged || mapChanged)
+                invalidated = [pageNumber];
+            }
+
+            if (this.mapDependencies.ByPage.TryGetValue(pageNumber, out Dictionary<long, int>? dependents))
+            {
+                foreach (KeyValuePair<long, int> entry in dependents)
                 {
-                    (invalidated ??= []).Add(entry.Key);
+                    bool mapChanged = entry.Value < 0
+                        ? !before.SequenceEqual(after)
+                        : !this.SameMapRow(before, after, entry.Value);
+                    if (mapChanged)
+                    {
+                        (invalidated ??= []).Add(entry.Key);
+                    }
                 }
             }
 
@@ -493,7 +502,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
                 this.ownedDataPagesByTdef[tdefPage] = pageNumbers;
                 if (dependencies is not null)
                 {
-                    this.mapDependencies![tdefPage] = dependencies;
+                    this.mapDependencies!.Register(tdefPage, dependencies);
                 }
             }
         }
@@ -638,6 +647,62 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         }
 
         return declaredRows == 0 || liveRows >= declaredRows;
+    }
+
+    /// <summary>Writer-only forward and reverse usage-map dependencies.</summary>
+    private sealed class WriterDependencies
+    {
+        private readonly Dictionary<long, Dictionary<long, int>> byOwner = [];
+
+        /// <summary>Gets the owners and map rows affected by a page write.</summary>
+        internal Dictionary<long, Dictionary<long, int>> ByPage { get; } = [];
+
+        /// <summary>Registers the validated map pages for an owner.</summary>
+        /// <param name="owner">The owning TDEF.</param>
+        /// <param name="dependencies">Map pages and root-row indexes, or -1 for bitmap pages.</param>
+        internal void Register(long owner, Dictionary<long, int> dependencies)
+        {
+            this.Remove(owner);
+            this.byOwner[owner] = dependencies;
+            foreach (KeyValuePair<long, int> entry in dependencies)
+            {
+                if (!this.ByPage.TryGetValue(entry.Key, out Dictionary<long, int>? owners))
+                {
+                    owners = [];
+                    this.ByPage.Add(entry.Key, owners);
+                }
+
+                owners[owner] = entry.Value;
+            }
+        }
+
+        /// <summary>Removes both directions of an owner's dependencies.</summary>
+        /// <param name="owner">The owning TDEF.</param>
+        internal void Remove(long owner)
+        {
+            if (!this.byOwner.TryGetValue(owner, out Dictionary<long, int>? dependencies))
+            {
+                return;
+            }
+
+            this.byOwner.Remove(owner);
+            foreach (long page in dependencies.Keys)
+            {
+                Dictionary<long, int> owners = this.ByPage[page];
+                owners.Remove(owner);
+                if (owners.Count == 0)
+                {
+                    this.ByPage.Remove(page);
+                }
+            }
+        }
+
+        /// <summary>Discards all dependencies after pager invalidation.</summary>
+        internal void Clear()
+        {
+            this.byOwner.Clear();
+            this.ByPage.Clear();
+        }
     }
 
     /// <summary>One live row: the page that holds its bytes, and its location.</summary>

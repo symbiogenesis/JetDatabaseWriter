@@ -304,6 +304,86 @@ public sealed class OwnedDataPagesTests
         await AssertScanParityAsync(harness);
     }
 
+    /// <summary>Shared map-page siblings retain cached results while owned-map edits invalidate them.</summary>
+    /// <param name="referenceMap">Whether the owned row points to a bitmap page.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WriterOwnedPages_SharedMapPage_InvalidatesOnlyChangedOwnedRow(bool referenceMap)
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
+        await using var counting = new CountingStream(stream);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, new AccessWriterOptions { PageCacheSize = 0 }, cancellationToken: Ct);
+        await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct);
+        CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
+        Assert.NotNull(entry);
+        byte[] tdef = await harness.Pager.ReadPageAsync(entry.TDefPage, Ct);
+        UsageMapPointer pointer;
+        try
+        {
+            Assert.True(UsageMap.TryReadPointer(tdef, harness.Database.Format.TDef.UsedPages, out pointer));
+        }
+        finally
+        {
+            PageBuffers.Return(tdef);
+        }
+
+        IReadOnlyList<long> owned = await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct);
+        long bitmapNumber = 0;
+        if (referenceMap)
+        {
+            byte[] bitmap = new byte[harness.Database.Format.PageSize];
+            bitmap[0] = Constants.PageTypes.UsageMap;
+            foreach (long number in owned)
+            {
+                bitmap[Constants.UsageMap.ReferenceMapBitmapOffset + checked((int)(number / 8))] |= (byte)(1 << checked((int)(number % 8)));
+            }
+
+            bitmapNumber = await harness.Pager.AppendPageAsync(bitmap, Ct);
+        }
+
+        byte[] map = await harness.Pager.ReadPageAsync(pointer.PageNumber, Ct);
+        try
+        {
+            if (referenceMap)
+            {
+                Assert.True(UsageMap.TryGetRowBound(map, harness.Database.Format.DataPage, harness.Database.Format.PageSize, pointer.RowIndex, out RowBound referenceRow));
+                map.AsSpan(referenceRow.RowStart, referenceRow.RowSize).Clear();
+                map[referenceRow.RowStart] = Constants.UsageMap.ReferenceMapType;
+                BinaryPrimitives.WriteInt32LittleEndian(map.AsSpan(referenceRow.RowStart + Constants.UsageMap.ReferenceMapPointerOffset, 4), checked((int)bitmapNumber));
+                await harness.Pager.WritePageAsync(pointer.PageNumber, map, Ct);
+                Assert.Equal(owned, await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+            }
+
+            Assert.True(UsageMap.TryGetRowBound(map, harness.Database.Format.DataPage, harness.Database.Format.PageSize, pointer.RowIndex + 1, out RowBound sibling));
+            map[sibling.RowStart + sibling.RowSize - 1] ^= 1;
+            await harness.Pager.WritePageAsync(pointer.PageNumber, map, Ct);
+            counting.Reset();
+            Assert.Equal(owned, await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+            Assert.Equal(0, counting.BytesRead);
+            Assert.True(UsageMap.TryGetRowBound(map, harness.Database.Format.DataPage, harness.Database.Format.PageSize, pointer.RowIndex, out RowBound ownedMap));
+            if (referenceMap)
+            {
+                await harness.Pager.WritePageAsync(bitmapNumber, new byte[harness.Database.Format.PageSize], Ct);
+                counting.Reset();
+                Assert.Equal(owned, await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+                Assert.True(counting.BytesRead > 0);
+            }
+
+            map[ownedMap.RowStart] = byte.MaxValue;
+            await harness.Pager.WritePageAsync(pointer.PageNumber, map, Ct);
+            counting.Reset();
+            Assert.Equal(owned, await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+            Assert.True(counting.BytesRead > 0);
+        }
+        finally
+        {
+            PageBuffers.Return(map);
+        }
+
+        await AssertScanParityAsync(harness);
+    }
+
     private static async Task AssertScanParityAsync(WriterHarness harness)
     {
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
