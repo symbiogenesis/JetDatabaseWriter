@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tables;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -359,11 +358,7 @@ internal sealed class TableDataWriter(
             await uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(entry.TDefPage, tableDef, tableName, rows, pendingUpdates, cancellationToken).ConfigureAwait(false);
         }
 
-        // Every check has passed, and this is the last point at which
-        // cancellation is honoured. From the first write on, the update runs
-        // to completion with CancellationToken.None: stopping between a row's
-        // delete and its re-insert would lose the row, and stopping before
-        // index maintenance would leave the indexes out of step with the rows.
+        // The statement journal can discard a partial row rewrite before write-back.
         cancellationToken.ThrowIfCancellationRequested();
 
         // Rewrite the dependent rows the cascades reach, then the matching rows.
@@ -374,9 +369,9 @@ internal sealed class TableDataWriter(
         foreach ((int i, object[] oldRow, object[] newRow) in pendingUpdates)
         {
             RowLocation oldLoc = rows[i].Location;
-            await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, CancellationToken.None).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((oldLoc, oldRow));
-            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
+            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
             updateInsertedHints.Add((newLoc, newRow));
         }
 
@@ -385,10 +380,10 @@ internal sealed class TableDataWriter(
             tableDef,
             updateInsertedHints,
             updateDeletedHints,
-            CancellationToken.None).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
         if (!incremental)
         {
-            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, CancellationToken.None).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         }
 
         // An explicit AutoNumber value raises the TDEF high-water exactly as it
@@ -401,7 +396,7 @@ internal sealed class TableDataWriter(
                 newRows.Add(newRow);
             }
 
-            await autoNumbers.UpdateHighWaterAsync(entry.TDefPage, tableDef, newRows, CancellationToken.None).ConfigureAwait(false);
+            await autoNumbers.UpdateHighWaterAsync(entry.TDefPage, tableDef, newRows, cancellationToken).ConfigureAwait(false);
         }
 
         return pendingUpdates.Count;
@@ -487,11 +482,7 @@ internal sealed class TableDataWriter(
 
         await complexColumns.PlanComplexChildDeletesAsync(tableDef, parentLocs, complexChildren, cancellationToken).ConfigureAwait(false);
 
-        // Every row the delete removes has been found and every check has
-        // passed, and this is the last point at which cancellation is
-        // honoured. From the first write on, the delete runs to completion
-        // with CancellationToken.None: stopping partway would leave rows
-        // deleted without index maintenance and the TDEF row counts too high.
+        // The statement journal can discard partial deletes before write-back.
         cancellationToken.ThrowIfCancellationRequested();
 
         // Each set of rows loses its flat rows just before it is deleted, so
@@ -504,21 +495,21 @@ internal sealed class TableDataWriter(
         var deleteHints = new List<(RowLocation Loc, object[] Row)>(matchingRows.Count);
         foreach ((RowLocation location, object[] oldRow) in matchingRows)
         {
-            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, tableDef, CancellationToken.None).ConfigureAwait(false);
+            await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             deleteHints.Add((location, oldRow));
             deleted++;
         }
 
-        await tableRows.AdjustTDefRowCountAsync(entry.TDefPage, -deleted, CancellationToken.None).ConfigureAwait(false);
+        await tableRows.AdjustTDefRowCountAsync(entry.TDefPage, -deleted, cancellationToken).ConfigureAwait(false);
         bool incremental = await indexes.TryMaintainIndexesIncrementalAsync(
             entry.TDefPage,
             tableDef,
             insertedRows: null,
             deleteHints,
-            CancellationToken.None).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
         if (!incremental)
         {
-            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, CancellationToken.None).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(entry.TDefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
         }
 
         return deleted;
@@ -613,7 +604,6 @@ internal sealed class TableDataWriter(
         FkContext? fkContext,
         CancellationToken cancellationToken)
     {
-        var batchLocations = new List<RowLocation>();
         var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
         int inserted = 0;
 
@@ -628,10 +618,7 @@ internal sealed class TableDataWriter(
                 pendingRows,
                 cancellationToken).ConfigureAwait(false);
 
-            // Cancellation is honoured only between rows. A row write that is
-            // interrupted partway leaves a live row the rollback below cannot
-            // find, and abandoned index maintenance leaves the indexes out of
-            // step with the rows, so both run to completion once started.
+            // Row and index writes remain private until statement write-back.
             foreach (object[] row in pendingRows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -641,8 +628,7 @@ internal sealed class TableDataWriter(
                     await enforcer.EnforceFkOnInsertAsync(tableName, tableDef, row, fkContext, cancellationToken).ConfigureAwait(false);
                 }
 
-                RowLocation location = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, row, cancellationToken: CancellationToken.None).ConfigureAwait(false);
-                batchLocations.Add(location);
+                RowLocation location = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, row, cancellationToken: cancellationToken).ConfigureAwait(false);
                 batchHintRows.Add((location, row));
 
                 if (fkContext != null)
@@ -660,19 +646,18 @@ internal sealed class TableDataWriter(
                     tableDef,
                     batchHintRows,
                     deletedRows: null,
-                    CancellationToken.None).ConfigureAwait(false);
+                    cancellationToken).ConfigureAwait(false);
                 if (!incremental)
                 {
-                    await indexes.MaintainIndexesAsync(tdefPage, tableDef, tableName, CancellationToken.None).ConfigureAwait(false);
+                    await indexes.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
                 }
 
-                await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, CancellationToken.None).ConfigureAwait(false);
-                await autoNumbers.UpdateComplexHighWaterAsync(tdefPage, tableDef, pendingRows, CancellationToken.None).ConfigureAwait(false);
+                await autoNumbers.UpdateHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
+                await autoNumbers.UpdateComplexHighWaterAsync(tdefPage, tableDef, pendingRows, cancellationToken).ConfigureAwait(false);
             }
         }
         catch
         {
-            await this.RollbackInsertedRowsAsync(tdefPage, tableDef, batchLocations).ConfigureAwait(false);
             ConstraintRegistry.RestoreAutoCounters(autoCheckpoints);
             throw;
         }
@@ -714,39 +699,6 @@ internal sealed class TableDataWriter(
             {
                 throw new JetLimitationException(format.UnstorableTextMessage($"The value for column '{column.Name}' of table '{tableName}'", character));
             }
-        }
-    }
-
-    /// <summary>
-    /// Marks every row in <paramref name="locations"/> as deleted on its data
-    /// page and rewinds the owning TDEF's row count by the matching amount.
-    /// Takes no cancellation token, because the batch it undoes may have
-    /// failed through cancellation. Best-effort: an I/O failure during
-    /// rollback is swallowed so the original failure surfaces to the caller
-    /// intact.
-    /// </summary>
-    /// <param name="tdefPage">The TDEF page.</param>
-    /// <param name="tableDef">The table definition needed to release long values.</param>
-    /// <param name="locations">The locations.</param>
-    private async ValueTask RollbackInsertedRowsAsync(long tdefPage, TableDef tableDef, List<RowLocation> locations)
-    {
-        if (locations.Count == 0)
-        {
-            return;
-        }
-
-        try
-        {
-            foreach (RowLocation loc in locations)
-            {
-                await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, tableDef, CancellationToken.None).ConfigureAwait(false);
-            }
-
-            await tableRows.AdjustTDefRowCountAsync(tdefPage, -locations.Count, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
-        {
-            // Best-effort rollback; surface the original failure.
         }
     }
 }

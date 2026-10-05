@@ -56,7 +56,12 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.Pages = writable
             ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize)
             : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType);
-        this.TableDefs = new TableDefReader(this.Pages, this.Format, cacheResults: !writable);
+        this.TableDefs = new TableDefReader(this.Pages, this.Format, cacheResults: true);
+        if (this.Pages is Pager pager)
+        {
+            pager.AddWriteObserver(this.TableDefs);
+        }
+
         this.OwnedPages = new OwnedDataPages(this.Pages, this.Format, cacheResults: !writable);
     }
 
@@ -66,7 +71,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <summary>Gets the file's read-only page interface; the writer receives its pager separately.</summary>
     internal PageFile Pages { get; }
 
-    /// <summary>Gets the table-definition reader, cached only for read-only files.</summary>
+    /// <summary>Gets the table-definition reader, whose cache observes writer page changes.</summary>
     internal TableDefReader TableDefs { get; }
 
     /// <summary>Gets owned-page discovery, cached only for read-only files.</summary>
@@ -96,7 +101,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// journals pages, and hands that pager to the caller, the writer's
     /// composition root, which gives it to the services that write. The file
     /// itself exposes the pager only as the <see cref="PageFile"/> it reads,
-    /// and nothing is memoized, because its pages change.
+    /// and its table-definition cache observes every page change and rollback.
     /// </summary>
     /// <param name="stream">An open, readable, writable, seekable <see cref="Stream"/> for the database file.</param>
     /// <param name="header">Header bytes read from page 0.</param>

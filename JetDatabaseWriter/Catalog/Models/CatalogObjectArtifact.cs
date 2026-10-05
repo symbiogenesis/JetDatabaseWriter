@@ -23,8 +23,6 @@ internal sealed record CatalogObjectArtifact(
 
     public CatalogObjectAcePolicy AcePolicy { get; init; } = CatalogObjectAcePolicy.None;
 
-    public bool RollbackCatalogRowOnIndexFailure { get; init; }
-
     public static CatalogObjectArtifact Relationship(string relationshipName, CatalogObjectAcePolicy acePolicy = CatalogObjectAcePolicy.RelationshipObject)
         => new(
             0,
@@ -69,7 +67,6 @@ internal sealed record CatalogObjectArtifact(
             ForeignName = foreignName,
             EncodeForeignNameForTextLink = isTextLinkedTable,
             AcePolicy = CatalogObjectAcePolicy.LinkedObject,
-            RollbackCatalogRowOnIndexFailure = true,
         };
     }
 

@@ -490,14 +490,9 @@ public sealed class JetTransactionTests
     }
 
     [Fact]
-    public async Task UseTransactionalWrites_Disabled_AllowsPartialBatchVisibility()
+    public async Task UseTransactionalWrites_Disabled_CompletesDefaultStatement()
     {
-        // Sanity check: with UseTransactionalWrites=false (default), a
-        // failure mid-batch leaves whatever rows the writer's per-call
-        // rollback path didn't catch. We don't assert exact persisted-row
-        // count here — just that the option is honoured (no implicit
-        // transaction is opened, so PageCacheSize/MaxTransactionPageBudget
-        // do not affect the call's success).
+        // Default statements are atomic without requiring a durable flush.
         await using var ms = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,

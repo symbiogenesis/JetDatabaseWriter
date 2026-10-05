@@ -59,13 +59,12 @@ public sealed class AccessWriterOptions : AccessOptions
     public bool RespectExistingLockFile { get; init; } = true;
 
     /// <summary>
-    /// Gets the maximum number of distinct pages a single transaction (started
-    /// via <see cref="AccessWriter.BeginTransactionAsync(System.Threading.CancellationToken)"/>,
-    /// or implicitly by <see cref="UseTransactionalWrites"/>) may journal in
-    /// memory before the next page write throws a
-    /// <see cref="Exceptions.JetLimitationException"/>. An implicit transaction
-    /// is then rolled back automatically; an explicit one stays active, with the
-    /// failed operation rolled back to its internal savepoint. Each journaled page costs
+    /// Gets the maximum number of distinct pages an explicit transaction started
+    /// via <see cref="AccessWriter.BeginTransactionAsync(System.Threading.CancellationToken)"/>
+    /// may journal in memory before the next page write throws a
+    /// <see cref="Exceptions.JetLimitationException"/>. The transaction stays active,
+    /// with the failed operation rolled back to its internal savepoint. Private
+    /// statement transactions are exempt. Each journaled page costs
     /// <see cref="AccessBase.PageSize"/> bytes of process memory.
     /// Must be at least <c>1</c>: <c>OpenAsync</c> and <c>CreateDatabaseAsync</c>
     /// throw <see cref="System.ArgumentOutOfRangeException"/> (parameter
@@ -90,28 +89,22 @@ public sealed class AccessWriterOptions : AccessOptions
     public SecureEraseMode SecureEraseMode { get; init; } = SecureEraseMode.None;
 
     /// <summary>
-    /// Gets a value indicating whether every public mutation method on
-    /// <see cref="AccessWriter"/> is wrapped in an implicit
-    /// <see cref="JetTransaction"/> when no explicit transaction is active.
-    /// When <see langword="true"/>, each call to <c>CreateTableAsync</c>,
-    /// <c>InsertRowsAsync</c>, <c>UpdateRowsAsync</c>, etc. begins a private
-    /// transaction at entry, commits it on success, and rolls it back on
-    /// an exception before commit replay, or restores the file if a commit write or
-    /// flush fails. Validation and write-preparation failures leave the database in its
-    /// pre-call state. Calls made
-    /// inside an explicit transaction are unaffected.
+    /// Gets a value indicating whether successful statement write-back requests
+    /// a durable flush to the device when the store supports it. Schema and row
+    /// mutations use a private statement transaction regardless of this option:
+    /// a work-phase failure or cancellation discards its pages, and a write or
+    /// flush failure restores the original bytes and length. Explicit transaction
+    /// commits always request a durable flush.
     /// <para>
-    /// This is an in-memory page journal, not a durable write-ahead log. Commit
-    /// keeps raw before-images to restore the original bytes and length after
-    /// a stream write or flush fails. Cancellation is ignored once replay starts.
-    /// If restoration also fails, the writer rejects further mutations with
-    /// <c>WriterFaulted</c>. Process loss or power loss during replay can still
-    /// leave a partial transaction on disk; there is no crash recovery.
+    /// Cancellation is ignored once physical write-back starts. If restoration
+    /// also fails, the writer rejects further mutations with <c>WriterFaulted</c>.
+    /// The undo images are held in memory: process or power loss during replay
+    /// can leave a partial transaction on disk, with no crash recovery. Compound
+    /// encrypted containers are rewrapped on disposal; this option does not make
+    /// their individual statements durable. Creation and physical shrinking use
+    /// their separate maintenance paths.
     /// </para>
-    /// <para>
-    /// Default: <see langword="false"/>. Calls then use per-call write-back
-    /// buffering, which does not provide statement rollback on failure.
-    /// </para>
+    /// <para>Default: <see langword="false"/>.</para>
     /// </summary>
     public bool UseTransactionalWrites { get; init; }
 

@@ -93,9 +93,12 @@ the column type with `ResultType` for calculated columns.
 So the reader (`RowDecodePlan`) and the writer (`RowEncoder`,
 `LongValueEncoder`) both pick the payload codec with
 `JetTypeInfo.ResolveValueType`, which is the hydrated `ResultType` for a
-calculated column. The writer's `TableCatalog` hydrates `ResultType` through
-`ColumnPropertyReader` when it resolves a table, once per table until the next
-`Invalidate`. A schema rewrite (`AddColumnAsync`, `DropColumnAsync`,
+calculated column. Both readers and writers resolve a `TableSchema` through
+`TableCatalog`; calculated columns load persisted properties through
+`ColumnPropertyReader`, cached by structural image and catalog generation.
+Each caller-owned layout projects `ResultType` without changing the cached
+image. Catalog invalidation or a changed structural image forces resolution
+again. A schema rewrite (`AddColumnAsync`, `DropColumnAsync`,
 `RenameColumnAsync`) projects each calculated column from its result type, so
 the rebuilt descriptor carries the result type, as the writer's own tables do.
 Rows that earlier builds of this library inserted into or updated in such

@@ -151,15 +151,7 @@ internal sealed class CatalogWriter(
         }
 
         RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await this.RequireCatalogIndexSpliceAsync(msys, loc, values, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidOperationException ex) when (artifact.RollbackCatalogRowOnIndexFailure && IsCatalogSpliceFailure(ex))
-        {
-            await this.RemoveUnindexedCatalogRowAsync(msys, loc, cancellationToken).ConfigureAwait(false);
-            throw;
-        }
+        await this.RequireCatalogIndexSpliceAsync(msys, loc, values, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
 
         if (artifact.AcePolicy != CatalogObjectAcePolicy.None)
         {
@@ -264,9 +256,6 @@ internal sealed class CatalogWriter(
 #endif
     }
 
-    private static bool IsCatalogSpliceFailure(InvalidOperationException exception)
-        => exception.Message.StartsWith("Could not maintain MSysObjects catalog indexes", StringComparison.Ordinal);
-
     private async ValueTask<object> EncodeLinkedMemoFieldAsync(string value, CancellationToken cancellationToken)
     {
         object? encoded = await longValueEncoder.ForceEncodeMemoAsLvalAsync(value, compress: false, cancellationToken).ConfigureAwait(false);
@@ -329,12 +318,6 @@ internal sealed class CatalogWriter(
         {
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
         }
-    }
-
-    private async ValueTask RemoveUnindexedCatalogRowAsync(TableDef msys, RowLocation loc, CancellationToken cancellationToken)
-    {
-        await tableRows.MarkRowDeletedAsync(loc.PageNumber, loc.RowIndex, msys, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
-        await tableRows.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

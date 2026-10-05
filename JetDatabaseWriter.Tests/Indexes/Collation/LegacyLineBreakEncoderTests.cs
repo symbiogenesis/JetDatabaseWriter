@@ -15,6 +15,7 @@ public sealed class LegacyLineBreakEncoderTests
     [InlineData("\n\r", "08040807")]
     public void LongKeyPreservesLineBreakAndStopsAt255Characters(string lineBreak, string code)
     {
+        ArgumentNullException.ThrowIfNull(lineBreak);
         string text = new string('a', 90) + lineBreak + new string('b', 255 - 90 - lineBreak.Length);
         byte[] expected = [0x7F, .. Enumerable.Repeat((byte)0x4A, 90), .. Convert.FromHexString(code), .. Enumerable.Repeat((byte)0x4C, 255 - 90 - lineBreak.Length), 0x01, 0x00];
         Assert.Equal(expected, GeneralLegacyTextIndexEncoder.Encode(text + "z", ascending: true));

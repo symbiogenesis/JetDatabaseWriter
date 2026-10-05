@@ -43,8 +43,9 @@ internal sealed class ReaderServices : IDisposable
 
         var rows = new RowDecoder(db.Format, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache), options.StrictParsing);
         var catalogRows = new CatalogRowReader(format, tableDefs, db.OwnedPages);
-        this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows);
-        this.Catalog = new CatalogReader(format, tableDefs, this.TableCatalog, catalogRows, rows, new ColumnPropertyReader(format, tableDefs, rows));
+        var columnProperties = new ColumnPropertyReader(format, tableDefs, rows);
+        this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows, columnProperties);
+        this.Catalog = new CatalogReader(format, tableDefs, this.TableCatalog, catalogRows, rows);
 
         var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);

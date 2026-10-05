@@ -38,7 +38,8 @@ its transaction journal and plaintext frame cache.
 | `insertPageHintLock` | `DataPageInserter` | Insert-page hint; memory only |
 | `ownedMapSetsLock` | `CatalogOwnedMapPolicy` | Writable and refused TDEF sets; memory only |
 | `ownedDataPagesCacheLock` | `OwnedDataPages` | Per-table owned-page cache and writer observer state; memory only |
-| `tdefBytesCacheLock` | `TableDefReader` | Reader's TDEF-byte cache; memory only |
+| `cacheLock` | `TDefImageCache` | Parsed TDEF images, physical chain dependencies and publication epoch; memory only |
+| `TableCatalog.schemas` monitor | TableCatalog | Schema publication and catalog generation; memory only |
 | Owned-page index initializer | `AsyncLazyInitializer` in `OwnedDataPages` | One reader whole-file discovery pass |
 | `AsyncReentrantOperationGate.stateLock` | Reader operation gate | Drain bookkeeping; memory only |
 | Lock-file slot | `LockFileCoordinator` | `.ldb` / `.laccdb` slot held until disposal finishes |
@@ -73,7 +74,7 @@ cross-process commit sentinel spans the transaction replay; the lock-file slot
 spans the open database lifetime.
 ## Annotated call paths
 
-### Writer auto-commit (`UseTransactionalWrites = true`)
+### Writer statement commit
 
 `InsertRowsAsync` → `RunAutoCommitAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs))
 → `TransactionLifecycle.RunAutoCommitAsync` ([TransactionLifecycle.cs](../../JetDatabaseWriter/Transactions/TransactionLifecycle.cs))
@@ -89,7 +90,7 @@ work phase (row encode, index maintenance, page allocation)
      attached journal and buffers into it while holding frameGate and briefly IoGate for the
      buffer swap.
   └─ insertPageHintLock and ownedMapSetsLock may be taken briefly (leaf, memory only;
-     the owned-map policy's MSysObjects scan runs outside its lock). The writer does not memoize TDEF bytes. Its owner index and validated table-page results follow logical page writes;
+     the owned-map policy's MSysObjects scan runs outside its lock). The writer caches structural TDEF images and table schemas. Those images, its owner index and validated table-page results follow logical page writes;
      observer updates take only a leaf lock and never read through the pager.
 
 CommitTransactionAsync
@@ -101,7 +102,7 @@ CommitTransactionAsync
   │         final cancellation check, then CancellationToken.None:
   │           foreach buffered page (ascending page order):
   │             ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
-  │           one durable store flush
+  │           one store flush (durable for explicit commits or UseTransactionalWrites)
   │         on a storage failure: restore raw bytes, original length, and flush
   └─ release commit-lock (finally)
 
@@ -129,17 +130,11 @@ still has no recovery path.
 
 Under `mutationGate`, `RunInSavepointAsync` captures the insert hint, owned-map policy and constraint registry, then begins a journal frame under `JournalGate`. Each first page mutation in that frame keeps the prior journal bytes and zero-reservation state; child frames merge their first-touch priors into their parent. Failure restores the frame and append boundary under `JournalGate` with `CancellationToken.None`, invalidates pager observers and the catalog, and restores the captured writer state. The allocator reloads its free-page view after the pager invalidation generation changes. Earlier successful calls remain buffered and the explicit transaction stays active.
 
-### Writer non-transactional (default `UseTransactionalWrites = false`)
+### Default writer statements (`UseTransactionalWrites = false`)
 
-The mutation gate still covers the call; there is no transaction journal or commit-lock. A reference-counted write scope buffers logical page mutations, exposes them to subsequent reads, and notifies observers. The outer scope writes dirty pages in ascending order and flushes once; it spills dirty images at max(64, cache capacity / 2) pages. Scope exit still drains after a failed operation, so these calls are not statement-atomic.
+Default row, table-schema, relationship and complex-item calls use the same private journal and commit-lock sequence above. Work-phase failures discard the journal and restore writer state; replay failures restore the original bytes and length. The successful store flush does not request a device flush unless `UseTransactionalWrites` is true. Private statements are exempt from the explicit transaction page budget and currently retain all dirty pages in memory; bounded spill and its undo log remain open work.
 
-```
-WritePageAsync
-  └─ frameGate ──▶ buffer plaintext ──▶ notify logical-write observers
-Outer WriteScope.DisposeAsync (or threshold spill)
-  └─ frameGate ──▶ encode sorted dirty images ──▶ ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
-  └─ one non-durable store flush at outer scope exit
-```
+Initial database creation and physical tail shrinking still use reference-counted write scopes with a separate lifecycle. Container rewrapping also sits outside this statement path. Their failure and crash guarantees do not follow from the statement journal.
 
 ### Reader operation
 
@@ -158,7 +153,7 @@ operationGate lease  (reentrant: nested reader calls on the same async flow join
   └─ table-scan read-ahead: the next data page's read runs alongside the
      caller's decode of the current page, so two page reads can be in flight
   └─ owned-page cache build: ownedDataPagesCacheLock (leaf, memory only)
-  └─ TDEF-bytes memo: tdefBytesCacheLock (leaf, memory only; the chain is read
+  └─ TDEF image cache: cacheLock (leaf, memory only; the chain is read
      before the lock is taken)
   └─ owned-page index build (the first table whose usage map fails validation):
        ownedDataPageIndex gate ──▶ ReadPageAsync for every page from 3 to the end of file
@@ -231,7 +226,7 @@ lockFileCoordinator.DisposeAfterAsync(
 | `insertPageHintLock` | No | Plain `lock`; leaf only |
 | `ownedMapSetsLock` | No | Plain `lock`; leaf only |
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
-| `tdefBytesCacheLock` | No | Plain `lock`; leaf only |
+| `TDefImageCache.cacheLock` | No | Plain `lock`; leaf only |
 | `aesGate` | No | Plain `lock`; leaf only |
 
 ## Writer-owned caches and the exclusive-writer assumption
@@ -242,9 +237,10 @@ open:
 
 | Cache | Owner | Dropped when |
 |-------|-------|--------------|
-| Plaintext page frames, bounded by `PageCacheSize` | `Pager` | CLOCK eviction; transaction attach/detach, failed writes and truncation invalidate all frames. Each write refreshes its retained frame. |
+| Plaintext page frames, bounded by `PageCacheSize` | `Pager` | CLOCK eviction; explicit-transaction attachment, rollback, failed writes and truncation invalidate all frames; private statement attachment and successful replay retain coherent frames. Each write refreshes its retained frame. |
 | Validated owned data pages and usage-map dependencies | `OwnedDataPages` | Data-page ownership changes update the result; TDEF owned-map pointer, owned-map row or REFERENCE bitmap changes discard it; writes to sibling map rows keep it. Rollback, failed replay, truncation and shrink discard all results through the pager observer. |
-| User-table list and calculated result types | `TableCatalog` | `Invalidate`: every catalog write (create, drop or rewrite a table, add a catalog object), a rollback, a failed `UseTransactionalWrites` call and a failed commit. Each call also moves `TableCatalog.Generation` on. |
+| User-table list and table schemas with lazily loaded properties | `TableCatalog` | `Invalidate`: every catalog write (create, drop or rewrite a table, add a catalog object), a rollback, a failed statement and a failed commit. Each call also moves `TableCatalog.Generation` on. |
+| Parsed structural TDEF images | `TDefImageCache` | A structural write to any chain page drops that image. Row, AutoNumber and complex-reference counter changes retain it; the writer reads live counters from the root. Rollback, failed replay and truncation discard all images. Chain reads publish only if no write changed the epoch. |
 | Insert-page hint | `DataPageInserter` | Restored to its state at the transaction or statement savepoint on a rollback; forgotten if commit recovery also fails. |
 | The TDEF pages whose owned-page maps the writer may extend, and those it found it may not | `CatalogOwnedMapPolicy` | Restored to their state at the transaction or statement savepoint on a rollback. If commit recovery also fails, the writable set is restored and the refusals are forgotten. A table the writer creates drops a refusal for its TDEF page. |
 | Constraint lists, AutoNumber `NextAutoValue` and complex-reference counters | `ConstraintRegistry` | Re-registered by schema changes; restored on a rollback. Successful commit recovery restores them too. If recovery fails, counters stay above values that may be on disk and the writer refuses further mutations. |
@@ -273,7 +269,7 @@ on the assumption that the file does not change while it is open:
 | Pages and their row directories, up to `PageCacheSize` pages | `ReaderPageCache` | The least recently used page first, when the cache is full; every page at dispose. |
 | User-table list | `TableCatalog` | Dispose. |
 | Linked-table list | `LinkedTableReader` | Dispose. |
-| Each table's TDEF bytes | `TableDefReader` | Dispose. |
+| Each table's parsed TDEF image and lazily loaded properties | `TableDefReader` and `TableCatalog` | Dispose. |
 | Each table's owned data pages, and the whole-file owner index | `OwnedDataPages` | Dispose. |
 
 Nothing writes through the reader, so its own work never makes them stale.
@@ -292,7 +288,7 @@ same assumption.
 2. Never hold `IoGate`, or a `Pager.JournalGate` lease, when calling
    `ReadPageAsync` / `WritePageAsync` / `AppendPageAsync` — they take the gate
    themselves on their gated paths.
-3. Keep `insertPageHintLock`, `ownedMapSetsLock`, `ownedDataPagesCacheLock`, `tdefBytesCacheLock`,
+3. Keep `insertPageHintLock`, `ownedMapSetsLock`, `ownedDataPagesCacheLock`, `TDefImageCache.cacheLock`,
    `frameSync` and `aesGate` as leaf locks: pure in-memory work, no `await` and no other lock acquired while held.
 4. Physical writes take the per-page byte-range lock before the store gate; never hold the journal `IoGate` across store I/O.
 5. The cross-process locks (`LockFileCoordinator` slot, `ByteRangeLock`

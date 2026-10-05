@@ -24,8 +24,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="tables">The cached user-table catalog.</param>
 /// <param name="catalogRows">The system-table lookup by name, shared with the writer.</param>
 /// <param name="rows">Decodes <c>MSysObjects</c> rows as strings.</param>
-/// <param name="properties">Reads persisted column properties and hydrates calculated result types.</param>
-internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, TableCatalog tables, CatalogRowReader catalogRows, RowDecoder rows, ColumnPropertyReader properties)
+internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, TableCatalog tables, CatalogRowReader catalogRows, RowDecoder rows)
 {
     /// <summary>
     /// Returns the <c>ResultType</c> a calculated column's persisted properties
@@ -55,10 +54,10 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
         CatalogEntry? entry = userTables.Find(e => string.Equals(e.Name, tableName, StringComparison.OrdinalIgnoreCase));
         if (entry != null)
         {
-            TableDef? td = await this.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-            if (td != null)
+            TableSchema? schema = await tables.GetSchemaAsync(entry.TDefPage, loadProperties: false, cancellationToken).ConfigureAwait(false);
+            if (schema is { Image.Columns.Count: > 0 })
             {
-                return new ResolvedTable(entry, td);
+                return new ResolvedTable(entry, schema);
             }
         }
 
@@ -68,10 +67,10 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
         long sysPage = await this.FindSystemTablePageAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (sysPage > 0)
         {
-            TableDef? sysTd = await this.ReadTableDefAsync(sysPage, cancellationToken).ConfigureAwait(false);
-            if (sysTd != null)
+            TableSchema? systemSchema = await tables.GetSchemaAsync(sysPage, loadProperties: false, cancellationToken).ConfigureAwait(false);
+            if (systemSchema is { Image.Columns.Count: > 0 })
             {
-                return new ResolvedTable(new CatalogEntry(tableName, sysPage), sysTd);
+                return new ResolvedTable(new CatalogEntry(tableName, sysPage), systemSchema);
             }
         }
 
@@ -88,13 +87,12 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        TableDef? td = await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? td = await tables.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (td is not { Columns.Count: > 0 })
         {
             return null;
         }
 
-        _ = await properties.HydrateCalculatedResultTypesAsync(tdefPage, td, cancellationToken).ConfigureAwait(false);
         return td;
     }
 
@@ -129,8 +127,8 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
-        => properties.ReadLvPropForTableAsync(tdefPage, cancellationToken);
+    internal async ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
+        => (await tables.GetSchemaAsync(tdefPage, cancellationToken: cancellationToken).ConfigureAwait(false))?.Properties;
 
     /// <summary>
     /// Finds the TDEF page number for a system table by name (case-insensitive).

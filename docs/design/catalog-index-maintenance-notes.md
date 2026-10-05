@@ -126,7 +126,7 @@ We never re-encode rows we did not insert. The "Databases" row (and any other ro
 
 ### 4.5 Transactional behaviour
 
-When `UseTransactionalWrites` is enabled, or when the caller opened an explicit `JetTransaction`, the leaf-splice writes participate in that batch and a thrown splice failure rolls back the catalog-row insert too. With the default flush-per-page mode, linked-table catalog insertion has a local cleanup guard: if the splice path returns `false` before ACE insertion, it marks the just-inserted Type 4/6 row deleted and restores the `MSysObjects` row count before rethrowing.
+Catalog-row and leaf-splice writes participate in the enclosing statement journal by default, or in a savepoint inside an explicit `JetTransaction`. A thrown splice failure rolls back the catalog row, index pages and row count together. There is no separate tombstone compensation path. `UseTransactionalWrites` controls the device flush after a successful private statement.
 
 ## 5. Phasing
 

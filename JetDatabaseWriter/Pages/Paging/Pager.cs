@@ -610,8 +610,9 @@ internal sealed class Pager : PageFile
     /// <param name="transaction">The detached transaction.</param>
     /// <param name="beforeFirstWrite">The last preparation before replay.</param>
     /// <param name="cancellationToken">Cancellation before the first write.</param>
+    /// <param name="durable">Whether successful replay and undo request a device flush.</param>
     /// <returns>The completion.</returns>
-    internal async ValueTask CommitAsync(PagerTransaction transaction, Action beforeFirstWrite, CancellationToken cancellationToken)
+    internal async ValueTask CommitAsync(PagerTransaction transaction, Action beforeFirstWrite, CancellationToken cancellationToken, bool durable = true)
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         bool replayStarted = false;
@@ -622,7 +623,9 @@ internal sealed class Pager : PageFile
             {
                 long offset = checked(entry.Key * this.PageSize);
                 byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
-                image.AfterImages.Add(new(offset, ReferenceEquals(encoded, entry.Value) ? (byte[])encoded.Clone() : encoded));
+
+                // The detached journal owns its images until replay ends.
+                image.AfterImages.Add(new(offset, encoded));
                 if (offset < image.OriginalLength)
                 {
                     byte[] before = new byte[checked((int)Math.Min(this.PageSize, image.OriginalLength - offset))];
@@ -641,7 +644,7 @@ internal sealed class Pager : PageFile
                     await this.Store.WriteAsync(entry.Key, entry.Value.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
                 }
 
-                await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+                await this.Store.FlushAsync(durable, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
             {
@@ -653,7 +656,7 @@ internal sealed class Pager : PageFile
                     }
 
                     await this.Store.SetLengthAsync(image.OriginalLength, CancellationToken.None).ConfigureAwait(false);
-                    await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+                    await this.Store.FlushAsync(durable, CancellationToken.None).ConfigureAwait(false);
                     replayStarted = false;
                 }
                 catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
@@ -830,8 +833,9 @@ internal sealed class Pager : PageFile
 
         /// <summary>Attaches <paramref name="journal"/>, so later writes and appends are buffered in it.</summary>
         /// <param name="journal">The new transaction's journal.</param>
+        /// <param name="preserveFrames">Whether unchanged physical frames may be retained for a statement.</param>
         /// <exception cref="InvalidOperationException">A journal is already attached.</exception>
-        internal void Attach(PagerTransaction journal)
+        internal void Attach(PagerTransaction journal, bool preserveFrames = false)
         {
             Pager pager = this.Owner;
             if (pager.journal is not null)
@@ -844,15 +848,23 @@ internal sealed class Pager : PageFile
                 throw new InvalidOperationException("Initialize or release reserved pages before starting a transaction.");
             }
 
-            pager.InvalidateAll();
+            if (!preserveFrames)
+            {
+                pager.InvalidateAll();
+            }
+
             pager.journal = journal;
         }
 
         /// <summary>Detaches the journal, so later writes and appends reach the file.</summary>
-        internal void Detach()
+        /// <param name="invalidate">Whether discarded journal images must be evicted. Successful replay retains them.</param>
+        internal void Detach(bool invalidate = true)
         {
             this.Owner.journal = null;
-            this.Owner.InvalidateAll();
+            if (invalidate)
+            {
+                this.Owner.InvalidateAll();
+            }
         }
     }
 }

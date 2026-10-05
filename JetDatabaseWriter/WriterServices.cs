@@ -57,7 +57,7 @@ internal sealed class WriterServices
             db.TableDefs,
             db.OwnedPages,
             snapshotRows,
-            new CatalogReader(db.Format, db.TableDefs, catalog, this.CatalogRows, snapshotRows, columnProperties));
+            new CatalogReader(db.Format, db.TableDefs, catalog, this.CatalogRows, snapshotRows));
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db.Format, pager);
         var longValueEncoder = new LongValueEncoder(db.Format, pager, this.PageAllocator, options);
@@ -77,7 +77,7 @@ internal sealed class WriterServices
                     return null;
                 }
 
-                return await snapshots.ReadLvPropBlockAsync(entry.TDefPage, ct).ConfigureAwait(false);
+                return (await catalog.GetSchemaAsync(entry.TDefPage, cancellationToken: ct).ConfigureAwait(false))?.Properties;
             },
             async (tableName, tableDef, columnIndex, ct) =>
             {

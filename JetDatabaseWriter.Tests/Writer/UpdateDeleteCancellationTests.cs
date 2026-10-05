@@ -18,21 +18,10 @@ using JetDatabaseWriter.Tests.Relationships;
 using Xunit;
 
 /// <summary>
-/// <c>UpdateRowsAsync</c> and <c>DeleteRowsAsync</c> honour their token through
-/// every read and check, and ignore it from their first page write. Without a
-/// transaction, a statement cancelled after it has started writing runs to
-/// completion and returns its count, and leaves the file exactly as an
-/// uncancelled run does, through cascades, complex-column items and the
-/// AutoNumber high-water value too: no row is lost, the indexes and TDEF row
-/// counts of the tables it names or cascades into agree with their rows, and
-/// the hidden flat tables' row counts with theirs. A token cancelled before
-/// the call, or while the statement is still reading, throws
-/// <see cref="OperationCanceledException"/> and leaves the file unchanged.
-/// With <see cref="AccessWriterOptions.UseTransactionalWrites"/> the commit
-/// checks the token before its first page write, so a cancel during the
-/// statement always throws and leaves the file unchanged; in an explicit
-/// transaction the statement either throws before it journals a page or
-/// completes.
+/// Updates and deletes honour cancellation until physical statement write-back.
+/// A cancelled work phase discards private pages or restores the explicit
+/// transaction savepoint. Once write-back begins, cancellation is ignored
+/// and the statement completes with consistent rows, indexes and counters.
 /// </summary>
 /// <param name="db">Caches the fixture files.</param>
 public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
@@ -166,16 +155,10 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
     }
 
     /// <summary>
-    /// A token cancelled after a page read of the statement, at points spread
-    /// over all of its reads, ends the statement in one of two ways: it throws
-    /// <see cref="OperationCanceledException"/> and leaves the file unchanged,
-    /// which it always does when it is still reading, or it completes and
-    /// leaves the file as an uncancelled run does, which it always does after
-    /// its last read, since that follows its first write. In an explicit
-    /// transaction a statement that throws has journaled nothing, so
-    /// committing the transaction anyway changes nothing. With
-    /// <see cref="AccessWriterOptions.UseTransactionalWrites"/> it always
-    /// throws, because the commit checks the token before it writes a page.
+    /// A token cancelled after a physical read before statement write-back
+    /// throws and leaves the file unchanged in every write mode. An explicit
+    /// transaction can still be committed after the cancelled statement
+    /// because its internal savepoint was restored.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="statement">The statement.</param>
@@ -215,14 +198,10 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
             if (count is null)
             {
                 Assert.True(original.AsSpan().SequenceEqual(actual), $"A cancel after read {nthRead} of {uncancelled.Reads} threw but changed the file.");
-
-                // The statement's last read follows its first write, so a
-                // cancel there is past the point where it is honoured.
-                Assert.True(mode == WriteMode.AutoCommit || nthRead < uncancelled.Reads, "A cancel after the statement's last read stopped it.");
             }
             else
             {
-                Assert.True(mode != WriteMode.AutoCommit, $"A cancel after read {nthRead} of {uncancelled.Reads} did not stop the auto-commit.");
+                Assert.True(mode == WriteMode.ExplicitCommit, $"A cancel after read {nthRead} of {uncancelled.Reads} did not stop statement write-back.");
                 Assert.True(nthRead > 1, "A cancel after the statement's first read did not stop it.");
                 Assert.Equal(uncancelled.Count, count);
                 Assert.True(uncancelled.Bytes.AsSpan().SequenceEqual(actual), $"A cancel after read {nthRead} of {uncancelled.Reads} completed but left the file different from an uncancelled run.");

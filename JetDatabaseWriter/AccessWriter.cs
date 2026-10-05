@@ -730,8 +730,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// performed by this writer is journaled in memory instead of flushed to
     /// the database file. <see cref="JetTransaction.CommitAsync"/> writes the
     /// journaled pages over the file in place; this is not crash-atomic, so a
-    /// crash or I/O error partway through leaves part of the transaction in
-    /// the file. <see cref="JetTransaction.RollbackAsync"/> (and
+    /// crash partway through can leave part of the transaction in the file.
+    /// An I/O failure restores the original image; if restoration also fails,
+    /// the writer rejects further mutations. <see cref="JetTransaction.RollbackAsync"/> (and
     /// <see cref="JetTransaction.DisposeAsync"/> on an uncommitted transaction)
     /// discards the journal, leaving the file in its pre-transaction state.
     /// </summary>
@@ -783,13 +784,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 this.Database.DisposeAsync);
 
     /// <summary>
-    /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
-    /// and no explicit transaction is currently active, wraps
-    /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so an
-    /// exception before commit leaves the database in its pre-call state (a
-    /// crash during the commit's page replay can still leave part of the call
-    /// in the file). Otherwise invokes <paramref name="work"/> directly using
-    /// the flush-per-page path.
+    /// Runs the work in a private statement transaction when no explicit
+    /// transaction is active, or in a savepoint of the explicit transaction.
+    /// Failed work discards its pages and writer state. Physical write-back
+    /// restores the original image after an I/O failure; process loss during
+    /// replay can still leave part of the call in the file.
     /// </summary>
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

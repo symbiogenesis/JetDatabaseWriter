@@ -156,9 +156,10 @@ internal sealed class TransactionLifecycle(
     /// Begins an explicit page-buffered transaction against the owning writer.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="statement">Whether this private statement is exempt from the explicit transaction budget.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="JetOperationException">Another transaction is already active on the writer.</exception>
-    private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken)
+    private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken, bool statement = false)
     {
         pager.ThrowIfDisposed();
         pager.ThrowIfFaulted();
@@ -173,17 +174,16 @@ internal sealed class TransactionLifecycle(
                 "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
         }
 
-        var journal = new PagerTransaction(gate.PhysicalLengthBytes, format.PageSize, options.MaxTransactionPageBudget);
+        var journal = new PagerTransaction(gate.PhysicalLengthBytes, format.PageSize, statement ? int.MaxValue : options.MaxTransactionPageBudget);
         var tx = new JetTransaction(this, journal);
         this.stateAtBegin = new WriterState(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
-        gate.Attach(journal);
+        gate.Attach(journal, preserveFrames: statement);
         this.ActiveTransaction = tx;
         return tx;
     }
 
     /// <summary>
-    /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled
-    /// and no explicit transaction is currently active, wraps
+    /// When no explicit transaction is currently active, wraps
     /// <paramref name="work"/> in a private <see cref="JetTransaction"/> so an
     /// exception before commit replay leaves the database in its pre-call state.
     /// </summary>
@@ -198,18 +198,11 @@ internal sealed class TransactionLifecycle(
             return;
         }
 
-        if (!options.UseTransactionalWrites || pager.IsDisposed)
-        {
-            await using WriteScope scope = pager.BeginWriteScope();
-            await work(cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        JetTransaction tx = await this.BeginTransactionCoreAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await this.BeginTransactionCoreAsync(cancellationToken, statement: true).ConfigureAwait(false);
         try
         {
             await work(cancellationToken).ConfigureAwait(false);
-            await this.CommitTransactionCoreAsync(tx, cancellationToken).ConfigureAwait(false);
+            await this.CommitTransactionCoreAsync(tx, cancellationToken, durable: options.UseTransactionalWrites).ConfigureAwait(false);
         }
         catch
         {
@@ -247,17 +240,11 @@ internal sealed class TransactionLifecycle(
             return await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
         }
 
-        if (!options.UseTransactionalWrites || pager.IsDisposed)
-        {
-            await using WriteScope scope = pager.BeginWriteScope();
-            return await work(cancellationToken).ConfigureAwait(false);
-        }
-
-        JetTransaction tx = await this.BeginTransactionCoreAsync(cancellationToken).ConfigureAwait(false);
+        JetTransaction tx = await this.BeginTransactionCoreAsync(cancellationToken, statement: true).ConfigureAwait(false);
         try
         {
             TResult? result = await work(cancellationToken).ConfigureAwait(false);
-            await this.CommitTransactionCoreAsync(tx, cancellationToken).ConfigureAwait(false);
+            await this.CommitTransactionCoreAsync(tx, cancellationToken, durable: options.UseTransactionalWrites).ConfigureAwait(false);
             return result;
         }
         catch
@@ -306,9 +293,10 @@ internal sealed class TransactionLifecycle(
     /// </remarks>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation before replay starts.</param>
+    /// <param name="durable">Whether commit requests a device flush.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="JetOperationException">The transaction is terminated or is not active on this writer.</exception>
-    private async ValueTask CommitTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken)
+    private async ValueTask CommitTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken, bool durable = true)
     {
         Guard.NotNull(transaction, nameof(transaction));
 
@@ -345,7 +333,7 @@ internal sealed class TransactionLifecycle(
 
             // Detach the journal first so the page-write loop below routes
             // straight to disk.
-            gate.Detach();
+            gate.Detach(invalidate: false);
             this.ActiveTransaction = null;
             this.stateAtBegin = null;
         }
@@ -362,7 +350,7 @@ internal sealed class TransactionLifecycle(
             cancellationToken.ThrowIfCancellationRequested();
 
             // The pager captures raw undo images before beginning replay.
-            await pager.CommitAsync(journal, () => { }, cancellationToken).ConfigureAwait(false);
+            await pager.CommitAsync(journal, () => { }, cancellationToken, durable).ConfigureAwait(false);
             transaction.MarkCommitted();
         }
         catch
@@ -482,6 +470,7 @@ internal sealed class TransactionLifecycle(
         try
         {
             TResult result = await work(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             using Pager.JournalGate gate = await pager.EnterJournalGateAsync(CancellationToken.None).ConfigureAwait(false);
             transaction.Journal.ReleaseSavepoint();
             return result;

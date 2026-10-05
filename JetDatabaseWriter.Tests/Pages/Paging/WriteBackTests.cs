@@ -181,8 +181,61 @@ public sealed class WriteBackTests
         Assert.Equal(2, stream.Flushes);
     }
 
+    /// <summary>A successful statement retains frames; discarding a statement invalidates observers.</summary>
+    [Fact]
+    public async Task StatementCommit_PreservesFrames_RollbackInvalidates()
+    {
+        await using var stream = new MemoryStream(new byte[32], writable: true);
+#pragma warning disable CA2000 // The awaited pager owns and disposes the codec.
+        await using var pager = new Pager(stream, 16, new NoPageCodec(), true, typeof(AccessWriter));
+#pragma warning restore CA2000
+        var observer = new Observer();
+        pager.AddWriteObserver(observer);
+        byte[] page = await pager.ReadPageAsync(1, TestContext.Current.CancellationToken);
+        PageBuffers.Return(page);
+        var transaction = new PagerTransaction(32, 16, 4);
+        using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(TestContext.Current.CancellationToken))
+        {
+            gate.Attach(transaction, preserveFrames: true);
+        }
+
+        page = new byte[16];
+        page[0] = 17;
+        await pager.WritePageAsync(1, page, TestContext.Current.CancellationToken);
+        using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(TestContext.Current.CancellationToken))
+        {
+            gate.Detach(invalidate: false);
+        }
+
+        await pager.CommitAsync(transaction, () => { }, TestContext.Current.CancellationToken, durable: false);
+        long reads = pager.Statistics.StoreReads;
+        byte[] committed = await pager.ReadPageAsync(1, TestContext.Current.CancellationToken);
+        Assert.Equal(17, committed[0]);
+        PageBuffers.Return(committed);
+        Assert.Equal(reads, pager.Statistics.StoreReads);
+        Assert.Equal(0, observer.Invalidations);
+        using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(TestContext.Current.CancellationToken))
+        {
+            gate.Attach(new PagerTransaction(32, 16, 4), preserveFrames: true);
+        }
+
+        page[0] = 29;
+        await pager.WritePageAsync(1, page, TestContext.Current.CancellationToken);
+        using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(TestContext.Current.CancellationToken))
+        {
+            gate.Detach();
+        }
+
+        Assert.Equal(1, observer.Invalidations);
+        byte[] rolledBack = await pager.ReadPageAsync(1, TestContext.Current.CancellationToken);
+        Assert.Equal(17, rolledBack[0]);
+        PageBuffers.Return(rolledBack);
+    }
+
     private sealed class Observer : IPageWriteObserver
     {
+        internal int Invalidations { get; private set; }
+
         internal List<long> Pages { get; } = [];
 
         internal List<byte?> Before { get; } = [];
@@ -193,9 +246,7 @@ public sealed class WriteBackTests
             this.Before.Add(before.IsEmpty ? null : before[0]);
         }
 
-        public void OnInvalidateAll()
-        {
-        }
+        public void OnInvalidateAll() => this.Invalidations++;
     }
 
     private sealed class CountingStream : MemoryStream

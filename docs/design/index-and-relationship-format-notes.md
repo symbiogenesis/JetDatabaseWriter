@@ -456,7 +456,7 @@ Wiring:
 
 W15 caveats:
 
-- **Indexes whose encoder rejects the pre-write encode (text outside General Legacy `0-9 / A-Z / a-z`, etc.) are silently skipped by W15.** A duplicate on such an index still surfaces from the post-write `MaintainIndexesAsync` check, but the offending row hits disk first — same model as before W15. The `RollbackInsertedRowsAsync` path already restores the row count and auto-increment counters when the post-write check throws, so the table state is still recoverable in that case.
+- **Index refusals participate in statement rollback.** Index preflight and unique checks run before mutation where possible. A duplicate or index-maintenance failure discovered later discards the statement's buffered row, index and counter changes; a failure during physical write-back restores the original bytes. There is no separate inserted-row tombstone compensation path.
 - **Cost is one full snapshot scan per call** (insert or update) on top of the existing post-write rebuild scan. Acceptable for v1; W17 (index-seek RI enforcement) and W19 (incremental B-tree maintenance) will eventually retire both passes.
 - **`AddAttachmentAsync` / `AddMultiValueItemAsync`** route through `InsertRowDataLocAsync` directly, bypassing `InsertRowCoreAsync` and therefore the W15 pre-check; the flat child tables ship a unique PK on a writer-managed autoincrement scalar (C7), so duplicate-key collisions there are not user-reachable.
 - **Validation:** 7 round-trip tests in `IndexPreWriteUniqueEnforcementTests`. W15 does not touch the byte-level format, so the §8 Microsoft Access compact-and-repair validation gap does not apply.

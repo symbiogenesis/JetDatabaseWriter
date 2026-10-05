@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -24,17 +23,15 @@ using JetDatabaseWriter.Schema.Models;
 /// Reads persisted column properties. When supplied,
 /// <see cref="ResolveRequiredTableAsync"/> sets each calculated column's
 /// <see cref="ColumnInfo.CalculatedResultType"/>, so the writer encodes the
-/// cached value by the type Access stores it as. The reader graph resolves
-/// definitions through <see cref="CatalogReader"/> and passes <see langword="null"/>.
+/// cached value by the type Access stores it as. Both service graphs share this path.
 /// </param>
 internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, CatalogRowReader catalogRows, ColumnPropertyReader? properties = null)
 {
     /// <summary>
-    /// The calculated-column result types read for each TDEF page, by column
-    /// name, so the <c>MSysObjects</c> scan behind them runs once per table
-    /// until <see cref="Invalidate"/>. Guarded by its own lock.
+    /// Schemas keyed by root page, guarded by this dictionary. Entries match the
+    /// exact structural image and are discarded when the catalog generation changes.
     /// </summary>
-    private readonly Dictionary<long, Dictionary<string, ColumnType>> calculatedResultTypes = [];
+    private readonly Dictionary<long, TableSchema> schemas = [];
 
     /// <summary>
     /// The cached user-table list. A single reference: a volatile write of a
@@ -105,12 +102,16 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="System.IO.InvalidDataException">The table definition cannot be read.</exception>
     internal async ValueTask<ResolvedTable> ResolveRequiredTableAsync(string tableName, CancellationToken cancellationToken = default)
     {
         CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
-        await this.ApplyCalculatedResultTypesAsync(entry.TDefPage, tableDef, cancellationToken).ConfigureAwait(false);
-        return new ResolvedTable(entry, tableDef);
+        TableSchema schema = await this.GetSchemaAsync(entry.TDefPage, loadProperties: false, cancellationToken).ConfigureAwait(false)
+            ?? throw new System.IO.InvalidDataException($"Table definition for '{tableName}' could not be read.");
+        TableCounters? counters = pages is Pager
+            ? await tableDefs.ReadTableCountersAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false)
+            : null;
+        return new ResolvedTable(entry, schema, counters);
     }
 
     /// <summary>
@@ -124,81 +125,82 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
-        TableDef? tableDef = await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (tableDef is not null)
+        TableSchema? schema = await this.GetSchemaAsync(tdefPage, loadProperties: false, cancellationToken).ConfigureAwait(false);
+        if (schema is null)
         {
-            await this.ApplyCalculatedResultTypesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+            return null;
         }
 
-        return tableDef;
+        TableDef definition = schema.CreateDefinition();
+        if (pages is Pager)
+        {
+            definition.RowCount = (await tableDefs.ReadTableCountersAsync(tdefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
+        }
+
+        return definition;
     }
 
-    /// <summary>
-    /// Discards the cached user-table list and calculated result types so the
-    /// next lookup re-scans <c>MSysObjects</c>, and moves <see cref="Generation"/>
-    /// on so caches derived from the catalog reload too.
-    /// </summary>
+    /// <summary>Resolves one structural image and lazily loads properties for metadata and calculated columns.</summary>
+    /// <param name="tdefPage">The root page.</param>
+    /// <param name="loadProperties">Whether ordinary columns need their persisted properties.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The schema, or null.</returns>
+    internal async ValueTask<TableSchema?> GetSchemaAsync(long tdefPage, bool loadProperties = true, CancellationToken cancellationToken = default)
+    {
+        int readGeneration = this.Generation;
+        TDefImage? image = await tableDefs.ReadImageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (image is null)
+        {
+            return null;
+        }
+
+        foreach (ColumnInfo column in image.Columns)
+        {
+            loadProperties |= column.IsCalculated;
+        }
+
+        lock (this.schemas)
+        {
+            if (this.Generation == readGeneration
+                && this.schemas.TryGetValue(tdefPage, out TableSchema? cached)
+                && ReferenceEquals(cached.Image, image)
+                && (!loadProperties || cached.PropertiesLoaded))
+            {
+                return cached;
+            }
+        }
+
+        ColumnPropertyBlock? block = loadProperties && properties is not null
+            ? await properties.ReadLvPropForTableAsync(tdefPage, cancellationToken).ConfigureAwait(false)
+            : null;
+        var schema = new TableSchema(image, block, loadProperties);
+        lock (this.schemas)
+        {
+            if (this.Generation == readGeneration)
+            {
+                if (this.schemas.TryGetValue(tdefPage, out TableSchema? loaded)
+                    && ReferenceEquals(loaded.Image, image)
+                    && loaded.PropertiesLoaded
+                    && !schema.PropertiesLoaded)
+                {
+                    return loaded;
+                }
+
+                this.schemas[tdefPage] = schema;
+            }
+        }
+
+        return schema;
+    }
+
+    /// <summary>Discards catalog-derived schemas and advances their generation.</summary>
     internal void Invalidate()
     {
         this.userTables = null;
-        lock (this.calculatedResultTypes)
+        lock (this.schemas)
         {
-            this.calculatedResultTypes.Clear();
-        }
-
-        _ = Interlocked.Increment(ref this.generation);
-    }
-
-    private async ValueTask ApplyCalculatedResultTypesAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
-    {
-        if (properties is null || !tableDef.Columns.Exists(static c => c.IsCalculated))
-        {
-            return;
-        }
-
-        Dictionary<string, ColumnType>? resultTypes;
-        lock (this.calculatedResultTypes)
-        {
-            _ = this.calculatedResultTypes.TryGetValue(tdefPage, out resultTypes);
-        }
-
-        if (resultTypes is null)
-        {
-            // Hydrate once from LvProp, then remember the types by column name.
-            _ = await properties.HydrateCalculatedResultTypesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
-            resultTypes = new Dictionary<string, ColumnType>(StringComparer.OrdinalIgnoreCase);
-            foreach (ColumnInfo column in tableDef.Columns)
-            {
-                if (column.IsCalculated && column.CalculatedResultType != default)
-                {
-                    resultTypes[column.Name] = column.CalculatedResultType;
-                }
-            }
-
-            lock (this.calculatedResultTypes)
-            {
-                this.calculatedResultTypes[tdefPage] = resultTypes;
-            }
-
-            return;
-        }
-
-        bool changed = false;
-        for (int i = 0; i < tableDef.Columns.Count; i++)
-        {
-            ColumnInfo column = tableDef.Columns[i];
-            if (column.IsCalculated
-                && resultTypes.TryGetValue(column.Name, out ColumnType resultType)
-                && resultType != column.CalculatedResultType)
-            {
-                tableDef.Columns[i] = column.WithCalculatedResultType(resultType);
-                changed = true;
-            }
-        }
-
-        if (changed)
-        {
-            tableDef.InitializeColumnMetadata();
+            _ = Interlocked.Increment(ref this.generation);
+            this.schemas.Clear();
         }
     }
 

@@ -10,6 +10,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.ComplexColumns;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -337,7 +338,7 @@ public sealed class TransactionRollbackStateTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task InsertRow_AfterFailedAutoCommitBatch_Succeeds(DatabaseFormat format)
     {
-        await using var stream = new MemoryStream();
+        await using var stream = new WriteFaultStream();
         await using (AccessWriter writer = await CreateWriterAsync(stream, format))
         {
             await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
@@ -355,8 +356,9 @@ public sealed class TransactionRollbackStateTests
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, transactionalOptions, leaveOpen: true, TestContext.Current.CancellationToken))
         {
+            stream.FailOnWrite(1);
             List<object?[]> tooManyPages = [.. Enumerable.Range(1000, 400).Select(id => new object?[] { id, new string('x', 100) })];
-            _ = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            _ = await Assert.ThrowsAsync<IOException>(async () =>
                 await writer.InsertRowsAsync("Items", tooManyPages, TestContext.Current.CancellationToken));
 
             await writer.InsertRowAsync("Items", [2, "After"], TestContext.Current.CancellationToken);

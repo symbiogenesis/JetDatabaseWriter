@@ -221,19 +221,24 @@ public sealed class TableDefReaderTests
     }
 
     [Fact]
-    public async Task CachingOverPager_IsRejected()
+    public async Task CachingOverPager_UsesWriteObservedImages()
     {
         await using MemoryStream stream = await CreateWideTableAsync(DatabaseFormat.AceAccdb);
         await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
-
-        ArgumentException ex = Assert.Throws<ArgumentException>(
-            () => new TableDefReader(writer.Database.Pages, writer.Database.Format, cacheResults: true));
-        Assert.Equal("cacheResults", ex.ParamName);
-
-        using var uncached = new TableDefReader(writer.Database.Pages, writer.Database.Format, cacheResults: false);
+        TableDefReader tableDefs = writer.Database.TableDefs;
         CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);
         Assert.NotNull(entry);
-        Assert.NotNull(await uncached.ReadTableDefAsync(entry.TDefPage, Ct));
+        TDefImage? first = await tableDefs.ReadImageAsync(entry.TDefPage, Ct);
+        Assert.NotNull(first);
+        Assert.Same(first, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
+        await writer.Services.TDefWriter.WriteInt32Async(entry.TDefPage, writer.Database.Format.TDef.NumRows, 10, Ct);
+        Assert.Same(first, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
+        Assert.Equal(10, (await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, WideTable, Ct)).RowCount);
+        LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(entry.TDefPage, Ct);
+        int logicalOffset = writer.Database.Format.PageSize + 8;
+        int original = BitConverter.ToInt32(chain.Bytes, logicalOffset);
+        await writer.Services.TDefWriter.WriteInt32Async(entry.TDefPage, logicalOffset, original ^ 1, Ct);
+        Assert.NotSame(first, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
     }
 
     /// <summary>

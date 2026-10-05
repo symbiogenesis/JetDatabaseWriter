@@ -1,233 +1,176 @@
 namespace JetDatabaseWriter.Schema;
 
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-/// <summary>
-/// Reads table definitions (TDEFs): the page chain of one table as logical
-/// bytes, and its column descriptors and names parsed into a
-/// <see cref="TableDef"/>. It reads through an <see cref="IPageSource"/>, so
-/// over the writer's <see cref="Pager"/> it sees a transaction's pending TDEF
-/// pages, and it never writes; the writer's <see cref="TDefWriter"/> writes
-/// chains back in place. The read-only reader memoizes each table's logical
-/// TDEF bytes, so a repeated <see cref="ReadTableDefAsync"/> or <see cref="ReadTDefBytesAsync"/>
-/// reads no page; it still parses a new <see cref="TableDef"/> from them, and
-/// hands out a new copy of them, on every call, because callers change what
-/// they get. The writer, whose pages change, never caches, and the
-/// constructor refuses a caching instance over a <see cref="Pager"/>.
-/// </summary>
-internal sealed class TableDefReader : IDisposable
+/// <summary>Reads owned layouts from immutable, write-observed TDEF images.</summary>
+internal sealed class TableDefReader : IDisposable, IPageWriteObserver
 {
     private readonly IPageSource pages;
     private readonly JetFormat format;
     private readonly bool cacheResults;
-#if NET9_0_OR_GREATER
-    private readonly Lock tdefBytesCacheLock = new();
-#else
-    private readonly object tdefBytesCacheLock = new();
-#endif
-    private readonly Dictionary<long, byte[]> tdefBytesByPage = [];
+    private readonly TDefImageCache images;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="TableDefReader"/> class.
-    /// </summary>
-    /// <param name="pages">The page source the chain is read from.</param>
-    /// <param name="format">The file's format profile.</param>
-    /// <param name="cacheResults">
-    /// <see langword="true"/> to memoize each table's logical TDEF bytes for
-    /// <see cref="ReadTableDefAsync"/> and <see cref="ReadTDefBytesAsync"/>;
-    /// only safe when nothing writes through <paramref name="pages"/> (the
-    /// reader).
-    /// </param>
-    /// <exception cref="ArgumentException"><paramref name="cacheResults"/> is <see langword="true"/> and <paramref name="pages"/> is the writer's <see cref="Pager"/>.</exception>
+    /// <summary>Initializes a new instance of the <see cref="TableDefReader"/> class.</summary>
+    /// <param name="pages">The page source.</param>
+    /// <param name="format">The format profile.</param>
+    /// <param name="cacheResults">Whether parsed structural images are cached.</param>
     internal TableDefReader(IPageSource pages, JetFormat format, bool cacheResults)
     {
-        if (cacheResults && pages is Pager)
-        {
-            throw new ArgumentException(
-                "Table definitions cannot be cached over the writer's file: its pages change.",
-                nameof(cacheResults));
-        }
-
         this.pages = pages;
         this.format = format;
         this.cacheResults = cacheResults;
+        this.images = new TDefImageCache(format);
     }
+
+    /// <summary>Gets or sets a value indicating whether cache hits are checked against the source.</summary>
+    internal bool VerifyOnHit { get; set; }
 
     /// <inheritdoc/>
-    public void Dispose()
+    public void Dispose() => this.images.OnInvalidateAll();
+
+    /// <inheritdoc/>
+    public void OnPageWritten(long pageNumber, ReadOnlySpan<byte> before, ReadOnlySpan<byte> after)
+        => this.images.OnPageWritten(pageNumber, before, after);
+
+    /// <inheritdoc/>
+    public void OnInvalidateAll() => this.images.OnInvalidateAll();
+
+    /// <summary>Reads current counters from the root page alone, never from the structural cache.</summary>
+    /// <param name="tdefPage">The root page.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The current counters, or null when the root is not a TDEF.</returns>
+    internal async ValueTask<TableCounters?> ReadTableCountersAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
-        lock (this.tdefBytesCacheLock)
+        byte[] page = await this.pages.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
         {
-            this.tdefBytesByPage.Clear();
+            if (page[0] != Constants.PageTypes.TableDefinition)
+            {
+                return null;
+            }
+
+            Pages.TDefHeaderLayout header = this.format.TDefFormat.Header;
+            return new TableCounters(
+                Ru32(page, header.NumRows),
+                Ru32(page, header.AutoNumber),
+                header.ComplexAutoNumber < 0 ? 0 : Ru32(page, header.ComplexAutoNumber));
+        }
+        finally
+        {
+            PageBuffers.Return(page);
         }
     }
 
-    /// <summary>
-    /// Returns the TDEF page chain starting at <paramref name="startPage"/> as
-    /// a single byte array. Pages after the first have their 8-byte TDEF
-    /// header stripped before appending. Returns <see langword="null"/> when
-    /// the page is not a valid TDEF root. The array is new on every call, so
-    /// the caller may change it: a caching instance reads the chain once and
-    /// returns a copy of the memoized bytes.
-    /// </summary>
-    /// <param name="startPage">The start page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The logical TDEF bytes, or <see langword="null"/>.</returns>
+    /// <summary>Returns independent logical bytes. Writable sources always read their current chain.</summary>
+    /// <param name="startPage">The root page.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The logical bytes, or null.</returns>
     internal async ValueTask<byte[]?> ReadTDefBytesAsync(long startPage, CancellationToken cancellationToken = default)
     {
-        if (!this.cacheResults)
+        if (!this.cacheResults || this.pages is Pager)
         {
-            return await this.ReadChainBytesAsync(startPage, cancellationToken).ConfigureAwait(false);
+            return (await this.ReadChainAsync(startPage, cancellationToken).ConfigureAwait(false))?.Bytes;
         }
 
-        byte[]? bytes = await this.ReadTableDefBytesAsync(startPage, cancellationToken).ConfigureAwait(false);
-        if (bytes is null)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (this.images.TryGet(startPage, out _))
         {
-            return null;
+            return (await this.ReadImageAsync(startPage, cancellationToken).ConfigureAwait(false))?.CopyBytes();
         }
 
-        // The memoized bytes are shared, so the caller gets its own copy.
-        return bytes.AsSpan().ToArray();
+        long epoch = this.images.Epoch;
+        LogicalTDefChain? chain = await this.ReadChainAsync(startPage, cancellationToken).ConfigureAwait(false);
+        TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
+        if (image is not null && chain is not null)
+        {
+            _ = this.images.Publish(startPage, image, chain.PageNumbers, epoch);
+        }
+
+        // Byte-level callers retain the original tolerant contract even when
+        // the structural parser refuses the columns of an otherwise valid chain.
+        return chain?.Bytes;
     }
 
-    /// <summary>
-    /// Reads the TDEF page chain starting at <paramref name="startPage"/> as a
-    /// logical buffer that remembers its physical pages, so fields patched at
-    /// logical offsets can be written back in place
-    /// (<see cref="LogicalTDefChain.WriteInPlaceAsync"/>). Throws when the
-    /// page is not a TDEF root. Always reads the chain, even on a caching
-    /// instance: only the writer's in-place write-backs use it.
-    /// </summary>
-    /// <param name="startPage">The first TDEF page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <summary>Reads a fresh chain with its physical page mapping for in-place writes.</summary>
+    /// <param name="startPage">The root page.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The chain.</returns>
-    /// <exception cref="InvalidDataException">The page at <paramref name="startPage"/> is not a table definition.</exception>
+    /// <exception cref="InvalidDataException">The root is not a table definition.</exception>
     internal async ValueTask<LogicalTDefChain> ReadTDefChainAsync(long startPage, CancellationToken cancellationToken = default)
-        => await LogicalTDefChain.ReadAsync(
-            startPage,
-            this.format.PageSize,
-            this.pages.ReadPageAsync,
-            PageBuffers.Return,
-            retainPageNumbers: true,
-            cancellationToken).ConfigureAwait(false)
+        => await this.ReadChainAsync(startPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"The table definition at page {startPage} could not be read.");
 
-    /// <summary>
-    /// Reads and parses the table definition rooted at <paramref name="tdefPage"/>:
-    /// its columns (descriptors and names, sorted by column number), its row
-    /// count and whether column numbers have gaps left by deleted columns.
-    /// Returns <see langword="null"/> when the chain is not a TDEF, is too
-    /// short, or declares more columns than a table can have. A caching
-    /// instance reads each chain once and parses a new <see cref="TableDef"/>
-    /// from the same bytes on every call.
-    /// </summary>
-    /// <param name="tdefPage">The first TDEF page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The table definition, or <see langword="null"/>.</returns>
+    /// <summary>Reads an immutable parsed structural image, with guarded cache publication.</summary>
+    /// <param name="tdefPage">The root page.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The image, or null for an unreadable definition.</returns>
+    /// <exception cref="InvalidDataException">Verification detects stale cached structure.</exception>
+    internal async ValueTask<TDefImage?> ReadImageAsync(long tdefPage, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (this.cacheResults && this.images.TryGet(tdefPage, out TDefImage? cached))
+        {
+            if (this.VerifyOnHit)
+            {
+                LogicalTDefChain? current = await this.ReadChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                if (current is null || !this.images.StructuralBytesEqual(cached.CopyBytes(), current.Bytes))
+                {
+                    throw new InvalidDataException($"The cached table definition at page {tdefPage} is stale.");
+                }
+            }
+
+            return cached;
+        }
+
+        long epoch = this.images.Epoch;
+        LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
+        if (this.cacheResults && image is not null && chain is not null)
+        {
+            _ = this.images.Publish(tdefPage, image, chain.PageNumbers, epoch);
+        }
+
+        return image;
+    }
+
+    /// <summary>Returns a mutable layout owned by the caller, never the cached projection.</summary>
+    /// <param name="tdefPage">The root page.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The layout, or null.</returns>
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
-        byte[]? td = await this.ReadTableDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-
-        List<ColumnInfo>? columns = TDefCodec.ReadColumns(this.format, td, out TDefHeader header, out bool hasDeletedColumns, out _, out _);
-        if (columns is null)
+        TDefImage? image = await this.ReadImageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (image is null)
         {
             return null;
         }
 
-        var tableDef = new TableDef
+        TableDef definition = TableSchema.CreateDefinition(image, properties: null);
+        if (this.pages is Pager)
         {
-            Columns = columns,
-            RowCount = header.Counters.RowCount,
-            HasDeletedColumns = hasDeletedColumns,
-        };
-        tableDef.InitializeColumnMetadata();
-        return tableDef;
+            definition.RowCount = (await this.ReadTableCountersAsync(tdefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
+        }
+
+        return definition;
     }
 
-    /// <summary>
-    /// Reads the table definition rooted at <paramref name="tdefPage"/>, or
-    /// throws when it cannot be read (<see cref="ReadTableDefAsync"/>).
-    /// </summary>
-    /// <param name="tdefPage">The first TDEF page.</param>
-    /// <param name="tableName">The table's name, for the error message.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The table definition.</returns>
-    /// <exception cref="InvalidDataException">The table definition could not be read.</exception>
+    /// <summary>Reads the required owned layout.</summary>
+    /// <param name="tdefPage">The root page.</param>
+    /// <param name="tableName">The name for error reporting.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The layout.</returns>
+    /// <exception cref="InvalidDataException">The definition cannot be read.</exception>
     internal async ValueTask<TableDef> ReadRequiredTableDefAsync(long tdefPage, string tableName, CancellationToken cancellationToken = default)
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
-    /// <summary>
-    /// Returns the logical TDEF bytes that <see cref="ReadTableDefAsync"/>
-    /// parses and a caching <see cref="ReadTDefBytesAsync"/> copies: the
-    /// memoized bytes when this instance caches and has read the chain before,
-    /// and otherwise the chain read by <see cref="ReadChainBytesAsync"/>,
-    /// memoized when this instance caches and the chain is a TDEF. The bytes
-    /// may be shared, so they are only read, never changed.
-    /// </summary>
-    /// <param name="tdefPage">The first TDEF page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The logical TDEF bytes, or <see langword="null"/>.</returns>
-    private async ValueTask<byte[]?> ReadTableDefBytesAsync(long tdefPage, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (this.cacheResults && this.TryGetCachedTDefBytes(tdefPage, out byte[] cachedBytes))
-        {
-            return cachedBytes;
-        }
-
-        byte[]? bytes = await this.ReadChainBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (this.cacheResults && bytes is not null)
-        {
-            this.CacheTDefBytes(tdefPage, bytes);
-        }
-
-        return bytes;
-    }
-
-    /// <summary>
-    /// Reads the TDEF page chain starting at <paramref name="startPage"/> into
-    /// a new logical byte array, or returns <see langword="null"/> when the
-    /// page is not a valid TDEF root.
-    /// </summary>
-    /// <param name="startPage">The first TDEF page.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The logical TDEF bytes, or <see langword="null"/>.</returns>
-    private async ValueTask<byte[]?> ReadChainBytesAsync(long startPage, CancellationToken cancellationToken)
-    {
-        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
-            startPage,
-            this.format.PageSize,
-            this.pages.ReadPageAsync,
-            PageBuffers.Return,
-            retainPageNumbers: false,
-            cancellationToken).ConfigureAwait(false);
-
-        return chain?.Bytes;
-    }
-
-    private bool TryGetCachedTDefBytes(long tdefPage, out byte[] bytes)
-    {
-        lock (this.tdefBytesCacheLock)
-        {
-            bool found = this.tdefBytesByPage.TryGetValue(tdefPage, out byte[]? cachedBytes);
-            bytes = cachedBytes ?? [];
-            return found;
-        }
-    }
-
-    private void CacheTDefBytes(long tdefPage, byte[] bytes)
-    {
-        lock (this.tdefBytesCacheLock)
-        {
-            this.tdefBytesByPage[tdefPage] = bytes;
-        }
-    }
+    private ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, CancellationToken cancellationToken)
+        => LogicalTDefChain.ReadAsync(startPage, this.format.PageSize, this.pages.ReadPageAsync, PageBuffers.Return, retainPageNumbers: true, cancellationToken);
 }
