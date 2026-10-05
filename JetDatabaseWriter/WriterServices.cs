@@ -55,7 +55,8 @@ internal sealed class WriterServices
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db, pager);
         var longValueEncoder = new LongValueEncoder(db, pager, this.PageAllocator, options);
-        var dataPages = new DataPageInserter(db, pager, this.PageAllocator, this.CatalogRows);
+        this.OwnedMaps = new CatalogOwnedMapPolicy(db.Profile, db.TableDefs, this.CatalogRows);
+        var dataPages = new DataPageInserter(db, pager, this.PageAllocator, this.OwnedMaps);
         var tableRows = new TableRowStore(db, pager, options, longValueEncoder, new RowEncoder(db), dataPages, tdefPageBuilder);
         var autoNumbers = new AutoNumberMaintainer(db, pager);
         CatalogRowReader catalogRows = this.CatalogRows;
@@ -90,14 +91,14 @@ internal sealed class WriterServices
 
         this.Indexes = new IndexMaintainer(db, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
         var catalogWriter = new CatalogWriter(db, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
-        this.CatalogArtifacts = new CatalogArtifactWriter(db, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, catalogWriter, constraints);
+        this.CatalogArtifacts = new CatalogArtifactWriter(db, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
         this.ComplexColumns = new ComplexColumnManager(db, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds);
 
         var relationshipCatalog = new RelationshipCatalogStore(db, this.Indexes, this.CatalogRows, snapshots, catalog);
         var enforcer = new RelationshipEnforcer(db, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots);
         this.Relationships = new RelationshipManager(db, pager, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog);
 
-        this.Transactions = new TransactionLifecycle(db, pager, options, byteRangeLock, catalog, dataPages, constraints);
+        this.Transactions = new TransactionLifecycle(db, pager, options, byteRangeLock, catalog, dataPages, this.OwnedMaps, constraints);
         this.Data = new TableDataWriter(
             db,
             catalog,
@@ -158,6 +159,9 @@ internal sealed class WriterServices
 
     /// <summary>Gets the global page allocator.</summary>
     internal PageAllocator PageAllocator { get; }
+
+    /// <summary>Gets the policy that decides whose owned-page usage maps the writer may extend.</summary>
+    internal CatalogOwnedMapPolicy OwnedMaps { get; }
 
     /// <summary>Gets the in-place TDEF write-backs.</summary>
     internal TDefWriter TDefWriter { get; }

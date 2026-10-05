@@ -142,9 +142,11 @@ JetDatabaseWriter/
 │       └── UnreadableLongValue.cs         (MEMO/OLE value the writer's snapshot could not read; writing it throws)
 │
 ├── Pages/                                 (page-level I/O & layout)
+│   ├── CatalogOwnedMapPolicy.cs           (the writer's IOwnedMapPolicy, from the catalog; keeps both answers by TDEF page)
 │   ├── DataPageLayout.cs                  (byte offsets, page structure, format-version layouts)
 │   ├── DataPageInserter.cs               (FindInsertTarget, CanInsertRow, WriteRowToPage)
 │   ├── DataPageRows.cs                    (a data page's row directory: live rows, overflow headers, slot bounds)
+│   ├── IOwnedMapPolicy.cs                 (whose owned-page usage maps the writer may extend; captured and restored by transactions)
 │   ├── OwnedDataPages.cs                  (a table's owned data pages from its usage map or the whole-file index, and its live rows, overflow rows included)
 │   ├── PageAllocator.cs                   (global free-map reuse, freed-page scrubbing, tail shrink)
 │   ├── ReservedPageRuns.cs                (page runs an index operation reserved but has not linked; released on a bail or throw)
@@ -157,9 +159,10 @@ JetDatabaseWriter/
 │   │   ├── PageFile.cs                    (read-only page I/O: stream, I/O gate, page cipher, RandomAccess reads)
 │   │   └── Pager.cs                       (the writer's PageFile: writes, appends, flushes, byte-range locks, the transaction journal and its JournalGate)
 │   └── Models/
-│       ├── DataPageInserterState.cs       (insert hint + writable owned-map set, restored on rollback)
+│       ├── DataPageInserterState.cs       (the insert hint, restored on rollback)
 │       ├── LocatedRow.cs                  (a decoded row paired with the location it was read from)
 │       ├── OverflowRowTarget.cs           (the slot an overflow row's header points at, and its page)
+│       ├── OwnedMapPolicyState.cs         (the owned-map policy's writable and refused TDEF pages, restored on rollback)
 │       ├── PageInsertTarget.cs
 │       ├── RowBound.cs                    (one row-directory entry; flags an overflow row's header)
 │       ├── RowLayout.cs
@@ -473,7 +476,8 @@ AccessWriter → WriterServices
   ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
                         AutoNumberMaintainer, ComplexReferenceSeedReader
   ComplexReferenceSeedReader → CatalogRowReader, AutoNumberMaintainer
-  CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogWriter, ConstraintRegistry
+  CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogOwnedMapPolicy, CatalogWriter,
+                        ConstraintRegistry
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
   IndexMaintainer     → TDefWriter, PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
   TDefWriter          → Pager, TableDefReader
@@ -482,9 +486,10 @@ AccessWriter → WriterServices
   ColumnPropertyReader → RowDecoder
   RowDecoder          → ReaderPageCache (capacity 0), LongValueDecoder
   TableRowStore       → LongValueEncoder, RowEncoder, DataPageInserter, TDefPageBuilder
-  DataPageInserter    → PageAllocator, CatalogRowReader
+  DataPageInserter    → PageAllocator, CatalogOwnedMapPolicy
+  CatalogOwnedMapPolicy → JetFormat, TableDefReader, CatalogRowReader
   TableCatalog        → CatalogRowReader
-  TransactionLifecycle → Pager, JetByteRangeLock, TableCatalog, DataPageInserter, ConstraintRegistry
+  TransactionLifecycle → Pager, JetByteRangeLock, TableCatalog, DataPageInserter, CatalogOwnedMapPolicy, ConstraintRegistry
   (services that write pages) → Pager
   (every collaborator) → DatabaseFile
 ```
@@ -719,7 +724,7 @@ Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `Relatio
 
 ### 8. Usage-map parsing stays with page ownership
 
-`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `OwnedDataPages` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows; `PageAllocator` decides when to promote the global free map and allocate reference pages; `CatalogArtifactWriter`, `TableSchemaEditor`, and `IndexMaintainer` decide which index pages to emit or reclaim.
+`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `OwnedDataPages` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows in the maps `CatalogOwnedMapPolicy` lets it extend; `PageAllocator` decides when to promote the global free map and allocate reference pages; `CatalogArtifactWriter`, `TableSchemaEditor`, and `IndexMaintainer` decide which index pages to emit or reclaim.
 
 ### 9. Linked-table metadata spans catalog, schema, and delimited text parsing
 

@@ -24,16 +24,17 @@ using JetDatabaseWriter.Schema.Models;
 /// <remarks>
 /// The journal holds only page images. The writer also caches state in
 /// memory that a transaction can change: the user-table catalog, the
-/// insert-page hint and writable owned-map set, and the constraint registry.
-/// A rollback restores or invalidates each of them, so the writer behaves as
-/// if the transaction had never run.
+/// insert-page hint, the owned-map policy's decisions, and the constraint
+/// registry. A rollback restores or invalidates each of them, so the writer
+/// behaves as if the transaction had never run.
 /// </remarks>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="pager">The writer's page file, which holds the journal and through which a commit writes and flushes.</param>
 /// <param name="options">The writer options; supplies the auto-commit switch and journal page budget.</param>
 /// <param name="byteRangeLock">The cooperative JET byte-range lock used for the commit-lock sentinel.</param>
 /// <param name="catalog">The writer's cached user-table catalog, invalidated on rollback.</param>
-/// <param name="dataPages">Owns the insert-page hint and writable owned-map set, restored on rollback.</param>
+/// <param name="dataPages">Owns the insert-page hint, restored on rollback.</param>
+/// <param name="ownedMaps">Decides whose owned-page usage maps the writer may extend; its decisions are restored on rollback.</param>
 /// <param name="constraints">The writer's constraint registry, restored on rollback.</param>
 internal sealed class TransactionLifecycle(
     DatabaseFile db,
@@ -42,6 +43,7 @@ internal sealed class TransactionLifecycle(
     JetByteRangeLock byteRangeLock,
     TableCatalog catalog,
     DataPageInserter dataPages,
+    IOwnedMapPolicy ownedMaps,
     ConstraintRegistry constraints)
 {
     /// <summary>
@@ -74,7 +76,7 @@ internal sealed class TransactionLifecycle(
 
         var journal = new PageJournal(gate.PhysicalLengthBytes, db.PageSizeBytes, options.MaxTransactionPageBudget);
         var tx = new JetTransaction(this, journal);
-        this.stateAtBegin = new WriterState(dataPages.CaptureState(), constraints.CaptureSnapshot());
+        this.stateAtBegin = new WriterState(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
         gate.Attach(journal);
         this.ActiveTransaction = tx;
         return tx;
@@ -276,8 +278,8 @@ internal sealed class TransactionLifecycle(
     /// <summary>
     /// Rolls back the supplied <paramref name="transaction"/>: discards the
     /// in-memory journal without touching the database file, and puts the
-    /// writer's cached catalog, insert hint, owned-map set and constraint
-    /// registry back to their state when the transaction began.
+    /// writer's cached catalog, insert hint, owned-map decisions and
+    /// constraint registry back to their state when the transaction began.
     /// </summary>
     /// <param name="transaction">The transaction.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -355,6 +357,7 @@ internal sealed class TransactionLifecycle(
         }
 
         dataPages.RestoreState(state.DataPages);
+        ownedMaps.Restore(state.OwnedMaps);
         constraints.Restore(state.Constraints);
     }
 
@@ -363,10 +366,10 @@ internal sealed class TransactionLifecycle(
     /// file then holds some of the transaction's pages and not others, so
     /// neither the state from before the transaction nor the transaction's own
     /// is known to match it: the catalog is re-scanned on next use, the insert
-    /// hint is forgotten, and the owned-map set goes back to the TDEFs known
-    /// before the transaction. The constraint registry keeps the transaction's
-    /// entries, so AutoNumber counters never move back over values that may
-    /// have reached the file.
+    /// hint and the owned-map policy's refusals are forgotten, and its
+    /// writable set goes back to the TDEFs known before the transaction. The
+    /// constraint registry keeps the transaction's entries, so AutoNumber
+    /// counters never move back over values that may have reached the file.
     /// </summary>
     /// <param name="state">The state captured when the transaction began.</param>
     private void DiscardCachesAfterFailedReplay(WriterState? state)
@@ -377,11 +380,13 @@ internal sealed class TransactionLifecycle(
             return;
         }
 
-        dataPages.RestoreState(state.DataPages with { HintTDefPage = -1, HintPageNumber = -1 });
+        dataPages.RestoreState(new DataPageInserterState(HintTDefPage: -1, HintPageNumber: -1));
+        ownedMaps.Restore(state.OwnedMaps with { RefusedTdefs = [] });
     }
 
     /// <summary>The writer's in-memory state that a transaction can change.</summary>
-    /// <param name="DataPages">The insert-page hint and writable owned-map set.</param>
+    /// <param name="DataPages">The insert-page hint.</param>
+    /// <param name="OwnedMaps">The owned-map policy's decisions.</param>
     /// <param name="Constraints">The constraint registry's contents.</param>
-    private sealed record WriterState(DataPageInserterState DataPages, ConstraintRegistrySnapshot Constraints);
+    private sealed record WriterState(DataPageInserterState DataPages, OwnedMapPolicyState OwnedMaps, ConstraintRegistrySnapshot Constraints);
 }

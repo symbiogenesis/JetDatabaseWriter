@@ -5,9 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using static JetDatabaseWriter.DatabaseFile;
@@ -17,21 +15,21 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Owns data-page allocation and row insertion mechanics for
 /// <see cref="AccessWriter"/>. Handles finding/creating target pages,
 /// writing row bytes, and patching usage-map / autonumber TDEF fields. Also
-/// owns the per-writer insert-page hint and the set of TDEFs whose owned-page
-/// usage maps this writer may extend (both restored when a transaction rolls back).
+/// owns the per-writer insert-page hint (restored when a transaction rolls
+/// back); the owned-map policy it is given decides whose owned-page usage
+/// maps an appended data page is marked in.
 /// </summary>
 /// <param name="db">The database page I/O and format context.</param>
 /// <param name="pager">The writer's page file, through which data and usage-map pages are written.</param>
 /// <param name="pageAllocator">The page allocator.</param>
-/// <param name="catalogRows">Reads <c>MSysObjects</c> rows to decide whether an existing table's owned-page map is writable.</param>
-internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocator pageAllocator, CatalogRowReader catalogRows)
+/// <param name="ownedMaps">Decides whether a table's owned-page usage map may be extended.</param>
+internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocator pageAllocator, IOwnedMapPolicy ownedMaps)
 {
 #if NET9_0_OR_GREATER
     private readonly Lock insertPageHintLock = new();
 #else
     private readonly object insertPageHintLock = new();
 #endif
-    private readonly HashSet<long> ownedMapWritableTdefs = [];
     private long cachedInsertTDefPage = -1;
     private long cachedInsertPageNumber = -1;
 
@@ -101,13 +99,9 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
         // usage map. Without this, DAO's sequential / snapshot recordset
         // scans (which walk the usage map rather than the PK index) see
         // the table as empty, even though the row bytes are on disk and
-        // the data page's parent_tdef back-pointer is correct.
-        // Skip the small set of pre-existing system-table TDEFs whose
-        // usage maps are already populated and managed by DAO; modifying
-        // them surfaces "Invalid argument" from DAO.OpenDatabase. Freshly
-        // created databases have low page numbers too, so the writer records
-        // the TDEFs whose owned-page maps it created and can safely maintain.
-        if (await this.CanMaintainOwnedMapAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        // the data page's parent_tdef back-pointer is correct. The owned-map
+        // policy skips the system tables whose maps Access manages.
+        if (await ownedMaps.CanMaintainAsync(tdefPage, cancellationToken).ConfigureAwait(false))
         {
             await this.MarkPageInOwnedMapAsync(tdefPage, newPageNumber, cancellationToken).ConfigureAwait(false);
         }
@@ -144,20 +138,20 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
     }
 
     /// <summary>
-    /// Captures the insert-page hint and the writable owned-map set. A
-    /// transaction takes this when it begins: inside it, both can come to name
-    /// pages the transaction appended, which rollback discards.
+    /// Captures the insert-page hint. A transaction takes this when it begins:
+    /// inside it, the hint can come to name a page the transaction appended,
+    /// which rollback discards.
     /// </summary>
     /// <returns>The state to pass to <see cref="RestoreState"/>.</returns>
     internal DataPageInserterState CaptureState()
     {
         lock (this.insertPageHintLock)
         {
-            return new DataPageInserterState(this.cachedInsertTDefPage, this.cachedInsertPageNumber, [.. this.ownedMapWritableTdefs]);
+            return new DataPageInserterState(this.cachedInsertTDefPage, this.cachedInsertPageNumber);
         }
     }
 
-    /// <summary>Puts the insert-page hint and the writable owned-map set back to <paramref name="state"/>.</summary>
+    /// <summary>Puts the insert-page hint back to <paramref name="state"/>.</summary>
     /// <param name="state">A state from <see cref="CaptureState"/>.</param>
     internal void RestoreState(DataPageInserterState state)
     {
@@ -166,59 +160,6 @@ internal sealed class DataPageInserter(DatabaseFile db, Pager pager, PageAllocat
             this.cachedInsertTDefPage = state.HintTDefPage;
             this.cachedInsertPageNumber = state.HintPageNumber;
         }
-
-        this.ownedMapWritableTdefs.Clear();
-        this.ownedMapWritableTdefs.UnionWith(state.OwnedMapWritableTdefs);
-    }
-
-    /// <summary>
-    /// Records that this writer created <paramref name="tdefPageNumber"/>'s
-    /// owned-page usage map, so appended data pages may be marked in it.
-    /// </summary>
-    /// <param name="tdefPageNumber">The TDEF page number.</param>
-    internal void RegisterOwnedMapWritableTdef(long tdefPageNumber) => this.ownedMapWritableTdefs.Add(tdefPageNumber);
-
-    internal async ValueTask<bool> CanMaintainOwnedMapAsync(long tdefPageNumber, CancellationToken cancellationToken)
-    {
-        if (db.Format == DatabaseFormat.Jet3Mdb || tdefPageNumber <= 0)
-        {
-            return false;
-        }
-
-        if (this.ownedMapWritableTdefs.Contains(tdefPageNumber))
-        {
-            return true;
-        }
-
-        if (tdefPageNumber == 2)
-        {
-            return false;
-        }
-
-        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys is null)
-        {
-            return false;
-        }
-
-        List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
-        foreach (CatalogRow row in rows)
-        {
-            if (row.TDefPage != tdefPageNumber || row.ObjectType != Constants.SystemObjects.UserTableType)
-            {
-                continue;
-            }
-
-            if (string.IsNullOrEmpty(row.Name) || row.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            this.RegisterOwnedMapWritableTdef(tdefPageNumber);
-            return true;
-        }
-
-        return false;
     }
 
     private async ValueTask<PageInsertTarget?> TryFindExistingSystemTablePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)

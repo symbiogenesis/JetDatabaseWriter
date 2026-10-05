@@ -274,6 +274,7 @@ public sealed class ServiceGraphTests
             typeof(ComplexColumnManager),
             typeof(CatalogWriter),
             typeof(CatalogArtifactWriter),
+            typeof(CatalogOwnedMapPolicy),
             typeof(IndexMaintainer),
             typeof(TransactionLifecycle),
             typeof(TableSnapshotReader),
@@ -332,6 +333,27 @@ public sealed class ServiceGraphTests
         Pager pager = Assert.IsType<Pager>(Assert.Single(reachable, item => item is Pager));
         Assert.Same(FacadeDatabase(writer).Pages, pager);
         _ = Assert.Single(reachable, item => item is TDefWriter);
+    }
+
+    /// <summary>
+    /// One owned-map policy decides for the whole writer: the data-page
+    /// inserter asks it, the catalog artifact writer registers the maps it
+    /// creates with it, and the transaction lifecycle captures and restores
+    /// it, so a rollback forgets what the transaction taught it.
+    /// </summary>
+    [Fact]
+    public async Task OpenWriter_ServicesShareOneOwnedMapPolicy()
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync();
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+
+        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
+
+        _ = Assert.Single(reachable, item => item is IOwnedMapPolicy);
     }
 
     [Fact]

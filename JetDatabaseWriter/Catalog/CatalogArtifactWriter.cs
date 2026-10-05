@@ -29,7 +29,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalog">The cached user-table catalog, invalidated after every catalog mutation.</param>
 /// <param name="pageAllocator">Reserves TDEF and index leaf pages.</param>
 /// <param name="tdefPageBuilder">Builds and patches table-definition pages.</param>
-/// <param name="dataPages">Allocates usage-map pages and records writer-owned usage maps.</param>
+/// <param name="dataPages">Allocates usage-map pages.</param>
+/// <param name="ownedMaps">Records the tables whose owned-page usage maps this writer created.</param>
 /// <param name="catalogWriter">Writes <c>MSysObjects</c> and <c>MSysACEs</c> rows.</param>
 /// <param name="constraints">Registers client-side column constraints for created tables.</param>
 internal sealed class CatalogArtifactWriter(
@@ -39,6 +40,7 @@ internal sealed class CatalogArtifactWriter(
     PageAllocator pageAllocator,
     TDefPageBuilder tdefPageBuilder,
     DataPageInserter dataPages,
+    IOwnedMapPolicy ownedMaps,
     CatalogWriter catalogWriter,
     ConstraintRegistry constraints)
 {
@@ -144,7 +146,7 @@ internal sealed class CatalogArtifactWriter(
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], db.TDef, checked((int)usageMapPageNumber));
         DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
         await pager.WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
-        dataPages.RegisterOwnedMapWritableTdef(2);
+        ownedMaps.RegisterWritable(2);
         catalog.Invalidate();
     }
 
@@ -331,7 +333,7 @@ internal sealed class CatalogArtifactWriter(
             // the first physical page.
             DataPageInserter.PatchUsageMapPointers(tdefPages[0], db.TDef, checked((int)usageMapPageNumber));
             DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
-            dataPages.RegisterOwnedMapWritableTdef(tdefPageNumber);
+            ownedMaps.RegisterWritable(tdefPageNumber);
             tdefDirty = true;
         }
 

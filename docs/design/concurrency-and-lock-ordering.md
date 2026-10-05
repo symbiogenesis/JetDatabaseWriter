@@ -21,7 +21,7 @@ recorded in [Why these are not consolidated](#why-these-are-not-consolidated).
 
 ## The primitives
 
-The library has **ten** distinct coordination mechanisms. Eight are in-process;
+The library has **eleven** distinct coordination mechanisms. Nine are in-process;
 two are cross-process / cross-opener (advisory). Each has a single, distinct
 responsibility — the apparent overlap noted in the audit is superficial (see the
 closing section).
@@ -38,10 +38,12 @@ closing section).
 | 8 | `aesGate` | `Lock` / `object` | [PageDecryptionKeys.cs](../../JetDatabaseWriter/Encryption/Models/PageDecryptionKeys.cs) | One open database file | The cached AES-ECB page transforms: their lazy build and every page encrypt or decrypt |
 | 9 | `ownedDataPageIndex` gate | `SemaphoreSlim(1,1)` inside `AsyncLazyInitializer` | [AsyncLazyInitializer.cs](../../JetDatabaseWriter/Infrastructure/AsyncLazyInitializer.cs), built in [OwnedDataPages.cs](../../JetDatabaseWriter/Pages/OwnedDataPages.cs) (`BuildOwnedDataPageIndexAsync`) | One open database file (reader only) | The one-time whole-file pass that maps every data page to its table, run for the first table whose owned-pages usage map fails validation |
 | 10 | `tdefBytesCacheLock` | `Lock` / `object` | [TableDefReader.cs](../../JetDatabaseWriter/Schema/TableDefReader.cs) | One open database file (reader only) | The `tdefBytesByPage` dictionary only |
+| 11 | `ownedMapSetsLock` | `Lock` / `object` | [CatalogOwnedMapPolicy.cs](../../JetDatabaseWriter/Pages/CatalogOwnedMapPolicy.cs) | Writer instance (`CatalogOwnedMapPolicy`) | The owned-map policy's writable and refused TDEF sets only |
 
-> Note: #4 and #7 are both plain `lock` objects guarding unrelated in-memory
-> state (the writer's insert-page hint and the reader gate's drain bookkeeping).
-> They never interact, and neither do #5 and #10, the reader's two memo locks.
+> Note: #4, #7 and #11 are plain `lock` objects guarding unrelated in-memory
+> state (the writer's insert-page hint, the reader gate's drain bookkeeping and
+> the writer's owned-map decisions). They never interact, and neither do #5
+> and #10, the reader's two memo locks.
 > #8 exists because pages are decrypted after `IoGate` is
 > released (and the `RandomAccess` read path never takes it), so table-scan
 > read-ahead or two operations on one reader can decrypt pages on two threads
@@ -64,6 +66,7 @@ order. Never acquire one earlier in this list while holding one later in it.
 
 — leaf locks (never held across an await, never nested under each other) —
    insertPageHintLock             (insert-page cache; pure memory)
+   ownedMapSetsLock               (owned-map policy's TDEF sets; pure memory)
    ownedDataPagesCacheLock        (owned-page dictionary; pure memory)
    tdefBytesCacheLock             (TDEF-bytes dictionary; pure memory)
    aesGate                        (AES page transform; CPU only; reads take it after IoGate,
@@ -110,14 +113,15 @@ in [TransactionLifecycle.cs](../../JetDatabaseWriter/Transactions/TransactionLif
 
 ```
 BeginTransactionAsync
-  └─ JournalGate lease (IoGate) ──▶ capture writer state (insertPageHintLock briefly)
+  └─ JournalGate lease (IoGate) ──▶ capture writer state (insertPageHintLock, ownedMapSetsLock briefly)
               ──▶ gate.Attach(journal); set ActiveTransaction ──▶ dispose the lease
 
 work phase (row encode, index maintenance, page allocation)
   └─ no durable locks held: every WritePageAsync/AppendPageAsync sees the
      attached journal and buffers into it while holding only IoGate for the
      buffer swap.
-  └─ insertPageHintLock may be taken briefly (leaf, memory only). The writer's file never
+  └─ insertPageHintLock and ownedMapSetsLock may be taken briefly (leaf, memory only;
+     the owned-map policy's MSysObjects scan runs outside its lock). The writer's file never
      caches owned pages or TDEF bytes, so the writer never takes ownedDataPagesCacheLock
      or tdefBytesCacheLock.
 
@@ -133,18 +137,19 @@ CommitTransactionAsync
 
 RollbackTransactionAsync  (auto-commit calls it when the work throws)
   └─ JournalGate lease (IoGate) ──▶ gate.Detach() ──▶ restore writer state (catalog invalidated,
-                insertPageHintLock briefly, constraint registry) ──▶ dispose the lease
+                insertPageHintLock and ownedMapSetsLock briefly, constraint registry) ──▶ dispose the lease
 ```
 
 The commit-lock sentinel is "outer" only in the sense that it spans the replay
 window; it is acquired **after** `IoGate` has been released, so it never nests
 outside an already-held `IoGate`. Capturing and restoring the writer state is
-memory-only, so the leaf `insertPageHintLock` is the only lock taken inside
-`IoGate` there. A commit that fails before its first page write restores the
-same state from its `catch`, after `IoGate` has been released, and marks the
-transaction rolled back. One that fails after replay has started only
-invalidates the catalog and forgets the insert hint, and leaves the transaction
-neither committed nor rolled back. The replay is not crash-atomic: there is no
+memory-only, so the leaf `insertPageHintLock` and `ownedMapSetsLock`, one after
+the other, are the only locks taken inside `IoGate` there. A commit that fails
+before its first page write restores the same state from its `catch`, after
+`IoGate` has been released, and marks the transaction rolled back. One that
+fails after replay has started only invalidates the catalog, forgets the insert
+hint and the owned-map policy's refusals, and puts the policy's writable set
+back, and leaves the transaction neither committed nor rolled back. The replay is not crash-atomic: there is no
 before-image or redo log, so the pages written before a failure stay written.
 
 ### Writer non-transactional (default `UseTransactionalWrites = false`)
@@ -243,6 +248,7 @@ lockFileCoordinator.DisposeAfterAsync(
 | `IoGate` | No | Binary `SemaphoreSlim(1,1)` — re-entering on the same flow self-deadlocks; never hold it, or a `Pager.JournalGate` lease, across a `*PageAsync` call |
 | `ByteRangeLock` per-page | No | OS advisory byte-range lock; re-locking the same range blocks |
 | `insertPageHintLock` | No | Plain `lock`; leaf only |
+| `ownedMapSetsLock` | No | Plain `lock`; leaf only |
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
 | `tdefBytesCacheLock` | No | Plain `lock`; leaf only |
 | `aesGate` | No | Plain `lock`; leaf only |
@@ -256,12 +262,14 @@ open:
 | Cache | Owner | Dropped when |
 |-------|-------|--------------|
 | User-table list and calculated result types | `TableCatalog` | `Invalidate`: every catalog write (create, drop or rewrite a table, add a catalog object), a rollback, a failed `UseTransactionalWrites` call and a failed commit. Each call also moves `TableCatalog.Generation` on. |
-| Insert-page hint and the set of owned maps it may extend | `DataPageInserter` | Restored to its state at `BeginTransactionAsync` on a rollback; the hint is forgotten after a commit that fails during replay. |
+| Insert-page hint | `DataPageInserter` | Restored to its state at `BeginTransactionAsync` on a rollback; forgotten after a commit that fails during replay. |
+| The TDEF pages whose owned-page maps the writer may extend, and those it found it may not | `CatalogOwnedMapPolicy` | Restored to their state at `BeginTransactionAsync` on a rollback. After a commit that fails during replay the writable set is restored and the refusals are forgotten. A table the writer creates drops a refusal for its TDEF page. |
 | Constraint lists, AutoNumber `NextAutoValue` and complex-reference counters | `ConstraintRegistry` | Re-registered by schema changes; restored on a rollback. A commit that fails during replay keeps them, so counters never move back over values that may be on disk. |
 | Enforced relationships, which every insert, update and delete checks | `RelationshipCatalogStore` | Every `MSysRelationships` write through the store (create, drop or rename a relationship, rename a key column), and whenever `TableCatalog.Generation` has moved on since the set was loaded, so a rollback or failed commit reloads it. |
 
 All of these are memory-only, so restoring or dropping them takes no lock
-beyond the leaf `insertPageHintLock`; the generation counters use `Interlocked`.
+beyond the leaf `insertPageHintLock` and `ownedMapSetsLock`; the generation
+counters use `Interlocked`.
 
 A writer opened by path holds the file with `FileShare.Read`, so no other
 process can open it for writing while the writer is open. A writer opened on a
@@ -301,8 +309,8 @@ same assumption.
 2. Never hold `IoGate`, or a `Pager.JournalGate` lease, when calling
    `ReadPageAsync` / `WritePageAsync` / `AppendPageAsync` — they take the gate
    themselves on their gated paths.
-3. Keep `insertPageHintLock`, `ownedDataPagesCacheLock`, `tdefBytesCacheLock` and `aesGate`
-   as leaf locks: pure in-memory work, no `await` and no other lock acquired while held.
+3. Keep `insertPageHintLock`, `ownedMapSetsLock`, `ownedDataPagesCacheLock`, `tdefBytesCacheLock`
+   and `aesGate` as leaf locks: pure in-memory work, no `await` and no other lock acquired while held.
 4. Per-page byte-range locks go **inside** `IoGate`, never the reverse.
 5. The cross-process locks (`LockFileCoordinator` slot, `ByteRangeLock`
    commit-lock) are lifetime- or transaction-scoped, not per-page; do not fold
