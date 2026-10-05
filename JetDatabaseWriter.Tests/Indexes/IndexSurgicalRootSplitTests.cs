@@ -166,7 +166,7 @@ public sealed class IndexSurgicalRootSplitTests
         IndexMetadata index = indexes.Single(i => i.Name == indexName);
         Assert.True(index.FirstDp > 0, "Index root page (first_dp) should be set.");
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
 

@@ -29,7 +29,7 @@ internal static class IndexLeafChain
     /// <returns>The leaf entries.</returns>
     public static async Task<List<IndexEntry>> ReadEntriesAsync(DatabaseFile db, long tdefPage, long rootPage, CancellationToken cancellationToken)
     {
-        var layout = IndexPageLayout.ForFormat(db.Format);
+        IndexPageLayout layout = db.Profile.IndexPage;
         long current = rootPage;
         for (int depth = 0; ; depth++)
         {
@@ -83,7 +83,7 @@ internal static class IndexLeafChain
     /// <returns>The tree's page numbers.</returns>
     public static async Task<HashSet<long>> ReadTreePagesAsync(DatabaseFile db, long tdefPage, long rootPage, CancellationToken cancellationToken)
     {
-        var layout = IndexPageLayout.ForFormat(db.Format);
+        IndexPageLayout layout = db.Profile.IndexPage;
         var pages = new HashSet<long>();
         var pending = new Stack<long>();
         pending.Push(rootPage);

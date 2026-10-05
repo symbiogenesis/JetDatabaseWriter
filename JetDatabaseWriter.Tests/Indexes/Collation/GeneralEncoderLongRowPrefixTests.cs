@@ -101,7 +101,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             ct);
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(TestDatabases.TestIndexCodesV2010, cancellationToken: ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
         IndexMetadata dataIndex = Assert.Single(indexes, candidateIndex =>
@@ -161,7 +161,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             ct);
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
 
         IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(tableName, ct);

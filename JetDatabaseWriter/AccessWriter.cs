@@ -230,7 +230,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            await writer.InitializeFreshDatabaseAsync(format, options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
+            await writer.InitializeFreshDatabaseAsync(options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -279,7 +279,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
         try
         {
-            await writer.InitializeFreshDatabaseAsync(format, options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
+            await writer.InitializeFreshDatabaseAsync(options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -760,14 +760,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// system-table TDEF slots, bootstraps the <c>MSysObjects</c> indexes, and
     /// scaffolds the remaining full-catalog system tables.
     /// </summary>
-    /// <param name="format">The database format.</param>
     /// <param name="fullCatalogSchema">Whether the full 17-column catalog schema is in use.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask InitializeFreshDatabaseAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
+    private async ValueTask InitializeFreshDatabaseAsync(bool fullCatalogSchema, CancellationToken cancellationToken)
     {
-        long coreSystemTableStartPage = await this.services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(format, fullCatalogSchema, cancellationToken).ConfigureAwait(false);
-        await this.services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(format, fullCatalogSchema, cancellationToken).ConfigureAwait(false);
-        await this.services.ComplexColumns.ScaffoldSystemTablesAsync(format, fullCatalogSchema, coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
+        long coreSystemTableStartPage = await this.services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(fullCatalogSchema, cancellationToken).ConfigureAwait(false);
+        await this.services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(fullCatalogSchema, cancellationToken).ConfigureAwait(false);
+        await this.services.ComplexColumns.ScaffoldSystemTablesAsync(fullCatalogSchema, coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
     }
 
     private ValueTask CreateLinkedOdbcTableCoreAsync(

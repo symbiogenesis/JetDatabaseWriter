@@ -323,7 +323,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
     {
         byte[] header = await ReadHeaderAsync(FixturePath(fixture));
 
-        Assert.Equal(format, EncryptionConverter.DetectFormat(header));
+        Assert.Equal(format, JetFormat.DetectFormat(header));
         Assert.False(EncryptionManager.HasHeaderPassword(header, format));
     }
 

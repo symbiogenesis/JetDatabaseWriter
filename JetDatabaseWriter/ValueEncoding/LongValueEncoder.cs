@@ -291,7 +291,7 @@ internal sealed class LongValueEncoder(DatabaseFile db, Pager pager, PageAllocat
             }
         }
 
-        if (!RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
+        if (!RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, page, rowBound.RowStart, rowBound.RowSize, hasVarColumns, out RowLayout layout))
         {
             return roots;
         }

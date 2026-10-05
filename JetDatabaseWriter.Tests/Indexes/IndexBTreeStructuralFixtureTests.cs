@@ -96,7 +96,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             ct);
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
 
         // The compIndex fixtures all have a "Table1" with a non-FK index
@@ -143,7 +143,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             ct);
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
 
         int btreesChecked = 0;
@@ -224,7 +224,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             ct);
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
 
         long fileLength = new FileInfo(fixturePath).Length;
@@ -341,7 +341,7 @@ public sealed class IndexBTreeStructuralFixtureTests
                 ct);
             await using ReaderHarness pages = await ReaderHarness.OpenAsync(temp, cancellationToken: ct);
 
-            var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+            IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
             int pageSize = reader.PageSize;
 
             DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);

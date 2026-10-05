@@ -34,7 +34,7 @@ internal static class ScalarColumnReader
             return string.Empty;
         }
 
-        if (!RowDecodePlan.TryParseRowLayout(format.Kind, format.RowFields, page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
+        if (!RowDecodePlan.TryParseRowLayout(format.RowFields, page, rowStart, rowSize, hasVarColumns: true, out RowLayout layout))
         {
             return string.Empty;
         }

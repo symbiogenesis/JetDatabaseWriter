@@ -595,13 +595,13 @@ internal static class IndexKeyEncoder
     /// <see cref="EncodeNumericEntryAtDeclaredScale"/> for <c>Numeric</c>
     /// columns) and the per-column blocks are concatenated.
     /// </summary>
-    /// <param name="format">Database format; selects the legacy Jet4 vs. ACE numeric encoding.</param>
+    /// <param name="format">The database's format profile; selects the legacy Jet4 vs. ACE numeric encoding (<see cref="JetFormat.LegacyNumericIndexKeys"/>).</param>
     /// <param name="tableName">Owning table name, used only in exception messages.</param>
     /// <param name="index">Index whose key columns drive the encoding order.</param>
     /// <param name="tableDef">Table definition supplying per-column type / scale metadata.</param>
     /// <param name="keyValues">Exactly one value per index key column.</param>
     /// <exception cref="ArgumentException">The value count does not equal the index key-column count.</exception>
-    public static byte[] EncodeIndexSeekKey(DatabaseFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues) =>
+    public static byte[] EncodeIndexSeekKey(JetFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues) =>
         EncodeIndexKey(format, tableName, index, tableDef, keyValues, requireFullKey: true, nameof(keyValues));
 
     /// <summary>
@@ -609,18 +609,18 @@ internal static class IndexKeyEncoder
     /// accepting between one and the index's key-column count values for range /
     /// prefix seeks. Encoding rules match <see cref="EncodeIndexSeekKey"/>.
     /// </summary>
-    /// <param name="format">Database format; selects the legacy Jet4 vs. ACE numeric encoding.</param>
+    /// <param name="format">The database's format profile; selects the legacy Jet4 vs. ACE numeric encoding (<see cref="JetFormat.LegacyNumericIndexKeys"/>).</param>
     /// <param name="tableName">Owning table name, used only in exception messages.</param>
     /// <param name="index">Index whose key columns drive the encoding order.</param>
     /// <param name="tableDef">Table definition supplying per-column type / scale metadata.</param>
     /// <param name="keyValues">One to N leading key-column values.</param>
     /// <param name="paramName">Originating caller parameter name, surfaced in argument-validation exceptions.</param>
     /// <exception cref="ArgumentException">The value count is zero or exceeds the index key-column count.</exception>
-    public static byte[] EncodeIndexKeyPrefix(DatabaseFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues, string paramName) =>
+    public static byte[] EncodeIndexKeyPrefix(JetFormat format, string tableName, IndexMetadata index, TableDef tableDef, IReadOnlyList<object?> keyValues, string paramName) =>
         EncodeIndexKey(format, tableName, index, tableDef, keyValues, requireFullKey: false, paramName);
 
     private static byte[] EncodeIndexKey(
-        DatabaseFormat format,
+        JetFormat format,
         string tableName,
         IndexMetadata index,
         TableDef tableDef,
@@ -644,7 +644,7 @@ internal static class IndexKeyEncoder
                 paramName);
         }
 
-        bool legacyNumeric = format == DatabaseFormat.Jet4Mdb;
+        bool legacyNumeric = format.LegacyNumericIndexKeys;
         byte[][] perColumn = new byte[keyValues.Count][];
         int totalLength = 0;
 

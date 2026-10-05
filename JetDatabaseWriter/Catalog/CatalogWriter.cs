@@ -505,7 +505,7 @@ internal sealed class CatalogWriter(
             return;
         }
 
-        if (db.Format != DatabaseFormat.Jet3Mdb)
+        if (!db.Profile.IsJet3)
         {
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes while {operation}.");
         }

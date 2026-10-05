@@ -569,7 +569,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         List<int>? leafBoundaryKeys,
         CancellationToken cancellationToken)
     {
-        var layout = IndexPageLayout.ForFormat(db.Format);
+        IndexPageLayout layout = db.Profile.IndexPage;
         int keyOrdinal = tableDef.FindColumnIndex(keyColumn);
         ColumnType keyType = tableDef.Columns[keyOrdinal].Type;
         var decodePlan = RowDecodePlan.CreatePartial(tableDef, [keyOrdinal]);

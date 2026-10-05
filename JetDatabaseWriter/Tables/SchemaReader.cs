@@ -147,7 +147,7 @@ internal sealed class SchemaReader(
             TotalRows = totalRows,
             TableRowCounts = tableRowCounts,
             PageCacheHitRate = pageCacheHitRate,
-            Version = db.Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE",
+            Version = db.Profile.VersionName,
             Format = db.Format,
             CodePage = db.CodePage,
         };

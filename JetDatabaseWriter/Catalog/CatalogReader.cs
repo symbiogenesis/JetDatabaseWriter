@@ -181,7 +181,7 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, Catalo
 
         StringBuilder diag = new StringBuilder()
             .Append("JET: ")
-            .Append(db.Format == DatabaseFormat.Jet3Mdb ? "Jet3" : "Jet4/ACE")
+            .Append(db.Profile.VersionName)
             .Append("  PageSize: ")
             .Append(db.PageSizeBytes)
             .Append("  TotalPages: ")

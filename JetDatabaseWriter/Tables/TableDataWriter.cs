@@ -684,7 +684,7 @@ internal sealed class TableDataWriter(
     /// <exception cref="JetLimitationException">A Text or Memo value holds a character the database's code page does not have.</exception>
     private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row)
     {
-        if (db.Format != DatabaseFormat.Jet3Mdb)
+        if (!db.Profile.IsJet3)
         {
             return;
         }

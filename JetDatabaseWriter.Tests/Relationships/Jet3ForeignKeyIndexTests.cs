@@ -115,7 +115,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         TDefIndexSection parent = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection child = await this.ReadIndexSectionAsync(stream, Child);
-        var layout = IndexLayout.For(DatabaseFormat.Jet3Mdb);
+        IndexLayout layout = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).Index;
 
         // Names in case-insensitive order, each a 1-byte length and ANSI.
         Assert.Equal([".rB", ".rC", "id", "PrimaryKey"], parent.Names);

@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Schema.Models;
 
 using System;
 using System.Collections.Generic;
-using System.Text;
 using JetDatabaseWriter.Enums;
 
 /// <summary>
@@ -53,9 +52,7 @@ internal sealed record ColumnPropertyTarget(
             return null;
         }
 
-        return format == DatabaseFormat.Jet3Mdb
-            ? Encoding.GetEncoding(1252).GetString(entry.Value)
-            : Encoding.Unicode.GetString(entry.Value);
+        return JetFormat.PropertyTextEncodingOf(format).GetString(entry.Value);
     }
 
     /// <summary>

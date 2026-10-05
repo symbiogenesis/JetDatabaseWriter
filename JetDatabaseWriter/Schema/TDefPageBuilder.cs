@@ -27,40 +27,40 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
     /// <summary>
     /// Checks that <paramref name="format"/> can hold <paramref name="definition"/>
     /// and returns the column type it is stored as: calculated, Large Number,
-    /// Date/Time Extended, Attachment and multi-value columns need ACCDB, a
-    /// calculated column needs an expression, a supported result type and no
-    /// AutoNumber, Attachment, multi-value or Hyperlink flag, a Hyperlink
-    /// column must be a Memo, and a decimal column on Jet3, which has no
-    /// Decimal type, is stored as Currency
+    /// Date/Time Extended, Attachment and multi-value columns need a format
+    /// whose capability flag allows them (ACCDB), a calculated column needs an
+    /// expression, a supported result type and no AutoNumber, Attachment,
+    /// multi-value or Hyperlink flag, a Hyperlink column must be a Memo, and a
+    /// decimal column on a format without Numeric (Jet3) is stored as Currency
     /// (<see cref="JetTypeInfo.ResolveStorageType"/>). The expression itself
     /// is not parsed here. Every <see cref="ArgumentException"/> it throws
     /// carries <paramref name="paramName"/>, so <c>CreateTableAsync</c> reports
     /// <c>columns</c> and <c>AddColumnAsync</c> reports <c>column</c>.
     /// </summary>
     /// <param name="definition">The column definition.</param>
-    /// <param name="format">The database format.</param>
+    /// <param name="format">The database's format profile.</param>
     /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column's type code.</returns>
     /// <exception cref="NotSupportedException">The format cannot hold the column, including a Jet3 decimal column whose precision or scale Currency cannot hold.</exception>
     /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, a Hyperlink column is not a Memo, or (<see cref="ArgumentOutOfRangeException"/>) the precision or scale of a decimal column, or of a multi-value column's decimal items, is out of range.</exception>
-    internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, DatabaseFormat format, string paramName)
+    internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, JetFormat format, string paramName)
     {
         ValidateCalculatedColumn(definition, format, paramName);
         ColumnType type = ResolveStorageType(definition, TypeCodeFromDefinition(definition, paramName), format, paramName);
 
-        if (type == BigIntType && format != DatabaseFormat.AceAccdb)
+        if (type == BigIntType && !format.SupportsBigInt)
         {
             throw new NotSupportedException(
                 $"Column '{definition.Name}': Int64/Large Number columns are only supported in ACCDB databases.");
         }
 
-        if (type == DateTimeExtendedType && format != DatabaseFormat.AceAccdb)
+        if (type == DateTimeExtendedType && !format.SupportsDateTimeExtended)
         {
             throw new NotSupportedException(
                 $"Column '{definition.Name}': Date/Time Extended columns are only supported in ACCDB databases.");
         }
 
-        if (type is ComplexType or AttachmentType && format != DatabaseFormat.AceAccdb)
+        if (type is ComplexType or AttachmentType && !format.SupportsComplexColumns)
         {
             throw new NotSupportedException(
                 $"Column '{definition.Name}': Attachment and multi-value columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
@@ -88,7 +88,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         return type;
     }
 
-    internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, DatabaseFormat format)
+    internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, JetFormat format)
     {
         var result = new TableDef();
         int fixedOffset = 0;
@@ -197,7 +197,8 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         byte[] page = new byte[logicalCapacity];
         int numCols = tableDef.Columns.Count;
         int numIdx = indexes.Count;
-        bool jet4 = db.Format != DatabaseFormat.Jet3Mdb;
+        bool jet4 = !db.Profile.IsJet3;
+        bool formatMagic = db.Profile.WritesTDefFormatMagic;
         int numRealIdx = numIdx;
 
         int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
@@ -224,7 +225,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             }
 
             page[o + db.ColumnDescriptor.TypeOff] = (byte)col.Type;
-            if (jet4)
+            if (formatMagic)
             {
                 Wi32(page, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
             }
@@ -251,7 +252,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             {
                 Wi32(page, o + db.ColumnDescriptor.MiscOff, col.Misc);
             }
-            else if (col.Type == NumericType && db.Format != DatabaseFormat.Jet3Mdb)
+            else if (col.Type == NumericType && db.Profile.SupportsNumeric)
             {
                 // Jet3 has no Numeric type: a decimal column there is created as
                 // Currency, and a Jet3 Numeric column an earlier build wrote keeps
@@ -346,7 +347,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             {
                 ResolvedIndex ri = indexes[i];
                 int phys = db.IndexLayoutInfo.RealIdxPhysOffset(realIdxPhysStart, i);
-                if (jet4)
+                if (formatMagic)
                 {
                     Wi32(page, phys, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
                 }
@@ -397,7 +398,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
                 firstDpOffsets[i] = db.IndexLayoutInfo.FirstDpAbsoluteOffset(phys);
 
                 int log = db.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, i);
-                if (jet4)
+                if (formatMagic)
                 {
                     Wi32(page, log - db.IndexLayoutInfo.LogicalEntryFieldsOffset, Constants.TableDefinition.Jet4.FormatMagic);
                 }
@@ -464,9 +465,13 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         }
 
         Wi32(page, 8, Math.Max(0, namePos - 8));
-        if (jet4)
+        if (formatMagic)
         {
             Wi32(page, 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
+        }
+
+        if (db.Profile.WritesTDefFreeSpace)
+        {
             int tdefLen = Math.Max(0, namePos - 8);
             Wu16(page, 2, Math.Max(0, db.PageSizeBytes - tdefLen - 8));
         }
@@ -604,10 +609,11 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
     /// Access across all Jet/ACE versions). When <see langword="false"/>, the
     /// historical 9-column slim schema is written instead.
     /// </param>
-    /// <exception cref="NotImplementedException">Thrown when an unsupported database format is specified.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="format"/> is not a defined format.</exception>
     internal static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
     {
-        int pgSz = JetFormat.PageSizeOf(format);
+        var profile = JetFormat.ForNewDatabase(format);
+        int pgSz = profile.PageSize;
         byte[] db = new byte[pgSz * 3];
 
         db[0] = 0x00;
@@ -615,23 +621,13 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         db[2] = 0x00;
         db[3] = 0x00;
 
-        byte[] magic = format == DatabaseFormat.AceAccdb
-            ? Encoding.ASCII.GetBytes("Standard ACE DB\0")
-            : Encoding.ASCII.GetBytes("Standard Jet DB\0");
-        Buffer.BlockCopy(magic, 0, db, 4, magic.Length);
+        profile.HeaderSignature.CopyTo(db.AsSpan(4));
+        db[0x14] = profile.NewDatabaseVersion;
 
-        db[0x14] = format switch
-        {
-            DatabaseFormat.Jet3Mdb => 0x00,
-            DatabaseFormat.Jet4Mdb => 0x01,
-            DatabaseFormat.AceAccdb => 0x02,
-            _ => throw new NotImplementedException($"Unsupported database format: {format}"),
-        };
+        BuildGlobalUsageMapPage(db, pgSz, profile);
+        BuildMSysObjectsTDef(db, pgSz * 2, profile, fullCatalogSchema);
 
-        BuildGlobalUsageMapPage(db, pgSz, format);
-        BuildMSysObjectsTDef(db, pgSz * 2, format, fullCatalogSchema);
-
-        if (format == DatabaseFormat.Jet3Mdb)
+        if (profile.IsJet3)
         {
             WriteJet3HeaderDefaults(db);
         }
@@ -695,9 +691,9 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         db[0x9E] = (byte)'0';
     }
 
-    private static void BuildGlobalUsageMapPage(byte[] db, int pgSz, DatabaseFormat format)
+    private static void BuildGlobalUsageMapPage(byte[] db, int pgSz, JetFormat format)
     {
-        var dataPage = DataPageLayout.For(format);
+        DataPageLayout dataPage = format.DataPage;
         int pageOffset = pgSz;
         int rowStart = pgSz - 69;
         int row1Start = rowStart - 69;
@@ -716,7 +712,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         Wi32(db, pageOffset + row1Start + 1, 0);
     }
 
-    private static int GetDeclaredSize(ColumnType type, int maxLength, DatabaseFormat format)
+    private static int GetDeclaredSize(ColumnType type, int maxLength, JetFormat format)
         => type switch
         {
             BooleanType => 0,
@@ -739,15 +735,11 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             _ => 0,
         };
 
-    private static int GetTextDeclaredSize(int maxLength, DatabaseFormat format)
+    private static int GetTextDeclaredSize(int maxLength, JetFormat format)
     {
+        // Jet3 stores a character per byte in the code page, Jet4 and ACE two (UTF-16).
         int effectiveLength = maxLength > 0 ? maxLength : 255;
-        return format switch
-        {
-            DatabaseFormat.Jet3Mdb => effectiveLength,
-            DatabaseFormat.Jet4Mdb or DatabaseFormat.AceAccdb => Math.Max(2, effectiveLength * 2),
-            _ => throw new NotSupportedException($"Unknown database format: {format}"),
-        };
+        return format.IsJet3 ? effectiveLength : Math.Max(2, effectiveLength * 2);
     }
 
     private static int GetCalculatedDeclaredSize(ColumnType type, int declaredSize)
@@ -765,23 +757,23 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         return Constants.CalculatedColumn.FixedFieldLen;
     }
 
-    private static byte GetExtraFlags(ColumnDefinition definition, ColumnType type, DatabaseFormat format)
+    private static byte GetExtraFlags(ColumnDefinition definition, ColumnType type, JetFormat format)
     {
         if (definition.IsCalculated)
         {
             return Constants.CalculatedColumn.ExtFlagMask;
         }
 
-        return (format != DatabaseFormat.Jet3Mdb && (type == TextType || type == MemoType) && definition.IsCompressedUnicode)
+        return (!format.IsJet3 && (type == TextType || type == MemoType) && definition.IsCompressedUnicode)
             ? Constants.CompressedUnicodeExtFlagMask
             : (byte)0;
     }
 
-    private static void BuildMSysObjectsTDef(byte[] db, int offset, DatabaseFormat format, bool fullCatalogSchema)
+    private static void BuildMSysObjectsTDef(byte[] db, int offset, JetFormat format, bool fullCatalogSchema)
     {
-        bool isJet3 = format == DatabaseFormat.Jet3Mdb;
-        var tdef = TDefHeaderLayout.For(format);
-        var descriptor = ColumnDescriptorLayout.For(format);
+        bool isJet3 = format.IsJet3;
+        TDefHeaderLayout tdef = format.TDef;
+        ColumnDescriptorLayout descriptor = format.ColumnDescriptor;
         int textColSize = isJet3 ? 255 : 510;
 
         BootstrapColumnDescriptor[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
@@ -813,7 +805,7 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
             int o = colStart + (i * descriptor.Size);
 
             db[o + descriptor.TypeOff] = (byte)col.Type;
-            if (!isJet3)
+            if (format.WritesTDefFormatMagic)
             {
                 Wi32(db, o + 1, Constants.TableDefinition.Jet4.FormatMagic);
             }
@@ -849,12 +841,15 @@ internal sealed class TDefPageBuilder(DatabaseFile db, Pager pager)
         }
 
         Wi32(db, offset + 8, Math.Max(0, namePos - offset - 8));
-        if (!isJet3)
+        if (format.WritesTDefFormatMagic)
         {
             Wi32(db, offset + 0x0C, Constants.TableDefinition.Jet4.FormatMagic);
+        }
+
+        if (format.WritesTDefFreeSpace)
+        {
             int tdefLen = Math.Max(0, namePos - offset - 8);
-            int pgSz = JetFormat.PageSizeOf(format);
-            Wu16(db, offset + 2, Math.Max(0, pgSz - tdefLen - 8));
+            Wu16(db, offset + 2, Math.Max(0, format.PageSize - tdefLen - 8));
         }
     }
 

@@ -32,7 +32,7 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
     [InlineData(DatabaseFormat.AceAccdb)]
     public void WriteRealIdxDescriptor_RoundTripsThroughTryReadRealIdxSlotWithKeyColumns(DatabaseFormat format)
     {
-        var layout = IndexLayout.For(format);
+        IndexLayout layout = JetFormat.ForNewDatabase(format).Index;
         const int descStart = 17;
         byte[] td = new byte[descStart + (3 * layout.RealIdxPhysSize)];
         td.AsSpan().Fill(0xCC);
@@ -55,7 +55,7 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
     [Fact]
     public void WriteRealIdxDescriptor_MoreColumnsThanColMapHolds_Throws()
     {
-        var layout = IndexLayout.For(DatabaseFormat.Jet4Mdb);
+        IndexLayout layout = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb).Index;
         byte[] td = new byte[layout.RealIdxPhysSize];
 
         Assert.Throws<ArgumentException>(() => layout.WriteRealIdxDescriptor(td, 0, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0, 1));
@@ -67,7 +67,7 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
     [InlineData(DatabaseFormat.AceAccdb)]
     public void WriteLogicalEntry_RoundTripsThroughTryReadLogicalEntry(DatabaseFormat format)
     {
-        var layout = IndexLayout.For(format);
+        IndexLayout layout = JetFormat.ForNewDatabase(format).Index;
         const int logStart = 9;
         byte[] td = new byte[logStart + (3 * layout.LogicalEntrySize)];
         td.AsSpan().Fill(0xCC);

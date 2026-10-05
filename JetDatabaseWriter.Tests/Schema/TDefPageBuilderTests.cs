@@ -16,7 +16,7 @@ public sealed class TDefPageBuilderTests
     {
         TableDef tableDef = TDefPageBuilder.BuildTableDefinition(
             [new ColumnDefinition("ExtendedAt", typeof(DateTime)) { IsDateTimeExtended = true }],
-            DatabaseFormat.AceAccdb);
+            JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
 
         ColumnInfo column = Assert.Single(tableDef.Columns);
         Assert.Equal(DateTimeExtendedType, column.Type);

@@ -370,7 +370,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
             return null;
         }
 
-        var cursor = new IndexCursor(IndexPageLayout.ForFormat(db.Format), db.ReadPageCopyAsync, db.PageSizeBytes);
+        var cursor = new IndexCursor(db.Profile.IndexPage, db.ReadPageCopyAsync, db.PageSizeBytes);
         IndexEntry? last = await cursor.TryReadLastEntryAsync(index.FirstDp, cancellationToken).ConfigureAwait(false);
         if (last is null)
         {

@@ -195,8 +195,7 @@ internal sealed class ColumnPropertyBlockBuilder
             return null;
         }
 
-        bool isJet3 = format == DatabaseFormat.Jet3Mdb;
-        Encoding stringEncoding = isJet3 ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        Encoding stringEncoding = JetFormat.PropertyTextEncodingOf(format);
 
         // Build the name pool from every distinct entry name encountered, in stable
         // first-seen order. The parser indexes by uint16 so we cap at 65,535 names entries.
@@ -238,7 +237,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
         byte[] blob = new byte[totalLength];
         int offset = 0;
-        WriteMagic(blob, ref offset, isJet3);
+        WriteUInt32(blob, ref offset, JetFormat.PropertyBlockMagicOf(format));
 
         // Name-pool chunk (always first; mdbtools requires it before property blocks).
         WriteChunk(blob, ref offset, ColumnPropertyChunkType.NamePool, namePoolPayload);
@@ -377,12 +376,6 @@ internal sealed class ColumnPropertyBlockBuilder
         }
 
         return chunkLength;
-    }
-
-    private static void WriteMagic(byte[] blob, ref int offset, bool isJet3)
-    {
-        ReadOnlySpan<byte> magic = isJet3 ? "KKD\0"u8 : "MR2\0"u8;
-        WriteBytes(blob, ref offset, magic);
     }
 
     private static void WriteLengthPrefixedEncodedString(

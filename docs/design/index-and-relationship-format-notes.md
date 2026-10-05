@@ -540,7 +540,7 @@ Self-referential bulk inserts: `AugmentParentSetsAfterInsert` records the key of
 
 W16 fallback triggers (drop back to the W10 HashSet path):
 
-- `_format == DatabaseFormat.Jet3Mdb` (Jet3 user/PK index emission exists, but relationship seek enforcement remains gated off for Jet3 and falls back to snapshot validation).
+- `JetFormat.SupportsIndexSeeks` is false, as on Jet3 (Jet3 user/PK index emission exists, but relationship seek enforcement remains gated off for Jet3 and falls back to snapshot validation).
 - Parent table missing from the user-table catalog. The HashSet path resolves the parent again with the system-table fallback, and throws when it is not found there either (below).
 - No real-idx slot covers `rel.PrimaryColumns` exactly (sharing per §3.3 is honoured — a non-FK user index over the same columns is acceptable).
 - `first_dp == 0` (the W3 placeholder before the first MaintainIndexes pass).
@@ -710,7 +710,7 @@ CRITICAL implementation note (regression seen during dev):
 
 Falls back to the legacy O(N) child snapshot when:
 
-- `db.Format == DatabaseFormat.Jet3Mdb` — `RelationshipSeekPlanner` does not seek on Jet3. The FK-side real index has been emitted on Jet3 too since 2026-10 (§7.19), but seeking on Jet3 has not been enabled or tested.
+- `JetFormat.SupportsIndexSeeks` is false (Jet3) — `RelationshipSeekPlanner` does not seek on Jet3. The FK-side real index has been emitted on Jet3 too since 2026-10 (§7.19), but seeking on Jet3 has not been enabled or tested.
 - No covering child real-idx exists (e.g. relationship over a non-PK column where W9b's slot was reclaimed).
 - The encoder rejects any FK key component (Numeric overflow, etc.).
 - A child row contains LVAL columns the single-row reader cannot decode.

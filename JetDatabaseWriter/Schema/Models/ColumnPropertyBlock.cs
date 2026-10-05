@@ -21,12 +21,12 @@ internal sealed class ColumnPropertyBlock
     /// <summary>
     /// &quot;MR2\0&quot; little-endian.
     /// </summary>
-    private const uint MagicMr2 = 0x0032524D;
+    internal const uint MagicMr2 = 0x0032524D;
 
     /// <summary>
     /// &quot;KKD\0&quot; little-endian.
     /// </summary>
-    private const uint MagicKkd = 0x00444B4B;
+    internal const uint MagicKkd = 0x00444B4B;
 
     /// <summary>Gets the database format the blob was parsed against.</summary>
     public DatabaseFormat Format { get; private init; }

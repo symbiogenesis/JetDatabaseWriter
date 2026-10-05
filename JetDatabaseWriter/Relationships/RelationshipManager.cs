@@ -274,7 +274,7 @@ internal sealed class RelationshipManager(
         // logical-idx number. rel_idx_num cross-references the partner
         // logical-idx number, not the partner physical real-idx slot. On Jet3
         // the parent shares a unique covering real index, as Access 97 does.
-        bool jet3 = this.db.Format == DatabaseFormat.Jet3Mdb;
+        bool jet3 = this.db.Profile.IsJet3;
         FkSidePlan pkPlan;
         FkSidePlan fkPlan;
         List<string> pkExistingNames;
@@ -372,7 +372,7 @@ internal sealed class RelationshipManager(
     private async ValueTask<long> AllocateEmptyFkLeafAsync(long tdefPage, ReservedPageRuns runs, CancellationToken cancellationToken)
     {
         byte[] leaf = IndexPageCodec.BuildLeafPage(
-            IndexPageLayout.ForFormat(this.db.Format),
+            this.db.Profile.IndexPage,
             this.db.PageSizeBytes,
             tdefPage,
             [],
@@ -443,7 +443,7 @@ internal sealed class RelationshipManager(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
-        int pkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, pkColumnNumbers, in layout, preferUnique: this.db.Format == DatabaseFormat.Jet3Mdb);
+        int pkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, pkColumnNumbers, in layout, preferUnique: this.db.Profile.IsJet3);
         int fkSharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, fkColumnNumbers, in layout, preferUnique: false);
         int nextRealIdxNum = layout.NumRealIdx;
 
@@ -594,7 +594,7 @@ internal sealed class RelationshipManager(
                 newTd,
                 newRealIdxDescStart + oldRealIdxPhysLen,
                 columnNumbers,
-                this.db.Format == DatabaseFormat.Jet3Mdb ? (byte)0 : Constants.TableDefinition.UnknownIndexFlag,
+                this.db.Profile.IsJet3 ? (byte)0 : Constants.TableDefinition.UnknownIndexFlag,
                 sidePlan.NewLeafPageNumber);
         }
 
@@ -700,7 +700,7 @@ internal sealed class RelationshipManager(
     /// <returns>The position, from 0 to <c>existingNames.Count</c>.</returns>
     private int FkEntryInsertPosition(List<string> existingNames, string indexName)
     {
-        if (this.db.Format != DatabaseFormat.Jet3Mdb)
+        if (!this.db.Profile.IsJet3)
         {
             return 0;
         }
@@ -1018,7 +1018,7 @@ internal sealed class RelationshipManager(
 
             // A parent-side entry on Jet3 shares a unique covering real index,
             // as in CreateRelationshipAsync.
-            bool preferUnique = this.db.Format == DatabaseFormat.Jet3Mdb
+            bool preferUnique = this.db.Profile.IsJet3
                 && entry.RelTblType == Constants.TableDefinition.ParentRelationshipTableType;
             (FkSidePlan plan, List<string> existingNames) = await this.PrepareFkSideAsync(targetTdefPage, columnNumbers[i], preferUnique, cancellationToken).ConfigureAwait(false);
             plan = plan with { LogicalIdxNum = newIndexNumbers[entry.IndexNumber] };
@@ -2097,7 +2097,7 @@ internal sealed class RelationshipManager(
 
         // Jet3 keeps entries and names in name order, so the renamed entry
         // moves to its new name's position.
-        if (this.db.Format == DatabaseFormat.Jet3Mdb
+        if (this.db.Profile.IsJet3
             && !this.TryMoveLogicalIdxEntryToNameOrder(td, in layout, matchEntryIdx))
         {
             return false;
@@ -2191,7 +2191,7 @@ internal sealed class RelationshipManager(
             this.pageAllocator.AllocatePageAsync,
             this.pager.WritePageAsync,
             this.pageAllocator.DeallocatePageAsync,
-            writeFreeSpace: this.db.Format != DatabaseFormat.Jet3Mdb,
+            writeFreeSpace: this.db.Profile.WritesTDefFreeSpace,
             cancellationToken);
 
     /// <summary>

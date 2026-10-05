@@ -2,10 +2,13 @@ namespace JetDatabaseWriter.Tests.Pages;
 
 using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -14,7 +17,9 @@ using Xunit;
 /// database file builds from its header: the format, the page size, the code
 /// page and the per-format byte layouts, spelled out here from mdbtools
 /// HACKING.md and Jackcess <c>JetFormat</c> rather than read back from the
-/// layout structs, plus the text and name codecs that depend on them.
+/// layout structs, the capability flags and per-format values code asks it
+/// for instead of comparing formats, and the text and name codecs that
+/// depend on them.
 /// </summary>
 public sealed class JetFormatTests
 {
@@ -54,8 +59,98 @@ public sealed class JetFormatTests
         Assert.Equal(tdefBlockEnd, format.TDef.BlockEnd);
         Assert.Equal(columnDescriptorSize, format.ColumnDescriptor.Size);
         Assert.Equal(rowColumnCountSize, format.RowFields.NumCols);
-        Assert.Equal(kind, format.Index.Format);
+        Assert.Equal(kind == DatabaseFormat.Jet3Mdb, format.RowFields.HasJumpTable);
+        Assert.Equal(kind == DatabaseFormat.AceAccdb ? 28 : -1, format.TDef.ComplexAutoNumber);
+        Assert.Equal(kind == DatabaseFormat.Jet3Mdb ? 39 : 52, format.Index.RealIdxPhysSize);
         Assert.Equal(kind == DatabaseFormat.Jet3Mdb ? 0x16 : 0x1B, format.IndexPage.BitmaskOffset);
+    }
+
+    /// <summary>
+    /// Pins every capability flag of each format: the facts library code asks
+    /// the profile instead of comparing formats. The column types and features
+    /// each format stores, Jet4's legacy Numeric index keys, the TDEF format
+    /// magic and free-space word the writer stamps only on Jet4 and ACE, and
+    /// index seeks, which Jet3 lacks until its General 97 text keys are right.
+    /// A flag added to the profile appears here and needs its rows updated.
+    /// </summary>
+    /// <param name="kind">The database format.</param>
+    /// <param name="expectedTrueFlags">The profile's flags that are true, in name order.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "IsJet3")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "LegacyNumericIndexKeys SupportsIndexSeeks SupportsNumeric WritesTDefFormatMagic WritesTDefFreeSpace")]
+    [InlineData(DatabaseFormat.AceAccdb, "SupportsBigInt SupportsCalculatedColumns SupportsComplexColumns SupportsDateTimeExtended SupportsIndexSeeks SupportsNumeric WritesTDefFormatMagic WritesTDefFreeSpace")]
+    public void CapabilityFlags_MatchFormat(DatabaseFormat kind, string expectedTrueFlags)
+        => Assert.Equal(expectedTrueFlags, TrueFlags(JetFormat.ForNewDatabase(kind)));
+
+    /// <summary>
+    /// Pins the per-format values the profile answers: the version name the
+    /// statistics and diagnostics print, the commit-lock offset, the header
+    /// signature and version byte of a new database (which the profile's
+    /// <see cref="JetFormat.DetectFormat"/> reads back), and the text encoding
+    /// and magic of an <c>LvProp</c> property block.
+    /// </summary>
+    /// <param name="kind">The database format.</param>
+    /// <param name="versionName">The expected version name.</param>
+    /// <param name="commitLockOffset">The expected commit-lock offset.</param>
+    /// <param name="headerSignature">The expected signature at header offset 4, without its NUL.</param>
+    /// <param name="newDatabaseVersion">The expected version byte at header offset 0x14 of a new database.</param>
+    /// <param name="propertyTextCodePage">The expected code page of property-block text.</param>
+    /// <param name="propertyBlockMagic">The expected property-block magic.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, "Jet3", 0xFFFFFFFEL, "Standard Jet DB", 0, 1252, 0x00444B4BU)]
+    [InlineData(DatabaseFormat.Jet4Mdb, "Jet4/ACE", 0xFFFFFFFEL, "Standard Jet DB", 1, 1200, 0x0032524DU)]
+    [InlineData(DatabaseFormat.AceAccdb, "Jet4/ACE", 0xFFFFFFFCL, "Standard ACE DB", 2, 1200, 0x0032524DU)]
+    public void Values_MatchFormat(
+        DatabaseFormat kind,
+        string versionName,
+        long commitLockOffset,
+        string headerSignature,
+        int newDatabaseVersion,
+        int propertyTextCodePage,
+        uint propertyBlockMagic)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+
+        Assert.Equal(versionName, format.VersionName);
+        Assert.Equal(commitLockOffset, format.CommitLockOffset);
+        Assert.Equal(Encoding.ASCII.GetBytes(headerSignature + "\0"), format.HeaderSignature.ToArray());
+        Assert.Equal(newDatabaseVersion, format.NewDatabaseVersion);
+        Assert.Equal(kind, JetFormat.DetectFormat(TDefPageBuilder.BuildEmptyDatabase(kind, fullCatalogSchema: true)));
+        Assert.Equal(propertyTextCodePage, JetFormat.PropertyTextEncodingOf(kind).CodePage);
+        Assert.Equal(propertyBlockMagic, JetFormat.PropertyBlockMagicOf(kind));
+    }
+
+    /// <summary>
+    /// The format comes from the version byte at header offset 0x14: 0 is
+    /// Jet3, 1 is Jet4, and every later version, which Access 2007 and later
+    /// write, is ACE.
+    /// </summary>
+    /// <param name="version">The version byte.</param>
+    /// <param name="expected">The expected format.</param>
+    [Theory]
+    [InlineData(0x00, DatabaseFormat.Jet3Mdb)]
+    [InlineData(0x01, DatabaseFormat.Jet4Mdb)]
+    [InlineData(0x02, DatabaseFormat.AceAccdb)]
+    [InlineData(0x03, DatabaseFormat.AceAccdb)]
+    [InlineData(0x05, DatabaseFormat.AceAccdb)]
+    public void DetectFormat_ReadsTheVersionByte(int version, DatabaseFormat expected)
+    {
+        byte[] header = new byte[Constants.DatabaseHeader.Length];
+        header[0x14] = (byte)version;
+
+        Assert.Equal(expected, JetFormat.DetectFormat(header));
+    }
+
+    /// <summary>
+    /// A value outside the enum gets no profile, so <c>CreateDatabaseAsync</c>
+    /// refuses it, naming its parameter, before it writes anything.
+    /// </summary>
+    [Fact]
+    public void ForNewDatabase_UndefinedFormat_Throws()
+    {
+        ArgumentOutOfRangeException ex = Assert.Throws<ArgumentOutOfRangeException>(() => JetFormat.ForNewDatabase((DatabaseFormat)3));
+
+        Assert.Equal("format", ex.ParamName);
     }
 
     [Theory]
@@ -94,7 +189,7 @@ public sealed class JetFormatTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void TextCodec_MatchesFormat(DatabaseFormat kind)
     {
-        var format = JetFormat.For(kind);
+        var format = JetFormat.ForNewDatabase(kind);
 
         byte[] encoded = format.EncodeText(SampleText);
         byte[] expected = kind == DatabaseFormat.Jet3Mdb ? SampleAnsiBytes : [0xFF, 0xFE, .. SampleAnsiBytes];
@@ -111,12 +206,12 @@ public sealed class JetFormatTests
     [Fact]
     public void TextCodec_Jet3_RefusesCharacterOutsideCodePage()
     {
-        var jet3 = JetFormat.For(DatabaseFormat.Jet3Mdb);
+        var jet3 = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb);
 
         Assert.Null(jet3.DescribeUnstorableCharacter(SampleText));
         Assert.Equal("'中' (U+4E2D)", jet3.DescribeUnstorableCharacter("x中"));
         _ = Assert.Throws<EncoderFallbackException>(() => jet3.EncodeAnsiText("中"));
-        Assert.Null(JetFormat.For(DatabaseFormat.AceAccdb).DescribeUnstorableCharacter("x中"));
+        Assert.Null(JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb).DescribeUnstorableCharacter("x中"));
     }
 
     [Theory]
@@ -125,7 +220,7 @@ public sealed class JetFormatTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void ReadColumnName_ReadsJet3AndJet4Names(DatabaseFormat kind)
     {
-        var format = JetFormat.For(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         byte[] record = format.EncodeTDefNameRecord(SampleText);
         int prefix = kind == DatabaseFormat.Jet3Mdb ? 1 : 2;
         int payload = kind == DatabaseFormat.Jet3Mdb ? SampleAnsiBytes.Length : SampleText.Length * 2;
@@ -149,13 +244,13 @@ public sealed class JetFormatTests
     [InlineData("Jet3Test")]
     [InlineData("AdventureLT2008")]
     [InlineData("NorthwindTraders")]
-    public async Task For_MatchesFromHeaderLayouts(string fixture)
+    public async Task ForNewDatabase_MatchesFromHeaderLayoutsAndFlags(string fixture)
     {
         var fromHeader = JetFormat.FromHeader(await ReadHeaderAsync(fixture));
-        var forFormat = JetFormat.For(fromHeader.Kind);
+        var forFormat = JetFormat.ForNewDatabase(fromHeader.Kind);
 
         Assert.Equal(fromHeader.Kind, forFormat.Kind);
-        Assert.Equal(fromHeader.IsJet3, forFormat.IsJet3);
+        Assert.Equal(TrueFlags(fromHeader), TrueFlags(forFormat));
         Assert.Equal(fromHeader.PageSize, forFormat.PageSize);
         Assert.Equal(JetFormat.PageSizeOf(fromHeader.Kind), forFormat.PageSize);
         Assert.Equal(1252, forFormat.CodePage);
@@ -212,6 +307,20 @@ public sealed class JetFormatTests
         Assert.Equal(SampleText, db.DecodeTextForFormat(text, 0, text.Length));
         Assert.Equal(string.Empty, db.DecodeTextForFormat(text, 0, 0));
     }
+
+    /// <summary>
+    /// Lists the names of the profile's <see cref="bool"/> properties that are
+    /// true, in name order, read by reflection so a new flag cannot be missed.
+    /// </summary>
+    /// <param name="format">The profile.</param>
+    /// <returns>The names, separated by spaces.</returns>
+    private static string TrueFlags(JetFormat format)
+        => string.Join(
+            ' ',
+            typeof(JetFormat).GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(property => property.PropertyType == typeof(bool) && property.GetValue(format) is true)
+                .Select(static property => property.Name)
+                .OrderBy(static name => name, StringComparer.Ordinal));
 
     private static async ValueTask<byte[]> ReadHeaderAsync(string fixture)
     {

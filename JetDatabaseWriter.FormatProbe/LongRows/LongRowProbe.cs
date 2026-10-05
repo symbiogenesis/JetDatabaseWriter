@@ -65,7 +65,7 @@ internal static class LongRowProbe
         await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
         IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
 

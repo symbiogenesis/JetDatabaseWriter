@@ -509,8 +509,8 @@ public sealed class Jet3LongRowTests
         byte[] page = new byte[Jet3PageSize];
         int rowStart = Jet3PageSize - row.Length;
         row.CopyTo(page, rowStart);
-        var rowFields = RowFieldSizes.For(DatabaseFormat.Jet3Mdb);
-        Assert.True(RowDecodePlan.TryParseRowLayout(DatabaseFormat.Jet3Mdb, rowFields, page, rowStart, row.Length, tableDef.HasVarColumns, out RowLayout layout));
+        RowFieldSizes rowFields = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).RowFields;
+        Assert.True(RowDecodePlan.TryParseRowLayout(rowFields, page, rowStart, row.Length, tableDef.HasVarColumns, out RowLayout layout));
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(rowFields, page, rowStart, row.Length, layout, tableDef.Columns[i]);

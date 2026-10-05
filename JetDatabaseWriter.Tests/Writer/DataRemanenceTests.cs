@@ -411,7 +411,7 @@ public sealed class DataRemanenceTests
     private static List<RowSnapshot> FindRowsContaining(byte[] fileBytes, DatabaseFormat format, byte[] marker, bool liveOnly)
     {
         int pageSize = PageSizeOf(format);
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         int pageCount = fileBytes.Length / pageSize;
         var matches = new List<RowSnapshot>();
 
@@ -452,7 +452,7 @@ public sealed class DataRemanenceTests
     private static RowSnapshot ReadRowSnapshot(byte[] fileBytes, DatabaseFormat format, int pageNumber, int rowIndex)
     {
         int pageSize = PageSizeOf(format);
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         ReadOnlySpan<byte> page = fileBytes.AsSpan(pageNumber * pageSize, pageSize);
         int rowCount = ReadUInt16(page, layout.NumRows);
 

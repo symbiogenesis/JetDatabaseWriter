@@ -151,17 +151,16 @@ internal sealed class JetByteRangeLock
     /// window inside
     /// <see cref="TransactionLifecycle.CommitTransactionAsync"/>.
     /// </summary>
-    /// <param name="isAccdb">True when the target database is ACE (.accdb), which uses sentinel offset <c>0xFFFFFFFC</c>; otherwise <c>0xFFFFFFFE</c> (Jet3/Jet4).</param>
+    /// <param name="offset">The database format's sentinel offset (<see cref="JetFormat.CommitLockOffset"/>): <c>0xFFFFFFFC</c> on ACE (.accdb), <c>0xFFFFFFFE</c> on Jet3 and Jet4.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The locked offset, or <see langword="null"/> when locking is disabled.</returns>
-    public async ValueTask<long?> AcquireCommitLockOffsetAsync(bool isAccdb, CancellationToken cancellationToken = default)
+    public async ValueTask<long?> AcquireCommitLockOffsetAsync(long offset, CancellationToken cancellationToken = default)
     {
         if (!this.IsEnabled)
         {
             return null;
         }
 
-        long offset = isAccdb ? 0xFFFFFFFCL : 0xFFFFFFFEL;
         await this.AcquireBlockingAsync(offset, length: 1, cancellationToken).ConfigureAwait(false);
         return offset;
     }

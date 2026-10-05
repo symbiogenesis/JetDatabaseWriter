@@ -35,7 +35,7 @@ public sealed class IndexCursorTests
     public void PageCodec_DecodeLeafEntries_RoundTripsBuilderOutput(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexPageLayout.ForFormat(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         List<IndexEntry> entries = BuildIntEntries(8);
 
         byte[] page = IndexPageCodec.BuildLeafPage(
@@ -348,7 +348,7 @@ public sealed class IndexCursorTests
     private static TreeFixture BuildTree(DatabaseFormat format, IReadOnlyList<IndexEntry> entries)
     {
         int pageSize = PageSizeOf(format);
-        var layout = IndexPageLayout.ForFormat(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         IndexBTreeBuildResult build = IndexBTreeBuilder.Build(
             layout,
             pageSize,

@@ -67,18 +67,18 @@ internal sealed class ComplexColumnManager(
     /// scaffold mandatory full-catalog ACCDB system tables: the core
     /// <c>MSysACEs</c>, <c>MSysQueries</c>, and <c>MSysRelationships</c>
     /// tables, plus <c>MSysComplexColumns</c> and the per-kind
-    /// <c>MSysComplexType_*</c> templates. ACCDB only — Jet3/Jet4
+    /// <c>MSysComplexType_*</c> templates. ACCDB only
+    /// (<see cref="JetFormat.SupportsComplexColumns"/>) — Jet3/Jet4
     /// <c>.mdb</c> scaffolds skip these tables. Skipped on the slim
     /// 9-column legacy catalog schema because that mode targets
     /// backward-compatible byte hashing and must not introduce additional pages.
     /// </summary>
-    /// <param name="format">The format.</param>
     /// <param name="fullCatalogSchema">The full catalog schema.</param>
     /// <param name="coreSystemTableStartPage">The core system table start page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public async ValueTask ScaffoldSystemTablesAsync(DatabaseFormat format, bool fullCatalogSchema, long coreSystemTableStartPage, CancellationToken cancellationToken)
+    public async ValueTask ScaffoldSystemTablesAsync(bool fullCatalogSchema, long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
-        if (format != DatabaseFormat.AceAccdb || !fullCatalogSchema)
+        if (!this.db.Profile.SupportsComplexColumns || !fullCatalogSchema)
         {
             return;
         }
@@ -437,7 +437,7 @@ internal sealed class ComplexColumnManager(
             return null;
         }
 
-        if (this.db.Format != DatabaseFormat.AceAccdb)
+        if (!this.db.Profile.SupportsComplexColumns)
         {
             throw new NotSupportedException(
                 "Attachment and MultiValue columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
@@ -770,7 +770,7 @@ internal sealed class ComplexColumnManager(
             throw new ArgumentException("At least one key column is required.", nameof(parentRowKey));
         }
 
-        if (this.db.Format != DatabaseFormat.AceAccdb)
+        if (!this.db.Profile.SupportsComplexColumns)
         {
             throw new NotSupportedException(
                 "Complex (Attachment / MultiValue) columns are an Access 2007+ ACE feature; only .accdb databases are supported.");

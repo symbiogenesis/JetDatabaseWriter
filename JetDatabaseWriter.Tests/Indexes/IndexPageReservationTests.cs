@@ -43,7 +43,7 @@ public sealed class IndexPageReservationTests
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         PageAllocator allocator = harness.Services.PageAllocator;
-        var layout = IndexPageLayout.ForFormat(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         List<IndexEntry> entries = BuildLongKeyEntries(1000);
         int treePages = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, db.PageCount).Pages.Count;
         Assert.True(treePages > 1, "The tree should span several pages.");
@@ -96,7 +96,7 @@ public sealed class IndexPageReservationTests
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         PageAllocator allocator = harness.Services.PageAllocator;
-        var layout = IndexPageLayout.ForFormat(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         List<IndexEntry> entries = BuildLongKeyEntries(1000);
         int treePages = IndexBTreeBuilder.Build(layout, db.PageSizeBytes, 2, entries, db.PageCount).Pages.Count;
         _ = await CreateFreeRunAsync(harness, treePages, this.ct);
@@ -137,7 +137,7 @@ public sealed class IndexPageReservationTests
     public async Task TryPlaceTree_FailureInsideExplicitTransaction_ReleasesRunInJournal()
     {
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(DatabaseFormat.AceAccdb);
-        var layout = IndexPageLayout.ForFormat(DatabaseFormat.AceAccdb);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb).IndexPage;
         List<IndexEntry> entries = BuildLongKeyEntries(1000);
         long freeRun;
         int treePages;

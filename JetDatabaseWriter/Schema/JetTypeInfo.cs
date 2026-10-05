@@ -354,25 +354,26 @@ internal static class JetTypeInfo
     }
 
     /// <summary>
-    /// Checks a calculated column: the format is ACCDB, it has an expression,
+    /// Checks a calculated column: the format has calculated columns
+    /// (<see cref="JetFormat.SupportsCalculatedColumns"/>, ACCDB), it has an expression,
     /// it is not AutoNumber, Attachment, multi-value or Hyperlink, and its
     /// result type is one Access computes. The expression itself is not
     /// parsed here.
     /// </summary>
     /// <param name="column">The column definition; a column that is not calculated passes.</param>
-    /// <param name="format">The database format.</param>
+    /// <param name="format">The database's format profile.</param>
     /// <param name="paramName">The public parameter that carries <paramref name="column"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <exception cref="NotSupportedException">The format or the column's kind cannot be calculated, or the result type is not supported.</exception>
     /// <exception cref="ArgumentException">The column has no expression, or its flags conflict.</exception>
     /// <exception cref="InvalidOperationException">The result type is unknown.</exception>
-    internal static void ValidateCalculatedColumn(ColumnDefinition column, DatabaseFormat format, string paramName)
+    internal static void ValidateCalculatedColumn(ColumnDefinition column, JetFormat format, string paramName)
     {
         if (!column.IsCalculated)
         {
             return;
         }
 
-        if (format != DatabaseFormat.AceAccdb)
+        if (!format.SupportsCalculatedColumns)
         {
             throw new NotSupportedException(
                 $"Column '{column.Name}': calculated columns are only supported in ACCDB databases.");
@@ -443,8 +444,9 @@ internal static class JetTypeInfo
     /// <summary>
     /// Returns the column type <paramref name="format"/> stores a column of
     /// <paramref name="declaredType"/> as, and checks a <c>Numeric</c>
-    /// column's precision and scale. Jet3 (Access 97) has no Decimal type, so
-    /// a decimal column there is stored as Currency, which must hold every
+    /// column's precision and scale. Jet3 (Access 97) has no Decimal type
+    /// (<see cref="JetFormat.SupportsNumeric"/>), so a decimal column there is
+    /// stored as Currency, which must hold every
     /// value the declared precision and scale allow: a scale of at most
     /// <see cref="CurrencyScale"/> and at most
     /// <see cref="CurrencyIntegerDigits"/> integer digits. Every other
@@ -455,12 +457,12 @@ internal static class JetTypeInfo
     /// </summary>
     /// <param name="definition">The column definition.</param>
     /// <param name="declaredType">The type <see cref="TypeCodeFromDefinition(ColumnDefinition, string)"/> returned for it.</param>
-    /// <param name="format">The database format.</param>
+    /// <param name="format">The database's format profile.</param>
     /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column type to write into the descriptor.</returns>
     /// <exception cref="ArgumentOutOfRangeException">A <c>Numeric</c> column's precision is not 1..28 or its scale is above its precision.</exception>
     /// <exception cref="NotSupportedException">A Jet3 decimal column declares a precision or scale Currency cannot hold.</exception>
-    internal static ColumnType ResolveStorageType(ColumnDefinition definition, ColumnType declaredType, DatabaseFormat format, string paramName)
+    internal static ColumnType ResolveStorageType(ColumnDefinition definition, ColumnType declaredType, JetFormat format, string paramName)
     {
         if (declaredType != NumericType)
         {
@@ -469,7 +471,7 @@ internal static class JetTypeInfo
 
         byte precision = ResolveNumericPrecision(definition, paramName);
         byte scale = ResolveNumericScale(definition, paramName);
-        if (format != DatabaseFormat.Jet3Mdb || definition.ColumnTypeOverride is not null)
+        if (format.SupportsNumeric || definition.ColumnTypeOverride is not null)
         {
             return NumericType;
         }

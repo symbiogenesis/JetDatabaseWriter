@@ -99,8 +99,7 @@ internal sealed class RowDecodePlan
     /// (<see cref="Jet3JumpTable"/>), so <see cref="RowLayout.Eod"/> is the
     /// full row-relative offset.
     /// </summary>
-    /// <param name="format">The database format (selects the Jet3 jump-table rule).</param>
-    /// <param name="rowFields">Row-trailer field sizes for the format.</param>
+    /// <param name="rowFields">Row-trailer field sizes for the format, which say whether rows keep a Jet3 jump table.</param>
     /// <param name="page">Data page containing the row.</param>
     /// <param name="rowStart">Offset of the row within <paramref name="page"/>.</param>
     /// <param name="rowSize">Total size of the row in bytes.</param>
@@ -110,7 +109,6 @@ internal sealed class RowDecodePlan
     /// variable-length columns, and the writer's unused trailer is skipped.</param>
     /// <param name="layout">Receives the parsed layout on success.</param>
     internal static bool TryParseRowLayout(
-        DatabaseFormat format,
         in RowFieldSizes rowFields,
         ReadOnlySpan<byte> page,
         int rowStart,
@@ -150,7 +148,7 @@ internal sealed class RowDecodePlan
         }
 
         int varLen = rowFields.ReadVarLen(page, rowStart + varLenPos);
-        int jumpEntries = format != DatabaseFormat.Jet3Mdb ? 0 : Jet3JumpTable.EntryCount(rowSize);
+        int jumpEntries = rowFields.HasJumpTable ? Jet3JumpTable.EntryCount(rowSize) : 0;
         int varTableStart = varLenPos - jumpEntries - (varLen * rowFields.VarEntry);
         int eodPos = varTableStart - rowFields.Eod;
         if (eodPos < rowFields.NumCols)
@@ -535,7 +533,7 @@ internal sealed class RowDecodePlan
         }
 
         bool effectiveHasVarColumns = this.hasVarColumns || (this.hasDeletedColumns && rawNumCols > this.columns.Count);
-        return TryParseRowLayout(source.Format, source.RowFields, page, rowStart, rowSize, effectiveHasVarColumns, out layout);
+        return TryParseRowLayout(source.RowFields, page, rowStart, rowSize, effectiveHasVarColumns, out layout);
     }
 
     private async ValueTask<string> DecodeStringValueAsync(

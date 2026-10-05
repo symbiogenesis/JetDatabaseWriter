@@ -105,7 +105,7 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
         object[] row,
         int[] numericTargetScales)
     {
-        bool legacyNumeric = db.Format == Enums.DatabaseFormat.Jet4Mdb;
+        bool legacyNumeric = db.Profile.LegacyNumericIndexKeys;
         int keyCount = descriptor.KeyColumns.Count;
 
         // Single-column fast path: avoid the per-column array + copy.
@@ -203,7 +203,7 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
         CancellationToken cancellationToken)
     {
         var cursor = new IndexCursor(
-            IndexPageLayout.ForFormat(db.Format),
+            db.Profile.IndexPage,
             this.ReadIndexPageOwnedAsync,
             db.PageSizeBytes);
 

@@ -125,7 +125,7 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
         IReadOnlyList<string> columnNames,
         CancellationToken cancellationToken)
     {
-        if (db.Format == DatabaseFormat.Jet3Mdb)
+        if (!db.Profile.SupportsIndexSeeks)
         {
             return null;
         }
@@ -176,7 +176,7 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
             columnTypes,
             numericScales,
             hit.Value.AscendingFlags,
-            db.Format == DatabaseFormat.Jet4Mdb);
+            db.Profile.LegacyNumericIndexKeys);
     }
 
     private async ValueTask<(long FirstDp, IReadOnlyList<bool> AscendingFlags)?> TryFindCoveringRealIdxAsync(

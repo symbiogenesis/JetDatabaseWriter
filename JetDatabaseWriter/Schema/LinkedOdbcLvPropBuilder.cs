@@ -150,7 +150,7 @@ internal static class LinkedOdbcLvPropBuilder
         List<ColumnIdentity> columns,
         DatabaseFormat format)
     {
-        Encoding encoding = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        Encoding encoding = JetFormat.PropertyTextEncodingOf(format);
         using var stream = new MemoryStream();
 
         WriteUInt32(stream, 0x550E_CC0A);

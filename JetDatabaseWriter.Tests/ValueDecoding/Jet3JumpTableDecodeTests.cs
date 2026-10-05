@@ -109,7 +109,7 @@ public sealed class Jet3JumpTableDecodeTests
 
                     int[] offsets = Jet3RowTrailerReference.DecodeVarOffsets(rowBytes, nullMaskSize);
                     Assert.Equal(255, offsets[^1]);
-                    Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout));
+                    Assert.True(RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout));
                     Assert.Equal(255, layout.Eod);
                     foreach (ColumnInfo column in tableDef.Columns.Where(c => !c.IsFixed))
                     {
@@ -252,8 +252,8 @@ public sealed class Jet3JumpTableDecodeTests
         int rowStart = Jet3PageSize - row.Length;
         row.CopyTo(page, rowStart);
 
-        var rowFields = RowFieldSizes.For(DatabaseFormat.Jet3Mdb);
-        Assert.True(RowDecodePlan.TryParseRowLayout(DatabaseFormat.Jet3Mdb, rowFields, page, rowStart, row.Length, hasVarColumns: true, out RowLayout layout));
+        RowFieldSizes rowFields = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).RowFields;
+        Assert.True(RowDecodePlan.TryParseRowLayout(rowFields, page, rowStart, row.Length, hasVarColumns: true, out RowLayout layout));
         Assert.Equal(varLengths.Length, layout.VarLen);
         Assert.Equal(expectedOffsets[^1], layout.Eod);
 

@@ -79,7 +79,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
             ct);
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
 
         var failures = new StringBuilder();

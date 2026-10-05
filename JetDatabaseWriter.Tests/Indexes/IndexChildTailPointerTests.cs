@@ -53,7 +53,7 @@ public sealed class IndexChildTailPointerTests
             ct);
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
         long fileLength = new FileInfo(fixturePath).Length;
         long maxPageNumber = fileLength / pageSize;

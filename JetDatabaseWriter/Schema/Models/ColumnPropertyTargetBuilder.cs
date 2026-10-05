@@ -25,7 +25,7 @@ internal sealed class ColumnPropertyTargetBuilder
     {
         Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
         Guard.NotNull(value, nameof(value));
-        Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        Encoding enc = JetFormat.PropertyTextEncodingOf(format);
         this.Entries.Add(new ColumnPropertyEntryBuilder
         {
             Name = propertyName,
@@ -43,7 +43,7 @@ internal sealed class ColumnPropertyTargetBuilder
     {
         Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
         Guard.NotNull(value, nameof(value));
-        Encoding enc = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        Encoding enc = JetFormat.PropertyTextEncodingOf(format);
         this.Entries.Add(new ColumnPropertyEntryBuilder
         {
             Name = propertyName,

@@ -1,12 +1,11 @@
 namespace JetDatabaseWriter.Indexes;
 
-using JetDatabaseWriter.Enums;
-
 /// <summary>
 /// Per-format index page layout descriptor. The index page header layout
 /// differs between Jet3 (no unknown(0) at offset 8) and Jet4 / ACE
 /// (unknown(0) at offset 8 shifts prev/next/tail/pref_len 4 bytes later);
 /// the entry-start bitmask offset and first-entry offset also differ.
+/// <see cref="JetFormat.IndexPage"/> holds the layout of a database's format.
 /// </summary>
 /// <param name="bitmaskOffset">The bitmask offset.</param>
 /// <param name="firstEntryOffset">The first entry offset.</param>
@@ -39,13 +38,6 @@ internal readonly struct IndexPageLayout(
         Constants.IndexLeafPage.Jet4.NextPageOffset,
         Constants.IndexLeafPage.Jet4.TailPageOffset,
         Constants.IndexLeafPage.Jet4.PrefLenOffset);
-
-    /// <summary>
-    /// Returns the correct <see cref="IndexPageLayout"/> for the specified <see cref="DatabaseFormat"/>.
-    /// </summary>
-    /// <param name="format">The database format.</param>
-    public static IndexPageLayout ForFormat(DatabaseFormat format)
-        => format == DatabaseFormat.Jet3Mdb ? Jet3 : Jet4;
 
     /// <summary>Gets the byte offset of the entry-start bitmask within the page.</summary>
     public int BitmaskOffset { get; } = bitmaskOffset;

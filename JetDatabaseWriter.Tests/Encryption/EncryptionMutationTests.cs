@@ -340,7 +340,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await this.OpenSourceAsync(source, ct);
         byte[] original = ms.ToArray();
-        DatabaseFormat databaseFormat = EncryptionConverter.DetectFormat(original);
+        DatabaseFormat databaseFormat = JetFormat.DetectFormat(original);
         IReadOnlyList<string> originalTables = await ListTablesAsync(ms, password: null);
 
         ms.Position = 0;

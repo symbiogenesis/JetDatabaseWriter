@@ -29,7 +29,7 @@ public sealed class PageAllocatorTests
 
         byte[] bytes = stream.ToArray();
         int pageSize = PageSizeOf(format);
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         ReadOnlySpan<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & 0x1FFF;
         int row1Start = ReadUInt16(globalMap, layout.RowsStart + 2) & 0x1FFF;
@@ -219,7 +219,7 @@ public sealed class PageAllocatorTests
         bytes[freePageOffset + 1] = 0x01;
         BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(freePageOffset + 2, 2), (ushort)(pageSize - 16));
 
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         Span<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & Constants.DataPage.RowOffsetMask;
         globalMap.Slice(rowStart, Constants.UsageMap.RowSize).Clear();
@@ -253,7 +253,7 @@ public sealed class PageAllocatorTests
     private static bool IsInlineGlobalMapBitSet(byte[] bytes, DatabaseFormat format, int pageNumber)
     {
         int pageSize = PageSizeOf(format);
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         ReadOnlySpan<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & 0x1FFF;
         int basePage = BinaryPrimitives.ReadInt32LittleEndian(globalMap.Slice(rowStart + 1, 4));
@@ -265,7 +265,7 @@ public sealed class PageAllocatorTests
     private static void SetInlineGlobalMapBit(byte[] bytes, DatabaseFormat format, int pageNumber, bool free)
     {
         int pageSize = PageSizeOf(format);
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         Span<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & 0x1FFF;
         int basePage = BinaryPrimitives.ReadInt32LittleEndian(globalMap.Slice(rowStart + 1, 4));
@@ -286,7 +286,7 @@ public sealed class PageAllocatorTests
     private static bool IsReferenceGlobalMapBitSet(byte[] bytes, DatabaseFormat format, int pageNumber)
     {
         int pageSize = PageSizeOf(format);
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         ReadOnlySpan<byte> globalMap = bytes.AsSpan(pageSize, pageSize);
         int rowStart = ReadUInt16(globalMap, layout.RowsStart) & Constants.DataPage.RowOffsetMask;
         Assert.Equal(Constants.UsageMap.ReferenceMapType, globalMap[rowStart]);

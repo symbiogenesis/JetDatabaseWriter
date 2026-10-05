@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -42,8 +41,8 @@ internal sealed class IndexRowReader(
     TableReader tables,
     AsyncReentrantOperationGate operations)
 {
-    /// <summary>Gets a value indicating whether the database format supports index seeks (Jet4 / ACE only).</summary>
-    internal bool CanSeek => db.Format != DatabaseFormat.Jet3Mdb;
+    /// <summary>Gets a value indicating whether the database format uses index seeks (<see cref="JetFormat.SupportsIndexSeeks"/>).</summary>
+    internal bool CanSeek => db.Profile.SupportsIndexSeeks;
 
     /// <summary>
     /// Returns metadata for every logical index defined on <paramref name="tableName"/>,
@@ -289,7 +288,7 @@ internal sealed class IndexRowReader(
             pages.ReadPageAsync,
             db.PageSizeBytes);
         List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsForCriteriaAsync(
-            db.Format,
+            db.Profile,
             tableName,
             index,
             td,

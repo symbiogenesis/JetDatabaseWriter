@@ -234,9 +234,7 @@ internal sealed class TransactionLifecycle(
         bool replayStarted = false;
         try
         {
-            commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(
-                isAccdb: db.Format == Enums.DatabaseFormat.AceAccdb,
-                cancellationToken).ConfigureAwait(false);
+            commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(db.Profile.CommitLockOffset, cancellationToken).ConfigureAwait(false);
 
             // Last point at which cancellation is honoured: nothing has
             // reached the file yet. Stopping the replay partway would leave

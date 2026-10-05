@@ -110,7 +110,7 @@ internal sealed class TableSchemaEditor(
         {
             if (columns[i] is { } column)
             {
-                _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format, nameof(columns));
+                _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Profile, nameof(columns));
             }
         }
 
@@ -259,7 +259,7 @@ internal sealed class TableSchemaEditor(
         // Argument checks before the table is read: the name, then the format,
         // so a calculated column on an .mdb reports that, then the expression,
         // then the default.
-        _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Format, nameof(column));
+        _ = TDefPageBuilder.ValidateColumnForFormat(column, db.Profile, nameof(column));
         ValidateDeclaredCalculatedExpression(column, nameof(column));
         ValidateDeclaredDefault(column, nameof(column));
 
@@ -714,7 +714,7 @@ internal sealed class TableSchemaEditor(
     /// <exception cref="JetLimitationException">The database is Jet3 and <paramref name="columnCount"/> is over 255.</exception>
     private void ThrowIfTooManyColumns(string tableName, int columnCount)
     {
-        if (db.Format == DatabaseFormat.Jet3Mdb && columnCount > Constants.TableDefinition.MaxJet3Columns)
+        if (db.Profile.IsJet3 && columnCount > Constants.TableDefinition.MaxJet3Columns)
         {
             throw new JetLimitationException(
                 $"Table '{tableName}' would have {columnCount} columns; a Jet3 (Access 97) table holds at most {Constants.TableDefinition.MaxJet3Columns}.");
@@ -1192,7 +1192,7 @@ internal sealed class TableSchemaEditor(
         {
             case TextType:
                 int textSize = column.IsCalculated ? CalculatedPayloadSize(column, sizedByDescriptor, Constants.CalculatedColumn.MaxTextResultBytes) : column.Size;
-                int charLen = db.Format != DatabaseFormat.Jet3Mdb ? Math.Max(1, textSize / 2) : Math.Max(1, textSize);
+                int charLen = db.Profile.IsJet3 ? Math.Max(1, textSize) : Math.Max(1, textSize / 2);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
             case BinaryType:
@@ -1460,7 +1460,7 @@ internal sealed class TableSchemaEditor(
             }
         }
 
-        if (firstTdefPage is not null && db.Format != DatabaseFormat.Jet3Mdb)
+        if (firstTdefPage is not null && !db.Profile.IsJet3)
         {
             int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, db.TDef.UsedPagesPage);
             if (usageMapPage > 0)

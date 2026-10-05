@@ -138,7 +138,7 @@ internal sealed class IndexCursor
     /// <paramref name="format"/>'s numeric encoding. Returns an empty list for a
     /// provably empty range.
     /// </summary>
-    /// <param name="format">Database format; selects the legacy Jet4 vs. ACE numeric encoding.</param>
+    /// <param name="format">The database's format profile; selects the legacy Jet4 vs. ACE numeric encoding (<see cref="JetFormat.LegacyNumericIndexKeys"/>).</param>
     /// <param name="tableName">Owning table name, used only in encoder exception messages.</param>
     /// <param name="index">The index being seeked; supplies the root page and key columns.</param>
     /// <param name="tableDef">Table definition supplying per-column type / scale metadata.</param>
@@ -146,7 +146,7 @@ internal sealed class IndexCursor
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="NotSupportedException">The criteria kind is not supported.</exception>
     public async ValueTask<List<(long DataPage, int RowIndex)>> FindRowLocationsForCriteriaAsync(
-        DatabaseFormat format,
+        JetFormat format,
         string tableName,
         IndexMetadata index,
         TableDef tableDef,

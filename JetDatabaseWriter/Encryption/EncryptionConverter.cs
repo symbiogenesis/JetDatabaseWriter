@@ -46,7 +46,7 @@ internal static class EncryptionConverter
             throw new InvalidDataException("Plaintext database is shorter than the JET header.");
         }
 
-        return DetectFormat(plaintext) switch
+        return JetFormat.DetectFormat(plaintext) switch
         {
             DatabaseFormat.Jet4Mdb => AccessEncryptionFormat.Jet4Rc4,
             DatabaseFormat.AceAccdb => AccessEncryptionFormat.AccdbAgile,
@@ -119,7 +119,7 @@ internal static class EncryptionConverter
             return (OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span), AccessEncryptionFormat.AccdbAgile);
         }
 
-        DatabaseFormat fmt = DetectFormat(header);
+        DatabaseFormat fmt = JetFormat.DetectFormat(header);
         AccessEncryptionFormat src = DetectFlatFormat(rawFile, fmt);
         await using var rawStream = new MemoryStream(rawFile, writable: false);
         byte[] plaintext = await ReadFlatDecryptedAsync(rawStream, header, password, isLegacyAesCfb: false, cancellationToken)
@@ -150,7 +150,7 @@ internal static class EncryptionConverter
             throw new InvalidDataException("Plaintext database is shorter than the JET header.");
         }
 
-        DatabaseFormat fmt = DetectFormat(plaintext);
+        DatabaseFormat fmt = JetFormat.DetectFormat(plaintext);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
         return targetFormat switch
@@ -197,7 +197,7 @@ internal static class EncryptionConverter
                 : AccessEncryptionFormat.AccdbAesCfbWrapped;
         }
 
-        DatabaseFormat fmt = DetectFormat(rawFile);
+        DatabaseFormat fmt = JetFormat.DetectFormat(rawFile);
         return DetectFlatFormat(rawFile, fmt);
     }
 
@@ -231,7 +231,7 @@ internal static class EncryptionConverter
         bool isLegacyAesCfb,
         CancellationToken cancellationToken)
     {
-        DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : DetectFormat(header);
+        DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : JetFormat.DetectFormat(header);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
         using PageDecryptionKeys pageKeys = EncryptionManager.CreatePageDecryptionKeys(header, fmt, isLegacyAesCfb, password, EncryptionManager.OldPasswordArgument);
@@ -501,24 +501,6 @@ internal static class EncryptionConverter
         {
             CryptographicOperations.ZeroMemory(utf8);
         }
-    }
-
-    /// <summary>
-    /// Classifies a JET/ACE file by inspecting the format-version byte at
-    /// header offset <c>0x14</c> (0 = Jet3, 1 = Jet4, ≥ 2 = ACE/ACCDB).
-    /// Shared with <see cref="JetFormat.FromHeader"/> so format detection lives in
-    /// exactly one place.
-    /// </summary>
-    /// <param name="header">The header.</param>
-    internal static DatabaseFormat DetectFormat(byte[] header)
-    {
-        byte ver = header[0x14];
-        return ver switch
-        {
-            >= 2 => DatabaseFormat.AceAccdb,
-            >= 1 => DatabaseFormat.Jet4Mdb,
-            _ => DatabaseFormat.Jet3Mdb,
-        };
     }
 
     private static AccessEncryptionFormat DetectFlatFormat(byte[] header, DatabaseFormat fmt)

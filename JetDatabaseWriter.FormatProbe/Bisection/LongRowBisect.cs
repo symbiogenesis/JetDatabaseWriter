@@ -82,7 +82,7 @@ internal static class LongRowBisect
         await using ProbeDatabase reader = await ProbeDatabase.OpenAsync(
             path, new AccessReaderOptions { UseLockFile = false }, CancellationToken.None);
 
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table11");
         int dataOrdinal = FindColumnOrdinal(columns, "data");
         var rowValues = new List<string?>();

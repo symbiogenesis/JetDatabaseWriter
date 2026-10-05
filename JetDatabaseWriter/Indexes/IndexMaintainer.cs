@@ -560,7 +560,7 @@ internal sealed class IndexMaintainer(
         byte[] tdefBuffer = preamble.Buffer;
         int numRealIdx = preamble.NumRealIdx;
 
-        var leafLayout = IndexPageLayout.ForFormat(db.Format);
+        IndexPageLayout leafLayout = db.Profile.IndexPage;
 
         // Every populated real-idx slot, with IsUnique already promoted for
         // any slot backing a PK logical-idx, and its key columns resolved.
@@ -577,7 +577,7 @@ internal sealed class IndexMaintainer(
             ?? await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
 
         bool tdefDirty = false;
-        bool jet3 = db.Format == DatabaseFormat.Jet3Mdb;
+        bool jet3 = db.Profile.IsJet3;
         long[][] rebuiltIndexPageGroups = CreateEmptyPageGroups(numRealIdx);
 
         // The trees this rebuild replaces go back to the global usage map
@@ -996,7 +996,7 @@ internal sealed class IndexMaintainer(
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (db.Format == DatabaseFormat.Jet3Mdb || slots.Count == 0)
+        if (db.Profile.IsJet3 || slots.Count == 0)
         {
             return [];
         }
@@ -1254,7 +1254,7 @@ internal sealed class IndexMaintainer(
         // intermediate pages are orphaned and reclaimed by Access on
         // Compact & Repair.
         IndexLayout idxLayout = db.IndexLayoutInfo;
-        var layout = IndexPageLayout.ForFormat(db.Format);
+        IndexPageLayout layout = db.Profile.IndexPage;
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
@@ -1579,7 +1579,7 @@ internal sealed class IndexMaintainer(
         runs.MarkLinked();
         await this.WriteIncrementalIndexUsageMapsAsync(tdefBuffer, indexPageGroups, cancellationToken).ConfigureAwait(false);
 
-        if (db.Format != DatabaseFormat.Jet3Mdb)
+        if (!db.Profile.IsJet3)
         {
             tdefDirty = true;
         }
@@ -1594,8 +1594,8 @@ internal sealed class IndexMaintainer(
 
     /// <summary>
     /// Encodes a single composite index key by per-column-encoding then
-    /// concatenating. Honours <see cref="DatabaseFormat.Jet4Mdb"/>'s legacy
-    /// fixed-point byte-twiddling for <c>Numeric</c> columns. Throws
+    /// concatenating. Honours Jet4's legacy fixed-point byte-twiddling for
+    /// <c>Numeric</c> columns (<see cref="JetFormat.LegacyNumericIndexKeys"/>). Throws
     /// whatever <see cref="IndexKeyEncoder"/> throws on encoder rejection
     /// (<see cref="NotSupportedException"/> / <see cref="ArgumentException"/>
     /// / <see cref="OverflowException"/>); callers that want soft-fail
@@ -1605,7 +1605,7 @@ internal sealed class IndexMaintainer(
     /// <param name="cells">The cells.</param>
     private byte[] EncodeCompositeKey(List<KeyColumnInfo> keyColInfos, object?[] cells)
     {
-        bool legacyNumeric = db.Format == DatabaseFormat.Jet4Mdb;
+        bool legacyNumeric = db.Profile.LegacyNumericIndexKeys;
 
         byte[][] perColumn = new byte[keyColInfos.Count][];
         int totalLen = 0;
@@ -1761,7 +1761,7 @@ internal sealed class IndexMaintainer(
         object[] newRowValues,
         CancellationToken cancellationToken)
     {
-        var layout = IndexPageLayout.ForFormat(db.Format);
+        IndexPageLayout layout = db.Profile.IndexPage;
 
         this.LastIncrementalBail = null;
 

@@ -971,7 +971,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, cancellationToken);
         int pageSize = format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
-        var layout = IndexPageLayout.ForFormat(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         int count = 0;
         for (int pageNumber = 0; pageNumber < fileBytes.Length / pageSize; pageNumber++)
         {

@@ -520,7 +520,7 @@ public sealed class Jet3LongValueTests
             (row, _) =>
             {
                 RowLocation location = row.Location;
-                if (RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns, out RowLayout layout))
+                if (RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns, out RowLayout layout))
                 {
                     ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Profile.RowFields, row.Page, location.RowStart, location.RowSize, layout, column);
                     if (slice.Kind is ColumnSliceKind.Fixed or ColumnSliceKind.Var

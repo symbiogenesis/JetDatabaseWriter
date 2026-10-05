@@ -575,7 +575,7 @@ public sealed class LvPropReadTests
             {
                 byte[] bytes = row.Page.AsSpan(row.Location.RowStart, row.Location.RowSize).ToArray();
                 ColumnSlice slice = default;
-                if (lvProp is not null && RowDecodePlan.TryParseRowLayout(db.Format, db.RowFields, bytes, 0, bytes.Length, hasVarColumns: true, out RowLayout layout))
+                if (lvProp is not null && RowDecodePlan.TryParseRowLayout(db.RowFields, bytes, 0, bytes.Length, hasVarColumns: true, out RowLayout layout))
                 {
                     slice = RowDecodePlan.ResolveColumnSlice(db.RowFields, bytes, 0, bytes.Length, layout, lvProp);
                 }

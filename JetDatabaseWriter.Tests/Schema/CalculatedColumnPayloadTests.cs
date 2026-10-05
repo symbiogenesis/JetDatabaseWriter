@@ -147,8 +147,8 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         }
 
         var rows = new List<Dictionary<string, byte[]>>();
-        var dataPage = DataPageLayout.For(reader.Database.Format);
-        var rowSizes = RowFieldSizes.For(reader.Database.Format);
+        DataPageLayout dataPage = reader.Database.Profile.DataPage;
+        RowFieldSizes rowSizes = reader.Database.Profile.RowFields;
         long pageCount = reader.Database.PageCount;
 
         for (long pageNumber = 1; pageNumber < pageCount; pageNumber++)

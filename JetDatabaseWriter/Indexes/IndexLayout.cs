@@ -26,7 +26,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal readonly struct IndexLayout
 {
     private IndexLayout(
-        DatabaseFormat format,
         int realIdxPhysSize,
         int logicalEntrySize,
         int realIdxFieldsOffset,
@@ -34,7 +33,6 @@ internal readonly struct IndexLayout
         int flagsOffsetWithinPhys,
         int colMapStartWithinPhys)
     {
-        this.Format = format;
         this.RealIdxPhysSize = realIdxPhysSize;
         this.LogicalEntrySize = logicalEntrySize;
         this.RealIdxFieldsOffset = realIdxFieldsOffset;
@@ -43,8 +41,23 @@ internal readonly struct IndexLayout
         this.ColMapStartWithinPhys = colMapStartWithinPhys;
     }
 
-    /// <summary>Gets the database format this layout describes.</summary>
-    public DatabaseFormat Format { get; }
+    /// <summary>Gets the Jet3 layout.</summary>
+    public static IndexLayout Jet3 => new(
+        realIdxPhysSize: Constants.TableDefinition.Jet3.RealIdx.PhysSize,
+        logicalEntrySize: Constants.TableDefinition.Jet3.LogicalIdx.EntrySize,
+        realIdxFieldsOffset: 0,
+        logicalEntryFieldsOffset: 0,
+        flagsOffsetWithinPhys: Constants.TableDefinition.Jet3.RealIdx.FlagsOffset,
+        colMapStartWithinPhys: Constants.TableDefinition.Jet3.RealIdx.ColMapOffset);
+
+    /// <summary>Gets the Jet4 / ACE layout.</summary>
+    public static IndexLayout Jet4 => new(
+        realIdxPhysSize: Constants.TableDefinition.Jet4.RealIdx.PhysSize,
+        logicalEntrySize: Constants.TableDefinition.Jet4.LogicalIdx.EntrySize,
+        realIdxFieldsOffset: 4,
+        logicalEntryFieldsOffset: 4,
+        flagsOffsetWithinPhys: Constants.TableDefinition.Jet4.RealIdx.FlagsOffset,
+        colMapStartWithinPhys: Constants.TableDefinition.Jet4.RealIdx.ColMapOffset);
 
     /// <summary>Gets the size in bytes of one real-idx physical descriptor (Jet3: 39, Jet4/ACE: 52).</summary>
     public int RealIdxPhysSize { get; }
@@ -90,26 +103,6 @@ internal readonly struct IndexLayout
     /// Jet4 phys descriptor is <c>magic(4) + col_map(30) + …</c>.
     /// </summary>
     public int ColMapStartWithinPhys { get; }
-
-    /// <summary>Returns the layout matching <paramref name="format"/>.</summary>
-    /// <param name="format">The format.</param>
-    public static IndexLayout For(DatabaseFormat format) => format == DatabaseFormat.Jet3Mdb
-        ? new IndexLayout(
-            format,
-            realIdxPhysSize: Constants.TableDefinition.Jet3.RealIdx.PhysSize,
-            logicalEntrySize: Constants.TableDefinition.Jet3.LogicalIdx.EntrySize,
-            realIdxFieldsOffset: 0,
-            logicalEntryFieldsOffset: 0,
-            flagsOffsetWithinPhys: Constants.TableDefinition.Jet3.RealIdx.FlagsOffset,
-            colMapStartWithinPhys: Constants.TableDefinition.Jet3.RealIdx.ColMapOffset)
-        : new IndexLayout(
-            format,
-            realIdxPhysSize: Constants.TableDefinition.Jet4.RealIdx.PhysSize,
-            logicalEntrySize: Constants.TableDefinition.Jet4.LogicalIdx.EntrySize,
-            realIdxFieldsOffset: 4,
-            logicalEntryFieldsOffset: 4,
-            flagsOffsetWithinPhys: Constants.TableDefinition.Jet4.RealIdx.FlagsOffset,
-            colMapStartWithinPhys: Constants.TableDefinition.Jet4.RealIdx.ColMapOffset);
 
     /// <summary>
     /// Resolves an index's <see cref="KeyColumn"/> list against a table's
@@ -435,7 +428,9 @@ internal readonly struct IndexLayout
 
         Span<byte> phys = td.Slice(physStart, this.RealIdxPhysSize);
         phys.Clear();
-        if (this.Format != DatabaseFormat.Jet3Mdb)
+
+        // The leading magic fills the bytes the fields are shifted past.
+        if (this.RealIdxFieldsOffset > 0)
         {
             Wi32(phys, 0, Constants.TableDefinition.Jet4.RealIdx.LeadingMagic);
         }
@@ -489,7 +484,9 @@ internal readonly struct IndexLayout
     {
         Span<byte> entry = td.Slice(entryStart, this.LogicalEntrySize);
         entry.Clear();
-        if (this.Format != DatabaseFormat.Jet3Mdb)
+
+        // The leading cookie fills the bytes the fields are shifted past.
+        if (this.LogicalEntryFieldsOffset > 0)
         {
             Wi32(entry, 0, Constants.TableDefinition.Jet4.FormatMagic);
         }

@@ -550,7 +550,7 @@ internal static class LongRowSuffixProbe
         int seedBase,
         CancellationToken ct)
     {
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
@@ -5071,7 +5071,7 @@ internal static class LongRowSuffixProbe
                 fixturePath,
                 new AccessReaderOptions { UseLockFile = false },
                 ct);
-            var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+            IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
             int pageSize = reader.PageSize;
 
             IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
@@ -5763,7 +5763,7 @@ internal static class LongRowSuffixProbe
             new AccessReaderOptions { UseLockFile = false },
             ct);
         DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        var ascLayout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout ascLayout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, ascLayout, reader.PageSize, firstPage: 112, ct);
 
         GeneralLegacyTextIndexEncoder.CharHandler[] codes = GeneralCodes.Value;
@@ -5886,7 +5886,7 @@ internal static class LongRowSuffixProbe
             new AccessReaderOptions { UseLockFile = false },
             ct);
         DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
-        var layout = IndexPageLayout.ForFormat(reader.DatabaseFormat);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
 
         List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 112, ct);
         List<IndexEntry> descKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 119, ct);

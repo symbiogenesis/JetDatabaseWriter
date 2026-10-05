@@ -97,7 +97,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
 
     internal async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken)
     {
-        if (db.Format == DatabaseFormat.Jet3Mdb)
+        if (!db.Profile.SupportsComplexColumns)
         {
             return [];
         }

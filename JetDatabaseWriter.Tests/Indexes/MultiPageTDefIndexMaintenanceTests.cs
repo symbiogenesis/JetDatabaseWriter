@@ -588,7 +588,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             List<RowLocation> locations = await db.GetLiveRowLocationsAsync(entry.TDefPage, this.ct);
             Assert.Equal(rows.Rows.Count, locations.Count);
 
-            var layout = IndexPageLayout.ForFormat(format);
+            IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
             foreach (IndexMetadata index in indexes)
             {
                 IndexColumnReference keyColumn = Assert.Single(index.Columns);

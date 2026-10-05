@@ -7,15 +7,22 @@ using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// The immutable format profile of one database file: its format, page size,
 /// code page and the per-format byte layouts of data pages, LVAL pages, TDEF
 /// headers, column descriptors, row trailers, index sections and index
-/// pages, plus the text and name codecs that depend on them. One instance is
-/// built per open file from its header (<see cref="FromHeader"/>), or for a
-/// format alone (<see cref="For"/>). It holds no file state and never changes.
+/// pages, the text and name codecs that depend on them, and the capability
+/// flags and per-format values that code asks for instead of comparing
+/// formats. One instance is built per open file from its header
+/// (<see cref="FromHeader"/>), or for a new database of a format
+/// (<see cref="ForNewDatabase"/>). It holds no file state and never changes.
+/// Outside this file and the enum itself, only the encryption code, which
+/// classifies a file and unmasks its header before any profile exists, and
+/// the facades name a <see cref="DatabaseFormat"/> value; FormatKnowledgeTests
+/// enforces it.
 /// </summary>
 internal sealed class JetFormat
 {
@@ -29,16 +36,19 @@ internal sealed class JetFormat
     /// Initializes static members of the <see cref="JetFormat"/> class: registers
     /// the code-page encodings .NET does not load by default. Without them every
     /// Jet3 code page, Windows-1252 included, would fall back to UTF-8 without
-    /// an error. The registration also serves the code that decodes Jet3 LvProp
-    /// text with <c>Encoding.GetEncoding(1252)</c>, which only runs once a
-    /// database file has built its profile.
+    /// an error. The registration also serves Jet3 <c>LvProp</c> text, which
+    /// <see cref="PropertyTextEncodingOf"/> encodes in Windows-1252, and the
+    /// <c>LvProp</c> parser, which only runs once a database file has built its
+    /// profile.
     /// </summary>
     static JetFormat() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
     private JetFormat(DatabaseFormat kind, int codePage)
     {
+        bool jet3 = kind == DatabaseFormat.Jet3Mdb;
+        bool ace = kind == DatabaseFormat.AceAccdb;
         this.Kind = kind;
-        this.IsJet3 = kind == DatabaseFormat.Jet3Mdb;
+        this.IsJet3 = jet3;
         this.PageSize = PageSizeOf(kind);
 
         // An unknown code page falls back to UTF-8: Jet3 files that earlier
@@ -67,19 +77,48 @@ internal sealed class JetFormat
         // Format-specific TDEF / page / column / row layouts:
         //   Jet4 / ACE (Access 2000–2019): TDEF 8+55 = 63 bytes, column descriptor 25 bytes.
         //   Jet3        (Access 97):       TDEF 8+35 = 43 bytes, column descriptor 18 bytes.
-        this.DataPage = DataPageLayout.For(kind);
-        this.LvalPage = LvalPageLayout.For(kind);
-        this.TDef = TDefHeaderLayout.For(kind);
-        this.ColumnDescriptor = ColumnDescriptorLayout.For(kind);
-        this.RowFields = RowFieldSizes.For(kind);
-        this.Index = IndexLayout.For(kind);
-        this.IndexPage = IndexPageLayout.ForFormat(kind);
+        // ACE adds the complex AutoNumber to the Jet4 TDEF header.
+        (TDefHeaderLayout tdef, byte newDatabaseVersion) = kind switch
+        {
+            DatabaseFormat.Jet3Mdb => (TDefHeaderLayout.Jet3, (byte)0x00),
+            DatabaseFormat.Jet4Mdb => (TDefHeaderLayout.Jet4, (byte)0x01),
+            DatabaseFormat.AceAccdb => (TDefHeaderLayout.Ace, (byte)0x02),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown database format."),
+        };
+        this.TDef = tdef;
+        this.NewDatabaseVersion = newDatabaseVersion;
+        this.DataPage = jet3 ? DataPageLayout.Jet3 : DataPageLayout.Jet4;
+        this.LvalPage = jet3 ? LvalPageLayout.Jet3 : LvalPageLayout.Jet4;
+        this.ColumnDescriptor = jet3 ? ColumnDescriptorLayout.Jet3 : ColumnDescriptorLayout.Jet4;
+        this.RowFields = jet3 ? RowFieldSizes.Jet3 : RowFieldSizes.Jet4;
+        this.Index = jet3 ? IndexLayout.Jet3 : IndexLayout.Jet4;
+        this.IndexPage = jet3 ? IndexPageLayout.Jet3 : IndexPageLayout.Jet4;
+
+        // Jet3 has no Numeric type; Large Number, Date/Time Extended, complex
+        // and calculated columns arrived with ACE.
+        this.SupportsNumeric = !jet3;
+        this.SupportsBigInt = ace;
+        this.SupportsDateTimeExtended = ace;
+        this.SupportsComplexColumns = ace;
+        this.SupportsCalculatedColumns = ace;
+        this.LegacyNumericIndexKeys = kind == DatabaseFormat.Jet4Mdb;
+        this.WritesTDefFormatMagic = !jet3;
+        this.WritesTDefFreeSpace = !jet3;
+        this.SupportsIndexSeeks = !jet3;
+
+        this.VersionName = jet3 ? "Jet3" : "Jet4/ACE";
+        this.CommitLockOffset = ace ? 0xFFFFFFFCL : 0xFFFFFFFEL;
     }
 
     /// <summary>Gets the database format.</summary>
     internal DatabaseFormat Kind { get; }
 
-    /// <summary>Gets a value indicating whether the format is Jet3 (Access 97).</summary>
+    /// <summary>
+    /// Gets a value indicating whether the format is Jet3 (Access 97), whose
+    /// row and TDEF layouts use one-byte counts, ANSI names and no format
+    /// magic. Code that branches on a fact a capability flag below names asks
+    /// the flag instead.
+    /// </summary>
     internal bool IsJet3 { get; }
 
     /// <summary>Gets the page size in bytes: 2048 on Jet3, 4096 on Jet4 and ACE.</summary>
@@ -124,16 +163,93 @@ internal sealed class JetFormat
     internal IndexPageLayout IndexPage { get; }
 
     /// <summary>
+    /// Gets a value indicating whether the format has the Numeric (Decimal,
+    /// type <c>0x10</c>) column type: Jet4 and ACE. Jet3 has none, so a
+    /// decimal column there is stored as Currency.
+    /// </summary>
+    internal bool SupportsNumeric { get; }
+
+    /// <summary>Gets a value indicating whether the format has the Large Number (BigInt, type <c>0x13</c>) column type: ACE only.</summary>
+    internal bool SupportsBigInt { get; }
+
+    /// <summary>Gets a value indicating whether the format has the Date/Time Extended (type <c>0x14</c>) column type: ACE only.</summary>
+    internal bool SupportsDateTimeExtended { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the format has complex columns
+    /// (Attachment and multi-value) and the <c>MSysComplexColumns</c> catalog
+    /// they need: ACE only.
+    /// </summary>
+    internal bool SupportsComplexColumns { get; }
+
+    /// <summary>Gets a value indicating whether the format has calculated columns: ACE only.</summary>
+    internal bool SupportsCalculatedColumns { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether Numeric index keys use Jet4's legacy
+    /// fixed-point encoding rather than ACE's (<see cref="IndexKeyEncoder"/>):
+    /// Jet4 only.
+    /// </summary>
+    internal bool LegacyNumericIndexKeys { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the writer stamps the format magic
+    /// (<see cref="Constants.TableDefinition.Jet4.FormatMagic"/>) into the TDEF
+    /// header at offset 12, each column descriptor and each logical-idx entry,
+    /// and the leading magic into each real-idx descriptor: Jet4 and ACE, whose
+    /// layouts reserve those fields. Jet3 has none of them.
+    /// </summary>
+    internal bool WritesTDefFormatMagic { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the writer stamps a TDEF page's free
+    /// space into page bytes 2..3: Jet4 and ACE. On Jet3 it leaves them zero,
+    /// where Access 97 keeps <c>VC</c>.
+    /// </summary>
+    internal bool WritesTDefFreeSpace { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether index seeks are used: Jet4 and ACE.
+    /// Jet3 reads by table scan until its General 97 text keys are encoded
+    /// right.
+    /// </summary>
+    internal bool SupportsIndexSeeks { get; }
+
+    /// <summary>Gets the version name the statistics and the catalog diagnostics print: <c>Jet3</c> or <c>Jet4/ACE</c>.</summary>
+    internal string VersionName { get; }
+
+    /// <summary>
+    /// Gets the offset of the one-byte commit lock that Microsoft Access, OLE
+    /// DB JET and ACE take to gate a commit: <c>0xFFFFFFFC</c> on ACE,
+    /// <c>0xFFFFFFFE</c> on Jet3 and Jet4.
+    /// </summary>
+    internal long CommitLockOffset { get; }
+
+    /// <summary>
+    /// Gets the version byte at header offset <c>0x14</c> that the writer
+    /// stamps into a new database: 0 on Jet3, 1 on Jet4 and 2 on ACE, which
+    /// <see cref="DetectFormat"/> reads back. Later Access versions write
+    /// higher values into an ACE file.
+    /// </summary>
+    internal byte NewDatabaseVersion { get; }
+
+    /// <summary>
+    /// Gets the NUL-terminated signature at header offset 4:
+    /// <c>Standard Jet DB</c> on Jet3 and Jet4, <c>Standard ACE DB</c> on ACE.
+    /// </summary>
+    internal ReadOnlySpan<byte> HeaderSignature => this.Kind == DatabaseFormat.AceAccdb ? "Standard ACE DB\0"u8 : "Standard Jet DB\0"u8;
+
+    /// <summary>
     /// Builds the profile of the database whose page-0 header is
-    /// <paramref name="header"/>: the format from the version byte at 0x14,
-    /// and the code page from the masked header word at 0x3C, or 1252 when
-    /// it holds none.
+    /// <paramref name="header"/>: the format from the version byte at 0x14
+    /// (<see cref="DetectFormat"/>), and the code page from the masked header
+    /// word at 0x3C, or 1252 when it holds none.
     /// </summary>
     /// <param name="header">The first <see cref="Constants.DatabaseHeader.Length"/> bytes of page 0, as stored.</param>
     /// <returns>The profile.</returns>
     internal static JetFormat FromHeader(byte[] header)
     {
-        DatabaseFormat kind = EncryptionConverter.DetectFormat(header);
+        DatabaseFormat kind = DetectFormat(header);
 
         // Codepage / sort order: stored as a UInt16 at hdr[0x3C], scrambled by
         // the constant-key RC4 stream Microsoft Access applies to header bytes
@@ -152,17 +268,56 @@ internal sealed class JetFormat
     }
 
     /// <summary>
-    /// Builds the profile of a database of <paramref name="format"/> with code
-    /// page 1252, which the writer stamps into every new database.
+    /// Builds the profile of a new database of <paramref name="format"/>, with
+    /// code page 1252, which the writer stamps into every new database.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <returns>The profile.</returns>
-    internal static JetFormat For(DatabaseFormat format) => new(format, 1252);
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="format"/> is not a defined format.</exception>
+    internal static JetFormat ForNewDatabase(DatabaseFormat format)
+        => format is DatabaseFormat.Jet3Mdb or DatabaseFormat.Jet4Mdb or DatabaseFormat.AceAccdb
+            ? new JetFormat(format, 1252)
+            : throw new ArgumentOutOfRangeException(nameof(format), format, $"Unsupported database format: {format}.");
+
+    /// <summary>
+    /// Classifies a JET/ACE file by the format-version byte at header offset
+    /// <c>0x14</c>: 0 is Jet3, 1 is Jet4, and 2 or more is ACE (ACCDB). The
+    /// encryption code classifies a file with it before the file has a
+    /// profile.
+    /// </summary>
+    /// <param name="header">The header, as stored; the version byte precedes the masked region.</param>
+    /// <returns>The format.</returns>
+    internal static DatabaseFormat DetectFormat(byte[] header) => header[0x14] switch
+    {
+        >= 2 => DatabaseFormat.AceAccdb,
+        >= 1 => DatabaseFormat.Jet4Mdb,
+        _ => DatabaseFormat.Jet3Mdb,
+    };
 
     /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>
     /// <param name="format">The format.</param>
     /// <returns>The page size in bytes.</returns>
     internal static int PageSizeOf(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet4 : Constants.PageSizes.Jet3;
+
+    /// <summary>
+    /// Returns the encoding of the text in an <c>LvProp</c> property block of
+    /// <paramref name="format"/>: UTF-16LE on Jet4 and ACE, and Windows-1252 on
+    /// Jet3, whatever the database's code page.
+    /// </summary>
+    /// <param name="format">The format.</param>
+    /// <returns>The encoding.</returns>
+    internal static Encoding PropertyTextEncodingOf(DatabaseFormat format)
+        => format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+
+    /// <summary>
+    /// Returns the magic an <c>LvProp</c> property block of
+    /// <paramref name="format"/> starts with: <c>KKD\0</c> on Jet3,
+    /// <c>MR2\0</c> on Jet4 and ACE.
+    /// </summary>
+    /// <param name="format">The format.</param>
+    /// <returns>The magic, as a little-endian 32-bit value.</returns>
+    internal static uint PropertyBlockMagicOf(DatabaseFormat format)
+        => format == DatabaseFormat.Jet3Mdb ? ColumnPropertyBlock.MagicKkd : ColumnPropertyBlock.MagicMr2;
 
     /// <summary>
     /// Reads the per-row column count from the row header at

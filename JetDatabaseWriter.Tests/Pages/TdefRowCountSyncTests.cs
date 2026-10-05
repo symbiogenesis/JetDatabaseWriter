@@ -104,7 +104,7 @@ public sealed class TdefRowCountSyncTests
             ? Constants.PageSizes.Jet3
             : Constants.PageSizes.Jet4;
 
-        var layout = TDefHeaderLayout.For(format);
+        TDefHeaderLayout layout = JetFormat.ForNewDatabase(format).TDef;
 
         int tdefsChecked = 0;
         for (int p = 0; p < fileBytes.Length / pageSize; p++)

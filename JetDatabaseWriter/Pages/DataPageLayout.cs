@@ -1,25 +1,24 @@
 namespace JetDatabaseWriter.Pages;
 
 using System;
-using JetDatabaseWriter.Enums;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Per-format byte offsets within the data-page (page type 0x01) header that
-/// precede the row-offset table. Selected by <see cref="For"/> at construction
-/// time so call sites read e.g. <c>_dataPage.NumRows</c> instead of
-/// inlining the <c>jet3 ? 8 : 12</c> ternary.
+/// precede the row-offset table. <see cref="JetFormat"/> picks
+/// <see cref="Jet3"/> or <see cref="Jet4"/> so call sites read e.g.
+/// <c>_dataPage.NumRows</c> instead of inlining the <c>jet3 ? 8 : 12</c> ternary.
 /// </summary>
 /// <param name="TDefOff">The TDEF offset.</param>
 /// <param name="NumRows">The number of rows.</param>
 /// <param name="RowsStart">The rows start.</param>
 internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int RowsStart)
 {
-    /// <summary>Returns the data-page layout for <paramref name="format"/>.</summary>
-    /// <param name="format">The format.</param>
-    public static DataPageLayout For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
-        ? new DataPageLayout(TDefOff: 4, NumRows: 12, RowsStart: 14)
-        : new DataPageLayout(TDefOff: 4, NumRows: 8, RowsStart: 10);
+    /// <summary>Gets the Jet3 data-page layout.</summary>
+    public static DataPageLayout Jet3 => new(TDefOff: 4, NumRows: 8, RowsStart: 10);
+
+    /// <summary>Gets the Jet4 / ACE data-page layout.</summary>
+    public static DataPageLayout Jet4 => new(TDefOff: 4, NumRows: 12, RowsStart: 14);
 
     /// <summary>
     /// Returns the longest row an empty data page of <paramref name="pageSize"/>
@@ -49,11 +48,11 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
 /// <param name="PackRowsAtEnd">Whether every row is written at the end of its page, as Access 97 does, rather than at <paramref name="MinRowStart"/>.</param>
 internal readonly record struct LvalPageLayout(DataPageLayout DataPage, int MinRowStart, bool WritesToken, bool PackRowsAtEnd)
 {
-    /// <summary>Returns the LVAL page layout for <paramref name="format"/>.</summary>
-    /// <param name="format">The format.</param>
-    public static LvalPageLayout For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
-        ? new LvalPageLayout(DataPageLayout.For(format), MinRowStart: 20, WritesToken: true, PackRowsAtEnd: false)
-        : new LvalPageLayout(DataPageLayout.For(format), MinRowStart: 12, WritesToken: false, PackRowsAtEnd: true);
+    /// <summary>Gets the Jet3 LVAL page layout, which Access 97 writes.</summary>
+    public static LvalPageLayout Jet3 => new(DataPageLayout.Jet3, MinRowStart: 12, WritesToken: false, PackRowsAtEnd: true);
+
+    /// <summary>Gets the Jet4 / ACE LVAL page layout the writer uses.</summary>
+    public static LvalPageLayout Jet4 => new(DataPageLayout.Jet4, MinRowStart: 20, WritesToken: true, PackRowsAtEnd: false);
 
     /// <summary>
     /// Returns the largest payload one LVAL row holds on a page of
@@ -120,37 +119,40 @@ internal readonly record struct TDefHeaderLayout(
     int RealIdxEntrySz,
     int ComplexAutoNumber)
 {
-    /// <summary>Returns the TDEF header layout for <paramref name="format"/>.</summary>
-    /// <param name="format">The format.</param>
-    public static TDefHeaderLayout For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
-        ? new TDefHeaderLayout(
-            NumRows: 16,
-            AutoNumber: 20,
-            TableType: 40,
-            MaxCols: 41,
-            NumVarCols: 43,
-            NumCols: 45,
-            NumIdx: 47,
-            NumRealIdx: 51,
-            UsedPages: 55,
-            FreePages: 59,
-            BlockEnd: 63,
-            RealIdxEntrySz: 12,
-            ComplexAutoNumber: format == DatabaseFormat.AceAccdb ? 28 : -1)
-        : new TDefHeaderLayout(
-            NumRows: 12,
-            AutoNumber: 16,
-            TableType: 20,
-            MaxCols: 21,
-            NumVarCols: 23,
-            NumCols: 25,
-            NumIdx: 27,
-            NumRealIdx: 31,
-            UsedPages: 35,
-            FreePages: 39,
-            BlockEnd: 43,
-            RealIdxEntrySz: 8,
-            ComplexAutoNumber: -1);
+    /// <summary>Gets the Jet3 TDEF header layout.</summary>
+    public static TDefHeaderLayout Jet3 => new(
+        NumRows: 12,
+        AutoNumber: 16,
+        TableType: 20,
+        MaxCols: 21,
+        NumVarCols: 23,
+        NumCols: 25,
+        NumIdx: 27,
+        NumRealIdx: 31,
+        UsedPages: 35,
+        FreePages: 39,
+        BlockEnd: 43,
+        RealIdxEntrySz: 8,
+        ComplexAutoNumber: -1);
+
+    /// <summary>Gets the Jet4 TDEF header layout.</summary>
+    public static TDefHeaderLayout Jet4 => new(
+        NumRows: 16,
+        AutoNumber: 20,
+        TableType: 40,
+        MaxCols: 41,
+        NumVarCols: 43,
+        NumCols: 45,
+        NumIdx: 47,
+        NumRealIdx: 51,
+        UsedPages: 55,
+        FreePages: 59,
+        BlockEnd: 63,
+        RealIdxEntrySz: 12,
+        ComplexAutoNumber: -1);
+
+    /// <summary>Gets the ACE TDEF header layout: Jet4's, plus the complex AutoNumber at offset 28.</summary>
+    public static TDefHeaderLayout Ace => Jet4 with { ComplexAutoNumber = 28 };
 
     /// <summary>Gets the offset of the owned-pages usage-map page number (3 bytes after the row byte).</summary>
     public int UsedPagesPage => this.UsedPages + 1;
@@ -183,46 +185,52 @@ internal readonly record struct ColumnDescriptorLayout(
     int NumOff,
     int MiscOff)
 {
-    /// <summary>Returns the column-descriptor layout for <paramref name="format"/>.</summary>
-    /// <param name="format">The format.</param>
-    public static ColumnDescriptorLayout For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
-        ? new ColumnDescriptorLayout(
-            Size: 25,
-            TypeOff: 0, // col_type (1)
-            VarOff: 7, // offset_V (2): 1+4+2
-            FixedOff: 21, // offset_F (2): 1+4+2+2+2+2+2+1+1+4
-            SzOff: 23, // col_len (2)
-            FlagsOff: 15, // bitmask (1): 1+4+2+2+2+2+2
-            NumOff: 5, // col_num (2)
-            MiscOff: 11) // misc (4): 1+4+2+2+2 — carries ComplexID for complex columns
-        : new ColumnDescriptorLayout(
-            Size: 18,
-            TypeOff: 0, // col_type (1)
-            VarOff: 3, // offset_V (2): 1+2
-            FixedOff: 14, // offset_F (2): 1+2+2+2+2+2+2+1
-            SzOff: 16, // col_len (2)
-            FlagsOff: 13, // bitmask (1)
-            NumOff: 1, // col_num (2)
-            MiscOff: 7); // misc (4) — Jet3 has no complex columns; included for layout symmetry
+    /// <summary>Gets the Jet3 column-descriptor layout.</summary>
+    public static ColumnDescriptorLayout Jet3 => new(
+        Size: 18,
+        TypeOff: 0, // col_type (1)
+        VarOff: 3, // offset_V (2): 1+2
+        FixedOff: 14, // offset_F (2): 1+2+2+2+2+2+2+1
+        SzOff: 16, // col_len (2)
+        FlagsOff: 13, // bitmask (1)
+        NumOff: 1, // col_num (2)
+        MiscOff: 7); // misc (4) — Jet3 has no complex columns; included for layout symmetry
+
+    /// <summary>Gets the Jet4 / ACE column-descriptor layout.</summary>
+    public static ColumnDescriptorLayout Jet4 => new(
+        Size: 25,
+        TypeOff: 0, // col_type (1)
+        VarOff: 7, // offset_V (2): 1+4+2
+        FixedOff: 21, // offset_F (2): 1+4+2+2+2+2+2+1+1+4
+        SzOff: 23, // col_len (2)
+        FlagsOff: 15, // bitmask (1): 1+4+2+2+2+2+2
+        NumOff: 5, // col_num (2)
+        MiscOff: 11); // misc (4): 1+4+2+2+2 — carries ComplexID for complex columns
 }
 
 /// <summary>
 /// Per-format byte sizes of the in-row trailer fields that vary between
 /// Jet3 (1-byte fields) and Jet4/ACE (2-byte fields): the leading
 /// <c>num_cols</c> count, each <c>var_table</c> entry, the trailing
-/// <c>var_len</c> count, and the EOD pointer.
+/// <c>var_len</c> count, and the EOD pointer, and whether the trailer holds a
+/// Jet3 jump table.
 /// </summary>
 /// <param name="NumCols">The number of cols.</param>
 /// <param name="VarEntry">The var entry.</param>
 /// <param name="Eod">The end-of-data marker size.</param>
 /// <param name="VarLen">The var len.</param>
-internal readonly record struct RowFieldSizes(int NumCols, int VarEntry, int Eod, int VarLen)
+/// <param name="HasJumpTable">
+/// Whether a row with variable columns keeps a jump table between its EOD and
+/// <c>var_len</c>, which gives the one-byte offsets their high part
+/// (<see cref="Jet3JumpTable"/>): Jet3 only.
+/// </param>
+internal readonly record struct RowFieldSizes(int NumCols, int VarEntry, int Eod, int VarLen, bool HasJumpTable)
 {
-    /// <summary>Returns the row-trailer field sizes for <paramref name="format"/>.</summary>
-    /// <param name="format">The format.</param>
-    public static RowFieldSizes For(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb
-        ? new RowFieldSizes(NumCols: 2, VarEntry: 2, Eod: 2, VarLen: 2)
-        : new RowFieldSizes(NumCols: 1, VarEntry: 1, Eod: 1, VarLen: 1);
+    /// <summary>Gets the Jet3 row-trailer field sizes: one byte each, with a jump table.</summary>
+    public static RowFieldSizes Jet3 => new(NumCols: 1, VarEntry: 1, Eod: 1, VarLen: 1, HasJumpTable: true);
+
+    /// <summary>Gets the Jet4 / ACE row-trailer field sizes: two bytes each.</summary>
+    public static RowFieldSizes Jet4 => new(NumCols: 2, VarEntry: 2, Eod: 2, VarLen: 2, HasJumpTable: false);
 
     /// <summary>Reads a <see cref="NumCols"/>-sized little-endian unsigned int (1 or 2 bytes) from <paramref name="page"/> at <paramref name="off"/>.</summary>
     /// <param name="page">The page bytes.</param>

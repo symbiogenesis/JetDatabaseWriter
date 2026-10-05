@@ -6,7 +6,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
@@ -75,13 +74,14 @@ internal sealed class CatalogArtifactWriter(
     /// <summary>
     /// Reserves the contiguous TDEF slots for the core ACCDB system tables
     /// (<c>MSysACEs</c>, <c>MSysQueries</c>, <c>MSysRelationships</c>) of a
-    /// freshly created full-catalog database. Returns 0 when no slots are needed.
+    /// freshly created full-catalog database. Returns 0 when no slots are needed:
+    /// the writer scaffolds these tables only on ACCDB, with the complex-column
+    /// catalog (<see cref="JetFormat.SupportsComplexColumns"/>).
     /// </summary>
-    /// <param name="format">The database format.</param>
     /// <param name="fullCatalogSchema">Whether the full 17-column catalog schema is in use.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
-        => format == DatabaseFormat.AceAccdb && fullCatalogSchema
+    internal ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(bool fullCatalogSchema, CancellationToken cancellationToken)
+        => db.Profile.SupportsComplexColumns && fullCatalogSchema
             ? pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken)
             : new ValueTask<long>(0L);
 
@@ -90,19 +90,18 @@ internal sealed class CatalogArtifactWriter(
     /// <c>Id</c> primary key and <c>ParentIdName</c> unique index, empty leaf
     /// pages, and a writer-owned usage map. No-op for Jet3 and the slim catalog.
     /// </summary>
-    /// <param name="format">The database format.</param>
     /// <param name="fullCatalogSchema">Whether the full 17-column catalog schema is in use.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when the bootstrap TDEF unexpectedly spans multiple pages.</exception>
-    internal async ValueTask InitializeFreshCatalogIndexesAsync(DatabaseFormat format, bool fullCatalogSchema, CancellationToken cancellationToken)
+    internal async ValueTask InitializeFreshCatalogIndexesAsync(bool fullCatalogSchema, CancellationToken cancellationToken)
     {
-        if (format == DatabaseFormat.Jet3Mdb || !fullCatalogSchema)
+        if (db.Profile.IsJet3 || !fullCatalogSchema)
         {
             return;
         }
 
         IReadOnlyList<ColumnDefinition> columns = BuildFullCatalogColumnDefinitions();
-        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, db.Format);
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, db.Profile);
         var indexes = new IndexDefinition[]
         {
             new("Id", "Id") { IsPrimaryKey = true },
@@ -117,7 +116,7 @@ internal sealed class CatalogArtifactWriter(
         }
 
         tdefPages[0][db.TDef.TableType] = Constants.TableDefinition.SystemTableType;
-        var layout = IndexPageLayout.ForFormat(db.Format);
+        IndexPageLayout layout = db.Profile.IndexPage;
         long[] leafPageNumbers = new long[resolvedIndexes.Count];
         for (int i = 0; i < resolvedIndexes.Count; i++)
         {
@@ -232,7 +231,7 @@ internal sealed class CatalogArtifactWriter(
 
     private async ValueTask<long> CreateCatalogTableArtifactAsync(CatalogTableArtifact tableArtifact, CancellationToken cancellationToken)
     {
-        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(tableArtifact.Columns, db.Format);
+        TableDef tableDef = TDefPageBuilder.BuildTableDefinition(tableArtifact.Columns, db.Profile);
         List<ResolvedIndex> resolvedIndexes = IndexHelpers.ResolveIndexes(tableArtifact.Indexes, tableDef);
         (byte[][] tdefPages, int[] firstDpLogicalOffsets, int[] usedPagesLogicalOffsets) = tdefPageBuilder.BuildTDefPagesWithIndexOffsets(tableDef, resolvedIndexes);
         if (tableArtifact.ReservedTdefPageNumber > 0 && tdefPages.Length != 1)
@@ -278,7 +277,7 @@ internal sealed class CatalogArtifactWriter(
         // docs/design/index-and-relationship-format-notes.md §7.
         if (resolvedIndexes.Count > 0)
         {
-            var layout = IndexPageLayout.ForFormat(db.Format);
+            IndexPageLayout layout = db.Profile.IndexPage;
             leafPageNumbers = new long[resolvedIndexes.Count];
 
             for (int indexIndex = 0; indexIndex < resolvedIndexes.Count; indexIndex++)
@@ -307,7 +306,7 @@ internal sealed class CatalogArtifactWriter(
         // NorthwindTraders.accdb (every user table has byte 0x18 == 0x01,
         // including ones without an autonumber column). See
         // docs/design/round-trip-openrecordset-hypothesis.md.
-        if (tableArtifact.EmitUsageMap && db.Format != DatabaseFormat.Jet3Mdb)
+        if (tableArtifact.EmitUsageMap && !db.Profile.IsJet3)
         {
             long usageMapPageNumber = await dataPages.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
 

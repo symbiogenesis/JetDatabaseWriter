@@ -461,7 +461,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private static byte[] ConvertOwnedUsageMapToReference(byte[] fileBytes, int pageSize, long tdefPage)
     {
         const int dataPageRowsStart = 14;
-        var tdefLayout = TDefHeaderLayout.For(DatabaseFormat.Jet4Mdb);
+        TDefHeaderLayout tdefLayout = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb).TDef;
 
         int tdefOffset = checked((int)(tdefPage * pageSize));
         int usageMapRow = fileBytes[tdefOffset + tdefLayout.UsedPages];

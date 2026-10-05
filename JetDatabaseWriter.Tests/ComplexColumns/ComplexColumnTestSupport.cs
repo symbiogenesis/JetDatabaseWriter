@@ -220,7 +220,7 @@ internal static class ComplexColumnTestSupport
 
         ms.Position = 0;
         await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
-        return await CollectLeafKeysAsync(pages, IndexPageLayout.ForFormat(format), pageSize, index.FirstDp, Ct);
+        return await CollectLeafKeysAsync(pages, JetFormat.ForNewDatabase(format).IndexPage, pageSize, index.FirstDp, Ct);
     }
 
     /// <summary>Walks from <paramref name="rootPage"/> to the leftmost leaf, then returns every key along the leaf sibling chain.</summary>

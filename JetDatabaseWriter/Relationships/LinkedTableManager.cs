@@ -510,7 +510,7 @@ internal static class LinkedTableManager
             throw new ArgumentException("Cached schema LvProp cannot be the default placeholder.", paramName);
         }
 
-        uint expectedMagic = format == DatabaseFormat.Jet3Mdb ? 0x00444B4BU : 0x0032524DU;
+        uint expectedMagic = JetFormat.PropertyBlockMagicOf(format);
         if (copy.Length < sizeof(uint) || JetTypeInfo.Ru32(copy, 0) != expectedMagic)
         {
             throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);

@@ -349,7 +349,7 @@ internal sealed class RowEncoder(DatabaseFile db)
 
         int nullMaskLen = JetTypeInfo.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
-        bool jet3 = db.Format == DatabaseFormat.Jet3Mdb;
+        bool jet3 = db.Profile.IsJet3;
         if (jet3 && (numCols > Constants.TableDefinition.MaxJet3Columns || varLen > Constants.TableDefinition.MaxJet3Columns))
         {
             throw new JetLimitationException(

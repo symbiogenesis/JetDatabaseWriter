@@ -56,9 +56,9 @@ public sealed class LongValueStoreTests
         int singlePageCapacity,
         int chainedPageCapacity)
     {
-        var layout = LvalPageLayout.For(format);
+        LvalPageLayout layout = JetFormat.ForNewDatabase(format).LvalPage;
 
-        Assert.Equal(DataPageLayout.For(format), layout.DataPage);
+        Assert.Equal(JetFormat.ForNewDatabase(format).DataPage, layout.DataPage);
         Assert.Equal(minRowStart, layout.MinRowStart);
         Assert.Equal(writesToken, layout.WritesToken);
         Assert.Equal(packRowsAtEnd, layout.PackRowsAtEnd);
@@ -73,7 +73,7 @@ public sealed class LongValueStoreTests
         const int pageSize = 4096;
         byte[] payload = Payload(100);
 
-        byte[] page = LongValueStore.BuildSinglePageBuffer(payload, 0xDEADBEEF, pageSize, LvalPageLayout.For(DatabaseFormat.Jet4Mdb), packRowsAtEnd: false);
+        byte[] page = LongValueStore.BuildSinglePageBuffer(payload, 0xDEADBEEF, pageSize, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb).LvalPage, packRowsAtEnd: false);
         try
         {
             AssertLvalPageStart(page);
@@ -97,7 +97,7 @@ public sealed class LongValueStoreTests
         const int pageSize = 2048;
         byte[] payload = Payload(100);
 
-        byte[] page = LongValueStore.BuildSinglePageBuffer(payload, 0xDEADBEEF, pageSize, LvalPageLayout.For(DatabaseFormat.Jet3Mdb), packRowsAtEnd: false);
+        byte[] page = LongValueStore.BuildSinglePageBuffer(payload, 0xDEADBEEF, pageSize, JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).LvalPage, packRowsAtEnd: false);
         try
         {
             AssertLvalPageStart(page);
@@ -122,7 +122,7 @@ public sealed class LongValueStoreTests
         byte[] data = Payload(chunkLength + 10);
         uint nextDp = LongValueStore.MakeRowPointer(37, rowIndex: 0);
 
-        byte[] page = LongValueStore.BuildChainedPageBuffer(data, 10, chunkLength, nextDp, 0xDEADBEEF, pageSize, LvalPageLayout.For(DatabaseFormat.Jet3Mdb), packRowsAtEnd: false);
+        byte[] page = LongValueStore.BuildChainedPageBuffer(data, 10, chunkLength, nextDp, 0xDEADBEEF, pageSize, JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).LvalPage, packRowsAtEnd: false);
         try
         {
             AssertLvalPageStart(page);

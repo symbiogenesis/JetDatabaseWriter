@@ -141,5 +141,5 @@ internal sealed class CatalogRowReader(DatabaseFile db)
     private bool CanDecodeRow(byte[] page, RowLocation location)
         => location.RowSize >= db.RowColumnCountFieldSize
             && db.ReadRowColumnCount(page, location.RowStart) != 0
-            && RowDecodePlan.TryParseRowLayout(db.Profile.Kind, db.Profile.RowFields, page, location.RowStart, location.RowSize, hasVarColumns: true, out _);
+            && RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, page, location.RowStart, location.RowSize, hasVarColumns: true, out _);
 }

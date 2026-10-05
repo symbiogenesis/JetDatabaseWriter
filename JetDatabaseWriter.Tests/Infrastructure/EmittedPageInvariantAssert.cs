@@ -97,7 +97,7 @@ internal static class EmittedPageInvariantAssert
     private static DataPageSummary AssertDataPage(byte[] fileBytes, int pageNumber, int pageSize, DatabaseFormat format)
     {
         ReadOnlySpan<byte> page = PageSpan(fileBytes, pageNumber, pageSize);
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
 
         Assert.Equal(0x01, page[1]);
         List<RowSlotInfo> rowSlots = AssertRowSlotDirectory(page, pageNumber, pageSize, layout);
@@ -251,7 +251,7 @@ internal static class EmittedPageInvariantAssert
         Dictionary<int, uint> rowCountsByTdefPage)
     {
         ReadOnlySpan<byte> page = PageSpan(fileBytes, pageNumber, pageSize);
-        var layout = TDefHeaderLayout.For(format);
+        TDefHeaderLayout layout = JetFormat.ForNewDatabase(format).TDef;
 
         Assert.Equal(0x01, page[1]);
 
@@ -326,7 +326,7 @@ internal static class EmittedPageInvariantAssert
     private static void AssertIndexPage(byte[] fileBytes, int pageNumber, int pageSize, DatabaseFormat format)
     {
         byte[] page = PageCopy(fileBytes, pageNumber, pageSize);
-        var layout = IndexPageLayout.ForFormat(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
         byte pageType = page[0];
 
         Assert.Equal(0x01, page[1]);
@@ -449,7 +449,7 @@ internal static class EmittedPageInvariantAssert
     {
         AssertPageType(fileBytes, pageSize, indexPageNumber, dataPageNumber, [0x01], "index data-row page");
 
-        var layout = DataPageLayout.For(format);
+        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         ReadOnlySpan<byte> dataPage = PageSpan(fileBytes, checked((int)dataPageNumber), pageSize);
         int numRows = ReadUInt16(dataPage, layout.NumRows);
         Assert.True(

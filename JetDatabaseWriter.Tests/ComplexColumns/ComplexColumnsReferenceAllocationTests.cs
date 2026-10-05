@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -529,9 +528,9 @@ public sealed class ComplexColumnsReferenceAllocationTests
     [Fact]
     public void TDefHeaderLayout_ComplexAutoNumber_IsAceOnly()
     {
-        Assert.Equal(-1, TDefHeaderLayout.For(DatabaseFormat.Jet3Mdb).ComplexAutoNumber);
-        Assert.Equal(-1, TDefHeaderLayout.For(DatabaseFormat.Jet4Mdb).ComplexAutoNumber);
-        Assert.Equal(28, TDefHeaderLayout.For(DatabaseFormat.AceAccdb).ComplexAutoNumber);
+        Assert.Equal(-1, JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).TDef.ComplexAutoNumber);
+        Assert.Equal(-1, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb).TDef.ComplexAutoNumber);
+        Assert.Equal(28, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb).TDef.ComplexAutoNumber);
     }
 
     [Theory]
