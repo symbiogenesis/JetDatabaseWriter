@@ -8,8 +8,12 @@ using System.Collections.Generic;
 internal sealed class MaterializerCache<T>
 {
     private const int Capacity = 64;
+#if NET9_0_OR_GREATER
+    private readonly System.Threading.Lock gate = new();
+#else
     private readonly object gate = new();
-    private readonly Dictionary<RowShape, LinkedListNode<(RowShape Shape, T Value)>> entries = new();
+#endif
+    private readonly Dictionary<RowShape, LinkedListNode<(RowShape Shape, T Value)>> entries = [];
     private readonly LinkedList<(RowShape Shape, T Value)> recent = new();
 
     /// <summary>Gets an existing value or publishes one newly created value.</summary>
@@ -30,9 +34,8 @@ internal sealed class MaterializerCache<T>
             T value = create();
             LinkedListNode<(RowShape Shape, T Value)> added = this.recent.AddFirst((shape, value));
             this.entries.Add(shape, added);
-            if (this.entries.Count > Capacity)
+            if (this.entries.Count > Capacity && this.recent.Last is { } oldest)
             {
-                LinkedListNode<(RowShape Shape, T Value)> oldest = this.recent.Last!;
                 this.entries.Remove(oldest.Value.Shape);
                 this.recent.RemoveLast();
             }

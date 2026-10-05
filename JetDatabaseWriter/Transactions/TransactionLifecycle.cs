@@ -443,8 +443,8 @@ internal sealed class TransactionLifecycle(
     private async ValueTask<TResult> RunSerializedAsync<TResult>(Func<ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
         TResult result = default!;
-        Func<ValueTask> invoke = async () => result = await work().ConfigureAwait(false);
-        await this.RunSerializedAsync(invoke, cancellationToken).ConfigureAwait(false);
+        async ValueTask InvokeAsync() => result = await work().ConfigureAwait(false);
+        await this.RunSerializedAsync(InvokeAsync, cancellationToken).ConfigureAwait(false);
         return result;
     }
 

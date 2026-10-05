@@ -345,6 +345,7 @@ public sealed class IndexCursorTests
 
         Assert.Equal(expected, actual);
     }
+
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -393,7 +394,7 @@ public sealed class IndexCursorTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task StreamingRange_DescendingAndEmptyBoundsMatchList(DatabaseFormat format)
     {
-        List<IndexEntry> entries = Enumerable.Range(0, 500).Reverse().Select(static value => new IndexEntry(IndexKeyEncoder.EncodeEntry(LongIntegerType, value, ascending: false), DataPage: 100 + (value / 200), DataRow: (byte)(value % 200))).ToList();
+        var entries = Enumerable.Range(0, 500).Reverse().Select(static value => new IndexEntry(IndexKeyEncoder.EncodeEntry(LongIntegerType, value, ascending: false), DataPage: 100 + (value / 200), DataRow: (byte)(value % 200))).ToList();
         TreeFixture tree = BuildTree(format, entries);
         byte[] lower = IndexKeyEncoder.EncodeEntry(LongIntegerType, 400, ascending: false);
         byte[] upper = IndexKeyEncoder.EncodeEntry(LongIntegerType, 100, ascending: false);
@@ -413,6 +414,7 @@ public sealed class IndexCursorTests
 
         Assert.Empty(empty);
     }
+
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
@@ -444,19 +446,6 @@ public sealed class IndexCursorTests
         Assert.Equal(16, actual.Count);
         Assert.Equal(16, actual.Distinct().Count());
         Assert.Equal(2, reads);
-    }
-
-    private async Task AssertStreamingMatchesListAsync(TreeFixture tree, EncodedIndexRange range)
-    {
-        IndexCursor cursor = CreateCursor(tree);
-        List<(long DataPage, int RowIndex)> expected = await cursor.FindRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken);
-        var actual = new List<(long DataPage, int RowIndex)>();
-        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken))
-        {
-            actual.Add(location);
-        }
-
-        Assert.Equal(expected, actual);
     }
 
     private static void AssertLastKey(int expected, IndexEntry? last)
@@ -618,6 +607,19 @@ public sealed class IndexCursorTests
 
     private static int PageSizeOf(DatabaseFormat format)
         => format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+
+    private async Task AssertStreamingMatchesListAsync(TreeFixture tree, EncodedIndexRange range)
+    {
+        IndexCursor cursor = CreateCursor(tree);
+        List<(long DataPage, int RowIndex)> expected = await cursor.FindRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken);
+        var actual = new List<(long DataPage, int RowIndex)>();
+        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(tree.RootPageNumber, range, this.cancellationToken))
+        {
+            actual.Add(location);
+        }
+
+        Assert.Equal(expected, actual);
+    }
 
     private sealed record TreeFixture(
         IndexPageLayout Layout,

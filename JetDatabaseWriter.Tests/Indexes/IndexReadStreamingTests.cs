@@ -39,6 +39,7 @@ public sealed class IndexReadStreamingTests
         stream.Position = 0;
         await using var counting = new CountingStream(stream);
         await using AccessReader reader = await AccessReader.OpenAsync(counting, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, ct);
+
         // Resolve catalog and schema before measuring the index walk itself.
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Items", ct);
         _ = await reader.GetColumnMetadataAsync("Items", ct);

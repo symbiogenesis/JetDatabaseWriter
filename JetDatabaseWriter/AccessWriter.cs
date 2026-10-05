@@ -761,12 +761,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.lockFileCoordinator.Dispose();
     }
 
-    private ValueTask DisposeCoreAsync()
-        => this.lockFileCoordinator.DisposeAfterAsync(
-            this.services.Transactions.DisposeActiveTransactionAsync,
-            this.services.Transactions.FlushPendingWritesAsync,
-            this.RewrapAndCloseOuterEncryptedStreamAsync,
-            this.Database.DisposeAsync);
     private static FileStream CreateStream(string path) =>
         PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
@@ -776,6 +770,13 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         "remove the encryption with AccessWriter.DecryptAsync, write to the decrypted file, then encrypt it " +
         "again with AccessWriter.EncryptAsync. Files encrypted as AccessEncryptionFormat.AccdbAgileCfb can be " +
         "opened for writing.");
+
+    private ValueTask DisposeCoreAsync()
+        => this.lockFileCoordinator.DisposeAfterAsync(
+            this.services.Transactions.DisposeActiveTransactionAsync,
+            this.services.Transactions.FlushPendingWritesAsync,
+            this.RewrapAndCloseOuterEncryptedStreamAsync,
+            this.Database.DisposeAsync);
 
     /// <summary>
     /// If <see cref="AccessWriterOptions.UseTransactionalWrites"/> is enabled

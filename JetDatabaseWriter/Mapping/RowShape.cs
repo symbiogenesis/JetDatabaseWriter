@@ -17,7 +17,7 @@ internal sealed class RowShape : IEquatable<RowShape>
     internal RowShape(IReadOnlyList<string> headers, IReadOnlyList<Type>? types, IReadOnlyList<ColumnInfo>? layout = null)
     {
         this.columns = new ColumnShape[headers.Count];
-        var hash = new HashCode();
+        HashCode hash = default;
         for (int i = 0; i < headers.Count; i++)
         {
             ColumnInfo? column = layout?[i];

@@ -21,7 +21,7 @@ public sealed class LockAndTransactionErrorTests
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         JetOperationException active = await Assert.ThrowsAsync<JetOperationException>(() => writer.BeginTransactionAsync(TestContext.Current.CancellationToken).AsTask());
-        Assert.IsAssignableFrom<InvalidOperationException>(active);
+        Assert.IsType<InvalidOperationException>(active, exactMatch: false);
         Assert.Equal(JetErrorCode.TransactionAlreadyActive, active.ErrorCode);
         await transaction.RollbackAsync(TestContext.Current.CancellationToken);
         JetOperationException ended = await Assert.ThrowsAsync<JetOperationException>(() => transaction.CommitAsync(TestContext.Current.CancellationToken).AsTask());
@@ -56,7 +56,7 @@ public sealed class LockAndTransactionErrorTests
         try
         {
             JetIOException error = await Assert.ThrowsAsync<JetIOException>(() => AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.AceAccdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
-            Assert.IsAssignableFrom<IOException>(error);
+            Assert.IsType<IOException>(error, exactMatch: false);
             Assert.Equal(JetErrorCode.DatabaseFileExists, error.ErrorCode);
         }
         finally
@@ -99,7 +99,7 @@ public sealed class LockAndTransactionErrorTests
             for (int index = 0; index < LockFileSlotWriter.MaxSlots; index++)
             {
 #pragma warning disable CA2000 // Every acquired slot is owned by slots and disposed in finally.
-                LockFileSlotWriter? slot = LockFileSlotWriter.Open(path, nameof(AccessWriter), respectExisting: true, "Machine", "User");
+                var slot = LockFileSlotWriter.Open(path, nameof(AccessWriter), respectExisting: true, "Machine", "User");
 #pragma warning restore CA2000
                 Assert.NotNull(slot);
                 slots.Add(slot);

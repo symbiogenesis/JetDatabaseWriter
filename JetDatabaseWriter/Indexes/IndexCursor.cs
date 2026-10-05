@@ -387,6 +387,7 @@ internal sealed class IndexCursor
         (long PageNumber, byte[] Page)? candidate = await this.FindCandidateLeafWithNumberAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
         return candidate?.Page;
     }
+
     private async ValueTask<(long PageNumber, byte[] Page)?> FindCandidateLeafWithNumberAsync(
         long rootPageNumber,
         byte[] searchKey,
