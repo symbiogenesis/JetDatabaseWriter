@@ -54,6 +54,6 @@ internal readonly struct IndexPageLayout(
     /// <summary>Gets the byte offset of the tail_page (childTail) header field.</summary>
     public int TailPageOffset { get; } = tailPageOffset;
 
-    /// <summary>Gets the byte offset of the pref_len (page-shared prefix length, u16) header field.</summary>
+    /// <summary>Gets the byte offset of the pref_len (page-shared prefix length, u8 on Jet3 and u16 on Jet4/ACE) header field.</summary>
     public int PrefLenOffset { get; } = prefLenOffset;
 }

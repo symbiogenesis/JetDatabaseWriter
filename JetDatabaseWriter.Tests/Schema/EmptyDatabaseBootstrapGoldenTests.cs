@@ -44,7 +44,7 @@ using Xunit;
 /// are pinned as separate hashes. They are the only TDEFs in the scenario
 /// built through the column-descriptor overrides
 /// (<c>ForceVariableLengthStorage</c>, <c>DescriptorFlagsOverride</c>,
-/// <c>DescriptorExtraFlagsOverride</c> and <c>DescriptorMiscOverride</c>).
+/// <c>DescriptorExtraFlagsOverride</c> and <c>DescriptorNonTextMiscOverride</c>).
 /// The GUID in a flat table's name is not in its TDEF, so the bytes are the
 /// same on every run.
 /// </para>
@@ -54,8 +54,8 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, "717BA31062AEE9B6CD5BA5F625FACD6FA3BEDCFB587073A925EC6998597EBCED")]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, "F2AFA51D2ED0B44039DED0F0BA5CE98A6BE92DAF3EAB4FA8F16A105BCF6CBDA8")]
+    [InlineData(DatabaseFormat.Jet3Mdb, true, "D99ABF7F931CEFCCA40A76D2D7E341593992E0F1809F92D31AFA4D821E7A06BD")]
+    [InlineData(DatabaseFormat.Jet3Mdb, false, "4F3DC4F579E518F807B5D53A9E3E934EBE7B8D18AF25C9A2477AA45001707358")]
     [InlineData(DatabaseFormat.Jet4Mdb, true, "F8A34D1D4232CB91CBB813650023D4ADAC24A0B0D639DF9DA8DB995FD1807152")]
     [InlineData(DatabaseFormat.Jet4Mdb, false, "74280E912941AA1DC2F8D8DC3635B68243AE7A834C03F4F2BEE7021CF39282D5")]
     [InlineData(DatabaseFormat.AceAccdb, true, "2BF119CCEEAA076A9AE7C2A64476707A1DA60AFFD8E72E2996E53F564D6D5DF0")]
@@ -68,7 +68,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "B0C7B77C7BDB9FB73A7E60F6CE51CB0D4462EF5328D5DB098229D0C987F39431")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "F622EC30B3810C08029732707404BB0EFE2EB480646B16EB147E759D1E139A98")]
     [InlineData(DatabaseFormat.Jet4Mdb, "9763A6A440BD89F28D7C43FC76149DA0D0B39EE847B25733FACD8600718C7DC9")]
     [InlineData(DatabaseFormat.AceAccdb, "F2D690BFBF470FE48C2C09AA32BF4BC87BE667217B526FB3208F7143707F0AC7")]
     public async Task CreateTable_EveryAuthorableTypeAndTwoTextIndexes_TDefMatchesGoldenHash(DatabaseFormat format, string expectedSha256)

@@ -35,7 +35,18 @@ internal static class CollationTestSupport
             byte[] page = await harness.ReadPageCopyAsync(tablePage, ct);
             int realIndexes = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(format.TDef.NumRealIdx, 4));
             int descriptors = format.TDef.BlockEnd + (realIndexes * format.TDef.RealIdxEntrySz);
-            int index = definition.FindColumnIndex(column);
+            ColumnInfo target = Assert.Single(definition.Columns, value => value.Name == column);
+            int index = -1;
+            for (int descriptor = 0; descriptor < definition.Columns.Count; descriptor++)
+            {
+                int numberOffset = descriptors + (descriptor * format.ColumnDescriptor.Size) + format.ColumnDescriptor.NumOff;
+                if (BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(numberOffset, 2)) == target.ColNum)
+                {
+                    index = descriptor;
+                    break;
+                }
+            }
+
             Assert.True(index >= 0);
             int sortOffset = format.Kind == DatabaseFormat.Jet3Mdb ? 9 : 11;
             offset = (tablePage * format.PageSize) + descriptors + (index * format.ColumnDescriptor.Size) + sortOffset;

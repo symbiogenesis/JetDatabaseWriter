@@ -629,7 +629,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return false;
         }
 
-        int originalTailPrefLen = Ru16(tailLeaf, layout.PrefLenOffset);
+        int originalTailPrefLen = IndexPageCodec.ReadPrefixLength(layout, tailLeaf);
 
         List<IndexEntry> existingTail = IndexPageCodec.DecodeLeafEntries(layout, tailLeaf, format.PageSize);
 
@@ -776,7 +776,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
         long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
         long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
-        int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
+        int originalPrefLen = IndexPageCodec.ReadPrefixLength(layout, leaf);
 
         byte[] oldMaxKey = existingLeafEntries[^1].Key;
 
@@ -989,7 +989,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
             byte[] pageBytes = step.PageBytes;
             (long prev, long next, long tail) = IndexPageCodec.ReadSiblingPointers(layout, pageBytes);
-            int originalPrefLen = Ru16(pageBytes, layout.PrefLenOffset);
+            int originalPrefLen = IndexPageCodec.ReadPrefixLength(layout, pageBytes);
 
             byte[]? rebuilt = IndexBTreeBuilder.TryBuildIntermediatePage(
                 layout, format.PageSize, tdefPage, newEntries, prev, next, tail, originalPrefLen);
@@ -1067,7 +1067,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
         byte[] parentBytes = step.PageBytes;
         (long parentPrev, long parentNext, long parentTail) = IndexPageCodec.ReadSiblingPointers(layout, parentBytes);
-        int originalPrefLen = Ru16(parentBytes, layout.PrefLenOffset);
+        int originalPrefLen = IndexPageCodec.ReadPrefixLength(layout, parentBytes);
 
         byte[]? rebuiltParent = IndexBTreeBuilder.TryBuildIntermediatePage(
             layout, format.PageSize, tdefPage, newEntries, parentPrev, parentNext, parentTail, originalPrefLen);
@@ -1268,7 +1268,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 IndexPageCodec.ReadPrevPage(layout, leaf),
                 IndexPageCodec.ReadNextPage(layout, leaf),
                 IndexPageCodec.ReadTailPage(layout, leaf),
-                Ru16(leaf, layout.PrefLenOffset),
+                IndexPageCodec.ReadPrefixLength(layout, leaf),
                 existing[^1].Key);
 
             if (spliced.Count == 0)

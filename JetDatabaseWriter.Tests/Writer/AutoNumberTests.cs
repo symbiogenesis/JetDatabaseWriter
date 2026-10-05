@@ -504,7 +504,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync(tableName, [42, WriteMode.ExplicitCommit], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync(tableName, [42, "explicit"], TestContext.Current.CancellationToken);
         }
 
         await using (AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken))
@@ -518,7 +518,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
 
             Assert.NotNull(row);
             Assert.Equal(42, row[0]);
-            Assert.Equal(WriteMode.ExplicitCommit, row[1]);
+            Assert.Equal("explicit", row[1]);
         }
     }
 

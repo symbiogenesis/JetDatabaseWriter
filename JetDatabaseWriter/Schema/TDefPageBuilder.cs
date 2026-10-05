@@ -151,7 +151,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 Size = size,
                 Flags = flags,
                 TextSortOrder = definition.TextSortOrderOverride ?? format.DefaultTextSortOrder,
-                Misc = isComplex ? definition.ComplexId : definition.DescriptorMiscOverride ?? 0,
+                Misc = isComplex ? definition.ComplexId : definition.DescriptorNonTextMiscOverride ?? 0,
                 NumericPrecision = type == NumericType ? ResolveNumericPrecision(definition, nameof(columns)) : (byte)0,
                 NumericScale = type == NumericType ? ResolveNumericScale(definition, nameof(columns)) : (byte)0,
                 ExtraFlags = definition.DescriptorExtraFlagsOverride ?? GetExtraFlags(definition, type, format),
@@ -249,7 +249,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             {
                 Wu16(page, o + 5, col.ColNum);
                 Wu16(page, o + 9, 0x0409);
-                Wu16(page, o + 11, 1252);
+                Wu16(page, o + 11, format.CodePage);
             }
 
             page[o + format.ColumnDescriptor.FlagsOff] = col.Flags;
@@ -300,7 +300,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 }
                 else
                 {
-                    Wu16(page, o + 11, 1252);
+                    Wu16(page, o + 11, format.CodePage);
                 }
 
                 if (jet4)

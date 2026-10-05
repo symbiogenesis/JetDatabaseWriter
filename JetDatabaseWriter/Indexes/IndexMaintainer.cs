@@ -1934,7 +1934,7 @@ internal sealed class IndexMaintainer(
             long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
             long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
             long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
-            int originalPrefLen = Ru16(leaf, layout.PrefLenOffset);
+            int originalPrefLen = IndexPageCodec.ReadPrefixLength(layout, leaf);
 
             List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
 

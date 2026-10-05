@@ -110,25 +110,24 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     public Task Northwind_SecondInsert()
         => this.RunAsync(async writer => await writer.InsertRowAsync("PageIo", [2, "second"]));
 
+    // BenchmarkDotNet 0.15.8 requires synchronous iteration hooks. These adapters
+    // run outside measurement, on its worker thread without a synchronization context.
+
     /// <summary>Opens an unmeasured fresh image for the new-database workloads.</summary>
-    /// <returns>The setup completion.</returns>
     [IterationSetup(Targets = [nameof(NewAccdb_Bulk999), nameof(NewAccdb_Single), nameof(NewAccdb_Update), nameof(NewAccdb_Delete), nameof(NewAccdb_AddColumn)])]
-    public Task SetupNewIteration() => this.PrepareIterationAsync(this.baseline, warmInsert: false);
+    public void SetupNewIteration() => this.PrepareIterationAsync(this.baseline, warmInsert: false).GetAwaiter().GetResult();
 
     /// <summary>Opens a fresh Northwind writer before timing the first insert.</summary>
-    /// <returns>The setup completion.</returns>
     [IterationSetup(Target = nameof(Northwind_FirstInsert))]
-    public Task SetupFirstNorthwindIteration() => this.PrepareIterationAsync(this.northwind, warmInsert: false);
+    public void SetupFirstNorthwindIteration() => this.PrepareIterationAsync(this.northwind, warmInsert: false).GetAwaiter().GetResult();
 
     /// <summary>Opens and warms a Northwind writer before timing the second insert.</summary>
-    /// <returns>The setup completion.</returns>
     [IterationSetup(Target = nameof(Northwind_SecondInsert))]
-    public Task SetupSecondNorthwindIteration() => this.PrepareIterationAsync(this.northwind, warmInsert: true);
+    public void SetupSecondNorthwindIteration() => this.PrepareIterationAsync(this.northwind, warmInsert: true).GetAwaiter().GetResult();
 
     /// <summary>Records page counts and disposes the iteration's resources outside measurement.</summary>
-    /// <returns>The cleanup completion.</returns>
     [IterationCleanup]
-    public Task CleanupIteration() => this.DisposeAsync().AsTask();
+    public void CleanupIteration() => this.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()

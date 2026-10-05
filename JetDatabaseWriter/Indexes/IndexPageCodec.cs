@@ -17,6 +17,14 @@ internal static class IndexPageCodec
     private const int LeafTrailerSize = 4;
     private const int IntermediateTrailerSize = 8;
 
+    /// <summary>Reads the shared entry prefix byte count, excluding the Jet3 level byte.</summary>
+    /// <param name="layout">The page layout.</param>
+    /// <param name="page">The page bytes.</param>
+    public static int ReadPrefixLength(IndexPageLayout layout, byte[] page)
+        => layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset
+            ? page[layout.PrefLenOffset]
+            : Ru16(page, layout.PrefLenOffset);
+
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="page"/> is an
     /// index leaf page (<c>page_type = 0x04</c>).
@@ -80,7 +88,15 @@ internal static class IndexPageCodec
             prefLen = maxPrefixLength.Value;
         }
 
-        Wu16(page, layout.PrefLenOffset, prefLen);
+        if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
+        {
+            prefLen = Math.Min(prefLen, byte.MaxValue);
+            page[layout.PrefLenOffset] = (byte)prefLen;
+        }
+        else
+        {
+            Wu16(page, layout.PrefLenOffset, prefLen);
+        }
 
         int payloadCursor = layout.FirstEntryOffset;
         int payloadLimit = pageSize;
@@ -275,7 +291,15 @@ internal static class IndexPageCodec
             prefLen = maxPrefixLength.Value;
         }
 
-        Wu16(page, layout.PrefLenOffset, prefLen);
+        if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
+        {
+            prefLen = Math.Min(prefLen, byte.MaxValue);
+            page[layout.PrefLenOffset] = (byte)prefLen;
+        }
+        else
+        {
+            Wu16(page, layout.PrefLenOffset, prefLen);
+        }
 
         int payloadCursor = layout.FirstEntryOffset;
         int payloadLimit = pageSize;
@@ -560,7 +584,7 @@ internal static class IndexPageCodec
             return result;
         }
 
-        int prefixLength = Ru16(page, layout.PrefLenOffset);
+        int prefixLength = ReadPrefixLength(layout, page);
         byte[]? sharedPrefix = null;
         int entryStart = layout.FirstEntryOffset;
         bool isFirstEntry = true;
@@ -568,22 +592,24 @@ internal static class IndexPageCodec
         {
             int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
             int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
-            int suffixLength = entryEnd - entryStart - LeafTrailerSize;
-            if (suffixLength < 0 || entryStart + suffixLength + LeafTrailerSize > page.Length)
+            int storedLength = entryEnd - entryStart;
+            byte[] fullEntry = DecodeCanonicalKey(page, entryStart, storedLength, prefixLength, sharedPrefix, isFirstEntry);
+            if (fullEntry.Length < LeafTrailerSize || (isFirstEntry && prefixLength > fullEntry.Length))
             {
                 break;
             }
 
-            byte[] canonicalKey = DecodeCanonicalKey(page, entryStart, suffixLength, prefixLength, sharedPrefix, isFirstEntry);
-            if (isFirstEntry && prefixLength > 0 && suffixLength >= prefixLength)
+            if (isFirstEntry && prefixLength > 0)
             {
                 sharedPrefix = new byte[prefixLength];
-                Buffer.BlockCopy(canonicalKey, 0, sharedPrefix, 0, prefixLength);
+                Buffer.BlockCopy(fullEntry, 0, sharedPrefix, 0, prefixLength);
             }
 
-            int trailerOffset = entryStart + suffixLength;
-            long dataPage = ReadUInt24BigEndian(page.AsSpan(trailerOffset, 3));
-            byte dataRow = page[trailerOffset + 3];
+            int keyLength = fullEntry.Length - LeafTrailerSize;
+            byte[] canonicalKey = new byte[keyLength];
+            Buffer.BlockCopy(fullEntry, 0, canonicalKey, 0, keyLength);
+            long dataPage = ReadUInt24BigEndian(fullEntry.AsSpan(keyLength, 3));
+            byte dataRow = fullEntry[keyLength + 3];
             result.Add(new IndexEntry(canonicalKey, dataPage, dataRow));
 
             isFirstEntry = false;
@@ -618,7 +644,7 @@ internal static class IndexPageCodec
             return result;
         }
 
-        int prefixLength = Ru16(page, layout.PrefLenOffset);
+        int prefixLength = ReadPrefixLength(layout, page);
         byte[]? sharedPrefix = null;
         int entryStart = layout.FirstEntryOffset;
         bool isFirstEntry = true;
@@ -679,7 +705,7 @@ internal static class IndexPageCodec
             return null;
         }
 
-        int prefixLength = Ru16(page, layout.PrefLenOffset);
+        int prefixLength = ReadPrefixLength(layout, page);
         int entryStart = layout.FirstEntryOffset;
         int prefixStart = layout.FirstEntryOffset;
         bool isFirstEntry = true;
@@ -794,7 +820,7 @@ internal static class IndexPageCodec
             return false;
         }
 
-        int prefixLength = Ru16(page, layout.PrefLenOffset);
+        int prefixLength = ReadPrefixLength(layout, page);
         int entryStart = layout.FirstEntryOffset;
         int prefixStart = layout.FirstEntryOffset;
         int suffixLength;
@@ -880,21 +906,27 @@ internal static class IndexPageCodec
             int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
             int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
             suffixLength = entryEnd - entryStart - LeafTrailerSize;
-            if (!IsEntryReadable(page, entryStart, suffixLength, LeafTrailerSize))
+            if (suffixLength + (isFirstEntry ? 0 : prefixLength) < 0 || entryStart + suffixLength + LeafTrailerSize > page.Length)
             {
                 return false;
             }
 
-            if (isFirstEntry && prefixLength > suffixLength)
+            if (isFirstEntry && prefixLength > suffixLength + LeafTrailerSize)
             {
                 return false;
             }
 
             if (CurrentEntryMatchesRange(in range, out bool continueScanning))
             {
-                int pointerOffset = entryStart + suffixLength;
-                long dataPage = ReadUInt24BigEndian(page.AsSpan(pointerOffset, 3));
-                matches.Add((dataPage, page[pointerOffset + 3]));
+                int keyLength = suffixLength + (isFirstEntry ? 0 : prefixLength);
+                long dataPage = 0;
+                for (int pointerByte = 0; pointerByte < 3; pointerByte++)
+                {
+                    dataPage = (dataPage << 8) | ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, keyLength + pointerByte);
+                }
+
+                byte rowIndex = ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, keyLength + 3);
+                matches.Add((dataPage, rowIndex));
             }
 
             if (!continueScanning)
@@ -1130,7 +1162,7 @@ internal static class IndexPageCodec
             return false;
         }
 
-        int prefixLength = Ru16(page, layout.PrefLenOffset);
+        int prefixLength = ReadPrefixLength(layout, page);
         int entryStart = layout.FirstEntryOffset;
         int prefixStart = layout.FirstEntryOffset;
         bool isFirstEntry = true;
@@ -1140,12 +1172,12 @@ internal static class IndexPageCodec
             int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
             int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
             int suffixLength = entryEnd - entryStart - LeafTrailerSize;
-            if (!IsEntryReadable(page, entryStart, suffixLength, LeafTrailerSize))
+            if (suffixLength + (isFirstEntry ? 0 : prefixLength) < 0 || entryStart + suffixLength + LeafTrailerSize > page.Length)
             {
                 return false;
             }
 
-            if (isFirstEntry && prefixLength > suffixLength)
+            if (isFirstEntry && prefixLength > suffixLength + LeafTrailerSize)
             {
                 return false;
             }
@@ -1166,9 +1198,15 @@ internal static class IndexPageCodec
                     return true;
                 }
 
-                int pointerOffset = entryStart + suffixLength;
-                long dataPage = ReadUInt24BigEndian(page.AsSpan(pointerOffset, 3));
-                matches.Add((dataPage, page[pointerOffset + 3]));
+                int keyLength = suffixLength + (isFirstEntry ? 0 : prefixLength);
+                long dataPage = 0;
+                for (int pointerByte = 0; pointerByte < 3; pointerByte++)
+                {
+                    dataPage = (dataPage << 8) | ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, keyLength + pointerByte);
+                }
+
+                byte rowIndex = ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, keyLength + 3);
+                matches.Add((dataPage, rowIndex));
             }
 
             hasEntries = true;

@@ -88,14 +88,11 @@ internal static class TextIndexEncoderFixtureHarness
                     continue;
                 }
 
-                // Known fixture gaps remain in docs/todo.md: Fixed-length Text
-                // columns read as Null; GeneralLegacyTextIndexEncoder encodes
-                // 1 of the 8 keys in testUnicodeCompV2003.
+                // The fixed-length Text column in this index reads as Null;
+                // this fixture gap remains in docs/todo.md.
                 if (encode is null
-                    && ((fixturePath.Contains("fixedTextTest", StringComparison.OrdinalIgnoreCase)
-                            && index.Name == "Users2_8_idx")
-                        || (fixturePath.Contains("testUnicodeComp", StringComparison.OrdinalIgnoreCase)
-                            && tableName == "Table" && index.Columns[0].Name == "Unicode")))
+                    && fixturePath.Contains("fixedTextTest", StringComparison.OrdinalIgnoreCase)
+                    && index.Name == "Users2_8_idx")
                 {
                     continue;
                 }

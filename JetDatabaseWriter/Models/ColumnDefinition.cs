@@ -384,7 +384,7 @@ public sealed record ColumnDefinition
 
     internal byte? DescriptorExtraFlagsOverride { get; init; }
 
-    internal int? DescriptorMiscOverride { get; init; }
+    internal int? DescriptorNonTextMiscOverride { get; init; }
 
     /// <summary>Gets the original text sort order for schema rewrites.</summary>
     internal JetDatabaseWriter.Indexes.Collation.TextSortOrder? TextSortOrderOverride { get; init; }

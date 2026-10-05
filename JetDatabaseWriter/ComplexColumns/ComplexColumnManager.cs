@@ -651,10 +651,12 @@ internal sealed class ComplexColumnManager(
                 new ColumnDefinition("FileData", typeof(byte[]))
                 {
                     DescriptorExtraFlagsOverride = 0x10,
+                    DescriptorNonTextMiscOverride = 0x00000409,
                 },
                 new ColumnDefinition("FileFlags", typeof(int))
                 {
                     DescriptorExtraFlagsOverride = 0x10,
+                    DescriptorNonTextMiscOverride = 0x00000409,
                 },
                 new ColumnDefinition("FileName", typeof(string), maxLength: 255)
                 {
@@ -664,6 +666,7 @@ internal sealed class ComplexColumnManager(
                 new ColumnDefinition("FileTimeStamp", typeof(DateTime))
                 {
                     DescriptorExtraFlagsOverride = 0x10,
+                    DescriptorNonTextMiscOverride = 0x00000409,
                 },
                 new ColumnDefinition("FileType", typeof(string), maxLength: 255)
                 {
@@ -697,6 +700,7 @@ internal sealed class ComplexColumnManager(
         var valueCol = new ColumnDefinition("Value", elementType, maxLength: parentColumn.MaxLength)
         {
             DescriptorExtraFlagsOverride = 0x10,
+            DescriptorNonTextMiscOverride = 0x00000409,
             NumericPrecision = parentColumn.NumericPrecision,
             NumericScale = parentColumn.NumericScale,
         };

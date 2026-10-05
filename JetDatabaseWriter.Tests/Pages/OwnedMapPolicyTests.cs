@@ -70,7 +70,9 @@ public sealed class OwnedMapPolicyTests
     {
         await using var file = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, Ct));
         await using var counting = new CountingStream(file);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, cancellationToken: Ct);
+        // Measure the policy's memoization through physical reads of the catalog.
+        var options = new AccessWriterOptions { PageCacheSize = 0, UseLockFile = false, UseByteRangeLocks = false };
+        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, options, cancellationToken: Ct);
         CatalogOwnedMapPolicy policy = harness.Services.OwnedMaps;
         long[] systemTables =
         [

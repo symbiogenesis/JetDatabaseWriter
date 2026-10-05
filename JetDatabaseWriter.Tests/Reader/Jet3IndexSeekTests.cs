@@ -67,7 +67,7 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
                         actual.Add(row);
                     }
 
-                    Assert.Equal(expected, actual.Count);
+                    Assert.True(expected == actual.Count, $"Fixture {fixture}, table {table}, index {index.Name}, key {key}: expected {expected} rows, found {actual.Count}.");
                     int ordinal = scanned.Columns[name]!.Ordinal;
                     Assert.All(actual, row => Assert.Equal(sought, IndexKeyEncoder.EncodeColumnEntry(format, column, row[ordinal], index.Columns[0].IsAscending)));
                     checkedKeys++;

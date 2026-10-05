@@ -187,7 +187,8 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
     {
         await using MemoryStream source = await this.CreateDatabaseAsync(format, statement);
         byte[] original = source.ToArray();
-        UncancelledRun uncancelled = await RunUncancelledAsync(source, statement, mode);
+        // This fault injector cancels on stream reads, so every read must reach the stream.
+        UncancelledRun uncancelled = await RunUncancelledAsync(source, statement, mode, physicalReads: true);
         Assert.True(uncancelled.Reads >= 5, $"The statement made only {uncancelled.Reads} page reads.");
 
         foreach (int nthRead in Enumerable.Range(0, 6).Select(fifth => Math.Max(1, uncancelled.Reads * fifth / 5)).Distinct())
@@ -195,7 +196,7 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
             await using WriteFaultStream stream = CopyToFaultStream(source);
             using var cancellation = new CancellationTokenSource();
             int? count;
-            await using (AccessWriter writer = await OpenWarmWriterAsync(stream, mode, statement))
+            await using (AccessWriter writer = await OpenWarmWriterAsync(stream, mode, statement, physicalReads: true))
             {
                 stream.CancelAfterReads(nthRead, cancellation);
                 try
@@ -299,10 +300,18 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
     /// <param name="ms">The database.</param>
     /// <param name="mode">How the writer runs the operations.</param>
     /// <param name="statement">The statement the writer will run.</param>
+    /// <param name="physicalReads">Whether reads must reach the fault-injection stream.</param>
     /// <returns>The writer.</returns>
-    private static async Task<AccessWriter> OpenWarmWriterAsync(MemoryStream ms, WriteMode mode, Statement statement)
+    private static async Task<AccessWriter> OpenWarmWriterAsync(MemoryStream ms, WriteMode mode, Statement statement, bool physicalReads = false)
     {
-        AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode);
+        ms.Position = 0;
+        AccessWriter writer = physicalReads
+            ? await AccessWriter.OpenAsync(
+                ms,
+                new AccessWriterOptions { PageCacheSize = 0, UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = mode == WriteMode.AutoCommit },
+                leaveOpen: true,
+                Ct)
+            : await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode);
         try
         {
             Assert.Equal(0, await writer.DeleteRowsAsync(TableOf(statement), RowCriteria.Where("Id", -1), Ct));
@@ -369,13 +378,13 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
         return count;
     }
 
-    private static async Task<UncancelledRun> RunUncancelledAsync(MemoryStream source, Statement statement, WriteMode mode)
+    private static async Task<UncancelledRun> RunUncancelledAsync(MemoryStream source, Statement statement, WriteMode mode, bool physicalReads = false)
     {
         await using WriteFaultStream twin = CopyToFaultStream(source);
         int count;
         int writes;
         int reads;
-        await using (AccessWriter writer = await OpenWarmWriterAsync(twin, mode, statement))
+        await using (AccessWriter writer = await OpenWarmWriterAsync(twin, mode, statement, physicalReads))
         {
             int writesBefore = twin.WriteCount;
             int readsBefore = twin.ReadCount;
