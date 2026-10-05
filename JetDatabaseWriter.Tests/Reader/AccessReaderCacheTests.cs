@@ -301,7 +301,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             },
             TestContext.Current.CancellationToken);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
-        using var cache = new ReaderPageCache(harness.Database, capacity: 0);
+        using var cache = new ReaderPageCache(harness.Database.Profile, harness.Database.Pages, capacity: 0);
         int pageSize = harness.Database.PageSizeBytes;
 
         byte[] original = await harness.Database.ReadPageCopyAsync(1, TestContext.Current.CancellationToken);

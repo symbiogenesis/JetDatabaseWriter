@@ -57,14 +57,14 @@ internal sealed class UniqueIndexChecker(DatabaseFile db, TableSnapshotReader sn
             throw CreateUnenforceableException(tableName, $"its table definition declares {numIdx} logical and {numRealIdx} real indexes");
         }
 
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, tdefBuffer, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tdefBuffer, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
             throw CreateUnenforceableException(tableName, "the column-name section of its table definition could not be walked");
         }
 
         IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> logIdxNames = IndexCatalogReader.ReadLogicalIdxNames(db, tdefBuffer, anchors.LogIdxNamesStart, numIdx);
+        List<string> logIdxNames = IndexCatalogReader.ReadLogicalIdxNames(db.Profile, tdefBuffer, anchors.LogIdxNamesStart, numIdx);
 
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             tdefBuffer, db.IndexLayoutInfo, anchors, tableDef.Columns, logIdxNames);

@@ -14,6 +14,7 @@ using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -25,7 +26,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// predicate (falling back to a table scan otherwise). Each operation enters the
 /// reader's operation gate so disposal waits for it.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The file's format profile: the TDEF, index and data-page layouts and the index key encoding.</param>
+/// <param name="tableDefs">Reads each table's TDEF bytes, which hold its index definitions.</param>
 /// <param name="pages">The reader's page cache, which index and data pages are read through.</param>
 /// <param name="rows">Decodes the rows an index points at.</param>
 /// <param name="catalog">Resolves tables by name.</param>
@@ -33,7 +35,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="tables">Scans the table when no index covers a predicate.</param>
 /// <param name="operations">The reader's operation gate.</param>
 internal sealed class IndexRowReader(
-    DatabaseFile db,
+    JetFormat format,
+    TableDefReader tableDefs,
     ReaderPageCache pages,
     RowDecoder rows,
     CatalogReader catalog,
@@ -42,7 +45,7 @@ internal sealed class IndexRowReader(
     AsyncReentrantOperationGate operations)
 {
     /// <summary>Gets a value indicating whether the database format uses index seeks (<see cref="JetFormat.SupportsIndexSeeks"/>).</summary>
-    internal bool CanSeek => db.Profile.SupportsIndexSeeks;
+    internal bool CanSeek => format.SupportsIndexSeeks;
 
     /// <summary>
     /// Returns metadata for every logical index defined on <paramref name="tableName"/>,
@@ -232,13 +235,13 @@ internal sealed class IndexRowReader(
 
     private async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexesAsync(ResolvedTable resolved, CancellationToken cancellationToken)
     {
-        byte[]? td = await db.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (td == null || td.Length < db.TDef.BlockEnd)
+        byte[]? td = await tableDefs.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (td == null || td.Length < format.TDef.BlockEnd)
         {
             return [];
         }
 
-        return IndexCatalogReader.ReadMetadata(db, td, resolved.Definition.Columns);
+        return IndexCatalogReader.ReadMetadata(format, td, resolved.Definition.Columns);
     }
 
     private async IAsyncEnumerable<TRow> EnumerateIndexRowsAsync<TRow>(
@@ -268,13 +271,13 @@ internal sealed class IndexRowReader(
 
         CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
-        byte[]? tdefBytes = await db.ReadTDefBytesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        if (tdefBytes == null || tdefBytes.Length < db.TDef.BlockEnd)
+        byte[]? tdefBytes = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        if (tdefBytes == null || tdefBytes.Length < format.TDef.BlockEnd)
         {
             yield break;
         }
 
-        List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(db, tdefBytes, td.Columns);
+        List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(format, tdefBytes, td.Columns);
 
         IndexMetadata? index = indexes.Find(i => string.Equals(i.Name, indexName, StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException($"Index '{indexName}' was not found on table '{tableName}'.", nameof(indexName));
@@ -286,9 +289,9 @@ internal sealed class IndexRowReader(
 
         var cursor = new IndexCursor(
             pages.ReadPageAsync,
-            db.PageSizeBytes);
+            format.PageSize);
         List<(long DataPage, int RowIndex)> hits = await cursor.FindRowLocationsForCriteriaAsync(
-            db.Profile,
+            format,
             tableName,
             index,
             td,
@@ -341,7 +344,7 @@ internal sealed class IndexRowReader(
         CancellationToken cancellationToken)
     {
         byte[] page = await pages.ReadPageAsync(dataPage, cancellationToken).ConfigureAwait(false);
-        if (page[0] != Constants.PageTypes.Data || Ri32(page, db.DataPage.TDefOff) != expectedTDefPage)
+        if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != expectedTDefPage)
         {
             return null;
         }
@@ -363,7 +366,7 @@ internal sealed class IndexRowReader(
             (page, rowBound) = (target.Page, target.Bound);
         }
 
-        if (rowBound.RowSize < db.RowFields.NumCols)
+        if (rowBound.RowSize < format.RowFields.NumCols)
         {
             return null;
         }

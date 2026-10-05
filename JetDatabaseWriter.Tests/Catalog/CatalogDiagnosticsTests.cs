@@ -211,7 +211,7 @@ public sealed partial class CatalogDiagnosticsTests
         TableDef? msys = await harness.ReadTableDefAsync(2, cancellationToken);
         Assert.NotNull(msys);
 
-        List<CatalogRow> rows = await new CatalogRowReader(db).GetCatalogRowsAsync(msys, cancellationToken);
+        List<CatalogRow> rows = await new CatalogRowReader(db.Profile, db.TableDefs, db.OwnedPages).GetCatalogRowsAsync(msys, cancellationToken);
         CatalogRow target = rows.Last(row => row.IsDecoded && row.ObjectType == 1 && !row.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase));
 
         byte[] page = await harness.ReadPageCopyAsync(target.PageNumber, cancellationToken);

@@ -10,7 +10,10 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -19,17 +22,21 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Decodes the writer's own rows, index metadata, and persisted column
 /// properties for writer workflows that read a table before they change it.
-/// Every page is read through the writer's <see cref="DatabaseFile"/>, so
-/// inside a transaction these reads see the pages the transaction has
-/// journaled, and encrypted files are decrypted with the writer's own page
-/// keys. Nothing is cached between calls: <paramref name="rows"/> reads pages
-/// uncached, and table names resolve through the writer's
+/// Every page is read through the writer's own pages, so inside a transaction
+/// these reads see the pages the transaction has journaled, and encrypted
+/// files are decrypted with the writer's own page keys. Nothing is cached
+/// between calls: <paramref name="rows"/> reads pages uncached, the writer's
+/// <paramref name="tableDefs"/> and <paramref name="ownedPages"/> memoize
+/// nothing, and table names resolve through the writer's
 /// <see cref="TableCatalog"/>, which schema changes invalidate.
 /// </summary>
-/// <param name="db">The writer's database file.</param>
-/// <param name="rows">Decodes rows from pages read through <paramref name="db"/>; its page cache must be disabled.</param>
+/// <param name="format">The writer's format profile: the TDEF and row layouts.</param>
+/// <param name="pages">The writer's pages, through which disposal is checked.</param>
+/// <param name="tableDefs">Reads the writer's TDEF bytes.</param>
+/// <param name="ownedPages">Walks the writer's table rows.</param>
+/// <param name="rows">Decodes rows from pages read through <paramref name="pages"/>; its page cache must be disabled.</param>
 /// <param name="catalog">Resolves user and system table names over the writer's table catalog and reads persisted column properties.</param>
-internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, CatalogReader catalog)
+internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, TableDefReader tableDefs, OwnedDataPages ownedPages, RowDecoder rows, CatalogReader catalog)
 {
     /// <summary>
     /// Returns the values of a snapshot row with <see langword="null"/> cells
@@ -53,7 +60,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     /// <summary>
     /// Decodes every live row of the table rooted at <paramref name="tdefPage"/>,
     /// each paired with the location it was decoded from, in the page and row
-    /// order of <see cref="Pages.OwnedDataPages.ForEachLiveTableRowAsync"/>. Rows too
+    /// order of <see cref="OwnedDataPages.ForEachLiveTableRowAsync"/>. Rows too
     /// short or malformed to decode are left out, so a caller that mutates
     /// <see cref="LocatedRow.Location"/> changes exactly the row it read.
     /// Returns an empty list when the page holds no table definition.
@@ -62,7 +69,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<List<LocatedRow>> ReadRowsAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
 
         TableDef? tableDef = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         return tableDef is null
@@ -81,7 +88,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     internal ValueTask<ResolvedTable?> ResolveTableAsync(string tableName, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
         return catalog.ResolveTableAsync(tableName, cancellationToken);
     }
 
@@ -100,7 +107,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     internal async ValueTask<DataTable> ReadTableSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         List<LocatedRow> snapshotRows = resolved is null
@@ -153,7 +160,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     internal async ValueTask<IReadOnlyList<IndexMetadata>> ReadIndexMetadataSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
 
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved is null)
@@ -161,10 +168,10 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
             return [];
         }
 
-        byte[]? tdef = await db.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        return tdef is null || tdef.Length < db.TDef.BlockEnd
+        byte[]? tdef = await tableDefs.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        return tdef is null || tdef.Length < format.TDef.BlockEnd
             ? []
-            : IndexCatalogReader.ReadMetadata(db, tdef, resolved.Definition.Columns);
+            : IndexCatalogReader.ReadMetadata(format, tdef, resolved.Definition.Columns);
     }
 
     /// <summary>
@@ -177,7 +184,7 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<ColumnPropertyBlock?> ReadLvPropBlockAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        db.ThrowIfDisposedOrCancelled(cancellationToken);
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
         return catalog.ReadLvPropForTableAsync(tdefPage, cancellationToken);
     }
 
@@ -196,11 +203,11 @@ internal sealed class TableSnapshotReader(DatabaseFile db, RowDecoder rows, Cata
         // OLE cells keep their stored bytes exactly and an unreadable MEMO /
         // OLE value becomes an UnreadableLongValue rather than a placeholder.
         var decodePlan = RowDecodePlan.CreateTypedForWriteBack(tableDef, rows.StrictParsing);
-        await db.ForEachLiveTableRowAsync(
+        await ownedPages.ForEachLiveTableRowAsync(
             tdefPage,
             async (row, token) =>
             {
-                if (row.Location.RowSize < db.RowFields.NumCols)
+                if (row.Location.RowSize < format.RowFields.NumCols)
                 {
                     return true;
                 }

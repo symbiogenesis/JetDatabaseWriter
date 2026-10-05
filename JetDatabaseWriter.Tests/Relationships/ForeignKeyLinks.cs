@@ -55,7 +55,7 @@ internal static class ForeignKeyLinks
                 continue;
             }
 
-            List<IndexMetadata> fks = [.. IndexCatalogReader.ReadMetadata(harness.Database, tdef, definition.Columns).Where(i => i.Kind == IndexKind.ForeignKey && i.IsForeignKey)];
+            List<IndexMetadata> fks = [.. IndexCatalogReader.ReadMetadata(harness.Database.Profile, tdef, definition.Columns).Where(i => i.Kind == IndexKind.ForeignKey && i.IsForeignKey)];
             result[page] = fks;
             foreach (IndexMetadata fk in fks)
             {

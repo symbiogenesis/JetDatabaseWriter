@@ -501,7 +501,7 @@ public sealed class IndexPageReservationTests
         byte[] tdef = (await db.ReadTDefBytesAsync(2, cancellationToken))!;
         int numCols = Ru16(tdef, db.TDef.NumCols);
         int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, tdef, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tdef, numCols, numRealIdx);
         int count = 0;
         for (int ri = 0; ri < numRealIdx; ri++)
         {

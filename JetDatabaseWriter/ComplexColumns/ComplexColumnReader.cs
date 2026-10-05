@@ -25,11 +25,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// hidden flat child tables, and builds the <see cref="ComplexCellValue"/>
 /// cells that table scans substitute for each row's complex reference.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The file's format profile: the TDEF and column-descriptor layouts.</param>
+/// <param name="tableDefs">Reads table definitions and TDEF bytes.</param>
 /// <param name="catalog">Resolves tables and locates <c>MSysComplexColumns</c> and the flat child tables.</param>
 /// <param name="rows">Decodes system-table rows as strings and flat-table rows as typed values.</param>
 /// <param name="diagnosticsEnabled">Whether suppressed best-effort failures are traced.</param>
-internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled)
+internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled)
 {
     /// <summary>The <c>MSysComplexColumns</c> columns the descriptor join reads.</summary>
     private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
@@ -97,7 +98,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
 
     internal async ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken)
     {
-        if (!db.Profile.SupportsComplexColumns)
+        if (!format.SupportsComplexColumns)
         {
             return [];
         }
@@ -108,43 +109,43 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             return [];
         }
 
-        byte[]? td = await db.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        byte[]? td = await tableDefs.ReadTDefBytesAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         if (td == null)
         {
             return [];
         }
 
-        int numCols = Ru16(td, db.TDef.NumCols);
-        int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
+        int numCols = Ru16(td, format.TDef.NumCols);
+        int numRealIdx = Ri32(td, format.TDef.NumRealIdx);
         if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
             numRealIdx = 0;
         }
 
-        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
+        int colStart = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
 
         var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
         for (int i = 0; i < numCols; i++)
         {
-            int offset = colStart + (i * db.ColumnDescriptor.Size);
-            if (offset + db.ColumnDescriptor.Size > td.Length)
+            int offset = colStart + (i * format.ColumnDescriptor.Size);
+            if (offset + format.ColumnDescriptor.Size > td.Length)
             {
                 break;
             }
 
-            var type = (ColumnType)td[offset + db.ColumnDescriptor.TypeOff];
+            var type = (ColumnType)td[offset + format.ColumnDescriptor.TypeOff];
             if (type is not ComplexType and not AttachmentType)
             {
                 continue;
             }
 
-            int complexId = Ri32(td, offset + db.ColumnDescriptor.MiscOff);
+            int complexId = Ri32(td, offset + format.ColumnDescriptor.MiscOff);
             if (complexId <= 0)
             {
                 continue;
             }
 
-            int colNum = Ru16(td, offset + db.ColumnDescriptor.NumOff);
+            int colNum = Ru16(td, offset + format.ColumnDescriptor.NumOff);
 
             ColumnInfo? info = resolved.Definition.Columns.Find(c => c.ColNum == colNum);
             string name = info?.Name ?? string.Empty;
@@ -480,7 +481,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             return [];
         }
 
-        TableDef? msys = await db.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await tableDefs.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return [];
@@ -596,7 +597,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
     {
         var map = new Dictionary<long, string>();
 
-        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return map;
@@ -630,7 +631,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
                 return 0;
             }
 
-            TableDef? td = await db.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
+            TableDef? td = await tableDefs.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
             if (td == null)
             {
                 return 0;
@@ -781,7 +782,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
     private async ValueTask<FlatTable?> ResolveFlatTableAsync(ComplexColumnInfo column, CancellationToken cancellationToken)
     {
         long tdefPage = column.FlatTableId > 0 ? CatalogValueReader.TdefPageFromId(column.FlatTableId) : 0;
-        TableDef? td = tdefPage > 0 ? await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
+        TableDef? td = tdefPage > 0 ? await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
         if (td?.Columns.Count > 0)
         {
             return new FlatTable(tdefPage, td);
@@ -804,7 +805,7 @@ internal sealed class ComplexColumnReader(DatabaseFile db, CatalogReader catalog
             tdefPage = await this.FindSystemTablePageBySuffixAsync($"_{columnName}", cancellationToken).ConfigureAwait(false);
         }
 
-        TableDef? td = tdefPage > 0 ? await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
+        TableDef? td = tdefPage > 0 ? await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
         return td == null ? null : new FlatTable(tdefPage, td);
     }
 

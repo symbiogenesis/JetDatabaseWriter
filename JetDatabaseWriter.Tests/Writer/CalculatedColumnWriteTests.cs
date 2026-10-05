@@ -1260,7 +1260,7 @@ public sealed class CalculatedColumnWriteTests
         byte[] allNames = slots["AllNames"];
         Assert.True(allNames.Length >= Constants.LongValue.HeaderSize, $"AllNames slot is {allNames.Length} bytes, shorter than a long-value header.");
         Assert.Contains(allNames[3], new byte[] { 0x80, 0x40, 0x00 });
-        var longValues = new LongValueDecoder(db, harness.Services.PageCache);
+        var longValues = new LongValueDecoder(db.Profile, harness.Services.PageCache);
         byte[] lval = await longValues.ReadLongValueRawBytesAsync(allNames, 0, allNames.Length, TestContext.Current.CancellationToken);
         byte[] text = CalculatedColumnUtil.Unwrap(lval);
         Assert.Equal("Lee, Ann=Lee, Ann", db.DecodeTextForFormat(text, 0, text.Length));

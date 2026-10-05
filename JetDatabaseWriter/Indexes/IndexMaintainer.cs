@@ -262,7 +262,7 @@ internal sealed class IndexMaintainer(
             return false;
         }
 
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
             return false;
@@ -365,7 +365,7 @@ internal sealed class IndexMaintainer(
             return (TdefPreambleStatus.TooMany, new TdefPreamble(chain, numCols, numIdx, numRealIdx, 0));
         }
 
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, buffer, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, buffer, numCols, numRealIdx);
         return realIdxDescStart < 0
             ? (TdefPreambleStatus.ColumnNameWalkFailed, new TdefPreamble(chain, numCols, numIdx, numRealIdx, 0))
             : (TdefPreambleStatus.Ok, new TdefPreamble(chain, numCols, numIdx, numRealIdx, realIdxDescStart));
@@ -412,7 +412,7 @@ internal sealed class IndexMaintainer(
         }
 
         IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(preamble.RealIdxDescStart, preamble.NumRealIdx, preamble.NumIdx);
-        List<string> logicalIndexNames = IndexCatalogReader.ReadLogicalIdxNames(db, preamble.Buffer, anchors.LogIdxNamesStart, preamble.NumIdx);
+        List<string> logicalIndexNames = IndexCatalogReader.ReadLogicalIdxNames(db.Profile, preamble.Buffer, anchors.LogIdxNamesStart, preamble.NumIdx);
         this.ThrowIfIndexSectionCutShort(tableName, preamble, anchors, logicalIndexNames.Count);
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             preamble.Buffer,

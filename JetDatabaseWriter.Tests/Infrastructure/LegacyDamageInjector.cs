@@ -178,7 +178,7 @@ internal static class LegacyDamageInjector
     {
         int numCols = Ru16(td, db.TDef.NumCols);
         numRealIdx = Ri32(td, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
         return realIdxDescStart >= 0
             ? realIdxDescStart
             : throw new InvalidOperationException("The column-name section of the table definition could not be walked.");

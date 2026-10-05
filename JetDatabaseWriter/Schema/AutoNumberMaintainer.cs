@@ -354,7 +354,7 @@ internal sealed class AutoNumberMaintainer(DatabaseFile db, Pager pager)
         List<IndexMetadata> indexes;
         try
         {
-            indexes = IndexCatalogReader.ReadMetadata(db, tdefBytes, tableDef.Columns);
+            indexes = IndexCatalogReader.ReadMetadata(db.Profile, tdefBytes, tableDef.Columns);
         }
         catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
         {

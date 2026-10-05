@@ -1059,7 +1059,7 @@ internal sealed class ComplexColumnManager(
             return false;
         }
 
-        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(this.db, tdef, tableDef.Columns))
+        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(this.db.Profile, tdef, tableDef.Columns))
         {
             foreach (IndexColumnReference key in index.Columns)
             {

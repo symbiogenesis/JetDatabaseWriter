@@ -12,7 +12,9 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -24,7 +26,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// descriptions, and declared row counts. Each operation enters the reader's
 /// operation gate so disposal waits for it.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The file's format profile, which the statistics describe.</param>
+/// <param name="pageFile">The file's pages, whose count and length the statistics report.</param>
+/// <param name="tableDefs">Reads table definitions.</param>
 /// <param name="pages">The reader's page cache, whose hit rate the statistics report.</param>
 /// <param name="catalog">Resolves tables and reads persisted column properties.</param>
 /// <param name="complexColumns">Describes complex columns and their subtypes.</param>
@@ -32,7 +36,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="tables">Reads the <c>MSysRelationships</c> catalog table.</param>
 /// <param name="operations">The reader's operation gate.</param>
 internal sealed class SchemaReader(
-    DatabaseFile db,
+    JetFormat format,
+    PageFile pageFile,
+    TableDefReader tableDefs,
     ReaderPageCache pages,
     CatalogReader catalog,
     ComplexColumnReader complexColumns,
@@ -71,7 +77,7 @@ internal sealed class SchemaReader(
         foreach (CatalogEntry entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            TableDef? td = await db.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+            TableDef? td = await tableDefs.ReadTableDefAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
             result.Add(new TableStat
             {
                 Name = entry.Name,
@@ -126,7 +132,7 @@ internal sealed class SchemaReader(
         foreach (CatalogEntry table in userTables)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            TableDef? td = await db.ReadTableDefAsync(table.TDefPage, cancellationToken).ConfigureAwait(false);
+            TableDef? td = await tableDefs.ReadTableDefAsync(table.TDefPage, cancellationToken).ConfigureAwait(false);
             if (td != null)
             {
                 tableRowCounts[table.Name] = td.RowCount;
@@ -141,15 +147,15 @@ internal sealed class SchemaReader(
 
         return new DatabaseStatistics
         {
-            TotalPages = db.PageCount,
-            DatabaseSizeBytes = db.DatabaseLengthBytes,
+            TotalPages = pageFile.PageCount,
+            DatabaseSizeBytes = pageFile.LengthBytes,
             TableCount = userTables.Count,
             TotalRows = totalRows,
             TableRowCounts = tableRowCounts,
             PageCacheHitRate = pageCacheHitRate,
-            Version = db.Profile.VersionName,
-            Format = db.Format,
-            CodePage = db.CodePage,
+            Version = format.VersionName,
+            Format = format.Kind,
+            CodePage = format.CodePage,
         };
     }
 
@@ -182,7 +188,7 @@ internal sealed class SchemaReader(
             ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
             bool isCalc = col.IsCalculated;
             string? calcExpr = isCalc
-                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, db.Format)
+                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format.Kind)
                 : null;
             ColumnType calcResultType = isCalc ? CatalogReader.ResolveCalculatedResultType(target) : default;
 
@@ -201,10 +207,10 @@ internal sealed class SchemaReader(
                 IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = GetColumnSize(ResolveValueType(col), GetMetadataDeclaredSize(col)),
-                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, db.Format),
-                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, db.Format),
-                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, db.Format),
-                Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, db.Format),
+                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format.Kind),
+                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format.Kind),
+                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format.Kind),
+                Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, format.Kind),
                 NumericPrecision = col.NumericPrecision,
                 NumericScale = col.NumericScale,
                 IsCurrency = ResolveValueType(col) == MoneyType,

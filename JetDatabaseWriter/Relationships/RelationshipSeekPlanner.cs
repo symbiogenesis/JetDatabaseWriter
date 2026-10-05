@@ -200,7 +200,7 @@ internal sealed class RelationshipSeekPlanner(DatabaseFile db, TableCatalog tabl
             return null;
         }
 
-        int realIndexDescriptorStart = IndexCatalogReader.LocateRealIdxDescStart(db, tableDefinition, numColumns, numRealIndexes);
+        int realIndexDescriptorStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tableDefinition, numColumns, numRealIndexes);
         if (realIndexDescriptorStart < 0)
         {
             return null;

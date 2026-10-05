@@ -759,7 +759,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         int numCols = Ru16(td, db.TDef.NumCols);
         int numIdx = Ri32(td, db.TDef.NumIdx);
         int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
         IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
         var names = new List<string>(numIdx);
         var nameStarts = new List<int>(numIdx);

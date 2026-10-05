@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -14,9 +15,10 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <see cref="TableDef"/>. Shared by the reader and writer service graphs, so
 /// both decode and encode a calculated column's cached value by the same type.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The file's format profile, whose format the property blocks are parsed for.</param>
+/// <param name="tableDefs">Reads the <c>MSysObjects</c> table definition.</param>
 /// <param name="rows">Decodes <c>MSysObjects</c> rows, with OLE columns as their stored bytes.</param>
-internal sealed class ColumnPropertyReader(DatabaseFile db, RowDecoder rows)
+internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tableDefs, RowDecoder rows)
 {
     /// <summary>
     /// Returns the <c>ResultType</c> a calculated column's persisted properties
@@ -51,7 +53,7 @@ internal sealed class ColumnPropertyReader(DatabaseFile db, RowDecoder rows)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys is null)
         {
             return null;
@@ -71,7 +73,7 @@ internal sealed class ColumnPropertyReader(DatabaseFile db, RowDecoder rows)
         {
             if (row[idxId] is int id && id == tdefPage)
             {
-                return ColumnPropertyBlock.Parse(row[idxLvProp] as byte[], db.Format);
+                return ColumnPropertyBlock.Parse(row[idxLvProp] as byte[], format.Kind);
             }
         }
 

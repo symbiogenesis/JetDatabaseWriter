@@ -111,18 +111,18 @@ internal static class IndexCatalogReader
     /// <see cref="IndexMetadata.IgnoreNulls"/>, and
     /// <see cref="IndexMetadata.IsRequired"/> independently. It additionally
     /// owns the format-specific prelude (counts, column-name walk, section
-    /// anchors, index-name walk) via <paramref name="db"/>, so callers pass
+    /// anchors, index-name walk) via <paramref name="format"/>, so callers pass
     /// only the raw TDEF bytes and the table's columns.
     /// </para>
     /// </summary>
-    /// <param name="db">Format context supplying the per-format TDEF, column-descriptor, and index layouts plus the column-name decoder.</param>
+    /// <param name="format">The format profile supplying the per-format TDEF, column-descriptor, and index layouts plus the column-name decoder.</param>
     /// <param name="td">The concatenated TDEF page-chain bytes.</param>
     /// <param name="columns">The table's parsed columns, used to resolve key-column names (honouring deleted-column gaps).</param>
-    public static List<IndexMetadata> ReadMetadata(DatabaseFile db, byte[] td, IReadOnlyList<ColumnInfo> columns)
+    public static List<IndexMetadata> ReadMetadata(JetFormat format, byte[] td, IReadOnlyList<ColumnInfo> columns)
     {
-        int numCols = Ru16(td, db.TDef.NumCols);
-        int numIdx = Ri32(td, db.TDef.NumIdx);
-        int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
+        int numCols = Ru16(td, format.TDef.NumCols);
+        int numIdx = Ri32(td, format.TDef.NumIdx);
+        int numRealIdx = Ri32(td, format.TDef.NumRealIdx);
 
         // Defensive bounds: corrupt TDEFs can report absurd counts.
         if (numIdx is <= 0 or > Constants.TableDefinition.MaxIndexes)
@@ -136,13 +136,13 @@ internal static class IndexCatalogReader
         }
 
         // Section walk mirrors TableDefReader.ReadTableDefAsync and FormatProbe.
-        int realIdxDescStart = LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+        int realIdxDescStart = LocateRealIdxDescStart(format, td, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
             return [];
         }
 
-        IndexSectionAnchors anchors = db.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
+        IndexSectionAnchors anchors = format.Index.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
 
         if (anchors.LogIdxNamesStart > td.Length)
         {
@@ -161,7 +161,7 @@ internal static class IndexCatalogReader
         int npos = anchors.LogIdxNamesStart;
         for (int i = 0; i < numIdx; i++)
         {
-            if (db.ReadColumnName(td, ref npos, out string n) < 0)
+            if (format.ReadColumnName(td, ref npos, out string n) < 0)
             {
                 names[i] = string.Empty;
             }
@@ -174,7 +174,7 @@ internal static class IndexCatalogReader
         var result = new List<IndexMetadata>(numIdx);
         for (int i = 0; i < numIdx; i++)
         {
-            if (!db.IndexLayoutInfo.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out LogicalIdxEntry entry))
+            if (!format.Index.TryReadLogicalEntry(td, anchors.LogIdxStart, i, out LogicalIdxEntry entry))
             {
                 break;
             }
@@ -186,7 +186,7 @@ internal static class IndexCatalogReader
             byte flags = 0x00;
             int firstDp = 0;
             if (numRealIdx > 0 && realIdxNum >= 0 && realIdxNum < numRealIdx
-                && db.IndexLayoutInfo.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot, out List<KeyColumn>? kcs))
+                && format.Index.TryReadRealIdxSlotWithKeyColumns(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot, out List<KeyColumn>? kcs))
             {
                 foreach ((int cn, bool ascending) in kcs)
                 {
@@ -242,17 +242,17 @@ internal static class IndexCatalogReader
     /// offset of the real-index physical-descriptor section start, or -1
     /// when the column-name walk fails.
     /// </summary>
-    /// <param name="db">Format context supplying the per-format TDEF and column-descriptor layouts plus the column-name decoder.</param>
+    /// <param name="format">The format profile supplying the per-format TDEF and column-descriptor layouts plus the column-name decoder.</param>
     /// <param name="td">The concatenated TDEF page-chain bytes.</param>
     /// <param name="numCols">The number of columns.</param>
     /// <param name="numRealIdx">The number of real indexes.</param>
-    public static int LocateRealIdxDescStart(DatabaseFile db, byte[] td, int numCols, int numRealIdx)
+    public static int LocateRealIdxDescStart(JetFormat format, byte[] td, int numCols, int numRealIdx)
     {
-        int colStart = db.TDef.BlockEnd + (numRealIdx * db.TDef.RealIdxEntrySz);
-        int pos = colStart + (numCols * db.ColumnDescriptor.Size);
+        int colStart = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
+        int pos = colStart + (numCols * format.ColumnDescriptor.Size);
         for (int i = 0; i < numCols; i++)
         {
-            if (db.ReadColumnName(td, ref pos, out _) < 0)
+            if (format.ReadColumnName(td, ref pos, out _) < 0)
             {
                 return -1;
             }
@@ -266,17 +266,17 @@ internal static class IndexCatalogReader
     /// <paramref name="logIdxNamesStart"/>. Stops early (returning the names
     /// read so far) when a name record runs past the end of the buffer.
     /// </summary>
-    /// <param name="db">Format context supplying the column-name decoder.</param>
+    /// <param name="format">The format profile supplying the column-name decoder.</param>
     /// <param name="td">The concatenated TDEF page-chain bytes.</param>
     /// <param name="logIdxNamesStart">The logical-idx name section start.</param>
     /// <param name="numIdx">The number of logical indexes.</param>
-    public static List<string> ReadLogicalIdxNames(DatabaseFile db, byte[] td, int logIdxNamesStart, int numIdx)
+    public static List<string> ReadLogicalIdxNames(JetFormat format, byte[] td, int logIdxNamesStart, int numIdx)
     {
         var list = new List<string>(numIdx);
         int pos = logIdxNamesStart;
         for (int i = 0; i < numIdx; i++)
         {
-            if (db.ReadColumnName(td, ref pos, out string n) < 0)
+            if (format.ReadColumnName(td, ref pos, out string n) < 0)
             {
                 break;
             }

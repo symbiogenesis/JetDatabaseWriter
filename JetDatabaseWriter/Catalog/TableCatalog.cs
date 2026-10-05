@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
@@ -14,7 +16,8 @@ using JetDatabaseWriter.Schema.Models;
 /// writer calls <see cref="Invalidate"/>. Shared by the reader and writer
 /// service graphs, so both resolve table names the same way.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="pages">The file's pages; the scan summary records their count.</param>
+/// <param name="tableDefs">Reads table definitions.</param>
 /// <param name="catalogRows">Decodes the <c>MSysObjects</c> rows.</param>
 /// <param name="properties">
 /// Reads persisted column properties. When supplied,
@@ -23,7 +26,7 @@ using JetDatabaseWriter.Schema.Models;
 /// cached value by the type Access stores it as. The reader graph resolves
 /// definitions through <see cref="CatalogReader"/> and passes <see langword="null"/>.
 /// </param>
-internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows, ColumnPropertyReader? properties = null)
+internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, CatalogRowReader catalogRows, ColumnPropertyReader? properties = null)
 {
     /// <summary>
     /// The calculated-column result types read for each TDEF page, by column
@@ -103,7 +106,7 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
     internal async ValueTask<ResolvedTable> ResolveRequiredTableAsync(string tableName, CancellationToken cancellationToken = default)
     {
         CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
-        TableDef tableDef = await db.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
+        TableDef tableDef = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, tableName, cancellationToken).ConfigureAwait(false);
         await this.ApplyCalculatedResultTypesAsync(entry.TDefPage, tableDef, cancellationToken).ConfigureAwait(false);
         return new ResolvedTable(entry, tableDef);
     }
@@ -119,7 +122,7 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
-        TableDef? tableDef = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? tableDef = await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (tableDef is not null)
         {
             await this.ApplyCalculatedResultTypesAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
@@ -199,8 +202,8 @@ internal sealed class TableCatalog(DatabaseFile db, CatalogRowReader catalogRows
 
     private async ValueTask<CatalogScanSummary> ScanAsync(CancellationToken cancellationToken)
     {
-        long totalPages = db.PageCount;
-        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        long totalPages = pages.PageCount;
+        TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return new CatalogScanSummary(null, HasRequiredColumns: false, CatalogPageCount: 0, RowsScanned: 0, totalPages, []);

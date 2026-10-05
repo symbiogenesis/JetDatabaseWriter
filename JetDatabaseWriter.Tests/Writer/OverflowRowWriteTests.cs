@@ -764,7 +764,7 @@ public sealed class OverflowRowWriteTests
         byte[]? tdef = await db.ReadTDefBytesAsync(entry.TDefPage, Ct);
         Assert.NotNull(tableDef);
         Assert.NotNull(tdef);
-        IndexMetadata? primaryKey = IndexCatalogReader.ReadMetadata(db, tdef, tableDef.Columns).Find(i => i.Kind == IndexKind.PrimaryKey);
+        IndexMetadata? primaryKey = IndexCatalogReader.ReadMetadata(db.Profile, tdef, tableDef.Columns).Find(i => i.Kind == IndexKind.PrimaryKey);
         if (primaryKey is null)
         {
             return null;
@@ -823,7 +823,7 @@ public sealed class OverflowRowWriteTests
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
         TableDef? msys = await harness.ReadTableDefAsync(2, Ct);
         Assert.NotNull(msys);
-        List<CatalogRow> rows = await new CatalogRowReader(harness.Database).GetCatalogRowsAsync(msys, Ct);
+        List<CatalogRow> rows = await new CatalogRowReader(harness.Database.Profile, harness.Database.TableDefs, harness.Database.OwnedPages).GetCatalogRowsAsync(msys, Ct);
         return Assert.Single(rows, r => r.ObjectType == 1 && r.Name == name);
     }
 

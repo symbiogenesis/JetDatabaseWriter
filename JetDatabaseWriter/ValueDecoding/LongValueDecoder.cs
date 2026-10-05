@@ -14,9 +14,9 @@ using JetDatabaseWriter.Pages.Models;
 /// Reads LVAL (Long Value) pages from a JET database, resolving MEMO and
 /// OLE field chains.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The file's format profile: the page size, the data-page layout and the text codec.</param>
 /// <param name="pages">The reader's page cache, which LVAL pages are read through.</param>
-internal sealed class LongValueDecoder(DatabaseFile db, ReaderPageCache pages)
+internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages)
 {
     internal ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
@@ -43,11 +43,11 @@ internal sealed class LongValueDecoder(DatabaseFile db, ReaderPageCache pages)
     private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
     {
         RowBound[] rowDirectory = pages.GetRowDirectory(lvalPage, page);
-        return LongValueStore.LocateRow(lvalPage, lvalRow, page, db.DataPage, db.PageSizeBytes, rowDirectory);
+        return LongValueStore.LocateRow(lvalPage, lvalRow, page, format.DataPage, format.PageSize, rowDirectory);
     }
 
     internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
-        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, db.PageSizeBytes, this.LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
+        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, format.PageSize, this.LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
@@ -188,5 +188,5 @@ internal sealed class LongValueDecoder(DatabaseFile db, ReaderPageCache pages)
     internal string DecodeLongValue(byte[] buffer, int offset, int length, bool isOle)
         => isOle
             ? OleObjectDecoder.ToDataUri(buffer, offset, length)
-            : db.DecodeTextForFormat(buffer, offset, length);
+            : format.DecodeText(buffer, offset, length);
 }

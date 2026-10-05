@@ -4,7 +4,6 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Data;
-using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -1034,8 +1033,8 @@ internal sealed class TableReader(
 
     /// <summary>
     /// Determines whether a table scan reads its next data page while the
-    /// caller decodes the current one. Auto mode needs a file-backed stream
-    /// and at least <see cref="MinimumAutoTableScanReadAheadPages"/> pages, and
+    /// caller decodes the current one. Auto mode needs a file-backed page file
+    /// (<see cref="Pages.Paging.PageFile.IsFileBacked"/>) and at least <see cref="MinimumAutoTableScanReadAheadPages"/> pages, and
     /// yields the first page before prefetch begins to preserve first-row
     /// latency; Enabled needs two pages; Disabled never reads ahead. The
     /// reader's file has no transaction journal, so no journal check is needed.
@@ -1080,7 +1079,7 @@ internal sealed class TableReader(
     private bool HasEligibleTableScanReadAheadPageCount(IReadOnlyList<long> pageNumbers) =>
         options.PageReadOptimizationMode switch
         {
-            PageReadOptimizationMode.Auto => db.DatabaseStream is FileStream && pageNumbers.Count >= MinimumAutoTableScanReadAheadPages,
+            PageReadOptimizationMode.Auto => db.Pages.IsFileBacked && pageNumbers.Count >= MinimumAutoTableScanReadAheadPages,
             PageReadOptimizationMode.Disabled => false,
             PageReadOptimizationMode.Enabled => pageNumbers.Count > 1,
             _ => false,

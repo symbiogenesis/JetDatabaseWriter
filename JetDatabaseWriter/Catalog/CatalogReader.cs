@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -18,12 +19,13 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// properties, and renders the last user-table scan as
 /// <see cref="AccessReader.LastDiagnostics"/>.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
+/// <param name="format">The file's format profile, which the diagnostics describe.</param>
+/// <param name="tableDefs">Reads table definitions.</param>
 /// <param name="tables">The cached user-table catalog.</param>
 /// <param name="catalogRows">The system-table lookup by name, shared with the writer.</param>
 /// <param name="rows">Decodes <c>MSysObjects</c> rows as strings.</param>
 /// <param name="properties">Reads persisted column properties and hydrates calculated result types.</param>
-internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, CatalogRowReader catalogRows, RowDecoder rows, ColumnPropertyReader properties)
+internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, TableCatalog tables, CatalogRowReader catalogRows, RowDecoder rows, ColumnPropertyReader properties)
 {
     /// <summary>
     /// Returns the <c>ResultType</c> a calculated column's persisted properties
@@ -86,7 +88,7 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, Catalo
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<TableDef?> ReadTableDefAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        TableDef? td = await db.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        TableDef? td = await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         if (td is not { Columns.Count: > 0 })
         {
             return null;
@@ -99,7 +101,7 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, Catalo
     /// <summary>Loads the MSysObjects TableDef (page 2).</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<TableDef?> GetMSysObjectsTableDefAsync(CancellationToken cancellationToken) =>
-        db.ReadTableDefAsync(2, cancellationToken);
+        tableDefs.ReadTableDefAsync(2, cancellationToken);
 
     /// <summary>Enumerates every row of MSysObjects, decoded as strings.</summary>
     /// <param name="msys">The system-table data.</param>
@@ -181,9 +183,9 @@ internal sealed class CatalogReader(DatabaseFile db, TableCatalog tables, Catalo
 
         StringBuilder diag = new StringBuilder()
             .Append("JET: ")
-            .Append(db.Profile.VersionName)
+            .Append(format.VersionName)
             .Append("  PageSize: ")
-            .Append(db.PageSizeBytes)
+            .Append(format.PageSize)
             .Append("  TotalPages: ")
             .Append(scan.TotalPages)
             .AppendLine()

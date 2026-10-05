@@ -676,8 +676,8 @@ public sealed class LvPropReadTests
                 return null;
             }
 
-            using var pages = new ReaderPageCache(db, capacity: 0);
-            return await new LongValueDecoder(db, pages).ReadLongValueBytesExactAsync(this.Bytes, this.LvPropSlice.DataStart, this.LvPropSlice.DataLen, Ct);
+            using var pages = new ReaderPageCache(db.Profile, db.Pages, capacity: 0);
+            return await new LongValueDecoder(db.Profile, pages).ReadLongValueBytesExactAsync(this.Bytes, this.LvPropSlice.DataStart, this.LvPropSlice.DataLen, Ct);
         }
     }
 }

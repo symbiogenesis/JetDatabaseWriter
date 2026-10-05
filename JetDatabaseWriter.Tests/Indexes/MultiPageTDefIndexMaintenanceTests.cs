@@ -561,7 +561,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             TableDef tableDef = await db.ReadRequiredTableDefAsync(entry.TDefPage, TableName, this.ct);
             byte[]? td = await db.ReadTDefBytesAsync(entry.TDefPage, this.ct);
             Assert.NotNull(td);
-            List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(db, td, tableDef.Columns);
+            List<IndexMetadata> indexes = IndexCatalogReader.ReadMetadata(db.Profile, td, tableDef.Columns);
             Assert.Equal(IndexCountOf(format), indexes.Count(i => !i.IsForeignKey));
             Assert.Equal(expectedForeignKeys, indexes.Count(i => i.IsForeignKey));
 
@@ -572,7 +572,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             {
                 int numCols = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.TDef.NumCols));
                 int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(db.TDef.NumRealIdx));
-                int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+                int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
                 int usageMapPage = td[db.TDef.UsedPagesPage]
                     | (td[db.TDef.UsedPagesPage + 1] << 8)
                     | (td[db.TDef.UsedPagesPage + 2] << 16);

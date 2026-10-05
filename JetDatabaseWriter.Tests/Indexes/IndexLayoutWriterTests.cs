@@ -169,9 +169,9 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
         int numCols = Ru16(td, db.TDef.NumCols);
         int numIdx = Ri32(td, db.TDef.NumIdx);
         int numRealIdx = Ri32(td, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, numRealIdx);
         IndexSectionAnchors anchors = layout.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(db, td, anchors.LogIdxNamesStart, numIdx);
+        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(db.Profile, td, anchors.LogIdxNamesStart, numIdx);
         int li = names.IndexOf("Table2Table1");
         Assert.True(li >= 0);
 

@@ -582,7 +582,7 @@ public sealed class IndexWriterTests
         Assert.NotNull(td);
 
         int numCols = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.TDef.NumCols));
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, td, numCols, realIndexCount);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, td, numCols, realIndexCount);
         int usageMapPage = ReadUInt24(td, db.TDef.UsedPagesPage);
         Assert.True(usageMapPage > 0);
         for (int realIdxNum = 0; realIdxNum < realIndexCount; realIdxNum++)

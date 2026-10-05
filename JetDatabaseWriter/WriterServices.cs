@@ -40,18 +40,24 @@ internal sealed class WriterServices
         // A capacity-0 page cache keeps nothing between calls, and names
         // resolve through the writer's catalog, so DDL and rollback cannot
         // leave a stale snapshot behind.
-        var snapshotPages = new ReaderPageCache(db, capacity: 0);
-        var snapshotRows = new RowDecoder(db, snapshotPages, new LongValueDecoder(db, snapshotPages), strictParsing: true);
-        var columnProperties = new ColumnPropertyReader(db, snapshotRows);
+        var snapshotPages = new ReaderPageCache(db.Profile, db.Pages, capacity: 0);
+        var snapshotRows = new RowDecoder(db, snapshotPages, new LongValueDecoder(db.Profile, snapshotPages), strictParsing: true);
+        var columnProperties = new ColumnPropertyReader(db.Profile, db.TableDefs, snapshotRows);
 
-        this.CatalogRows = new CatalogRowReader(db);
-        this.Catalog = new TableCatalog(db, this.CatalogRows, columnProperties);
+        this.CatalogRows = new CatalogRowReader(db.Profile, db.TableDefs, db.OwnedPages);
+        this.Catalog = new TableCatalog(db.Pages, db.TableDefs, this.CatalogRows, columnProperties);
         this.PageAllocator = new PageAllocator(db, pager, options);
         this.TDefWriter = new TDefWriter(pager, db.TableDefs);
 
         TableCatalog catalog = this.Catalog;
 
-        var snapshots = new TableSnapshotReader(db, snapshotRows, new CatalogReader(db, catalog, this.CatalogRows, snapshotRows, columnProperties));
+        var snapshots = new TableSnapshotReader(
+            db.Profile,
+            db.Pages,
+            db.TableDefs,
+            db.OwnedPages,
+            snapshotRows,
+            new CatalogReader(db.Profile, db.TableDefs, catalog, this.CatalogRows, snapshotRows, columnProperties));
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db, pager);
         var longValueEncoder = new LongValueEncoder(db, pager, this.PageAllocator, options);

@@ -17,7 +17,8 @@ using JetDatabaseWriter.Pages.Paging;
 /// </summary>
 internal sealed class ReaderPageCache : IDisposable
 {
-    private readonly DatabaseFile db;
+    private readonly JetFormat format;
+    private readonly IPageSource pages;
     private readonly LruCache<long, byte[]>? pageCache;
 
     /// <summary>
@@ -33,19 +34,21 @@ internal sealed class ReaderPageCache : IDisposable
     /// <summary>
     /// Initializes a new instance of the <see cref="ReaderPageCache"/> class.
     /// </summary>
-    /// <param name="db">The database file pages are read from.</param>
+    /// <param name="format">The file's format profile, which parses the row directories.</param>
+    /// <param name="pages">The file's pages.</param>
     /// <param name="capacity">The number of pages to keep; zero or negative disables caching.</param>
-    /// <exception cref="ArgumentException"><paramref name="capacity"/> is positive and <paramref name="db"/> is the writer's file.</exception>
-    internal ReaderPageCache(DatabaseFile db, int capacity)
+    /// <exception cref="ArgumentException"><paramref name="capacity"/> is positive and <paramref name="pages"/> is the writer's <see cref="Pager"/>.</exception>
+    internal ReaderPageCache(JetFormat format, IPageSource pages, int capacity)
     {
-        if (capacity > 0 && db.Pages is Pager)
+        if (capacity > 0 && pages is Pager)
         {
             throw new ArgumentException(
                 "A page cache over the writer's file must have capacity 0: its pages change, and every read must see the active transaction's journal.",
                 nameof(capacity));
         }
 
-        this.db = db;
+        this.format = format;
+        this.pages = pages;
         if (capacity > 0)
         {
             // No eviction callback: callers keep using a cached buffer after it
@@ -72,11 +75,11 @@ internal sealed class ReaderPageCache : IDisposable
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<byte[]> ReadPageAsync(long n, CancellationToken cancellationToken)
     {
-        this.db.ThrowIfDisposedOrCancelled(cancellationToken);
+        this.pages.ThrowIfDisposedOrCancelled(cancellationToken);
 
         if (this.pageCache is null)
         {
-            return await this.db.ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
+            return await this.pages.ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
         }
 
         if (this.pageCache.TryGetValue(n, out byte[] cached))
@@ -84,7 +87,7 @@ internal sealed class ReaderPageCache : IDisposable
             return cached;
         }
 
-        byte[] page = await this.db.ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
+        byte[] page = await this.pages.ReadPageAsync(n, cancellationToken).ConfigureAwait(false);
         this.pageCache.Add(n, page);
         return page;
     }
@@ -121,7 +124,7 @@ internal sealed class ReaderPageCache : IDisposable
             return cached;
         }
 
-        RowBound[] bounds = this.db.ComputeRowDirectory(page);
+        RowBound[] bounds = DataPageRows.ComputeRowDirectory(this.format, page);
         this.rowBoundsCache?.Add(pageNumber, bounds);
         return bounds;
     }

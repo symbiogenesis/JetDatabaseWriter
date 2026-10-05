@@ -963,9 +963,9 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
             ?? throw new InvalidOperationException($"Table '{table}' has no TDEF.");
         int numIdx = Ri32(td, database.TDef.NumIdx);
         int numRealIdx = Ri32(td, database.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(database, td, Ru16(td, database.TDef.NumCols), numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(database.Profile, td, Ru16(td, database.TDef.NumCols), numRealIdx);
         IndexSectionAnchors anchors = database.IndexLayoutInfo.GetIndexSection(realIdxDescStart, numRealIdx, numIdx);
-        int index = IndexCatalogReader.ReadLogicalIdxNames(database, td, anchors.LogIdxNamesStart, numIdx).IndexOf(entryName);
+        int index = IndexCatalogReader.ReadLogicalIdxNames(database.Profile, td, anchors.LogIdxNamesStart, numIdx).IndexOf(entryName);
         Assert.True(index >= 0, $"Table '{table}' has no index '{entryName}'.");
         int fields = database.IndexLayoutInfo.LogicalIdxFieldsOffset(anchors.LogIdxStart, index);
         Assert.Equal((byte)IndexKind.ForeignKey, td[fields + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset]);

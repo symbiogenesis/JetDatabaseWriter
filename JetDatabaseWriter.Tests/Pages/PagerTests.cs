@@ -251,14 +251,14 @@ public sealed class PagerTests
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, encrypted: false);
         await using WriterHarness writer = await OpenAsync(stream, encrypted: false);
 
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database, capacity: 1));
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database.Profile, writer.Database.Pages, capacity: 1));
         Assert.Equal("capacity", ex.ParamName);
 
-        using var uncached = new ReaderPageCache(writer.Database, capacity: 0);
+        using var uncached = new ReaderPageCache(writer.Database.Profile, writer.Database.Pages, capacity: 0);
         Assert.Equal(0, uncached.Hits);
 
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
-        using var cached = new ReaderPageCache(reader.Database, capacity: 8);
+        using var cached = new ReaderPageCache(reader.Database.Profile, reader.Database.Pages, capacity: 8);
         Assert.Equal(0, cached.Misses);
     }
 

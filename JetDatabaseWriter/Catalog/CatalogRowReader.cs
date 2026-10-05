@@ -5,18 +5,23 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>
 /// Read-only <c>MSysObjects</c> scans, and the one system-table lookup by name
 /// that the reader's <see cref="CatalogReader"/> and the writer-side services
-/// share. Depends only on page I/O, so every catalog writer, the data-page
-/// inserter, and the feature managers can share it without depending on each other.
+/// share. Depends only on the format profile, the TDEF reader and the owned-page
+/// walk, so every catalog writer, the data-page inserter, and the feature
+/// managers can share it without depending on each other.
 /// </summary>
-/// <param name="db">The database page I/O and format context.</param>
-internal sealed class CatalogRowReader(DatabaseFile db)
+/// <param name="format">The file's format profile, which decodes the catalog columns.</param>
+/// <param name="tableDefs">Reads the <c>MSysObjects</c> table definition.</param>
+/// <param name="ownedPages">Walks the rows of <c>MSysObjects</c>.</param>
+internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDefs, OwnedDataPages ownedPages)
 {
     /// <summary>
     /// Scans all data pages belonging to <c>MSysObjects</c> (TDEF page 2) and
@@ -37,7 +42,7 @@ internal sealed class CatalogRowReader(DatabaseFile db)
         }
 
         var result = new List<CatalogRow>();
-        await db.ForEachLiveTableRowAsync(
+        await ownedPages.ForEachLiveTableRowAsync(
             2,
             (row, _) =>
             {
@@ -45,17 +50,17 @@ internal sealed class CatalogRowReader(DatabaseFile db)
                 RowLocation location = row.Location;
                 long id = idColumn is null
                     ? 0
-                    : CatalogValueReader.ParseInt64OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, idColumn));
+                    : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn));
                 long parentId = parentIdColumn is null
                     ? 0
-                    : CatalogValueReader.ParseInt64OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, parentIdColumn));
+                    : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, parentIdColumn));
 
                 result.Add(new CatalogRow(
                     PageNumber: location.PageNumber,
                     RowIndex: location.RowIndex,
-                    Name: db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, nameColumn),
-                    ObjectType: CatalogValueReader.ParseInt32OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, typeColumn)),
-                    Flags: CatalogValueReader.ParseInt64OrZero(db.DecodeSimpleColumnValue(page, location.RowStart, location.RowSize, flagsColumn!)),
+                    Name: ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn),
+                    ObjectType: CatalogValueReader.ParseInt32OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn)),
+                    Flags: CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn!)),
                     TDefPage: CatalogValueReader.TdefPageFromId(id),
                     Id: id,
                     ParentId: parentId,
@@ -111,7 +116,7 @@ internal sealed class CatalogRowReader(DatabaseFile db)
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<long> FindTableTdefPageAsync(Predicate<string> nameMatches, bool includeLinkedOdbc, CancellationToken cancellationToken)
     {
-        TableDef? msys = await db.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
+        TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
             return 0;
@@ -139,7 +144,7 @@ internal sealed class CatalogRowReader(DatabaseFile db)
     /// <param name="page">The data page holding the row.</param>
     /// <param name="location">The row's location on <paramref name="page"/>.</param>
     private bool CanDecodeRow(byte[] page, RowLocation location)
-        => location.RowSize >= db.RowColumnCountFieldSize
-            && db.ReadRowColumnCount(page, location.RowStart) != 0
-            && RowDecodePlan.TryParseRowLayout(db.Profile.RowFields, page, location.RowStart, location.RowSize, hasVarColumns: true, out _);
+        => location.RowSize >= format.RowFields.NumCols
+            && format.ReadRowColumnCount(page, location.RowStart) != 0
+            && RowDecodePlan.TryParseRowLayout(format.RowFields, page, location.RowStart, location.RowSize, hasVarColumns: true, out _);
 }

@@ -125,7 +125,7 @@ internal static class IndexLeafChain
         Assert.NotNull(tdef);
         int numCols = Ru16(tdef, db.TDef.NumCols);
         int numRealIdx = Ri32(tdef, db.TDef.NumRealIdx);
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db, tdef, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Profile, tdef, numCols, numRealIdx);
         Assert.True(realIdxDescStart >= 0, $"The TDEF at page {tdefPage} could not be walked.");
 
         var roots = new List<long>(numRealIdx);

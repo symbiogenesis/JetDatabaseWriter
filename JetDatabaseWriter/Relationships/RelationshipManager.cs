@@ -408,7 +408,7 @@ internal sealed class RelationshipManager(
         }
 
         int sharedSlot = FindCoveringRealIdx(this.db.IndexLayoutInfo, page, columnNumbers, in layout, preferUnique);
-        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, page, layout.LogIdxNamesStart, layout.NumIdx);
+        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db.Profile, page, layout.LogIdxNamesStart, layout.NumIdx);
 
         int logicalIdxNum = NextLogicalIdxNumber(this.db.IndexLayoutInfo, page, in layout);
         FkSidePlan plan = sharedSlot >= 0
@@ -470,7 +470,7 @@ internal sealed class RelationshipManager(
 
         int pkLogicalIdxNum = NextLogicalIdxNumber(this.db.IndexLayoutInfo, page, in layout);
         int fkLogicalIdxNum = pkLogicalIdxNum + 1;
-        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, page, layout.LogIdxNamesStart, layout.NumIdx);
+        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db.Profile, page, layout.LogIdxNamesStart, layout.NumIdx);
 
         return (
             new FkSidePlan(pkRealIdxNum, pkLogicalIdxNum, pkAllocates, 0),
@@ -534,7 +534,7 @@ internal sealed class RelationshipManager(
 
         // The new entry and its name go in at logical position `insertAt`;
         // entries and names before it keep their offsets.
-        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db, td, logIdxNamesStart, numIdx);
+        List<string> existingNames = IndexCatalogReader.ReadLogicalIdxNames(this.db.Profile, td, logIdxNamesStart, numIdx);
         int insertAt = this.FkEntryInsertPosition(existingNames, indexName);
         byte[] nameRecord = this.db.EncodeTDefNameRecord(indexName);
         int namesBeforeLen = 0;
@@ -1125,7 +1125,7 @@ internal sealed class RelationshipManager(
             columnNames[column.ColNum] = column.Name;
         }
 
-        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(this.db, td, layout.LogIdxNamesStart, layout.NumIdx);
+        List<string> names = IndexCatalogReader.ReadLogicalIdxNames(this.db.Profile, td, layout.LogIdxNamesStart, layout.NumIdx);
         var result = new List<FkLogicalIndexSnapshot>();
         for (int li = 0; li < layout.NumIdx && li < names.Count; li++)
         {
@@ -1824,7 +1824,7 @@ internal sealed class RelationshipManager(
             return baseName;
         }
 
-        List<string> existing = IndexCatalogReader.ReadLogicalIdxNames(this.db, pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
+        List<string> existing = IndexCatalogReader.ReadLogicalIdxNames(this.db.Profile, pageBytes, layout.LogIdxNamesStart, layout.NumIdx);
         return IndexHelpers.MakeUniqueLogicalIdxName(baseName, existing);
     }
 
@@ -2248,7 +2248,7 @@ internal sealed class RelationshipManager(
             return false;
         }
 
-        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(this.db, td, numCols, numRealIdx);
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(this.db.Profile, td, numCols, numRealIdx);
         if (realIdxDescStart < 0)
         {
             return false;
