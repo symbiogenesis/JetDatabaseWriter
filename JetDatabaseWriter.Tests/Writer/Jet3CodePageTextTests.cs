@@ -95,7 +95,10 @@ public sealed class Jet3CodePageTextTests
         {
             byte[] before = ms.ToArray();
 
-            JetArgumentException ex = await Assert.ThrowsAsync<JetArgumentException>(async () => await invoke(writer, text));
+            bool sourceText = call.StartsWith("CreateLinked", StringComparison.Ordinal) && !call.EndsWith(" link", StringComparison.Ordinal);
+            ArgumentException ex = sourceText
+                ? await Assert.ThrowsAsync<ArgumentException>(async () => await invoke(writer, text))
+                : await Assert.ThrowsAsync<JetArgumentException>(async () => await invoke(writer, text));
 
             Assert.Equal(paramName, ex.ParamName);
             Assert.Contains(Cp1252Message, ex.Message, StringComparison.Ordinal);

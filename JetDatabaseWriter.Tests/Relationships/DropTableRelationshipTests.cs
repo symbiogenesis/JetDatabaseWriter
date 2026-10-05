@@ -232,7 +232,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<JetOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(tree, RowValues.Create().Set("Id", 9).Set("ParentId", 99), Ct));
             await writer.DropRelationshipAsync(relationship, Ct);
             await writer.DropTableAsync(tree, Ct);
@@ -535,7 +535,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     {
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await Assert.ThrowsAsync<JetOperationException>(async () =>
+            await Assert.ThrowsAsync<JetConstraintException>(async () =>
                 await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 20).Set("ParentId", 99), Ct));
 
             Assert.Equal(1, await writer.DeleteRowsAsync(Parent, "Id", 1, Ct));

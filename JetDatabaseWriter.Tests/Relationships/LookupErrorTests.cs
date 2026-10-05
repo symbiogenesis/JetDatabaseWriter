@@ -40,7 +40,9 @@ public sealed class LookupErrorTests(DatabaseCache db) : IClassFixture<DatabaseC
             Assert.Equal(JetErrorCode.ColumnNotFound, column.ErrorCode);
             Assert.Equal("T", column.ErrorInfo.TableName);
             Assert.Equal("Missing", column.ErrorInfo.ColumnName);
+#pragma warning disable CA2208 // The golden message deliberately reproduces the public DropColumnAsync parameter name.
             Assert.Equal(new ArgumentException("Column 'Missing' was not found in table 'T'.", "columnName").Message, column.Message);
+#pragma warning restore CA2208 // The golden message deliberately reproduces the public DropColumnAsync parameter name.
             JetOperationException last = await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropColumnAsync("T", "Id", Ct));
             Assert.Equal(JetErrorCode.LastColumn, last.ErrorCode);
             Assert.Equal("Cannot drop the last remaining column from table 'T'.", last.Message);

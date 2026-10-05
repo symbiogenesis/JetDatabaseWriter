@@ -446,7 +446,15 @@ internal sealed class Pager : PageFile
             if (!pending && this.scopeDepth != 0)
             {
                 this.scopeHasWrites = true;
-                this.dirtyPages[pageNumber] = page.AsSpan(0, this.PageSize).ToArray();
+                if (this.dirtyPages.TryGetValue(pageNumber, out byte[]? dirty))
+                {
+                    Buffer.BlockCopy(page, 0, dirty, 0, this.PageSize);
+                }
+                else
+                {
+                    this.dirtyPages.Add(pageNumber, page.AsSpan(0, this.PageSize).ToArray());
+                }
+
                 this.bufferedPageCount = Math.Max(this.PageCount, pageNumber + 1);
                 pending = true;
                 if (this.dirtyPages.Count >= Math.Max(64, this.cacheSize / 2))

@@ -18,7 +18,7 @@ internal sealed class OwnedPageIndex(IPageSource pages, JetFormat format) : IPag
 #else
     private readonly object sync = new();
 #endif
-    private Dictionary<long, long> owners = [];
+    private Dictionary<long, List<long>> owners = [];
     private bool initialized;
     private long epoch;
 
@@ -44,13 +44,24 @@ internal sealed class OwnedPageIndex(IPageSource pages, JetFormat format) : IPag
                     loadedEpoch = this.epoch;
                 }
 
-                var loaded = new Dictionary<long, long>();
-                for (long number = 3; number < pages.PageCount; number++)
+                var loaded = new Dictionary<long, List<long>>();
+                long totalPages = pages.PageCount;
+                for (long number = 3; number < totalPages; number++)
                 {
                     byte[] page = await pages.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        this.SetOwner(loaded, number, page);
+                        long pageOwner = this.ReadOwner(page);
+                        if (pageOwner > 0)
+                        {
+                            if (!loaded.TryGetValue(pageOwner, out List<long>? ownedPages))
+                            {
+                                ownedPages = [];
+                                loaded.Add(pageOwner, ownedPages);
+                            }
+
+                            ownedPages.Add(number);
+                        }
                     }
                     finally
                     {
@@ -81,10 +92,44 @@ internal sealed class OwnedPageIndex(IPageSource pages, JetFormat format) : IPag
     /// <inheritdoc/>
     public void OnPageWritten(long pageNumber, ReadOnlySpan<byte> before, ReadOnlySpan<byte> after)
     {
+        long oldOwner = this.ReadOwner(before);
+        long newOwner = this.ReadOwner(after);
+        if (oldOwner == newOwner)
+        {
+            return;
+        }
+
         lock (this.sync)
         {
-            this.SetOwner(this.owners, pageNumber, after);
             this.epoch++;
+            if (!this.initialized)
+            {
+                return;
+            }
+
+            if (oldOwner > 0 && this.owners.TryGetValue(oldOwner, out List<long>? oldPages))
+            {
+                int oldIndex = oldPages.BinarySearch(pageNumber);
+                if (oldIndex >= 0)
+                {
+                    oldPages.RemoveAt(oldIndex);
+                }
+            }
+
+            if (newOwner > 0)
+            {
+                if (!this.owners.TryGetValue(newOwner, out List<long>? newPages))
+                {
+                    newPages = [];
+                    this.owners.Add(newOwner, newPages);
+                }
+
+                int newIndex = newPages.BinarySearch(pageNumber);
+                if (newIndex < 0)
+                {
+                    newPages.Insert(~newIndex, pageNumber);
+                }
+            }
         }
     }
 
@@ -100,30 +145,8 @@ internal sealed class OwnedPageIndex(IPageSource pages, JetFormat format) : IPag
     }
 
     private long[] FindOwnedPages(long owner)
-    {
-        var result = new List<long>();
-        foreach (KeyValuePair<long, long> pair in this.owners)
-        {
-            if (pair.Value == owner)
-            {
-                result.Add(pair.Key);
-            }
-        }
+        => this.owners.TryGetValue(owner, out List<long>? ownedPages) ? ownedPages.ToArray() : [];
 
-        result.Sort();
-        return result.ToArray();
-    }
-
-    private void SetOwner(Dictionary<long, long> target, long pageNumber, ReadOnlySpan<byte> page)
-    {
-        _ = target.Remove(pageNumber);
-        if (page[0] == Constants.PageTypes.Data)
-        {
-            long owner = Ri32(page, format.DataPage.TDefOff);
-            if (owner > 0)
-            {
-                target[pageNumber] = owner;
-            }
-        }
-    }
+    private long ReadOwner(ReadOnlySpan<byte> page)
+        => !page.IsEmpty && page[0] == Constants.PageTypes.Data ? Ri32(page, format.DataPage.TDefOff) : 0;
 }

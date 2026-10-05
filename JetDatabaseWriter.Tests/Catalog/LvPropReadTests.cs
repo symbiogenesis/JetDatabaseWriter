@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -187,7 +188,7 @@ public sealed class LvPropReadTests
             {
                 for (int i = 0; i < SignatureDescriptions.Length; i++)
                 {
-                    ArgumentException rejected = await Assert.ThrowsAsync<ArgumentException>(async () => await writer.InsertRowAsync($"T{i}", [1, -5d], Ct));
+                    JetValidationRuleException rejected = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync($"T{i}", [1, -5d], Ct));
                     Assert.Contains("Score must not be negative", rejected.Message, StringComparison.Ordinal);
                     await writer.InsertRowAsync($"T{i}", new RowValues { ["Id"] = 2 }, Ct);
                 }
@@ -253,7 +254,7 @@ public sealed class LvPropReadTests
         }
 
         await using AccessWriter later = await OpenWriterAsync(ms, WriteMode.Direct);
-        await Assert.ThrowsAsync<ArgumentException>(async () => await later.InsertRowAsync("T", new RowValues { ["Id"] = 2, ["Score"] = -1d }, Ct));
+        await Assert.ThrowsAsync<JetValidationRuleException>(async () => await later.InsertRowAsync("T", new RowValues { ["Id"] = 2, ["Score"] = -1d }, Ct));
     }
 
     /// <summary>
@@ -393,7 +394,7 @@ public sealed class LvPropReadTests
         }
 
         await using AccessWriter later = await OpenWriterAsync(ms, WriteMode.Direct);
-        await Assert.ThrowsAsync<ArgumentException>(async () => await later.InsertRowAsync("T", [1, "r", -2d], Ct));
+        await Assert.ThrowsAsync<JetValidationRuleException>(async () => await later.InsertRowAsync("T", [1, "r", -2d], Ct));
     }
 
     private static ColumnDefinition ScoreColumn(string description) => new("Score", typeof(double))

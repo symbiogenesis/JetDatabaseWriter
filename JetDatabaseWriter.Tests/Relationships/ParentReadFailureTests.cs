@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -24,6 +23,7 @@ public sealed class ParentReadFailureTests(DatabaseCache db) : IClassFixture<Dat
     public async Task Insert_WhenParentRowsCannotBeDecoded_ThrowsTheDecodeError(WriteMode mode)
     {
         await using MemoryStream stream = await db.CopyToStreamAsync(TestDatabases.MdbtoolsNwind, Ct);
+
         // CompanyName has no covering index, so this additional relationship
         // forces a parent snapshot even when ShipperID can be sought directly.
         await ForeignKeyTestDatabase.PlantRelationshipAsync(stream, "FK_DecodeParent", "Orders", "ShipVia", "Shippers", "CompanyName");

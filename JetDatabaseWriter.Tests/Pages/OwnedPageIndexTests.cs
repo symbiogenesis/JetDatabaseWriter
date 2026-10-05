@@ -53,6 +53,8 @@ public sealed class OwnedPageIndexTests
 
         Assert.Equal(3L, Assert.Single(await index.GetAsync(2, TestContext.Current.CancellationToken)));
         Assert.Empty(await index.GetAsync(1, TestContext.Current.CancellationToken));
+        await pager.WritePageAsync(3, new byte[format.PageSize], TestContext.Current.CancellationToken);
+        Assert.Empty(await index.GetAsync(2, TestContext.Current.CancellationToken));
     }
 
     /// <summary>A session's second insert avoids repeating Northwind's physical owner scan.</summary>

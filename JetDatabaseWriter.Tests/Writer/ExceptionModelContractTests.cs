@@ -12,7 +12,7 @@ public sealed class ExceptionModelContractTests
     {
         var info = new JetErrorInfo { TableName = "T", ColumnName = "Id", IndexName = "PrimaryKey" };
         var error = new JetConstraintException(JetErrorCode.UniqueViolation, "duplicate", info);
-        Assert.IsAssignableFrom<InvalidOperationException>(error);
+        Assert.IsType<InvalidOperationException>(error, exactMatch: false);
 #pragma warning disable CA1859 // This assertion verifies the public exception interface contract.
         IJetException structured = error;
 #pragma warning restore CA1859 // This assertion verifies the public exception interface contract.
@@ -26,7 +26,7 @@ public sealed class ExceptionModelContractTests
     {
         var inner = new InvalidOperationException("cause");
         var error = new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, "missing", "columnName", new JetErrorInfo { ColumnName = "Id" }, inner);
-        Assert.IsAssignableFrom<ArgumentException>(error);
+        Assert.IsType<ArgumentException>(error, exactMatch: false);
         Assert.Equal("columnName", error.ParamName);
         Assert.Same(inner, error.InnerException);
         Assert.Equal(new ArgumentException("missing", "columnName").Message, error.Message);

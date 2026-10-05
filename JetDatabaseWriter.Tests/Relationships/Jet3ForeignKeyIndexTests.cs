@@ -630,7 +630,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         await writer.CreateTableAsync("P", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], this.ct);
         await CreateChildAsync(writer, this.ct);
 
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, "P", "Id", Child, "ParentId"), this.ct));
     }
 

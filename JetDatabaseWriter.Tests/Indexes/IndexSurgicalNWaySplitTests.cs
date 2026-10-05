@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -255,7 +256,7 @@ public sealed class IndexSurgicalNWaySplitTests
         {
             foreach (int i in (int[])[0, 7, 13, 25, 41, 67, rowCount - 1])
             {
-                await Assert.ThrowsAsync<System.InvalidOperationException>(async () =>
+                await Assert.ThrowsAsync<JetConstraintException>(async () =>
                     await writer.InsertRowAsync(
                         "T",
                         [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M')],
