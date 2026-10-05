@@ -197,28 +197,13 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// entry on an intermediate (<c>0x03</c>) page. Each intermediate entry
     /// trails with <c>[3 B BE data page][1 B data row][4 B BE child page]</c>;
     /// the bitmask-driven entry layout means the last entry ends exactly at
-    /// <c>payloadEnd</c>, so the child pointer occupies
-    /// <c>[payloadEnd-4, payloadEnd)</c>.
+    /// <c>payloadEnd</c>; shared prefixes can include child-pointer bytes.
     /// </summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="pageSize">The page size.</param>
     /// <param name="layout">The layout.</param>
     private static long ReadLastChildPointer(byte[] page, int pageSize, IndexPageLayout layout)
-    {
-        if (page == null || page.Length < pageSize)
-        {
-            return 0;
-        }
-
-        int freeSpace = Ru16(page, 2);
-        int payloadEnd = pageSize - freeSpace;
-        if (payloadEnd < layout.FirstEntryOffset + 8)
-        {
-            return 0;
-        }
-
-        return IndexPageCodec.DecodeIntermediateChildPointer(page, payloadEnd - 4);
-    }
+        => IndexPageCodec.ReadLastChildPointer(layout, page, pageSize);
 
     /// <summary>
     /// Reads a page through the writer cache and returns a caller-owned clone.

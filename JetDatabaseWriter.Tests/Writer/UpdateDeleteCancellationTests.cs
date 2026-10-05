@@ -187,6 +187,7 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
     {
         await using MemoryStream source = await this.CreateDatabaseAsync(format, statement);
         byte[] original = source.ToArray();
+
         // This fault injector cancels on stream reads, so every read must reach the stream.
         UncancelledRun uncancelled = await RunUncancelledAsync(source, statement, mode, physicalReads: true);
         Assert.True(uncancelled.Reads >= 5, $"The statement made only {uncancelled.Reads} page reads.");

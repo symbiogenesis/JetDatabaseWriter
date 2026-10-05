@@ -1,10 +1,12 @@
 namespace JetDatabaseWriter.Tests.Indexes;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -46,6 +48,40 @@ public sealed class Jet3CompressedIndexFixtureTests
         var range = new EncodedIndexRange(new(key, true, false), new(key, true, false), key);
         IndexPageCodec.CollectRangeLeafEntries(layout, page, 2048, range, matches);
         Assert.Equal(entries.Select(entry => (entry.DataPage, (int)entry.DataRow)), matches);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    public void IntermediatePrefix_ReconstructsRowAndChildPointers(DatabaseFormat kind)
+    {
+        JetFormat format = JetFormat.ForNewDatabase(kind);
+        IndexPageLayout layout = format.IndexPage;
+        byte[] page = new byte[format.PageSize];
+        page[0] = 3;
+        page[1] = 1;
+        page[layout.PrefLenOffset] = 12;
+        if (kind == DatabaseFormat.Jet3Mdb)
+        {
+            page[21] = 1;
+        }
+
+        byte[] firstEntry = [0x7F, 0x80, 0, 0, 1, 0, 1, 0x8F, 2, 0, 0, 1, 2];
+        firstEntry.CopyTo(page, layout.FirstEntryOffset);
+        page[layout.FirstEntryOffset + 13] = 3;
+        page[layout.BitmaskOffset + 1] = 0x60;
+        BinaryPrimitives.WriteUInt16LittleEndian(page.AsSpan(2, 2), (ushort)(format.PageSize - layout.FirstEntryOffset - 14));
+        byte[] key = firstEntry.AsSpan(0, 5).ToArray();
+        List<DecodedIntermediateEntry> entries = IndexPageCodec.DecodeIntermediateEntries(layout, page, format.PageSize);
+        Assert.Equal(2, entries.Count);
+        Assert.All(entries, entry => Assert.Equal(key, entry.Entry.Key));
+        Assert.All(entries, entry => Assert.Equal(399, entry.Entry.DataPage));
+        Assert.All(entries, entry => Assert.Equal(2, entry.Entry.DataRow));
+        Assert.Equal(258, entries[0].ChildPage);
+        Assert.Equal(259, entries[1].ChildPage);
+        Assert.Equal(258, IndexPageCodec.SelectChildPage(layout, page, format.PageSize, key));
+        Assert.Equal(258, IndexPageCodec.ReadFirstChildPointer(layout, page, format.PageSize));
+        Assert.Equal(259, IndexPageCodec.ReadLastChildPointer(layout, page, format.PageSize));
     }
 
     private sealed class EntryComparer : IEqualityComparer<IndexEntry>

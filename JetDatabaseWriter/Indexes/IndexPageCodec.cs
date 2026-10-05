@@ -551,6 +551,50 @@ internal static class IndexPageCodec
         return DecodeIntermediateChildPointer(intermediatePage, entryEnd - 4);
     }
 
+    /// <summary>Reads the final child pointer after reconstructing shared pointer bytes.</summary>
+    /// <param name="layout">The page layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    public static long ReadLastChildPointer(IndexPageLayout layout, byte[] page, int pageSize)
+    {
+        if (!IsIntermediate(page)
+            || !TryGetPayloadEnd(layout, page, pageSize, out int payloadEnd)
+            || payloadEnd <= layout.FirstEntryOffset)
+        {
+            return 0;
+        }
+
+        int prefixLength = ReadPrefixLength(layout, page);
+        int entryStart = layout.FirstEntryOffset;
+        bool isFirstEntry = true;
+        while (entryStart < payloadEnd)
+        {
+            int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
+            int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
+            int fullLength = entryEnd - entryStart + (isFirstEntry ? 0 : prefixLength);
+            if (fullLength < IntermediateTrailerSize || (isFirstEntry && prefixLength > fullLength))
+            {
+                return 0;
+            }
+
+            if (entryEnd == payloadEnd)
+            {
+                long childPage = 0;
+                for (int pointerByte = 0; pointerByte < 4; pointerByte++)
+                {
+                    childPage = (childPage << 8) | ReadCanonicalKeyByte(page, layout.FirstEntryOffset, entryStart, prefixLength, isFirstEntry, fullLength - 4 + pointerByte);
+                }
+
+                return childPage;
+            }
+
+            isFirstEntry = false;
+            entryStart = entryEnd;
+        }
+
+        return 0;
+    }
+
     /// <summary>
     /// Reads a big-endian 4-byte child-page pointer from an intermediate entry.
     /// </summary>
@@ -652,23 +696,25 @@ internal static class IndexPageCodec
         {
             int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
             int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
-            int suffixLength = entryEnd - entryStart - IntermediateTrailerSize;
-            if (suffixLength < 0 || entryStart + suffixLength + IntermediateTrailerSize > page.Length)
+            int storedLength = entryEnd - entryStart;
+            byte[] fullEntry = DecodeCanonicalKey(page, entryStart, storedLength, prefixLength, sharedPrefix, isFirstEntry);
+            if (fullEntry.Length < IntermediateTrailerSize || (isFirstEntry && prefixLength > fullEntry.Length))
             {
                 break;
             }
 
-            byte[] canonicalKey = DecodeCanonicalKey(page, entryStart, suffixLength, prefixLength, sharedPrefix, isFirstEntry);
-            if (isFirstEntry && prefixLength > 0 && suffixLength >= prefixLength)
+            if (isFirstEntry && prefixLength > 0)
             {
                 sharedPrefix = new byte[prefixLength];
-                Buffer.BlockCopy(canonicalKey, 0, sharedPrefix, 0, prefixLength);
+                Buffer.BlockCopy(fullEntry, 0, sharedPrefix, 0, prefixLength);
             }
 
-            int trailerOffset = entryStart + suffixLength;
-            long dataPage = ReadUInt24BigEndian(page.AsSpan(trailerOffset, 3));
-            byte dataRow = page[trailerOffset + 3];
-            long childPage = DecodeIntermediateChildPointer(page, trailerOffset + 4);
+            int keyLength = fullEntry.Length - IntermediateTrailerSize;
+            byte[] canonicalKey = new byte[keyLength];
+            Buffer.BlockCopy(fullEntry, 0, canonicalKey, 0, keyLength);
+            long dataPage = ReadUInt24BigEndian(fullEntry.AsSpan(keyLength, 3));
+            byte dataRow = fullEntry[keyLength + 3];
+            long childPage = DecodeIntermediateChildPointer(fullEntry, keyLength + 4);
             result.Add(new DecodedIntermediateEntry(new IndexEntry(canonicalKey, dataPage, dataRow), childPage));
 
             isFirstEntry = false;
@@ -714,12 +760,12 @@ internal static class IndexPageCodec
             int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
             int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
             int suffixLength = entryEnd - entryStart - IntermediateTrailerSize;
-            if (!IsEntryReadable(page, entryStart, suffixLength, IntermediateTrailerSize))
+            if (suffixLength + (isFirstEntry ? 0 : prefixLength) < 0 || entryStart + suffixLength + IntermediateTrailerSize > page.Length)
             {
                 return null;
             }
 
-            if (isFirstEntry && prefixLength > suffixLength)
+            if (isFirstEntry && prefixLength > suffixLength + IntermediateTrailerSize)
             {
                 return null;
             }
@@ -734,7 +780,14 @@ internal static class IndexPageCodec
                 isFirstEntry);
             if (comparison <= 0)
             {
-                return DecodeIntermediateChildPointer(page, entryStart + suffixLength + IntermediateTrailerSize - 4);
+                long childPage = 0;
+                int pointerOffset = suffixLength + (isFirstEntry ? 0 : prefixLength) + 4;
+                for (int pointerByte = 0; pointerByte < 4; pointerByte++)
+                {
+                    childPage = (childPage << 8) | ReadCanonicalKeyByte(page, prefixStart, entryStart, prefixLength, isFirstEntry, pointerOffset + pointerByte);
+                }
+
+                return childPage;
             }
 
             if (nextEntryStart < 0)
@@ -1222,9 +1275,6 @@ internal static class IndexPageCodec
 
         return hasEntries;
     }
-
-    private static bool IsEntryReadable(byte[] page, int entryStart, int suffixLength, int trailerLength)
-        => suffixLength >= 0 && entryStart + suffixLength + trailerLength <= page.Length;
 
     private static int CompareSearchKeyToEntry(
         byte[] searchKey,
