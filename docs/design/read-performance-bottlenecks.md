@@ -163,6 +163,34 @@ was larger than the first run's errors but did not reproduce; no reader-path
 optimization was made between the measurements. Keep both artifacts rather than
 interpreting either host's absolute throughput as a universal performance floor.
 
+## Statement spill and immutable layout checks (2026-10-05)
+
+The [eight-case paired run](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37400056965)
+compares `6de9c067` with `24ea953d`, using the default adaptive job on one hosted
+Windows runner. The [focused repeat](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37401077756)
+compares `10b21a2a` with the same baseline; its production and benchmark code is
+identical to `6de9c067`. Ratios are head mean divided by baseline mean.
+
+| Case | First ratio | Focused repeat |
+|---|---:|---:|
+| Numeric untyped decode | 1.03 | 0.96 |
+| Text untyped decode | 1.02 | — |
+| Wide untyped decode | 1.03 | 1.01 |
+| MEMO untyped decode | 0.99 | — |
+| MEMO typed decode | 0.99 | — |
+| Single insert | 0.89 | — |
+| UpdateRows | 1.10 | 0.99 |
+| DeleteRows | 1.03 | — |
+
+Allocations stayed flat or fell slightly. The first run's numeric, wide and
+update results exceeded the 2% reader or 5% writer targets; the focused repeat
+met them. In that repeat, numeric reads measured 7.26 ± 0.10 ms against
+7.55 ± 0.14 ms, wide reads 12.47 ± 0.19 ms against 12.39 ± 0.15 ms, and updates
+8.55 ± 0.16 ms against 8.61 ± 0.41 ms. Errors are BenchmarkDotNet's half-widths
+of its 99.9% confidence intervals. The slower first results were not reproduced,
+so they do not justify an additional hot-path change. These comparisons do not
+resolve the older typed-MEMO comparison against `dfd16210` in `docs/todo.md`.
+
 ## Writer page-cache baseline (2026-10-05)
 
 [Hosted run 37286441249](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37286441249)

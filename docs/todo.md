@@ -229,7 +229,7 @@ The remaining wave-2 packages address the items above in stages 6-17. This secti
 
 #### stage-6-validation (stage 6)
 
-- **Statement spill and immutable-layout performance acceptance needs hosted paired measurements.** Bounded statement writes add undo bookkeeping, and immutable column collections change the row decoder's access path. Repro: dispatch `benchmarks.yml` on the integrated revision against `24ea953d`, using the default adaptive job and `AccessWriterBenchmarks.InsertRow_Single`, `UpdateRows`, `DeleteRows`, and the numeric, text, wide and typed/untyped MEMO methods in `AccessReaderRowDecodeBenchmarks`. Planned here: require writer time and allocations within 5% and row-decode means within 2%, investigating results outside measurement error. The older typed-MEMO comparison under "Docs, tests and tooling" still needs its repeated controlled measurements.
+Complete **Hosted reader timings do not establish stage-6-validation's 2% performance target** under "Docs, tests and tooling" before advancing to stage 7. Use the historical `dfd16210` comparison and repeated controls specified there.
 
 #### crash-journal (stage 7; needs stage-6-validation; ∥ write-pipeline-a1)
 
