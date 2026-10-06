@@ -37,17 +37,21 @@ public sealed class TableColumnLimitTests
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             stream, WriteModes.WriterOptions(mode), leaveOpen: true, cancellationToken: Ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                JetLimitationException create = await Assert.ThrowsAsync<JetLimitationException>(async () =>
-                    await writer.CreateTableAsync("TooWide", Columns(256), Ct));
-                Assert.Contains("TooWide", create.Message, StringComparison.Ordinal);
-                Assert.Contains("255", create.Message, StringComparison.Ordinal);
-                JetLimitationException add = await Assert.ThrowsAsync<JetLimitationException>(async () =>
-                    await writer.AddColumnAsync("Full", new ColumnDefinition("C255", typeof(int)), Ct));
-                Assert.Contains("Full", add.Message, StringComparison.Ordinal);
-                Assert.Contains("255", add.Message, StringComparison.Ordinal);
-            }, Ct);
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    JetLimitationException create = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+                        await writer.CreateTableAsync("TooWide", Columns(256), Ct));
+                    Assert.Contains("TooWide", create.Message, StringComparison.Ordinal);
+                    Assert.Contains("255", create.Message, StringComparison.Ordinal);
+                    JetLimitationException add = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+                        await writer.AddColumnAsync("Full", new ColumnDefinition("C255", typeof(int)), Ct));
+                    Assert.Contains("Full", add.Message, StringComparison.Ordinal);
+                    Assert.Contains("255", add.Message, StringComparison.Ordinal);
+                },
+                Ct);
         }
 
         Assert.Equal(before, stream.ToArray());
@@ -67,15 +71,19 @@ public sealed class TableColumnLimitTests
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream, format, WriteModes.WriterOptions(mode), leaveOpen: true, cancellationToken: Ct))
         {
-            await WriteModes.RunAsync(writer, mode, async () =>
-            {
-                await writer.CreateTableAsync("Boundary", Columns(254), Ct);
-                await writer.InsertRowAsync("Boundary", values, Ct);
-                await writer.AddColumnAsync("Boundary", new ColumnDefinition("C254", typeof(int)), Ct);
-                await Assert.ThrowsAsync<JetLimitationException>(async () =>
-                    await writer.AddColumnAsync("Boundary", new ColumnDefinition("C255", typeof(int)), Ct));
-                await writer.CreateTableAsync("StillUsable", [new("Id", typeof(int))], Ct);
-            }, Ct);
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    await writer.CreateTableAsync("Boundary", Columns(254), Ct);
+                    await writer.InsertRowAsync("Boundary", values, Ct);
+                    await writer.AddColumnAsync("Boundary", new ColumnDefinition("C254", typeof(int)), Ct);
+                    await Assert.ThrowsAsync<JetLimitationException>(async () =>
+                        await writer.AddColumnAsync("Boundary", new ColumnDefinition("C255", typeof(int)), Ct));
+                    await writer.CreateTableAsync("StillUsable", [new("Id", typeof(int))], Ct);
+                },
+                Ct);
         }
 
         stream.Position = 0;

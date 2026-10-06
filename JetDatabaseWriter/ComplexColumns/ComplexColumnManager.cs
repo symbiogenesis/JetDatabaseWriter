@@ -652,6 +652,7 @@ internal sealed class ComplexColumnManager(
         {
             scalarName = TruncateGeneratedName(scalarName, AccessObjectName.MaxLength - 2) + "_1";
         }
+
         var fk = new ColumnDefinition(fkName, typeof(int))
         {
             ForceVariableLengthStorage = true,
@@ -858,7 +859,7 @@ internal sealed class ComplexColumnManager(
             {
                 throw new ArgumentException(
                     $"Multi-value Text item exceeds the {valueColumn.Size / 2}-character limit of '{tableName}.{columnName}'.",
-                    "value");
+                    nameof(payload));
             }
         }
 

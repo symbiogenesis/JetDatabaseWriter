@@ -40,7 +40,10 @@ public sealed class CalculatedExpressionDateFormattingTests
     [InlineData("\"AM/PM\" hh", "AM/PM 17")]
     [InlineData("\"month\" m", "month 1")]
     public void CustomFormats_UseVbaTokens(string format, string expected)
-        => Assert.Equal(expected, Evaluate($"Format(#2020-01-31 17:04:23#, \"{format.Replace("\"", "\"\"", StringComparison.Ordinal)}\")"));
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        Assert.Equal(expected, Evaluate($"Format(#2020-01-31 17:04:23#, \"{format.Replace("\"", "\"\"", StringComparison.Ordinal)}\")"));
+    }
 
     [Theory]
     [InlineData("#2020-01-31 00:00#", "12 AM")]

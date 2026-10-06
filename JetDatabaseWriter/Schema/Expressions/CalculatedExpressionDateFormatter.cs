@@ -18,6 +18,7 @@ internal static class CalculatedExpressionDateFormatter
     /// <param name="firstDay">VBA's first-day-of-week setting.</param>
     /// <param name="firstWeek">VBA's first-week-of-year setting.</param>
     /// <returns>The formatted date.</returns>
+    /// <exception cref="ArgumentException">A week setting is outside its supported range.</exception>
     internal static string Format(DateTime value, string format, int firstDay, int firstWeek)
     {
         DayOfWeek day = firstDay switch
@@ -120,7 +121,7 @@ internal static class CalculatedExpressionDateFormatter
                     index++;
                 }
 
-                parts.Add((format.Substring(start, index - start), true));
+                parts.Add((format[start..index], true));
                 if (index < format.Length)
                 {
                     index++;

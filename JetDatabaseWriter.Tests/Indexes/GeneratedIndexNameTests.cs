@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Helpers;
@@ -52,8 +53,8 @@ public sealed class GeneratedIndexNameTests(DatabaseCache db) : IClassFixture<Da
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task SelfRelationship_CreateAndRename_KeepIndexNamesWithinLimit(DatabaseFormat format)
     {
-        var ct = TestContext.Current.CancellationToken;
-        using MemoryStream stream = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
         string originalName = new('r', 64);
         string renamedName = new('s', 64);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), leaveOpen: true, ct))

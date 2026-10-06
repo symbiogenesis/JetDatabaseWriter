@@ -63,7 +63,7 @@ internal static class IndexHelpers
             maximumLength--;
         }
 
-        return name.Substring(0, maximumLength);
+        return name[..maximumLength];
     }
 
     /// <summary>
