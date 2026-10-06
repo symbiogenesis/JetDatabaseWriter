@@ -37,12 +37,11 @@ internal sealed class TableSchema(TDefImage image, ColumnPropertyBlock? properti
             columns.Add(resultType == default ? column : column.WithCalculatedResultType(resultType));
         }
 
-        var definition = new TableDef
+        return new TableDef
         {
             Columns = columns,
             HasDeletedColumns = source.HasDeletedColumns,
         };
-        return definition;
     }
 
     /// <summary>Returns the immutable layout shared by resolutions of this schema.</summary>

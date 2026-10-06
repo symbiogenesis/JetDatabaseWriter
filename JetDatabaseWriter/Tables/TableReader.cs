@@ -33,8 +33,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// operation enters the reader's operation gate so disposal waits for it.
 /// </summary>
 /// <param name="format">The database's immutable format profile.</param>
-/// <param name="tableDefs">Reads current TDEF counters.</param>
 /// <param name="pageSource">The database's page source.</param>
+/// <param name="tableDefs">Reads current TDEF counters.</param>
 /// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pages">The reader's page cache.</param>
 /// <param name="rows">Decodes rows from cached pages.</param>

@@ -201,6 +201,7 @@ internal sealed class Pager : PageFile
                 await this.SpillStatementAsync(active, cancellationToken).ConfigureAwait(false);
                 return appended;
             }
+
             long pageNumber = this.PageCount;
             await this.WriteCoreAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
             return pageNumber;
@@ -623,6 +624,7 @@ internal sealed class Pager : PageFile
     /// <param name="cancellationToken">Cancellation before the first write.</param>
     /// <param name="durable">Whether successful replay and undo request a device flush.</param>
     /// <returns>The completion.</returns>
+    /// <exception cref="AggregateException">Commit replay and restoration both failed.</exception>
     internal async ValueTask CommitAsync(PagerTransaction transaction, Action beforeFirstWrite, CancellationToken cancellationToken, bool durable = true)
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);

@@ -5,7 +5,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+#if NETSTANDARD2_1
 using JetDatabaseWriter.Infrastructure;
+#endif
 
 /// <summary>Retains the first raw image of each overwritten page, never decoded plaintext.</summary>
 internal sealed class StatementUndoLog : IAsyncDisposable
@@ -15,7 +17,7 @@ internal sealed class StatementUndoLog : IAsyncDisposable
     private readonly int memoryPageLimit;
     private FileStream? spill;
 
-    /// <summary>Creates a raw undo log, spilling only on physical file stores.</summary>
+    /// <summary>Initializes a new instance of the <see cref="StatementUndoLog"/> class.</summary>
     /// <param name="originalLength">The original physical length.</param>
     /// <param name="fileBacked">Whether raw records can use a temporary file.</param>
     /// <param name="memoryPageLimit">The raw image count kept in memory before spilling.</param>
@@ -26,13 +28,13 @@ internal sealed class StatementUndoLog : IAsyncDisposable
         this.memoryPageLimit = memoryPageLimit;
     }
 
-    /// <summary>Gets whether undo records have spilled to a temporary file.</summary>
+    /// <summary>Gets a value indicating whether undo records have spilled to a temporary file.</summary>
     internal bool IsFileSpilled => this.spill is not null;
 
     /// <summary>Gets the original physical length.</summary>
     internal long OriginalLength { get; }
 
-    /// <summary>Gets or sets whether physical writes require undo.</summary>
+    /// <summary>Gets or sets a value indicating whether physical writes require undo.</summary>
     internal bool HasWrites { get; set; }
 
     /// <summary>Captures an original raw page once before any overwrite.</summary>
@@ -63,7 +65,7 @@ internal sealed class StatementUndoLog : IAsyncDisposable
             {
                 Record record = this.records[key];
                 long recordPosition = this.spill.Position;
-                await this.spill.WriteAsync(record.Bytes!.AsMemory(), cancellationToken).ConfigureAwait(false);
+                await this.spill.WriteAsync(record.Bytes.AsMemory(), cancellationToken).ConfigureAwait(false);
                 this.records[key] = new Record(recordPosition, record.Length, null);
             }
         }
@@ -107,6 +109,7 @@ internal sealed class StatementUndoLog : IAsyncDisposable
         await this.spill.ReadExactlyAsync(raw.AsMemory(), CancellationToken.None).ConfigureAwait(false);
         return raw;
     }
+
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {

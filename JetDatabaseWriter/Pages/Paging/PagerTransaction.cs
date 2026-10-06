@@ -57,7 +57,7 @@ internal sealed class PagerTransaction
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
     public int Count => this.pages.Count;
 
-    /// <summary>Gets whether dirty frames may spill during a private statement.</summary>
+    /// <summary>Gets a value indicating whether dirty frames may spill during a private statement.</summary>
     internal bool IsStatement { get; }
 
     /// <summary>Gets or sets first raw images retained across statement spills.</summary>
@@ -69,7 +69,7 @@ internal sealed class PagerTransaction
     /// <summary>Gets or sets the commit sentinel held across early writes.</summary>
     internal long? SpillCommitLockOffset { get; set; }
 
-    /// <summary>Gets or sets whether the early write lock was acquired.</summary>
+    /// <summary>Gets or sets a value indicating whether the early write lock was acquired.</summary>
     internal bool SpillCommitLockAcquired { get; set; }
 
     /// <summary>Discards successfully spilled images while retaining provisional zeros.</summary>
@@ -168,6 +168,7 @@ internal sealed class PagerTransaction
             {
                 this.appendedCount++;
             }
+
             _ = this.pages.Remove(reserved);
             _ = this.zeroReservations.Add(reserved);
             return reserved;

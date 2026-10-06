@@ -11,21 +11,20 @@ using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class TableDef
 {
+    private readonly IReadOnlyList<ColumnInfo> columns = Array.AsReadOnly(Array.Empty<ColumnInfo>());
+
     /// <summary>Gets the immutable materializer identity for this definition.</summary>
-    public RowShape Shape
-    {
-        get => field ??= new RowShape(this.Columns.Select(static column => column.Name).ToArray(), this.ClrTypes, this.Columns);
-    }
+    public RowShape Shape => field ??= new RowShape(this.Columns.Select(static column => column.Name).ToArray(), this.ClrTypes, this.Columns);
 
     public IReadOnlyList<ColumnInfo> Columns
     {
-        get;
+        get => this.columns;
         init
         {
-            field = Array.AsReadOnly(value.ToArray());
+            this.columns = Array.AsReadOnly(value.ToArray());
             this.InitializeColumnMetadata();
         }
-    } = Array.AsReadOnly(Array.Empty<ColumnInfo>());
+    }
 
     /// <summary>
     /// Gets a value indicating whether the physical ColNum sequence has gaps.

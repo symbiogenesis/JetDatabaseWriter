@@ -62,6 +62,16 @@ public sealed class TableDefReaderTests
         { "AesEncrypted", TestDatabases.AesEncryptedPassword, "92B04B8AD8173174F3B955E91736D4E8275D6A817F71CB5C749323767A5AD8BF" },
     };
 
+    /// <summary>The assembly fixture enables structural verification on newly opened readers.</summary>
+    [Fact]
+    public async Task AssemblyFixture_EnablesCacheVerification()
+    {
+        Assert.True(TableDefReader.VerifyCacheHits);
+        await using MemoryStream stream = await CreateWideTableAsync(DatabaseFormat.Jet4Mdb);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        Assert.True(harness.Database.TableDefs.VerifyOnHit);
+    }
+
     /// <summary>
     /// Every table of each fixture, in ordinal name order, parses to the
     /// pinned descriptors: each table's row count and deleted-column flag, and

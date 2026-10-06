@@ -281,10 +281,10 @@ internal sealed class TransactionLifecycle(
     /// <remarks>
     /// <para>
     /// Once the detach succeeds the transaction always ends. A failure before
-    /// the first page write (cancellation, or a commit-lock timeout) leaves the
-    /// file untouched: the transaction is marked rolled back and the writer's
+    /// final replay (cancellation, or a commit-lock timeout) restores any early
+    /// statement spills: the transaction is marked rolled back and the writer's
     /// state is restored as for a rollback. Cancellation is honoured only up to
-    /// that point; the replay and flush then run to completion, because
+    /// final replay; the replay and flush then run to completion, because
     /// stopping them would tear the file. A failure after replay starts (an
     /// I/O error while writing or flushing) restores the original file and
     /// writer state. If undo also fails, the transaction is neither committed
@@ -296,6 +296,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="durable">Whether commit requests a device flush.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     /// <exception cref="JetOperationException">The transaction is terminated or is not active on this writer.</exception>
+    /// <exception cref="AggregateException">Commit and restoration of an earlier statement spill both fail.</exception>
     private async ValueTask CommitTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken, bool durable = true)
     {
         Guard.NotNull(transaction, nameof(transaction));
@@ -347,9 +348,9 @@ internal sealed class TransactionLifecycle(
                 commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(format.CommitLockOffset, cancellationToken).ConfigureAwait(false);
             }
 
-            // Last point at which cancellation is honoured: nothing has
-            // reached the file yet. Stopping the replay partway would leave
-            // some of the transaction's pages on disk and the rest lost.
+            // Cancellation here restores any earlier statement spills.
+            // Once final replay starts, writes and any recovery finish
+            // without cancellation so no partial batch is left behind.
             cancellationToken.ThrowIfCancellationRequested();
 
             // The pager captures raw undo images before beginning replay.

@@ -1090,7 +1090,7 @@ internal sealed class ComplexColumnManager(
 
         // FK back-ref: the single LongInteger column starting with "_".
         ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
-        values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
+        values[flatDef.FindColumnIndex(column => column == fkCol)] = conceptualTableId;
 
         string ext = input.FileType ?? DeriveExtension(input.FileName);
 
@@ -1107,7 +1107,7 @@ internal sealed class ComplexColumnManager(
     {
         object[] values = flatDef.CreateNullValueRow();
         ColumnInfo fkCol = flatDef.FindFlatTableForeignKeyColumn();
-        values[flatDef.Columns.IndexOf(fkCol)] = conceptualTableId;
+        values[flatDef.FindColumnIndex(column => column == fkCol)] = conceptualTableId;
         flatDef.SetValueByName(values, "value", value ?? DBNull.Value);
         return values;
     }

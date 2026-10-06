@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Tests.Relationships;
@@ -113,6 +114,47 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
         await AssertFaultAsync(original, completed, "Update", stream => stream.FailOnFlush(1), "secret");
     }
 
+    /// <summary>Cancellation before final replay cannot leave a detached transaction active when early undo fails.</summary>
+    [Fact]
+    public async Task CancellationBeforeFinalReplay_UndoFailureFaultsWriter()
+    {
+        byte[] original = await this.CreateSourceAsync(DatabaseFormat.AceAccdb);
+        await using WriteFaultStream baseline = Copy(original);
+        int reads;
+        int earlyWrites;
+        await using (AccessWriter writer = await OpenAsync(baseline))
+        {
+            int initialReads = baseline.ReadCount;
+            int initialWrites = baseline.WriteCount;
+            await MutateAsync(writer, "Update");
+            reads = baseline.ReadCount - initialReads;
+            earlyWrites = baseline.WriteCount - initialWrites;
+        }
+
+        Assert.True(earlyWrites > 64);
+        await using WriteFaultStream stream = Copy(original);
+        AccessWriter target = await OpenAsync(stream);
+        try
+        {
+            using var source = new CancellationTokenSource();
+            stream.FailWritesFrom(int.MaxValue);
+            stream.CancelAfterReads(reads, source);
+            AggregateException failure = await Assert.ThrowsAsync<AggregateException>(async () =>
+                await target.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = new string('c', 36000) }, source.Token));
+            Assert.True(source.IsCancellationRequested);
+            Assert.Contains(failure.Flatten().InnerExceptions, exception => exception is OperationCanceledException);
+            Assert.Contains(failure.Flatten().InnerExceptions, exception => exception is IOException);
+            JetOperationException error = await Assert.ThrowsAsync<JetOperationException>(async () => await target.BeginTransactionAsync(Ct));
+            Assert.Equal(JetErrorCode.WriterFaulted, error.ErrorCode);
+            int writes = stream.WriteCount;
+            await target.DisposeAsync();
+            Assert.Equal(writes, stream.WriteCount);
+        }
+        finally
+        {
+            await target.DisposeAsync();
+        }
+    }
     private static async Task AssertFaultAsync(byte[] original, byte[] completed, string statement, Action<WriteFaultStream> arm, string? password = null)
     {
         await using WriteFaultStream stream = Copy(original);
