@@ -17,6 +17,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -32,6 +33,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// operation enters the reader's operation gate so disposal waits for it.
 /// </summary>
 /// <param name="format">The database's immutable format profile.</param>
+/// <param name="tableDefs">Reads current TDEF counters.</param>
 /// <param name="pageSource">The database's page source.</param>
 /// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
 /// <param name="pages">The reader's page cache.</param>
@@ -44,6 +46,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal sealed class TableReader(
     JetFormat format,
     PageFile pageSource,
+    TableDefReader tableDefs,
     OwnedDataPages ownedPages,
     ReaderPageCache pages,
     RowDecoder rows,
@@ -64,7 +67,7 @@ internal sealed class TableReader(
     /// <param name="wantedColumns">Optional bitmap selecting columns to decode.</param>
     /// <param name="type1">The type1.</param>
     /// <param name="type2">The type2.</param>
-    internal static bool HasWantedColumnOfType(List<ColumnInfo> columns, bool[] wantedColumns, ColumnType type1, ColumnType type2)
+    internal static bool HasWantedColumnOfType(IReadOnlyList<ColumnInfo> columns, bool[] wantedColumns, ColumnType type1, ColumnType type2)
     {
         int limit = Math.Min(columns.Count, wantedColumns.Length);
         for (int i = 0; i < limit; i++)
@@ -78,9 +81,9 @@ internal sealed class TableReader(
         return false;
     }
 
-    internal static bool HasWantedHyperlinkColumn(Type[] clrTypes, bool[] wantedColumns)
+    internal static bool HasWantedHyperlinkColumn(IReadOnlyList<Type> clrTypes, bool[] wantedColumns)
     {
-        int limit = Math.Min(clrTypes.Length, wantedColumns.Length);
+        int limit = Math.Min(clrTypes.Count, wantedColumns.Length);
         for (int i = 0; i < limit; i++)
         {
             if (wantedColumns[i] && clrTypes[i] == typeof(Hyperlink))
@@ -102,9 +105,9 @@ internal sealed class TableReader(
     /// </summary>
     /// <param name="typedRow">The decoded row.</param>
     /// <param name="clrTypes">The table's per-column CLR types.</param>
-    internal static void WrapHyperlinkColumns(object?[] typedRow, Type[] clrTypes)
+    internal static void WrapHyperlinkColumns(object?[] typedRow, IReadOnlyList<Type> clrTypes)
     {
-        int limit = Math.Min(clrTypes.Length, typedRow.Length);
+        int limit = Math.Min(clrTypes.Count, typedRow.Length);
         for (int i = 0; i < limit; i++)
         {
             if (clrTypes[i] != typeof(Hyperlink))
@@ -586,7 +589,8 @@ internal sealed class TableReader(
                 : null;
             IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
 
-            int minimumCapacity = ResolveDataTableMinimumCapacity(td.RowCount, maxRows);
+            long rowCount = (await tableDefs.ReadTableCountersAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
+            int minimumCapacity = ResolveDataTableMinimumCapacity(rowCount, maxRows);
             if (minimumCapacity > 0)
             {
                 dt.MinimumCapacity = minimumCapacity;

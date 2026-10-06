@@ -915,10 +915,10 @@ internal static class FormatProbeApplication
     {
         TableDef msys = await reader.GetMSysObjectsTableDefAsync(default)
                    ?? throw new InvalidOperationException("MSysObjects TDEF not found.");
-        int idxId = msys.Columns.FindIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
-        int idxFlags = msys.Columns.FindIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
+        int idxId = msys.FindColumnIndex(c => string.Equals(c.Name, "Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.FindColumnIndex(c => string.Equals(c.Name, "Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.FindColumnIndex(c => string.Equals(c.Name, "Type", StringComparison.OrdinalIgnoreCase));
+        int idxFlags = msys.FindColumnIndex(c => string.Equals(c.Name, "Flags", StringComparison.OrdinalIgnoreCase));
 
         var result = new List<(long Id, string Name, int Type, long Flags, long TdefPage)>();
         await foreach (string[] row in reader.EnumerateMSysObjectsRowsAsync(msys, default))

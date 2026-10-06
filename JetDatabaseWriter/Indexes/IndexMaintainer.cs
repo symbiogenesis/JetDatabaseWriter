@@ -168,8 +168,7 @@ internal sealed class IndexMaintainer(
             await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken).ConfigureAwait(false);
         }
 
-        await tableRows.AdjustTDefRowCountAsync(tdefPage, rows.Count - tableDef.RowCount, cancellationToken).ConfigureAwait(false);
-        tableDef.RowCount = rows.Count;
+        await tableRows.SetTDefRowCountAsync(tdefPage, checked((uint)rows.Count), cancellationToken).ConfigureAwait(false);
         await this.MaintainIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
     }
 

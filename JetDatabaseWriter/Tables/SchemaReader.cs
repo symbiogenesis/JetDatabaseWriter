@@ -81,7 +81,7 @@ internal sealed class SchemaReader(
             result.Add(new TableStat
             {
                 Name = entry.Name,
-                RowCount = td?.RowCount ?? 0L,
+                RowCount = (await tableDefs.ReadTableCountersAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0L,
                 ColumnCount = td?.Columns.Count ?? 0,
             });
         }
@@ -132,11 +132,11 @@ internal sealed class SchemaReader(
         foreach (CatalogEntry table in userTables)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            TableDef? td = await tableDefs.ReadTableDefAsync(table.TDefPage, cancellationToken).ConfigureAwait(false);
-            if (td != null)
+            TableCounters? counters = await tableDefs.ReadTableCountersAsync(table.TDefPage, cancellationToken).ConfigureAwait(false);
+            if (counters is { } current)
             {
-                tableRowCounts[table.Name] = td.RowCount;
-                totalRows += td.RowCount;
+                tableRowCounts[table.Name] = current.RowCount;
+                totalRows += current.RowCount;
             }
         }
 
@@ -272,7 +272,7 @@ internal sealed class SchemaReader(
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         cancellationToken.ThrowIfCancellationRequested();
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        return resolved?.Definition.RowCount ?? 0;
+        return resolved is null ? 0 : (await tableDefs.ReadTableCountersAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
     }
 
     /// <summary>

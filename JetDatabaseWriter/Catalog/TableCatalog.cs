@@ -108,10 +108,7 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
         CatalogEntry entry = await this.GetRequiredCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         TableSchema schema = await this.GetSchemaAsync(entry.TDefPage, loadProperties: false, cancellationToken).ConfigureAwait(false)
             ?? throw new System.IO.InvalidDataException($"Table definition for '{tableName}' could not be read.");
-        TableCounters? counters = pages is Pager
-            ? await tableDefs.ReadTableCountersAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false)
-            : null;
-        return new ResolvedTable(entry, schema, counters);
+        return new ResolvedTable(entry, schema);
     }
 
     /// <summary>
@@ -131,13 +128,7 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
             return null;
         }
 
-        TableDef definition = schema.CreateDefinition();
-        if (pages is Pager)
-        {
-            definition.RowCount = (await tableDefs.ReadTableCountersAsync(tdefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
-        }
-
-        return definition;
+        return schema.CreateDefinition();
     }
 
     /// <summary>Resolves one structural image and lazily loads properties for metadata and calculated columns.</summary>

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -278,13 +279,7 @@ public class RowMapperTests
 
     private static TableDef MakeTableDef(params string[] columnNames)
     {
-        var td = new TableDef();
-        foreach (string name in columnNames)
-        {
-            td.Columns.Add(new ColumnInfo { Name = name });
-        }
-
-        return td;
+        return new TableDef { Columns = [.. columnNames.Select(name => new ColumnInfo { Name = name })] };
     }
 
     [Fact]

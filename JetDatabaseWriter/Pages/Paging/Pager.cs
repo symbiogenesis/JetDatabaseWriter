@@ -171,23 +171,19 @@ internal sealed class Pager : PageFile
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            PagerTransaction? active;
+            long appended = -1;
             await this.IoGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                if (this.journal is { } active)
+                active = this.journal;
+                if (active is not null)
                 {
-                    long appended = active.Append(page.AsSpan(0, this.PageSize));
+                    appended = active.Append(page.AsSpan(0, this.PageSize));
                     lock (this.frameSync)
                     {
                         this.RetainFrame(appended, page);
                     }
-
-                    foreach (IPageWriteObserver observer in this.observers)
-                    {
-                        observer.OnPageWritten(appended, default, page.AsSpan(0, this.PageSize));
-                    }
-
-                    return appended;
                 }
             }
             finally
@@ -195,6 +191,16 @@ internal sealed class Pager : PageFile
                 _ = this.IoGate.Release();
             }
 
+            if (active is not null)
+            {
+                foreach (IPageWriteObserver observer in this.observers)
+                {
+                    observer.OnPageWritten(appended, default, page.AsSpan(0, this.PageSize));
+                }
+
+                await this.SpillStatementAsync(active, cancellationToken).ConfigureAwait(false);
+                return appended;
+            }
             long pageNumber = this.PageCount;
             await this.WriteCoreAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
             return pageNumber;
@@ -491,6 +497,11 @@ internal sealed class Pager : PageFile
                 _ = this.IoGate.Release();
             }
 
+            if (this.journal is { } statement)
+            {
+                await this.SpillStatementAsync(statement, cancellationToken).ConfigureAwait(false);
+            }
+
             if (!pending && this.scopeDepth != 0)
             {
                 this.scopeHasWrites = true;
@@ -615,69 +626,131 @@ internal sealed class Pager : PageFile
     internal async ValueTask CommitAsync(PagerTransaction transaction, Action beforeFirstWrite, CancellationToken cancellationToken, bool durable = true)
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        bool replayStarted = false;
+        StatementUndoLog? image = null;
         try
         {
-            var image = new CommitImage(this.Store.Length);
+            image = transaction.UndoLog ??= new StatementUndoLog(transaction.BaseFileLengthBytes, this.Store.Capabilities.IsFileBacked && this.Store.Capabilities.InPlacePages, Math.Max(64, this.cacheSize / 2));
             foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
             {
-                long offset = checked(entry.Key * this.PageSize);
-                byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
-
-                // The detached journal owns its images until replay ends.
-                image.AfterImages.Add(new(offset, encoded));
-                if (offset < image.OriginalLength)
-                {
-                    byte[] before = new byte[checked((int)Math.Min(this.PageSize, image.OriginalLength - offset))];
-                    await this.Store.ReadAsync(offset, before, false, cancellationToken).ConfigureAwait(false);
-                    image.BeforeImages.Add(new(offset, before));
-                }
+                await image.CaptureAsync(this.Store, checked(entry.Key * this.PageSize), this.PageSize, cancellationToken).ConfigureAwait(false);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
             beforeFirstWrite();
-            replayStarted = true;
+            image.HasWrites = true;
+            foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
+            {
+                byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
+                await this.Store.WriteAsync(checked(entry.Key * this.PageSize), encoded.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
+            }
+
+            await this.Store.FlushAsync(durable, CancellationToken.None).ConfigureAwait(false);
+            image.HasWrites = false;
+        }
+        catch (Exception failure)
+        {
             try
             {
-                foreach (KeyValuePair<long, byte[]> entry in image.AfterImages)
+                if (image?.HasWrites == true)
                 {
-                    await this.Store.WriteAsync(entry.Key, entry.Value.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
+                    await image.RestoreAsync(this.Store, durable).ConfigureAwait(false);
                 }
-
-                await this.Store.FlushAsync(durable, CancellationToken.None).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
+            catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
             {
-                try
-                {
-                    foreach (KeyValuePair<long, byte[]> entry in image.BeforeImages)
-                    {
-                        await this.Store.WriteAsync(entry.Key, entry.Value, CancellationToken.None).ConfigureAwait(false);
-                    }
-
-                    await this.Store.SetLengthAsync(image.OriginalLength, CancellationToken.None).ConfigureAwait(false);
-                    await this.Store.FlushAsync(durable, CancellationToken.None).ConfigureAwait(false);
-                    replayStarted = false;
-                }
-                catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
-                {
-                    this.IsFaulted = true;
-                    throw new AggregateException("Commit failed and its original database image could not be restored.", ex, undoFailure);
-                }
-
-                throw;
+                this.IsFaulted = true;
+                throw new AggregateException("Commit failed and its original database image could not be restored.", failure, undoFailure);
             }
-        }
-        catch
-        {
-            this.IsFaulted |= replayStarted;
-            this.InvalidateAll();
+            finally
+            {
+                this.InvalidateAll();
+            }
+
             throw;
         }
         finally
         {
-            _ = this.frameGate.Release();
+            try
+            {
+                if (image is not null)
+                {
+                    await image.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                transaction.UndoLog = null;
+                _ = this.frameGate.Release();
+            }
         }
+    }
+
+    /// <summary>Restores early statement writes before discarding their journal.</summary>
+    /// <param name="transaction">The journal being discarded.</param>
+    /// <returns>The asynchronous restoration.</returns>
+    internal async ValueTask RollbackStatementAsync(PagerTransaction transaction)
+    {
+        if (transaction.UndoLog is not { } undo)
+        {
+            return;
+        }
+
+        await this.frameGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (undo.HasWrites)
+            {
+                await undo.RestoreAsync(this.Store, false).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            this.IsFaulted = true;
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                await undo.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                transaction.UndoLog = null;
+                this.InvalidateAll();
+                _ = this.frameGate.Release();
+            }
+        }
+    }
+
+    private async ValueTask SpillStatementAsync(PagerTransaction transaction, CancellationToken cancellationToken)
+    {
+        if (!transaction.IsStatement || transaction.Count < Math.Max(64, this.cacheSize / 2))
+        {
+            return;
+        }
+
+        StatementUndoLog undo = transaction.UndoLog ??= new StatementUndoLog(transaction.BaseFileLengthBytes, this.Store.Capabilities.IsFileBacked && this.Store.Capabilities.InPlacePages, Math.Max(64, this.cacheSize / 2));
+        foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
+        {
+            await undo.CaptureAsync(this.Store, checked(entry.Key * this.PageSize), this.PageSize, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!transaction.SpillCommitLockAcquired)
+        {
+            transaction.SpillCommitLockOffset = await this.ByteRangeLock.AcquireCommitLockOffsetAsync(transaction.CommitLockAddress, cancellationToken).ConfigureAwait(false);
+            transaction.SpillCommitLockAcquired = true;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        undo.HasWrites = true;
+        foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
+        {
+            byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
+            await this.Store.WriteAsync(checked(entry.Key * this.PageSize), encoded.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
+        }
+
+        transaction.DiscardReplayImages();
     }
 
     /// <summary>Rejects mutations after an unsuccessful commit undo.</summary>
@@ -770,15 +843,6 @@ internal sealed class Pager : PageFile
             this.dirtyPages.Clear();
             this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
         }
-    }
-
-    private sealed class CommitImage(long originalLength)
-    {
-        internal long OriginalLength { get; } = originalLength;
-
-        internal List<KeyValuePair<long, byte[]>> AfterImages { get; } = [];
-
-        internal List<KeyValuePair<long, byte[]>> BeforeImages { get; } = [];
     }
 
     private sealed class Frame(byte[] bytes)

@@ -184,10 +184,10 @@ public sealed class TdefHeaderOffsetTests
         Assert.True(tdefPages.Count > 1);
         foreach (long tdefPage in tdefPages)
         {
-            TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(tdefPage, this.ct));
+            Assert.IsType<TableDef>(await harness.ReadTableDefAsync(tdefPage, this.ct));
             List<RowLocation> live = await harness.Database.GetLiveRowLocationsAsync(tdefPage, this.ct);
             Assert.True(live.Count > 0, $"TDEF page {tdefPage} has no live rows.");
-            Assert.Equal(live.Count, tableDef.RowCount);
+            Assert.Equal(checked((uint)live.Count), (await harness.Database.TableDefs.ReadTableCountersAsync(tdefPage, this.ct))?.RowCount);
         }
     }
 

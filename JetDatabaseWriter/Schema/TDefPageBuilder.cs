@@ -90,7 +90,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
     internal static TableDef BuildTableDefinition(IReadOnlyList<ColumnDefinition> columns, JetFormat format)
     {
-        var result = new TableDef();
+        var descriptors = new List<ColumnInfo>(columns.Count);
         int fixedOffset = 0;
         int nextVarIndex = 0;
 
@@ -157,7 +157,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 ExtraFlags = definition.DescriptorExtraFlagsOverride ?? GetExtraFlags(definition, type, format),
             };
 
-            result.Columns.Add(column);
+            descriptors.Add(column);
 
             if (variable)
             {
@@ -169,8 +169,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             }
         }
 
-        result.InitializeColumnMetadata();
-        return result;
+        return new TableDef { Columns = descriptors };
     }
 
     public byte[] BuildTDefPage(TableDef tableDef)
@@ -601,6 +600,34 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                         long next = Math.Clamp(cur + delta, 0L, uint.MaxValue);
                         Wi32(page, countOff, unchecked((int)(uint)next));
                     }
+                }
+            }
+
+            await pager.WritePageAsync(tdefPage, page, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
+    }
+
+    /// <summary>Sets the live row count and every real-index row statistic absolutely.</summary>
+    /// <param name="tdefPage">The TDEF root page.</param>
+    /// <param name="rowCount">The rewritten row count.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask SetTDefRowCountAsync(long tdefPage, uint rowCount, CancellationToken cancellationToken)
+    {
+        byte[] page = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Wi32(page, format.TDef.NumRows, unchecked((int)rowCount));
+            int count = TDefCodec.ReadCounts(format, page).RealIndexCount;
+            if (count is > 0 and <= Constants.TableDefinition.MaxIndexes
+                && format.TDef.BlockEnd + (count * format.TDef.RealIdxEntrySz) <= page.Length)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    Wi32(page, format.TDef.BlockEnd + (i * format.TDef.RealIdxEntrySz) + 4, unchecked((int)rowCount));
                 }
             }
 

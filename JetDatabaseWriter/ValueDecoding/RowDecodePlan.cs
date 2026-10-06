@@ -17,7 +17,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class RowDecodePlan
 {
-    private readonly List<ColumnInfo> columns;
+    private readonly IReadOnlyList<ColumnInfo> columns;
     private readonly bool[]? wantedColumns;
     private readonly int[]? columnOrdinals;
     private readonly bool strictParsing;

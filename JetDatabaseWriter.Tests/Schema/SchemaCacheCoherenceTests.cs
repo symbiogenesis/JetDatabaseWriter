@@ -46,7 +46,7 @@ public sealed class SchemaCacheCoherenceTests
         ResolvedTable original = await harness.Services.Catalog.ResolveRequiredTableAsync("T", ct);
         ResolvedTable repeated = await harness.Services.Catalog.ResolveRequiredTableAsync("T", ct);
         Assert.Same(original.Schema, repeated.Schema);
-        Assert.NotSame(original.Definition, repeated.Definition);
+        Assert.Same(original.Definition, repeated.Definition);
         JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await harness.BeginTransactionAsync(ct) : null;
         try
         {
@@ -85,7 +85,7 @@ public sealed class SchemaCacheCoherenceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task CounterWrites_KeepStructuralImageAndRefreshResolvedRowCount(DatabaseFormat format)
+    public async Task CounterWrites_KeepStructuralLayoutAndReadLiveCounters(DatabaseFormat format)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using var stream = new MemoryStream();
@@ -100,8 +100,7 @@ public sealed class SchemaCacheCoherenceTests
         await harness.InsertRowAsync("T", [1], ct);
         ResolvedTable after = await harness.Services.Catalog.ResolveRequiredTableAsync("T", ct);
         Assert.Same(original.Schema.Image, after.Schema.Image);
-        Assert.Equal(1, after.Definition.RowCount);
-        Assert.Equal(0, original.Definition.RowCount);
+        Assert.Same(original.Definition, after.Definition);
         TableCounters? counters = await harness.Database.TableDefs.ReadTableCountersAsync(after.Entry.TDefPage, ct);
         Assert.NotNull(counters);
         Assert.Equal(1u, counters.Value.RowCount);

@@ -55,8 +55,7 @@ public sealed class CalculatedExpressionDatePrecisionTests
 
     private static T Evaluate<T>(string expression)
     {
-        var table = new TableDef();
-        table.Columns.Add(new ColumnInfo { Name = "Calc" });
+        var table = new TableDef { Columns = [new ColumnInfo { Name = "Calc" }] };
         var constraints = new List<ColumnConstraint>
         {
             new() { Name = "Calc", ClrType = typeof(T), IsCalculated = true, CalculationExpression = expression },

@@ -88,7 +88,7 @@ public sealed class TableDefReaderTests
             Assert.NotNull(entry);
             TableDef? tableDef = await tableDefs.ReadTableDefAsync(entry.TDefPage, Ct);
             Assert.NotNull(tableDef);
-            AppendDescriptors(text, table, tableDef);
+            AppendDescriptors(text, table, tableDef, (await tableDefs.ReadTableCountersAsync(entry.TDefPage, Ct))?.RowCount ?? 0);
         }
 
         string actual = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())));
@@ -150,7 +150,7 @@ public sealed class TableDefReaderTests
         await using var file = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, Ct));
         await using var counting = new CountingStream(file);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
-        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults) { VerifyOnHit = false };
         int pageSize = harness.Database.Format.PageSize;
 
         for (int read = 0; read < 2; read++)
@@ -171,9 +171,9 @@ public sealed class TableDefReaderTests
     /// <summary>
     /// A caching instance reads a table's TDEF chain, every page of it, once:
     /// the next <see cref="TableDefReader.ReadTableDefAsync"/> reads nothing
-    /// and parses a new <see cref="TableDef"/> from the same bytes, because
-    /// callers change the one they get (the reader sets calculated columns'
-    /// result types on it). <see cref="TableDefReader.ReadTDefBytesAsync"/>
+    /// and returns the same immutable <see cref="TableDef"/>. Calculated
+    /// result types belong to the property-aware schema's own layout.
+    /// <see cref="TableDefReader.ReadTDefBytesAsync"/>
     /// reads nothing either and returns a new copy of the same bytes each
     /// time, because its callers may change them; the chain that the writer's
     /// in-place write-backs patch is always read.
@@ -183,12 +183,12 @@ public sealed class TableDefReaderTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task ReadTableDef_Caching_ReadsTheChainOnceAndParsesANewTableDef(DatabaseFormat format)
+    public async Task ReadTableDef_Caching_ReadsTheChainOnceAndSharesImmutableLayout(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateWideTableAsync(format);
         await using var counting = new CountingStream(stream);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
-        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: true);
+        using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: true) { VerifyOnHit = false };
         int pageSize = harness.Database.Format.PageSize;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(WideTable, Ct);
         Assert.NotNull(entry);
@@ -202,8 +202,8 @@ public sealed class TableDefReaderTests
         counting.Reset();
         TableDef second = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, WideTable, Ct);
         Assert.True(counting.BytesRead == 0, $"The second read read pages {string.Join(", ", counting.PagesRead(pageSize).Order())}.");
-        Assert.NotSame(first, second);
-        Assert.NotSame(first.Columns, second.Columns);
+        Assert.Same(first, second);
+        Assert.Same(first.Columns, second.Columns);
         Assert.Equal(first.Columns.Select(c => (c.Name, c.Type, c.ColNum)), second.Columns.Select(c => (c.Name, c.Type, c.ColNum)));
 
         counting.Reset();
@@ -233,7 +233,7 @@ public sealed class TableDefReaderTests
         Assert.Same(first, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
         await writer.Services.TDefWriter.WriteInt32Async(entry.TDefPage, writer.Database.Format.TDef.NumRows, 10, Ct);
         Assert.Same(first, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
-        Assert.Equal(10, (await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, WideTable, Ct)).RowCount);
+        Assert.Equal(10u, (await tableDefs.ReadTableCountersAsync(entry.TDefPage, Ct))?.RowCount);
         LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(entry.TDefPage, Ct);
         int logicalOffset = writer.Database.Format.PageSize + 8;
         int original = BitConverter.ToInt32(chain.Bytes, logicalOffset);
@@ -324,9 +324,10 @@ public sealed class TableDefReaderTests
     /// <param name="text">The descriptor text.</param>
     /// <param name="table">The table name.</param>
     /// <param name="tableDef">The parsed table definition.</param>
-    private static void AppendDescriptors(StringBuilder text, string table, TableDef tableDef)
+    /// <param name="rowCount">The live stored counter.</param>
+    private static void AppendDescriptors(StringBuilder text, string table, TableDef tableDef, uint rowCount)
     {
-        _ = text.Append(CultureInfo.InvariantCulture, $"{table}|{tableDef.RowCount}|{tableDef.HasDeletedColumns}\n");
+        _ = text.Append(CultureInfo.InvariantCulture, $"{table}|{rowCount}|{tableDef.HasDeletedColumns}\n");
         foreach (ColumnInfo c in tableDef.Columns)
         {
             _ = text.Append(

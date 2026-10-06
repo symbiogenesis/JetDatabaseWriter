@@ -29,8 +29,11 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         this.images = new TDefImageCache(format);
     }
 
+    /// <summary>Gets or sets the verification default for newly constructed readers.</summary>
+    internal static bool VerifyCacheHits { get; set; }
+
     /// <summary>Gets or sets a value indicating whether cache hits are checked against the source.</summary>
-    internal bool VerifyOnHit { get; set; }
+    internal bool VerifyOnHit { get; set; } = VerifyCacheHits;
 
     /// <inheritdoc/>
     public void Dispose() => this.images.OnInvalidateAll();
@@ -140,7 +143,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         return image;
     }
 
-    /// <summary>Returns a mutable layout owned by the caller, never the cached projection.</summary>
+    /// <summary>Returns an immutable column layout without live counter state.</summary>
     /// <param name="tdefPage">The root page.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The layout, or null.</returns>
@@ -152,13 +155,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
             return null;
         }
 
-        TableDef definition = TableSchema.CreateDefinition(image, properties: null);
-        if (this.pages is Pager)
-        {
-            definition.RowCount = (await this.ReadTableCountersAsync(tdefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
-        }
-
-        return definition;
+        return image.Definition;
     }
 
     /// <summary>Reads the required owned layout.</summary>

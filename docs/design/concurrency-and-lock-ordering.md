@@ -88,27 +88,30 @@ BeginTransactionAsync
 work phase (row encode, index maintenance, page allocation)
   └─ no durable locks held: every WritePageAsync/AppendPageAsync sees the
      attached journal and buffers into it while holding frameGate and briefly IoGate for the
-     buffer swap.
+     buffer swap. Private statements spill bounded batches outside IoGate;
+     the first spill acquires the commit sentinel, retained through completion or undo.
   └─ insertPageHintLock and ownedMapSetsLock may be taken briefly (leaf, memory only;
      the owned-map policy's MSysObjects scan runs outside its lock). The writer caches structural TDEF images and table schemas. Those images, its owner index and validated table-page results follow logical page writes;
      observer updates take only a leaf lock and never read through the pager.
 
 CommitTransactionAsync
   ├─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach(); ActiveTransaction = null ──▶ dispose the lease
-  ├─ ByteRangeLock commit-lock sentinel  ◀── held across the entire replay
-  │     last cancellation check (nothing written yet)
+  ├─ ByteRangeLock commit-lock sentinel  ◀── reuse the sentinel held by an earlier spill, or acquire it
+  │     last cancellation check (earlier spills remain undoable)
   │     Pager.CommitAsync takes frameGate for capture, replay and recovery:
-  │         prepare encoded after-images and read raw before-images
+  │         capture raw before-images not already retained by an earlier spill
   │         final cancellation check, then CancellationToken.None:
   │           foreach buffered page (ascending page order):
-  │             ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
+  │             encode one page; ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
   │           one store flush (durable for explicit commits or UseTransactionalWrites)
   │         on a storage failure: restore raw bytes, original length, and flush
   └─ release commit-lock (finally)
 
 RollbackTransactionAsync  (auto-commit calls it when the work throws)
-  └─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach() ──▶ restore writer state (catalog invalidated,
-                insertPageHintLock and ownedMapSetsLock briefly, constraint registry) ──▶ dispose the lease
+  └─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach() ──▶ dispose the lease
+       ──▶ restore any early spills under frameGate, outside IoGate
+       ──▶ restore writer state (catalog invalidated,
+                insertPageHintLock and ownedMapSetsLock briefly, constraint registry)
 ```
 
 The commit-lock sentinel is "outer" only in the sense that it spans the replay
@@ -116,15 +119,17 @@ window; it is acquired **after** `IoGate` has been released, so it never nests
 outside an already-held `IoGate`. Capturing and restoring the writer state is
 memory-only, so the leaf `insertPageHintLock` and `ownedMapSetsLock`, one after
 the other, protect those caches; frame invalidation briefly takes `frameSync` there.
-A commit that fails before replay leaves the file unchanged. If a stream write
+A commit that fails before replay restores any early spills. If a stream write
 or flush fails during replay, the pager restores the raw before-images and
 original file length while holding `frameGate` and the commit sentinel. After
 successful recovery, the lifecycle restores the same writer state as a normal
 rollback and marks the transaction rolled back. If recovery also fails, the
 transaction remains neither committed nor rolled back and the writer rejects
 mutations with `WriterFaulted`. Disposal skips pending writes and container
-rewrap. Before-images exist only in memory, so a process crash or power loss
-still has no recovery path.
+rewrap. Before-images use bounded memory followed by a DeleteOnClose temporary
+file on file-backed stores with in-place pages; other stores keep them in memory.
+Only raw stored bytes enter the log, so encrypted pages remain encrypted.
+This private log has no process-crash or power-loss recovery protocol.
 
 ### Failed calls inside an explicit transaction
 
@@ -132,7 +137,7 @@ Under `mutationGate`, `RunInSavepointAsync` captures the insert hint, owned-map 
 
 ### Default writer statements (`UseTransactionalWrites = false`)
 
-Default row, table-schema, relationship and complex-item calls use the same private journal and commit-lock sequence above. Work-phase failures discard the journal and restore writer state; replay failures restore the original bytes and length. The successful store flush does not request a device flush unless `UseTransactionalWrites` is true. Private statements are exempt from the explicit transaction page budget and currently retain all dirty pages in memory; bounded spill and its undo log remain open work.
+Default row, table-schema, relationship and complex-item calls use the same private journal and commit-lock sequence above. At `max(64, PageCacheSize / 2)` buffered pages, the pager captures each page's first raw before-image and writes the batch, then releases its replay images. Work-phase failures and cancellation restore earlier spills and writer state; replay failures restore the original bytes and length. Each started physical batch and restoration ignores cancellation, while work and preparation between batches remain cancellable. The successful store flush does not request a device flush unless `UseTransactionalWrites` is true. Private statements are exempt from the explicit transaction page budget; provisional zero reservations keep metadata without allocating page buffers.
 
 Initial database creation and physical tail shrinking still use reference-counted write scopes with a separate lifecycle. Container rewrapping also sits outside this statement path. Their failure and crash guarantees do not follow from the statement journal.
 

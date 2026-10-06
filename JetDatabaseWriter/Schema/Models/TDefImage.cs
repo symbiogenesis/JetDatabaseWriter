@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Models;
 
 using System;
 using System.Collections.Generic;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Indexes.Models;
 
 /// <summary>An owned immutable projection of one logical table definition, including uninterpreted bytes.</summary>
@@ -20,6 +21,9 @@ internal sealed class TDefImage
         this.RealIndexes = Array.AsReadOnly(realIndexes.ToArray());
         this.LogicalIndexes = Array.AsReadOnly(logicalIndexes.ToArray());
     }
+
+    /// <summary>Gets the immutable column layout shared by counter-only revisions.</summary>
+    internal TableDef Definition => field ??= TableSchema.CreateDefinition(this, properties: null);
 
     internal TDefHeader Header { get; }
 

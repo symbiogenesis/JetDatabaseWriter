@@ -11,6 +11,8 @@ using JetDatabaseWriter.Enums;
 /// <param name="propertiesLoaded">Whether a property read has completed.</param>
 internal sealed class TableSchema(TDefImage image, ColumnPropertyBlock? properties, bool propertiesLoaded)
 {
+    private TableDef? definition;
+
     /// <summary>Gets the structural image used to detect schema invalidation.</summary>
     internal TDefImage Image { get; } = image;
 
@@ -39,13 +41,11 @@ internal sealed class TableSchema(TDefImage image, ColumnPropertyBlock? properti
         {
             Columns = columns,
             HasDeletedColumns = source.HasDeletedColumns,
-            RowCount = source.Header.Counters.RowCount,
         };
-        definition.InitializeColumnMetadata();
         return definition;
     }
 
-    /// <summary>Builds an independent layout whose mutable state belongs to the caller.</summary>
+    /// <summary>Returns the immutable layout shared by resolutions of this schema.</summary>
     /// <returns>The layout.</returns>
-    internal TableDef CreateDefinition() => CreateDefinition(this.Image, this.Properties);
+    internal TableDef CreateDefinition() => this.definition ??= this.Properties is null ? this.Image.Definition : CreateDefinition(this.Image, this.Properties);
 }

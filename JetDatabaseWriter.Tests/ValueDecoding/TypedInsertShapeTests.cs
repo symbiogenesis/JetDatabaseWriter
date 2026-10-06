@@ -18,8 +18,6 @@ public sealed class TypedInsertShapeTests
     {
         var generated = new TableDef { Columns = [new ColumnInfo { Name = "Id", Type = ColumnType.LongIntegerType, Flags = 5 }] };
         var explicitValue = new TableDef { Columns = [new ColumnInfo { Name = "Id", Type = ColumnType.LongIntegerType, Flags = 1 }] };
-        generated.InitializeColumnMetadata();
-        explicitValue.InitializeColumnMetadata();
         Assert.NotEqual(generated.Shape, explicitValue.Shape);
         Assert.Same(DbDefault.Value, RowMapper<Entity>.ToRow(generated, new Entity())[0]);
         Assert.Equal(0, RowMapper<Entity>.ToRow(explicitValue, new Entity())[0]);

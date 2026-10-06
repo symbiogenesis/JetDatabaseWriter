@@ -7,18 +7,19 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
-/// In-memory journal of dirty pages produced inside a private statement or explicit
+/// Journal of dirty pages produced inside a private statement or explicit
 /// <see cref="JetTransaction"/>. Each entry is the page's new contents (an
-/// after-image), buffered in plaintext instead of written to disk. At
+/// after-image), buffered in plaintext until commit or a bounded statement spill. At
 /// <c>CommitAsync</c> the entries are written over the file in place, page by
-/// page; <c>RollbackAsync</c> / dispose discards them.
+/// page; <c>RollbackAsync</c> / dispose discards buffered pages and restores spills.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Savepoint prior images rewind the in-memory journal. Commit captures raw
 /// before-images separately and restores them after a write or flush failure.
-/// Nothing is written to a separate log, so a process crash can still leave
-/// part of the transaction in the file, with no recovery pass.
+/// File-backed stores spill raw undo records into a DeleteOnClose temporary log.
+/// This log is not a crash-recovery journal: a process crash can still leave
+/// part of a statement or transaction in the file, with no recovery pass.
 /// </para>
 /// <para>
 /// The journal stores **plaintext** page bytes. Page-level encryption is applied
@@ -39,7 +40,7 @@ internal sealed class PagerTransaction
     private readonly Stack<SavepointFrame> savepoints = [];
     private long appendedCount;
 
-    public PagerTransaction(long baseFileLengthBytes, int pageSize, int maxPages)
+    public PagerTransaction(long baseFileLengthBytes, int pageSize, int maxPages, bool statement = false)
     {
         Guard.Positive(pageSize, nameof(pageSize));
         Guard.Positive(maxPages, nameof(maxPages));
@@ -47,6 +48,7 @@ internal sealed class PagerTransaction
         this.BaseFileLengthBytes = baseFileLengthBytes;
         this.pageSize = pageSize;
         this.maxPages = maxPages;
+        this.IsStatement = statement;
     }
 
     /// <summary>Gets the file length captured when the transaction began.</summary>
@@ -54,6 +56,33 @@ internal sealed class PagerTransaction
 
     /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
     public int Count => this.pages.Count;
+
+    /// <summary>Gets whether dirty frames may spill during a private statement.</summary>
+    internal bool IsStatement { get; }
+
+    /// <summary>Gets or sets first raw images retained across statement spills.</summary>
+    internal StatementUndoLog? UndoLog { get; set; }
+
+    /// <summary>Gets or sets the commit lock address for early statement writes.</summary>
+    internal long CommitLockAddress { get; set; }
+
+    /// <summary>Gets or sets the commit sentinel held across early writes.</summary>
+    internal long? SpillCommitLockOffset { get; set; }
+
+    /// <summary>Gets or sets whether the early write lock was acquired.</summary>
+    internal bool SpillCommitLockAcquired { get; set; }
+
+    /// <summary>Discards successfully spilled images while retaining provisional zeros.</summary>
+    internal void DiscardReplayImages()
+    {
+        foreach (long pageNumber in new List<long>(this.pages.Keys))
+        {
+            if (!this.zeroReservations.Contains(pageNumber))
+            {
+                _ = this.pages.Remove(pageNumber);
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the page number that the next <see cref="Append"/> call will assign,
@@ -98,6 +127,7 @@ internal sealed class PagerTransaction
         byte[] copy = new byte[this.pageSize];
         page.CopyTo(copy);
         this.pages.Add(pageNumber, copy);
+        _ = this.zeroReservations.Remove(pageNumber);
     }
 
     /// <summary>
@@ -131,6 +161,18 @@ internal sealed class PagerTransaction
     /// <returns>The reserved page number.</returns>
     internal long ReserveZeroedPage(long? existingPageNumber)
     {
+        if (this.IsStatement)
+        {
+            long reserved = existingPageNumber ?? this.NextAppendPageNumber;
+            if (existingPageNumber is null)
+            {
+                this.appendedCount++;
+            }
+            _ = this.pages.Remove(reserved);
+            _ = this.zeroReservations.Add(reserved);
+            return reserved;
+        }
+
         byte[] zero = new byte[this.pageSize];
         long pageNumber;
         if (existingPageNumber is { } existing)

@@ -189,7 +189,7 @@ public sealed class RowSizeLimitTests
 
         Assert.Equal(original, values);
         Assert.True(rowBytes.Length <= 4_080, $"The row is {rowBytes.Length} bytes.");
-        int moved = tableDef.Columns.FindIndex(column => column.Name == "Memo1");
+        int moved = tableDef.FindColumnIndex(column => column.Name == "Memo1");
         for (int i = 0; i < prepared.Length; i++)
         {
             if (i == moved)

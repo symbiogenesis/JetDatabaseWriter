@@ -1644,11 +1644,10 @@ public sealed class CalculatedColumnWriteTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        var tableDef = new TableDef();
+        var tableDef = new TableDef { Columns = [.. meta.Select(column => new ColumnInfo { Name = column.Name })] };
         var constraints = new List<ColumnConstraint>(meta.Count);
         foreach (ColumnMetadata column in meta)
         {
-            tableDef.Columns.Add(new ColumnInfo { Name = column.Name });
             constraints.Add(new ColumnConstraint
             {
                 Name = column.Name,

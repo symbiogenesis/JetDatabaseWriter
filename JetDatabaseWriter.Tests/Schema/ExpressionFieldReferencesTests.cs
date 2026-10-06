@@ -116,8 +116,8 @@ public sealed class ExpressionFieldReferencesTests(DatabaseCache db) : IClassFix
             ["LastFirst"] = "Full Name",
         };
 
-        var originalDef = new TableDef();
-        var renamedDef = new TableDef();
+        var originalDef = new TableDef { Columns = [.. meta.Select(column => new ColumnInfo { Name = column.Name })] };
+        var renamedDef = new TableDef { Columns = [.. meta.Select(column => new ColumnInfo { Name = renames.TryGetValue(column.Name, out string? name) ? name : column.Name })] };
         var original = new List<ColumnConstraint>();
         var renamed = new List<ColumnConstraint>();
         var renamedExpressions = new Dictionary<string, string?>(StringComparer.Ordinal);
@@ -130,8 +130,6 @@ public sealed class ExpressionFieldReferencesTests(DatabaseCache db) : IClassFix
             }
 
             string name = renames.TryGetValue(column.Name, out string? newName) ? newName : column.Name;
-            originalDef.Columns.Add(new ColumnInfo { Name = column.Name });
-            renamedDef.Columns.Add(new ColumnInfo { Name = name });
             original.Add(new ColumnConstraint { Name = column.Name, ClrType = column.ClrType, IsCalculated = column.IsCalculated, CalculationExpression = column.CalculationExpression });
             renamed.Add(new ColumnConstraint { Name = name, ClrType = column.ClrType, IsCalculated = column.IsCalculated, CalculationExpression = expression });
             renamedExpressions[column.Name] = expression;

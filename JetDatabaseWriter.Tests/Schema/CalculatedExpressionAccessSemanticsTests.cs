@@ -331,9 +331,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [Fact]
     public void NestedCalculatedFailure_NamesInnermostColumnOnce()
     {
-        var tableDef = new TableDef();
-        tableDef.Columns.Add(new ColumnInfo { Name = "Inner" });
-        tableDef.Columns.Add(new ColumnInfo { Name = "Outer" });
+        var tableDef = new TableDef { Columns = [new ColumnInfo { Name = "Inner" }, new ColumnInfo { Name = "Outer" }] };
         ColumnConstraint[] constraints =
         [
             new() { Name = "Inner", ClrType = typeof(int), IsCalculated = true, CalculationExpression = "CByte(-1)" },
@@ -872,17 +870,15 @@ public sealed class CalculatedExpressionAccessSemanticsTests
 
     private static object EvaluateDeclared(string expression, Type resultType, params (string Name, Type ClrType, object Value)[] inputs)
     {
-        var tableDef = new TableDef();
+        var tableDef = new TableDef { Columns = [.. inputs.Select(input => new ColumnInfo { Name = input.Name }), new ColumnInfo { Name = "Calc" }] };
         var constraints = new List<ColumnConstraint>();
         object[] values = new object[inputs.Length + 1];
         for (int i = 0; i < inputs.Length; i++)
         {
-            tableDef.Columns.Add(new ColumnInfo { Name = inputs[i].Name });
             constraints.Add(new ColumnConstraint { Name = inputs[i].Name, ClrType = inputs[i].ClrType });
             values[i] = inputs[i].Value;
         }
 
-        tableDef.Columns.Add(new ColumnInfo { Name = "Calc" });
         constraints.Add(new ColumnConstraint
         {
             Name = "Calc",

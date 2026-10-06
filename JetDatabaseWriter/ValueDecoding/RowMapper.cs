@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Catalog.Models;
@@ -97,7 +98,7 @@ internal static class RowMapper<T>
         Materializers entry = Cache.Get(td.Shape, static () => new Materializers());
         lock (entry)
         {
-            return entry.Read ??= BuildUncached(td.Columns.ConvertAll(static column => column.Name), td.ClrTypes);
+            return entry.Read ??= BuildUncached(td.Columns.Select(static column => column.Name).ToArray(), td.ClrTypes);
         }
     }
 

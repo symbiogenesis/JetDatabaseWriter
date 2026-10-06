@@ -1908,11 +1908,11 @@ internal static class DaoBaselineProbe
     {
         Catalog.Models.TableDef msys = await r.GetMSysObjectsTableDefAsync(default)
             ?? throw new InvalidOperationException("MSysObjects TDEF missing");
-        int idxId = msys.Columns.FindIndex(c => c.Name.Equals("Id", StringComparison.OrdinalIgnoreCase));
-        int idxName = msys.Columns.FindIndex(c => c.Name.Equals("Name", StringComparison.OrdinalIgnoreCase));
-        int idxType = msys.Columns.FindIndex(c => c.Name.Equals("Type", StringComparison.OrdinalIgnoreCase));
-        int idxFlags = msys.Columns.FindIndex(c => c.Name.Equals("Flags", StringComparison.OrdinalIgnoreCase));
-        int idxParent = msys.Columns.FindIndex(c => c.Name.Equals("ParentId", StringComparison.OrdinalIgnoreCase));
+        int idxId = msys.FindColumnIndex(c => c.Name.Equals("Id", StringComparison.OrdinalIgnoreCase));
+        int idxName = msys.FindColumnIndex(c => c.Name.Equals("Name", StringComparison.OrdinalIgnoreCase));
+        int idxType = msys.FindColumnIndex(c => c.Name.Equals("Type", StringComparison.OrdinalIgnoreCase));
+        int idxFlags = msys.FindColumnIndex(c => c.Name.Equals("Flags", StringComparison.OrdinalIgnoreCase));
+        int idxParent = msys.FindColumnIndex(c => c.Name.Equals("ParentId", StringComparison.OrdinalIgnoreCase));
         var list = new List<CatalogEntry>();
         await foreach (string[] row in r.EnumerateMSysObjectsRowsAsync(msys, default))
         {

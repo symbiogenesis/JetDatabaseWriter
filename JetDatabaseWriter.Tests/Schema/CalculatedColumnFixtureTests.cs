@@ -258,11 +258,10 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Table1", TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.IsCalculated);
 
-        var tableDef = new TableDef();
+        var tableDef = new TableDef { Columns = [.. meta.Select(column => new ColumnInfo { Name = column.Name })] };
         var constraints = new List<ColumnConstraint>(meta.Count);
         foreach (ColumnMetadata column in meta)
         {
-            tableDef.Columns.Add(new ColumnInfo { Name = column.Name });
             constraints.Add(new ColumnConstraint
             {
                 Name = column.Name,

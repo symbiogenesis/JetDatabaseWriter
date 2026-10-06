@@ -831,7 +831,7 @@ await writer.CreateRelationshipAsync(new RelationshipDefinition(
 
 ## Transactions
 
-Row, table-schema, relationship and complex-item mutations are statement-atomic by default. Each call buffers its pages in memory, then writes them together; a work-phase failure or cancellation discards the call, and a write-back failure restores its original bytes and file length. `UseTransactionalWrites = true` additionally requests a durable device flush after each successful call. Explicit transactions group several calls into one durable commit. `MaxTransactionPageBudget` limits explicit transactions; private statement journals currently grow with the call. Database creation, physical tail shrinking and encrypted-container rewrapping have separate lifecycles.
+Row, table-schema, relationship and complex-item mutations are statement-atomic by default. Each call buffers a bounded batch of changed pages and spills it when it reaches `max(64, PageCacheSize / 2)` pages. Undo retains each page's original stored bytes and the original file length, so a work-phase failure, cancellation or write-back failure restores the call. On file-backed stores that support in-place page writes, larger undo logs use a temporary file deleted on close; encrypted pages remain encrypted in that log. Other stores retain undo in memory. `UseTransactionalWrites = true` additionally requests a durable device flush after each successful call. Explicit transactions group several calls into one durable commit and remain subject to `MaxTransactionPageBudget`. Database creation, physical tail shrinking and encrypted-container rewrapping have separate lifecycles.
 
 `AccessWriter` supports explicit page-buffered transactions for multi-row/page operations. All page mutations are buffered in memory until committed or rolled back.
 
@@ -1041,9 +1041,9 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### Transaction durability
 
-- **There is no crash recovery.** Statement and explicit-transaction undo images exist only in memory. A process crash or power loss during write-back can leave a partial database; a second I/O failure while restoring a failed write-back faults the writer. See [Transactions](#transactions) for the recovery and disposal contract.
-- **Large statements currently retain their changed pages and undo images in memory.** They do not yet spill to a bounded temporary log. `MaxTransactionPageBudget` limits explicit transactions only.
-- **Cancellation is honoured until write-back starts.** A cancelled row or schema call rolls back before physical replay; once replay starts, cancellation is ignored through completion or recovery. Inside an explicit transaction, a cancelled call rolls back to its internal savepoint and leaves the transaction usable.
+- **There is no crash recovery.** Undo is private to the open writer; its temporary files are not recoverable journals. A process crash or power loss during an early spill or final write-back can leave a partial database; a second I/O failure while restoring a failed write-back faults the writer. See [Transactions](#transactions) for the recovery and disposal contract.
+- **Statement page buffers are bounded; undo for memory and container stores grows with the call.** File-backed stores that support in-place page writes spill larger undo logs to temporary files. `MaxTransactionPageBudget` limits explicit transactions only.
+- **Cancellation is honoured between spill batches and before final write-back.** Each started physical batch and any recovery finish without cancellation. A cancelled row or schema call restores earlier spills; inside an explicit transaction, it rolls back to its internal savepoint and leaves the transaction usable.
 - **Physical shrinking, initial database creation and encrypted-container rewrapping use separate lifecycles.** The statement rollback contract above does not make those operations crash-safe or make container replacement atomic.
 
 ### Encryption

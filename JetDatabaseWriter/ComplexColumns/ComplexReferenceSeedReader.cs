@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.ComplexColumns;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -98,7 +99,7 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
     internal async ValueTask<long> ReadSeedAsync(long parentTdefPage, TableDef parentDef, CancellationToken cancellationToken)
     {
         long seed = await autoNumbers.ReadComplexHighWaterAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
-        List<ColumnInfo> complexColumns = parentDef.Columns.FindAll(c => c.Type is AttachmentType or ComplexType);
+        List<ColumnInfo> complexColumns = parentDef.Columns.Where(c => c.Type is AttachmentType or ComplexType).ToList();
         if (complexColumns.Count == 0)
         {
             return seed;
@@ -127,7 +128,7 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
                 ? await tableDefs.ReadTableDefAsync(flatTdefPage, cancellationToken).ConfigureAwait(false)
                 : null;
             ColumnInfo? foreignKey = flatDef?.FindColumn("_" + column.Name)
-                ?? flatDef?.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'));
+                ?? flatDef?.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.StartsWith('_'));
             if (foreignKey is null)
             {
                 continue;

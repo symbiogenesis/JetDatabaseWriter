@@ -38,8 +38,7 @@ public sealed class MaterializerCacheTests
         Assert.NotEqual(Definition("Id", 0).Shape, Definition("Renamed", 0).Shape);
         TableDef added = Definition("Id", 0);
         RowShape before = added.Shape;
-        added.Columns.Add(new ColumnInfo { Name = "Extra", Type = ColumnType.LongIntegerType, ColNum = 1 });
-        added.InitializeColumnMetadata();
+        added = new TableDef { Columns = [.. added.Columns, new ColumnInfo { Name = "Extra", Type = ColumnType.LongIntegerType, ColNum = 1 }] };
         Assert.NotEqual(before, added.Shape);
     }
 
@@ -110,7 +109,6 @@ public sealed class MaterializerCacheTests
     private static TableDef Definition(string name, int offset)
     {
         var definition = new TableDef { Columns = [new ColumnInfo { Name = name, Type = ColumnType.LongIntegerType, FixedOff = offset, Flags = 1 }] };
-        definition.InitializeColumnMetadata();
         return definition;
     }
 

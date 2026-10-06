@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -1258,8 +1259,8 @@ internal sealed class ComplexColumnManager(
 
             TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
 
-            ColumnInfo? fkCol = flatDef.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
-                ?? flatDef.Columns.Find(c => c.Type == LongIntegerType);
+            ColumnInfo? fkCol = flatDef.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+                ?? flatDef.Columns.FirstOrDefault(c => c.Type == LongIntegerType);
             if (fkCol == null)
             {
                 continue;

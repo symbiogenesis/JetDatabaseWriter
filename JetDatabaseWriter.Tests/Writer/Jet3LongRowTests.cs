@@ -400,7 +400,6 @@ public sealed class Jet3LongRowTests
         {
             Columns = [.. Enumerable.Range(0, 256).Select(FixedLong)],
         };
-        wide.InitializeColumnMetadata();
         JetLimitationException encode = Assert.Throws<JetLimitationException>(() =>
             new RowEncoder(harness.Database.Format).SerializeRow(wide, [.. Enumerable.Range(0, 256).Select(i => (object)i)]));
         Assert.Contains("255", encode.Message, StringComparison.Ordinal);
@@ -534,17 +533,17 @@ public sealed class Jet3LongRowTests
     /// <returns>The table definition and the row values.</returns>
     private static (TableDef TableDef, object[] Values) BuildRow(Random random, int fixedCount, int[] lengths)
     {
-        var tableDef = new TableDef();
+        var columns = new List<ColumnInfo>();
         var values = new List<object>();
         for (int i = 0; i < fixedCount; i++)
         {
-            tableDef.Columns.Add(FixedLong(i));
+            columns.Add(FixedLong(i));
             values.Add(random.Next());
         }
 
         for (int i = 0; i < lengths.Length; i++)
         {
-            tableDef.Columns.Add(new ColumnInfo
+            columns.Add(new ColumnInfo
             {
                 Type = ColumnType.BinaryType,
                 ColNum = fixedCount + i,
@@ -563,8 +562,7 @@ public sealed class Jet3LongRowTests
             values.Add(value);
         }
 
-        tableDef.InitializeColumnMetadata();
-        return (tableDef, [.. values]);
+        return (new TableDef { Columns = columns }, [.. values]);
     }
 
     /// <summary>

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -43,5 +44,36 @@ public sealed class TableCountersTests
         Assert.Equal(1u, during.Value.AutoNumber);
         await tx.RollbackAsync(ct);
         Assert.Equal(before, await harness.Database.TableDefs.ReadTableCountersAsync(entry.TDefPage, ct));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task AbsoluteCount_RepairsHeaderAndIndexStatisticsAndRollsBack(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, WriteModes.WriterOptions(WriteMode.Direct), leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], [new IndexDefinition("IX_Id", "Id")], ct);
+        }
+
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: ct);
+        CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", ct);
+        JetFormat profile = harness.Database.Format;
+        await harness.Services.TDefWriter.WriteInt32Async(entry.TDefPage, profile.TDef.NumRows, 99, ct);
+        int statistic = profile.TDef.BlockEnd + 4;
+        await harness.Services.TDefWriter.WriteInt32Async(entry.TDefPage, statistic, 17, ct);
+        var builder = new TDefPageBuilder(profile, harness.Pager);
+        await using JetTransaction transaction = await harness.BeginTransactionAsync(ct);
+        await builder.SetTDefRowCountAsync(entry.TDefPage, 3, ct);
+        Assert.Equal(3u, (await harness.Database.TableDefs.ReadTableCountersAsync(entry.TDefPage, ct))?.RowCount);
+        byte[] bytes = (await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, ct))!;
+        Assert.Equal(3u, JetTypeInfo.Ru32(bytes, statistic));
+        await transaction.RollbackAsync(ct);
+        Assert.Equal(99u, (await harness.Database.TableDefs.ReadTableCountersAsync(entry.TDefPage, ct))?.RowCount);
+        bytes = (await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, ct))!;
+        Assert.Equal(17u, JetTypeInfo.Ru32(bytes, statistic));
     }
 }

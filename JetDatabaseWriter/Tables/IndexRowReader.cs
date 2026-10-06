@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tables;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -212,7 +213,7 @@ internal sealed class IndexRowReader(
             bool supported = true;
             foreach (IndexColumnReference key in index.Columns)
             {
-                ColumnInfo? column = resolved.Definition.Columns.Find(c => c.ColNum == key.ColumnNumber);
+                ColumnInfo? column = resolved.Definition.Columns.FirstOrDefault(c => c.ColNum == key.ColumnNumber);
                 if (column is null || (column.Type is TextType or MemoType && !column.TextSortOrder.IsSupported))
                 {
                     supported = false;
@@ -247,7 +248,7 @@ internal sealed class IndexRowReader(
         {
             for (int ordinal = 0; ordinal < key.Length && ordinal < index.Columns.Count; ordinal++)
             {
-                ColumnInfo? column = resolved.Definition.Columns.Find(value => string.Equals(value.Name, index.Columns[ordinal].Name, StringComparison.OrdinalIgnoreCase));
+                ColumnInfo? column = resolved.Definition.Columns.FirstOrDefault(value => string.Equals(value.Name, index.Columns[ordinal].Name, StringComparison.OrdinalIgnoreCase));
                 if (column?.Type is TextType or MemoType
                     && TextCollationFamily(column.TextSortOrder) != TextCollationFamily(format.DefaultTextSortOrder))
                 {

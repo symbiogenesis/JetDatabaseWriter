@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Catalog.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -13,22 +14,23 @@ internal sealed class TableDef
     /// <summary>Gets the immutable materializer identity for this definition.</summary>
     public RowShape Shape
     {
-        get => field ??= new RowShape(this.Columns.ConvertAll(static column => column.Name), this.ClrTypes, this.Columns);
-        private set;
+        get => field ??= new RowShape(this.Columns.Select(static column => column.Name).ToArray(), this.ClrTypes, this.Columns);
     }
 
-    public List<ColumnInfo> Columns { get; set; } = [];
+    public IReadOnlyList<ColumnInfo> Columns
+    {
+        get;
+        init
+        {
+            field = Array.AsReadOnly(value.ToArray());
+            this.InitializeColumnMetadata();
+        }
+    } = Array.AsReadOnly(Array.Empty<ColumnInfo>());
 
     /// <summary>
-    /// Gets or sets num_rows from the TDEF header at
-    /// <see cref="Pages.TDefHeaderLayout.NumRows"/> (offset 16 on Jet4/ACE, 12 on Jet3).
+    /// Gets a value indicating whether the physical ColNum sequence has gaps.
     /// </summary>
-    public long RowCount { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value indicating whether the physical ColNum sequence has gaps.
-    /// </summary>
-    public bool HasDeletedColumns { get; set; }
+    public bool HasDeletedColumns { get; init; }
 
     /// <summary>
     /// Gets the per-column CLR projection types, populated by
@@ -37,7 +39,7 @@ internal sealed class TableDef
     /// typed-row cracker reuses this array to avoid resolving the CLR
     /// type per-row.
     /// </summary>
-    public Type[] ClrTypes { get; private set; } = [];
+    public IReadOnlyList<Type> ClrTypes { get; private set; } = Array.AsReadOnly(Array.Empty<Type>());
 
     /// <summary>
     /// Gets a value indicating whether at least one column lives in the row's
@@ -65,59 +67,34 @@ internal sealed class TableDef
     public bool HasHyperlinkColumns { get; private set; }
 
     /// <summary>
-    /// Populates the per-table metadata caches (<see cref="ClrTypes"/>,
-    /// <see cref="HasVarColumns"/>, <see cref="HasComplexColumns"/>). Must be
-    /// invoked after <see cref="Columns"/> is finalised; called once by the
-    /// TableDef loader in <see cref="Schema.TableDefReader.ReadTableDefAsync"/>.
-    /// </summary>
-    public void InitializeColumnMetadata()
-    {
-        this.Shape = null!;
-        var clrTypes = new Type[this.Columns.Count];
-        bool hasVar = false;
-        bool hasComplex = false;
-        bool hasHyperlink = false;
-        for (int i = 0; i < this.Columns.Count; i++)
-        {
-            ColumnInfo c = this.Columns[i];
-            Type clr = JetTypeInfo.ResolveClrType(c);
-            clrTypes[i] = clr;
-            if (!c.IsFixed)
-            {
-                hasVar = true;
-            }
-
-            if (c.Type is ComplexType or AttachmentType)
-            {
-                hasComplex = true;
-            }
-
-            if (clr == typeof(JetDatabaseWriter.Models.Hyperlink))
-            {
-                hasHyperlink = true;
-            }
-        }
-
-        this.ClrTypes = clrTypes;
-        this.HasVarColumns = hasVar;
-        this.HasComplexColumns = hasComplex;
-        this.HasHyperlinkColumns = hasHyperlink;
-    }
-
-    /// <summary>
     /// Returns the zero-based index of the column whose name matches
     /// <paramref name="columnName"/> case-insensitively, or -1 when no
     /// such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public int FindColumnIndex(string columnName) => this.Columns.FindIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+    public int FindColumnIndex(string columnName) => this.FindColumnIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Returns the first column index matching a predicate, or -1.</summary>
+    /// <param name="predicate">The column predicate.</param>
+    public int FindColumnIndex(Predicate<ColumnInfo> predicate)
+    {
+        for (int i = 0; i < this.Columns.Count; i++)
+        {
+            if (predicate(this.Columns[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
 
     /// <summary>
     /// Returns the column whose name matches <paramref name="columnName"/>
     /// case-insensitively, or <see langword="null"/> when no such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public ColumnInfo? FindColumn(string columnName) => this.Columns.Find(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+    public ColumnInfo? FindColumn(string columnName) => this.Columns.FirstOrDefault(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Resolves <paramref name="columnNames"/> to their <see cref="ColumnInfo.ColNum"/>
@@ -182,7 +159,45 @@ internal sealed class TableDef
     /// candidate exists. Throws when no <c>LongInteger</c> column is present.
     /// </summary>
     /// <exception cref="InvalidDataException">Thrown when the flat child table has no Long FK back-reference column.</exception>
-    public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.Find(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
-            ?? this.Columns.Find(c => c.Type == LongIntegerType)
+    public ColumnInfo FindFlatTableForeignKeyColumn() => this.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.StartsWith('_'))
+            ?? this.Columns.FirstOrDefault(c => c.Type == LongIntegerType)
             ?? throw new InvalidDataException("Flat child table is missing a Long FK back-reference column.");
+
+    /// <summary>
+    /// Populates the per-table metadata caches (<see cref="ClrTypes"/>,
+    /// <see cref="HasVarColumns"/>, <see cref="HasComplexColumns"/>). Must be
+    /// invoked when the owned <see cref="Columns"/> snapshot is initialized.
+    /// </summary>
+    private void InitializeColumnMetadata()
+    {
+        var clrTypes = new Type[this.Columns.Count];
+        bool hasVar = false;
+        bool hasComplex = false;
+        bool hasHyperlink = false;
+        for (int i = 0; i < this.Columns.Count; i++)
+        {
+            ColumnInfo c = this.Columns[i];
+            Type clr = JetTypeInfo.ResolveClrType(c);
+            clrTypes[i] = clr;
+            if (!c.IsFixed)
+            {
+                hasVar = true;
+            }
+
+            if (c.Type is ComplexType or AttachmentType)
+            {
+                hasComplex = true;
+            }
+
+            if (clr == typeof(JetDatabaseWriter.Models.Hyperlink))
+            {
+                hasHyperlink = true;
+            }
+        }
+
+        this.ClrTypes = Array.AsReadOnly(clrTypes);
+        this.HasVarColumns = hasVar;
+        this.HasComplexColumns = hasComplex;
+        this.HasHyperlinkColumns = hasHyperlink;
+    }
 }

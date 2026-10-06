@@ -174,7 +174,7 @@ internal sealed class TransactionLifecycle(
                 "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
         }
 
-        var journal = new PagerTransaction(gate.PhysicalLengthBytes, format.PageSize, statement ? int.MaxValue : options.MaxTransactionPageBudget);
+        var journal = new PagerTransaction(gate.PhysicalLengthBytes, format.PageSize, statement ? int.MaxValue : options.MaxTransactionPageBudget, statement) { CommitLockAddress = format.CommitLockOffset };
         var tx = new JetTransaction(this, journal);
         this.stateAtBegin = new WriterState(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
         gate.Attach(journal, preserveFrames: statement);
@@ -275,7 +275,7 @@ internal sealed class TransactionLifecycle(
     /// page-number order) in place through the normal page-write pipeline, so
     /// that per-page encryption and cooperative byte-range locks are honoured,
     /// then flushes. The pager captures raw before-images and restores them
-    /// after a write or flush failure. These images are memory-only, so replay
+    /// after a write or flush failure. Raw undo images may spill to a temporary file; replay
     /// is not crash-atomic.
     /// </summary>
     /// <remarks>
@@ -338,11 +338,14 @@ internal sealed class TransactionLifecycle(
             this.stateAtBegin = null;
         }
 
-        long? commitLockOffset = null;
+        long? commitLockOffset = journal.SpillCommitLockOffset;
 
         try
         {
-            commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(format.CommitLockOffset, cancellationToken).ConfigureAwait(false);
+            if (!journal.SpillCommitLockAcquired)
+            {
+                commitLockOffset = await byteRangeLock.AcquireCommitLockOffsetAsync(format.CommitLockOffset, cancellationToken).ConfigureAwait(false);
+            }
 
             // Last point at which cancellation is honoured: nothing has
             // reached the file yet. Stopping the replay partway would leave
@@ -353,18 +356,29 @@ internal sealed class TransactionLifecycle(
             await pager.CommitAsync(journal, () => { }, cancellationToken, durable).ConfigureAwait(false);
             transaction.MarkCommitted();
         }
-        catch
+        catch (Exception failure)
         {
-            pager.InvalidateAll();
-            if (pager.IsFaulted)
+            try
             {
-                transaction.MarkCommitFailed();
-                this.DiscardCachesAfterFailedReplay(state);
+                await pager.RollbackStatementAsync(journal).ConfigureAwait(false);
             }
-            else
+            catch (Exception undoFailure)
             {
-                transaction.MarkRolledBack();
-                this.RestoreWriterState(state);
+                throw new AggregateException("Commit failed and its early statement writes could not be restored.", failure, undoFailure);
+            }
+            finally
+            {
+                pager.InvalidateAll();
+                if (pager.IsFaulted)
+                {
+                    transaction.MarkCommitFailed();
+                    this.DiscardCachesAfterFailedReplay(state);
+                }
+                else
+                {
+                    transaction.MarkRolledBack();
+                    this.RestoreWriterState(state);
+                }
             }
 
             throw;
@@ -377,7 +391,7 @@ internal sealed class TransactionLifecycle(
 
     /// <summary>
     /// Rolls back the supplied <paramref name="transaction"/>: discards the
-    /// in-memory journal without touching the database file, and puts the
+    /// buffered journal and restores early statement spills, and puts the
     /// writer's cached catalog, insert hint, owned-map decisions and
     /// constraint registry back to their state when the transaction began.
     /// </summary>
@@ -387,30 +401,47 @@ internal sealed class TransactionLifecycle(
     private async ValueTask RollbackTransactionCoreAsync(JetTransaction transaction, CancellationToken cancellationToken)
     {
         Guard.NotNull(transaction, nameof(transaction));
-
         if (transaction.IsTerminated)
         {
             throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-
-        using Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
-        if (transaction.IsTerminated)
+        WriterState? state;
+        using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false))
         {
-            throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+            if (transaction.IsTerminated)
+            {
+                throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+            }
+
+            if (!ReferenceEquals(this.ActiveTransaction, transaction))
+            {
+                throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
+            }
+
+            state = this.stateAtBegin;
+            gate.Detach();
+            this.ActiveTransaction = null;
+            this.stateAtBegin = null;
         }
 
-        if (!ReferenceEquals(this.ActiveTransaction, transaction))
+        try
         {
-            throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
+            await pager.RollbackStatementAsync(transaction.Journal).ConfigureAwait(false);
+            this.RestoreWriterState(state);
+            transaction.MarkRolledBack();
         }
-
-        gate.Detach();
-        this.ActiveTransaction = null;
-        this.RestoreWriterState(this.stateAtBegin);
-        this.stateAtBegin = null;
-        transaction.MarkRolledBack();
+        catch
+        {
+            transaction.MarkCommitFailed();
+            this.DiscardCachesAfterFailedReplay(state);
+            throw;
+        }
+        finally
+        {
+            byteRangeLock.ReleaseCommitLock(transaction.Journal.SpillCommitLockOffset);
+        }
     }
 
     /// <summary>Serializes a mutation and detects active callback re-entry.</summary>

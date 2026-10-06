@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
+using System;
+using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Schema;
@@ -9,6 +11,19 @@ using Xunit;
 /// <summary>Pins independent schema projections and calculated-column metadata.</summary>
 public sealed class TableSchemaResolutionTests
 {
+    [Fact]
+    public void Definition_OwnsColumnsAndReadOnlyMetadata()
+    {
+        ColumnInfo[] source = [new ColumnInfo { Name = "Id", Type = ColumnType.LongIntegerType, Flags = 1 }];
+        var definition = new TableDef { Columns = source };
+        source[0] = new ColumnInfo { Name = "Replaced", Type = ColumnType.MemoType };
+        Assert.Equal("Id", Assert.Single(definition.Columns).Name);
+        Assert.Equal(typeof(int), Assert.Single(definition.ClrTypes));
+        Assert.False(definition.HasVarColumns);
+        Assert.Throws<NotSupportedException>(() => ((IList<Type>)definition.ClrTypes)[0] = typeof(string));
+        Assert.Throws<NotSupportedException>(() => ((IList<ColumnInfo>)definition.Columns)[0] = source[0]);
+    }
+
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
@@ -19,11 +34,10 @@ public sealed class TableSchemaResolutionTests
         TDefImage image = TDefCodec.Parse(format, new byte[format.PageSize])!;
         var schema = new TableSchema(image, properties: null, propertiesLoaded: false);
         TableDef first = schema.CreateDefinition();
-        first.Columns.Add(new ColumnInfo { Name = "Injected", Type = ColumnType.LongIntegerType });
-        first.RowCount = 99;
+        Assert.Throws<NotSupportedException>(() => ((IList<ColumnInfo>)first.Columns).Add(new ColumnInfo { Name = "Injected", Type = ColumnType.LongIntegerType }));
         TableDef second = schema.CreateDefinition();
+        Assert.Same(first, second);
         Assert.Empty(second.Columns);
-        Assert.Equal(0, second.RowCount);
         Assert.Empty(image.Columns);
         Assert.False(schema.PropertiesLoaded);
     }

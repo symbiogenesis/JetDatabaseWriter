@@ -173,6 +173,13 @@ internal sealed class TableRowStore(
         throw rowEncoder.CreateRowTooLongException(rowLength);
     }
 
+    /// <summary>Sets the stored count after a complete table rewrite.</summary>
+    /// <param name="tdefPage">The TDEF root page.</param>
+    /// <param name="rowCount">The rewritten row count.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask SetTDefRowCountAsync(long tdefPage, uint rowCount, CancellationToken cancellationToken)
+        => tdefPageBuilder.SetTDefRowCountAsync(tdefPage, rowCount, cancellationToken);
+
     /// <summary>
     /// Adjusts the persisted row count of the table at <paramref name="tdefPage"/>
     /// by <paramref name="delta"/>. Delegates to <see cref="TDefPageBuilder"/>,

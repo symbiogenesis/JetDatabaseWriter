@@ -121,10 +121,8 @@ internal sealed class LegacyTDefParsers(JetFormat format)
         var tableDef = new TableDef
         {
             Columns = cols,
-            RowCount = Ru32(td, this.format.TDef.NumRows),
             HasDeletedColumns = hasDeletedColumns,
         };
-        tableDef.InitializeColumnMetadata();
         return tableDef;
     }
 

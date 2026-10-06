@@ -49,7 +49,7 @@ internal sealed class ReaderServices : IDisposable
 
         var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);
-        this.Tables = new TableReader(db.Format, db.Pages, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
+        this.Tables = new TableReader(db.Format, db.Pages, tableDefs, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
         this.Indexes = new IndexRowReader(format, tableDefs, this.PageCache, rows, this.Catalog, complexColumns, this.Tables, this.Operations);
         this.Schema = new SchemaReader(format, db.Pages, tableDefs, this.PageCache, this.Catalog, complexColumns, this.LinkedTables, this.Tables, this.Operations);
         this.ComplexItems = new ComplexItemReader(complexColumns, this.Operations);

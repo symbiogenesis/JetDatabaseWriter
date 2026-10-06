@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Enums;
@@ -85,7 +86,7 @@ internal static class DirectRowDecoderBuilder
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="td">The table definition.</param>
     internal static DirectRowDecoder<T>? TryBuild<T>(Catalog.Models.TableDef td)
-        where T : class, new() => RowMapper<T>.GetDirect(td.Shape, () => TryBuildUncached<T>(td.Columns.ConvertAll(static column => column.Name), td.Columns, td.ClrTypes));
+        where T : class, new() => RowMapper<T>.GetDirect(td.Shape, () => TryBuildUncached<T>(td.Columns.Select(static column => column.Name).ToArray(), td.Columns, td.ClrTypes));
 
     private static DirectRowDecoder<T>? TryBuildUncached<T>(IReadOnlyList<string> headers, IReadOnlyList<ColumnInfo> columns, IReadOnlyList<Type> clrTypes)
         where T : class, new()

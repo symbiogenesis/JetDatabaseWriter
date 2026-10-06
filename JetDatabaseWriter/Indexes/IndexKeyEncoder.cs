@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
@@ -699,7 +700,7 @@ internal static class IndexKeyEncoder
         {
             IndexColumnReference keyColumn = index.Columns[i];
 
-            ColumnInfo? column = tableDef.Columns.Find(c => c.ColNum == keyColumn.ColumnNumber)
+            ColumnInfo? column = tableDef.Columns.FirstOrDefault(c => c.ColNum == keyColumn.ColumnNumber)
                 ?? throw new InvalidDataException($"Index '{index.Name}' on table '{tableName}' references missing column number {keyColumn.ColumnNumber}.");
 
             object? value = keyValues[i];

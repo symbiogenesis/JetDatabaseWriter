@@ -168,10 +168,10 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
         switch (statement)
         {
             case "Insert":
-                _ = await writer.InsertRowsAsync("T", Enumerable.Range(100, 8).Select(id => new object?[] { id, new string('b', 5000) }), Ct);
+                _ = await writer.InsertRowsAsync("T", Enumerable.Range(100, 8).Select(id => new object?[] { id, new string('b', 35000) }), Ct);
                 break;
             case "Update":
-                _ = await writer.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = new string('c', 6000) }, Ct);
+                _ = await writer.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = new string('c', 36000) }, Ct);
                 break;
             case "Delete":
                 _ = await writer.DeleteRowsAsync("T", RowCriteria.All(), Ct);
@@ -219,11 +219,11 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
         {
             await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("Note", typeof(string))], Ct);
-            _ = await writer.InsertRowsAsync("T", Enumerable.Range(1, 8).Select(id => new object?[] { id, new string('a', 5000) }), Ct);
+            _ = await writer.InsertRowsAsync("T", Enumerable.Range(1, 8).Select(id => new object?[] { id, new string('a', 35000) }), Ct);
             await writer.CreateTableAsync("P", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
-            await writer.CreateTableAsync("C", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))], Ct);
+            await writer.CreateTableAsync("C", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int)), new ColumnDefinition("Note", typeof(string))], Ct);
             await writer.InsertRowAsync("P", [1], Ct);
-            _ = await writer.InsertRowsAsync("C", Enumerable.Range(1, 8).Select(id => new object?[] { id, 1 }), Ct);
+            _ = await writer.InsertRowsAsync("C", Enumerable.Range(1, 8).Select(id => new object?[] { id, 1, new string('a', 35000) }), Ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_P", "P", "Id", "C", "ParentId") { CascadeDeletes = true }, Ct);
         }
 

@@ -49,7 +49,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// <param name="typedRow">The decoded row.</param>
     /// <param name="columns">The table's columns.</param>
     /// <param name="complexData">Cells by column index and complex reference, from <see cref="BuildColumnDataAsync"/>.</param>
-    internal static void ResolveColumns(object?[] typedRow, List<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
+    internal static void ResolveColumns(object?[] typedRow, IReadOnlyList<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
     {
         int limit = Math.Min(columns.Count, typedRow.Length);
         for (int i = 0; i < limit; i++)
@@ -71,7 +71,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// <param name="row">The decoded string row.</param>
     /// <param name="columns">The table's columns.</param>
     /// <param name="complexData">Cells by column index and complex reference, from <see cref="BuildColumnDataAsync"/>.</param>
-    internal static void ResolveStringColumns(string[] row, List<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
+    internal static void ResolveStringColumns(string[] row, IReadOnlyList<ColumnInfo> columns, Dictionary<int, Dictionary<int, byte[]>>? complexData)
     {
         const string prefix = "__CX:";
         const string suffix = "__";
@@ -186,7 +186,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// <returns>Cells by column index and complex reference, or <see langword="null"/> when no loaded complex column has items.</returns>
     internal async ValueTask<Dictionary<int, Dictionary<int, byte[]>>?> BuildColumnDataAsync(
         string tableName,
-        List<ColumnInfo> columns,
+        IReadOnlyList<ColumnInfo> columns,
         bool[]? wantedColumns,
         CancellationToken cancellationToken)
     {
@@ -419,10 +419,10 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     private static int FindForeignKeyIndex(TableDef flat, string columnName)
     {
         string foreignKeyName = "_" + columnName;
-        int index = flat.Columns.FindIndex(c => c.Type == LongIntegerType && string.Equals(c.Name, foreignKeyName, StringComparison.OrdinalIgnoreCase));
+        int index = flat.FindColumnIndex(c => c.Type == LongIntegerType && string.Equals(c.Name, foreignKeyName, StringComparison.OrdinalIgnoreCase));
         if (index < 0)
         {
-            index = flat.Columns.FindIndex(c => c.Type == LongIntegerType
+            index = flat.FindColumnIndex(c => c.Type == LongIntegerType
                 && c.Name.StartsWith('_')
                 && (c.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0
                 && !c.Name.EndsWith(foreignKeyName, StringComparison.OrdinalIgnoreCase));
@@ -430,10 +430,10 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
         if (index < 0)
         {
-            index = flat.Columns.FindIndex(c => c.Type == LongIntegerType && c.Name.StartsWith('_'));
+            index = flat.FindColumnIndex(c => c.Type == LongIntegerType && c.Name.StartsWith('_'));
         }
 
-        return index >= 0 ? index : flat.Columns.FindIndex(c => c.Type == LongIntegerType);
+        return index >= 0 ? index : flat.FindColumnIndex(c => c.Type == LongIntegerType);
     }
 
     private static ComplexColumnInfo? FindComplexColumn(IReadOnlyList<ComplexColumnInfo> complexColumns, string columnName)

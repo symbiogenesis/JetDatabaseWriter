@@ -526,9 +526,9 @@ table, 121-280 ms on the MEMO table, 14-74 ms on the numeric table and
 2.2-27 s for the uncached OLE copy.
 
 A warm table read reads nothing outside the page cache, so it does not matter
-where it starts. The reader keeps each table's TDEF bytes after the first read
-(`TableDefReader`, which still parses a new `TableDef` from them on every call
-and also serves index listings and seeks from them) and its owned pages, even
+where it starts. The reader keeps each table's structural TDEF image and immutable
+layout after the first read (`TableDefReader`, which also serves index listings
+and seeks from that image) and its owned pages, even
 when it rejects the table's usage map (`OwnedDataPages`), and the page cache
 holds its data and index pages. So `Rows()` on a table without long-value,
 complex or calculated columns returns the first row on the caller's thread

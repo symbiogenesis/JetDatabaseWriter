@@ -129,7 +129,7 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
         }
 
         Assert.NotNull(actual);
-        Assert.Equal(expected.RowCount, actual.Header.Counters.RowCount);
+        Assert.Equal(Ru32(bytes, format.TDef.NumRows), actual.Header.Counters.RowCount);
         Assert.Equal(expected.HasDeletedColumns, actual.HasDeletedColumns);
         Assert.Equal(expected.Columns.Count, actual.Columns.Count);
         for (int i = 0; i < expected.Columns.Count; i++)
