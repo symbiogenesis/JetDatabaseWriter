@@ -24,7 +24,9 @@ using Xunit;
 /// to the thread pool: on a thread with a synchronization context, or on a
 /// thread that is not a pool thread, such as the one BenchmarkDotNet blocks
 /// on. Listing the table's indexes and seeking through one again read nothing
-/// either.
+/// either. These checks use the reader service graph through <see cref="ReaderHarness"/>
+/// with structural cache verification disabled on that reader: verification
+/// deliberately reads the TDEF again and changes the measured I/O.
 /// </summary>
 public sealed class WarmTableReadTests : IDisposable
 {
@@ -68,16 +70,17 @@ public sealed class WarmTableReadTests : IDisposable
     {
         await using var backing = new MemoryStream(await CreateDatabaseAsync(rejectUsageMap), writable: false);
         await using var counting = new CountingStream(backing);
-        await using AccessReader reader = await AccessReader.OpenAsync(counting, Options(mode), leaveOpen: true, Ct);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(counting, Options(mode), leaveOpen: true, Ct);
+        reader.Database.TableDefs.VerifyOnHit = false;
         Assert.Equal(RowCount, await CountRowsAsync(reader));
 
         if (rejectUsageMap)
         {
             // The rejected map sent the scan to the whole-file owned-page
             // pass, which reads every page from 3 on.
-            int pageCount = checked((int)(backing.Length / reader.PageSize));
+            int pageCount = checked((int)(backing.Length / reader.Database.Format.PageSize));
             Assert.True(
-                counting.PagesRead(reader.PageSize).IsSupersetOf(Enumerable.Range(3, pageCount - 3).Select(page => (long)page)),
+                counting.PagesRead(reader.Database.Format.PageSize).IsSupersetOf(Enumerable.Range(3, pageCount - 3).Select(page => (long)page)),
                 "The cold scan did not take the whole-file owned-page pass, so the usage map was not rejected.");
         }
 
@@ -86,7 +89,7 @@ public sealed class WarmTableReadTests : IDisposable
 
         Assert.True(
             counting.BytesRead == 0,
-            $"The warm first-row read read pages {string.Join(", ", counting.PagesRead(reader.PageSize).Order())}.");
+            $"The warm first-row read read pages {string.Join(", ", counting.PagesRead(reader.Database.Format.PageSize).Order())}.");
     }
 
     /// <summary>
@@ -104,10 +107,11 @@ public sealed class WarmTableReadTests : IDisposable
         string path = Path.Combine(Path.GetTempPath(), $"WarmTableRead_{Guid.NewGuid():N}.accdb");
         this.paths.Add(path);
         await File.WriteAllBytesAsync(path, await CreateDatabaseAsync(rejectUsageMap), Ct);
-        await using AccessReader reader = await AccessReader.OpenAsync(path, Options(mode), Ct);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(path, Options(mode), Ct);
+        reader.Database.TableDefs.VerifyOnHit = false;
         Assert.Equal(RowCount, await CountRowsAsync(reader));
 
-        await using IAsyncEnumerator<object[]> rows = reader.Rows(TableName, cancellationToken: Ct).GetAsyncEnumerator(Ct);
+        await using IAsyncEnumerator<object[]> rows = reader.Services.Tables.Rows(TableName, progress: null, Ct).GetAsyncEnumerator(Ct);
         ValueTask<bool> first = MoveNextOnSynchronizationContext(rows);
         bool completedSynchronously = first.IsCompleted;
 
@@ -127,17 +131,18 @@ public sealed class WarmTableReadTests : IDisposable
     {
         await using var backing = new MemoryStream(await CreateDatabaseAsync(rejectUsageMap: false), writable: false);
         await using var counting = new CountingStream(backing);
-        await using AccessReader reader = await AccessReader.OpenAsync(counting, Options(PageReadOptimizationMode.Auto), leaveOpen: true, Ct);
-        Assert.Contains(await reader.ListIndexesAsync(TableName, Ct), index => string.Equals(index.Name, IndexName, StringComparison.Ordinal));
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(counting, Options(PageReadOptimizationMode.Auto), leaveOpen: true, Ct);
+        reader.Database.TableDefs.VerifyOnHit = false;
+        Assert.Contains(await reader.Services.Indexes.ListIndexesAsync(TableName, Ct), index => string.Equals(index.Name, IndexName, StringComparison.Ordinal));
         Assert.Equal(SeekId, await SeekIdAsync(reader));
 
         counting.Reset();
-        Assert.Contains(await reader.ListIndexesAsync(TableName, Ct), index => string.Equals(index.Name, IndexName, StringComparison.Ordinal));
+        Assert.Contains(await reader.Services.Indexes.ListIndexesAsync(TableName, Ct), index => string.Equals(index.Name, IndexName, StringComparison.Ordinal));
         Assert.Equal(SeekId, await SeekIdAsync(reader));
 
         Assert.True(
             counting.BytesRead == 0,
-            $"The warm index listing and seek read pages {string.Join(", ", counting.PagesRead(reader.PageSize).Order())}.");
+            $"The warm index listing and seek read pages {string.Join(", ", counting.PagesRead(reader.Database.Format.PageSize).Order())}.");
     }
 
     public void Dispose()
@@ -185,10 +190,10 @@ public sealed class WarmTableReadTests : IDisposable
     }
 #pragma warning restore RCS1229
 
-    private static async Task<int> CountRowsAsync(AccessReader reader)
+    private static async Task<int> CountRowsAsync(ReaderHarness reader)
     {
         int count = 0;
-        await foreach (object[] row in reader.Rows(TableName, cancellationToken: Ct))
+        await foreach (object[] row in reader.Services.Tables.Rows(TableName, progress: null, Ct))
         {
             Assert.Equal(++count, Assert.IsType<int>(row[0]));
         }
@@ -200,9 +205,9 @@ public sealed class WarmTableReadTests : IDisposable
     /// <param name="reader">The reader.</param>
     /// <returns>The first row's Id.</returns>
     /// <exception cref="InvalidOperationException">The table has no rows.</exception>
-    private static async Task<int> ReadFirstIdAsync(AccessReader reader)
+    private static async Task<int> ReadFirstIdAsync(ReaderHarness reader)
     {
-        await foreach (object[] row in reader.Rows(TableName, cancellationToken: Ct))
+        await foreach (object[] row in reader.Services.Tables.Rows(TableName, progress: null, Ct))
         {
             return Assert.IsType<int>(row[0]);
         }
@@ -213,10 +218,10 @@ public sealed class WarmTableReadTests : IDisposable
     /// <summary>Seeks <see cref="SeekId"/> through <see cref="IndexName"/> and returns the Id of the one row found.</summary>
     /// <param name="reader">The reader.</param>
     /// <returns>The Id of the row found.</returns>
-    private static async Task<int> SeekIdAsync(AccessReader reader)
+    private static async Task<int> SeekIdAsync(ReaderHarness reader)
     {
         List<int> ids = [];
-        await foreach (object[] row in reader.SeekRowsAsync(TableName, IndexName, [SeekId], Ct))
+        await foreach (object[] row in reader.Services.Indexes.SeekRowsAsync(TableName, IndexName, [SeekId], Ct))
         {
             ids.Add(Assert.IsType<int>(row[0]));
         }

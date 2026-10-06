@@ -2199,7 +2199,9 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false, PageCacheSize = wideRows ? 0 : 256 },
+            // Each of the 100 wide rows needs one data page. A 256-frame spill threshold
+            // keeps the data, indexes and allocation pages buffered until final replay.
+            new AccessWriterOptions { UseLockFile = false, PageCacheSize = wideRows ? 512 : 256 },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
         try

@@ -107,9 +107,7 @@ public sealed class MaterializerCacheTests
     }
 
     private static TableDef Definition(string name, int offset)
-    {
-        return new TableDef { Columns = [new ColumnInfo { Name = name, Type = ColumnType.LongIntegerType, FixedOff = offset, Flags = 1 }] };
-    }
+        => new() { Columns = [new ColumnInfo { Name = name, Type = ColumnType.LongIntegerType, FixedOff = offset, Flags = 1 }] };
 
     private sealed class Entity
     {
