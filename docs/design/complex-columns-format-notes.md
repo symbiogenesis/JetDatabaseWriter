@@ -202,10 +202,14 @@ Row reads (`Rows`, `ReadTableAsync`, `Rows<T>`, index seeks and `Query<T>`) repl
 
 ### 4.3 C7 flat-table schema
 
+Generated flat-table and column names are truncated to 64 characters without splitting a UTF-16 surrogate pair. If the generated scalar primary-key name collides with the foreign-key name after truncation, it receives a `_1` suffix within the same limit.
+
 The flat-child schema emitted by `BuildFlatTableSchema` (called from `EmitComplexColumnArtifactsAsync` during `CreateTableAsync`):
 
 - **Attachment flat table** (8 columns, in Access-authored Northwind order): `_<userColumnName>` (LONG, FK back-reference), `FileData` (OLE), `FileFlags` (LONG), `FileName` (TEXT 255), `FileTimeStamp` (DATETIME), `FileType` (TEXT 255), `FileURL` (MEMO), `<parentTable>_<userColumnName>` (LONG, autoincrement scalar PK). Three indexes ship: `MSysComplexPKIndex` (PK on the scalar), `_<userColumnName>` (normal index on the FK), and `IdxFKPrimaryScalar` (composite normal index on `(_<userColumnName>, FileName)`). The Access-specific descriptor flags/extra flags/misc values for these hidden flat-table columns are emitted through writer-owned `ColumnDefinition` descriptor overrides.
 - **Multi-value flat table** (3 columns): `_<userColumnName>` (LONG, FK back-reference), `Value` (CLR type from the user `ColumnDefinition`; a `decimal` value column takes its declared `NumericPrecision` and `NumericScale`, which `TDefPageBuilder.ValidateColumnForFormat` checks before the parent table is written), `<parentTable>_<userColumnName>` (LONG, autoincrement scalar PK). Two indexes: PK on the scalar plus a normal index on the FK back-reference. The composite secondary index is omitted because the format-probe corpus contains no multi-value flat-table fixture and the `Value` column may be a non-indexable type (MEMO, OLE, GUID).
+
+String multi-value items use Text with `MaxLength` 1-255; 0 selects Text(255). Negative lengths and lengths above 255 are refused during schema preflight. Inserting text longer than the stored column limit is refused before allocating a parent reference or inserting a flat row.
 
 `AddComplexItemCoreAsync` resolves the flat-table name from the catalog (helper `ResolveFlatTableNameAsync`) and calls `ConstraintRegistry.ApplyAsync` before `InsertRowDataAsync`, so the autoincrement scalar PK is seeded from the larger of the flat table's TDEF AutoNumber counter and its existing rows; after the insert, `AutoNumberMaintainer.UpdateHighWaterAsync` raises that counter, so IDs freed by deleting the top flat rows are not reused in a later session. The constraint registry is hydrated from the persisted `FLAG_AUTO_LONG` bit when the writer instance did not declare the table itself, so re-opening a file produced by a previous writer instance still drives the autoincrement correctly.
 

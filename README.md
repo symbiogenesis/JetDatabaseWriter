@@ -337,6 +337,8 @@ Returns an empty list for tables without complex columns and for older Jet3 / Je
 
 `GetColumnMetadataAsync` names each complex column by subtype in `TypeName`: `"Attachment"`, `"Version History"`, or `"Multi-value "` plus the element type (`"Multi-value Text"`, `"Multi-value Long Integer"`), and `"Complex"` when `MSysComplexColumns` cannot resolve it. `ClrType` is `byte[]` for all of them (see the cells below).
 
+Multi-value string columns store Text with a length of 1-255 characters. A `MaxLength` of 0 selects Text(255); invalid declarations and overlong items are rejected before the database changes.
+
 #### Reading and writing complex column rows
 
 For ACE `.accdb` files, attachments and multi-value items can be inserted into an existing parent row and read back via spec-compliant APIs:
@@ -999,7 +1001,7 @@ catch (FileNotFoundException)   { /* file missing */ }
 catch (ArgumentException)       { /* write: an object name Access does not allow, or an invalid definition */ }
 catch (UnauthorizedAccessException) { /* no password provided, or wrong password */ }
 catch (InvalidDataException)    { /* corrupt or non-JET file */ }
-catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained (an insert, update, delete or column change of that table is refused before it changes anything; a failed attachment or multi-value insertion also rolls back its parent-reference changes), a row larger than one data page, a Jet3 table over 255 columns, or Jet3 text outside the database's code page */ }
+catch (JetLimitationException)  { /* deleted-column gap, numeric overflow, or write: a table whose indexes cannot be enforced or maintained (an insert, update, delete or column change of that table is refused before it changes anything; a failed attachment or multi-value insertion also rolls back its parent-reference changes), a row larger than one data page, a table over 255 columns, or Jet3 text outside the database's code page */ }
 catch (NotSupportedException)   { /* write: CLR type not mappable to a Jet column, or table definition too large for one TDEF page */ }
 catch (ObjectDisposedException) { /* reader already disposed */ }
 ```
@@ -1054,7 +1056,7 @@ The items below are either **not yet implemented** or are important behavioral c
 
 ### Table and row size
 - **A row must fit on one data page: 2,036 bytes on Jet3, 4,080 on Jet4 and ACE.** MEMO values over 1,024 bytes and OLE values over 256 bytes are stored on separate long-value pages and take 12 bytes in the row; shorter ones stay in the row while it fits. Microsoft Access also moves long values out of a row too long for a page. The writer moves the largest MEMO and byte-array OLE values first, until the row fits, so three 1,000-character MEMO values on Jet3, or five on Jet4 and ACE, are written; whether Access picks the same values is unchecked. An OLE value given as a string stays in the row. A row still too long with every such value moved, because of its other columns, its OLE strings or the 12-byte headers of many long values, throws `JetLimitationException` before anything is written, long-value pages included. An update that grows a row too far, one of its own rows or a dependent row its cascade rewrites, throws the same exception before it changes any row.
-- **A Jet3 (Access 97) table holds at most 255 columns**, Access's field limit; a Jet3 row stores its column count in one byte. `CreateTableAsync` and `AddColumnAsync` throw `JetLimitationException` for a 256th column before writing anything.
+- **A table holds at most 255 columns in every format**, matching Access's field limit. `CreateTableAsync` and `AddColumnAsync` throw `JetLimitationException` for a 256th column before writing anything.
 
 ### Compact & Repair
 - **`ShrinkDatabaseAsync` is a tail shrinker, not a full Compact & Repair.** It truncates free pages from the physical end of the file but does not move live pages, renumber page references, rebuild all tables into a new file, or scrub every unused byte gap inside otherwise-live pages.

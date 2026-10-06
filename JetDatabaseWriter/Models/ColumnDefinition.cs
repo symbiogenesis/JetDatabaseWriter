@@ -363,6 +363,9 @@ public sealed record ColumnDefinition
     /// For <see cref="decimal"/> items, <see cref="NumericPrecision"/> and
     /// <see cref="NumericScale"/> are the items' precision and scale, Access's
     /// Decimal(18,0) by default.
+    /// For <see cref="string"/> items, <see cref="MaxLength"/> is 1-255
+    /// characters, with 0 selecting Text(255). Other lengths are rejected.
+    /// An item longer than the declared length is rejected without changing the database.
     /// </summary>
     public Type? MultiValueElementType { get; init; }
 

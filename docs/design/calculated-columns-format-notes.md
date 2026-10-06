@@ -300,6 +300,16 @@ Delivered:
   locale, so a non-US Access installation writes other text; this library
   always uses the en-US form. The other named formats (`Short Date`,
   `Long Time` and so on) still use .NET's invariant patterns.
+- Custom `Format` date strings use VBA's Gregorian tokens: `m`/`mm` are
+  months unless the preceding date/time token is `h`/`hh`; `n`/`nn` are
+  minutes. Quoted and backslash-escaped text stays literal. `w`, `ww`, `q`,
+  `y`, `AM/PM`, `A/P`, `ddddd`, `dddddd` and `ttttt` have VBA meanings;
+  optional first-day and first-week arguments control weekday/week numbers.
+  Custom short/long date and time tokens use en-US patterns, consistent with
+  General Date. These cases were checked against Windows `oleaut32!VarFormat`;
+  in particular `mm:ss` is month and seconds, not minutes and seconds.
+  See Microsoft's [VBA Format reference](https://learn.microsoft.com/en-us/office/vba/language/reference/user-interface-help/format-function-visual-basic-for-applications)
+  and [VarFormat API](https://learn.microsoft.com/en-us/windows/win32/api/oleauto/nf-oleauto-varformat).
 - A time with no date is on day 0 (1899-12-30), as in VBA. This was measured
   with VBScript, whose date conversions are VBA's, under LCID 1033. It covers
   time-only text (`CDate("6:00 PM")`), `#6:00#` literals, `Time()`,

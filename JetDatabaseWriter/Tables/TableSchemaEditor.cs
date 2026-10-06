@@ -164,7 +164,7 @@ internal sealed class TableSchemaEditor(
             throw new ArgumentException("At least one column is required", nameof(columns));
         }
 
-        this.ThrowIfTooManyColumns(tableName, columns.Count);
+        ThrowIfTooManyColumns(tableName, columns.Count);
 
         // Pre-process the column-level IsPrimaryKey shortcut. Synthesize one
         // composite PK IndexDefinition (named "PrimaryKey") from columns
@@ -742,19 +742,18 @@ internal sealed class TableSchemaEditor(
     }
 
     /// <summary>
-    /// Rejects a Jet3 table of more than 255 columns before anything is
-    /// written: a Jet3 row stores <c>num_cols</c> in one byte, and Access
-    /// allows 255 fields per table.
+    /// Rejects a table of more than 255 columns before anything is written:
+    /// Microsoft Access allows 255 fields per table in every database format.
     /// </summary>
     /// <param name="tableName">The table name, for the message.</param>
     /// <param name="columnCount">The number of columns the table would have.</param>
-    /// <exception cref="JetLimitationException">The database is Jet3 and <paramref name="columnCount"/> is over 255.</exception>
-    private void ThrowIfTooManyColumns(string tableName, int columnCount)
+    /// <exception cref="JetLimitationException"><paramref name="columnCount"/> is over 255.</exception>
+    private static void ThrowIfTooManyColumns(string tableName, int columnCount)
     {
-        if (format.IsJet3 && columnCount > Constants.TableDefinition.MaxJet3Columns)
+        if (columnCount > Constants.TableDefinition.MaxTableColumns)
         {
             throw new JetLimitationException(
-                $"Table '{tableName}' would have {columnCount} columns; a Jet3 (Access 97) table holds at most {Constants.TableDefinition.MaxJet3Columns}.");
+                $"Table '{tableName}' would have {columnCount} columns; a Microsoft Access table holds at most {Constants.TableDefinition.MaxTableColumns}.");
         }
     }
 
@@ -845,7 +844,7 @@ internal sealed class TableSchemaEditor(
             throw new JetOperationException(JetErrorCode.LastColumn, $"Table '{tableName}' must retain at least one column.", errorInfo: new JetErrorInfo { TableName = tableName });
         }
 
-        this.ThrowIfTooManyColumns(tableName, newDefs.Count);
+        ThrowIfTooManyColumns(tableName, newDefs.Count);
 
         // Carry renamed columns into the expressions that name them, and refuse
         // to drop a column one of them names, before anything is written; the

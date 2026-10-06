@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -23,12 +24,14 @@ internal static class IndexHelpers
     /// <summary>
     /// Returns <paramref name="baseName"/> if no entry in <paramref name="existing"/>
     /// already uses it (case-insensitive); otherwise appends "_1", "_2", … until
-    /// an unused name is found.
+    /// an unused name is found. Truncates the base to keep every generated name
+    /// within Access's 64-character limit without splitting a surrogate pair.
     /// </summary>
     /// <param name="baseName">The base name.</param>
     /// <param name="existing">The existing.</param>
     public static string MakeUniqueLogicalIdxName(string baseName, IReadOnlyList<string> existing)
     {
+        baseName = FitLogicalIdxName(baseName, AccessObjectName.MaxLength);
         var taken = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
         if (!taken.Contains(baseName))
         {
@@ -37,7 +40,8 @@ internal static class IndexHelpers
 
         for (int i = 1; i < int.MaxValue; i++)
         {
-            string candidate = baseName + "_" + i.ToString(CultureInfo.InvariantCulture);
+            string suffix = "_" + i.ToString(CultureInfo.InvariantCulture);
+            string candidate = FitLogicalIdxName(baseName, AccessObjectName.MaxLength - suffix.Length) + suffix;
             if (!taken.Contains(candidate))
             {
                 return candidate;
@@ -45,6 +49,21 @@ internal static class IndexHelpers
         }
 
         return baseName;
+    }
+
+    private static string FitLogicalIdxName(string name, int maximumLength)
+    {
+        if (name.Length <= maximumLength)
+        {
+            return name;
+        }
+
+        if (char.IsHighSurrogate(name[maximumLength - 1]) && char.IsLowSurrogate(name[maximumLength]))
+        {
+            maximumLength--;
+        }
+
+        return name.Substring(0, maximumLength);
     }
 
     /// <summary>

@@ -798,7 +798,10 @@ internal static class Constants
         /// <c>num_cols</c> and <c>var_len</c> in one byte each, and Access
         /// allows 255 fields per table.
         /// </summary>
-        public const int MaxJet3Columns = 255;
+        public const int MaxJet3Columns = MaxTableColumns;
+
+        /// <summary>Most fields Microsoft Access allows in a table, in every database format.</summary>
+        public const int MaxTableColumns = 255;
 
         /// <summary>Conservative maximum logical / physical index count accepted while parsing a TDEF.</summary>
         public const int MaxIndexes = 1000;

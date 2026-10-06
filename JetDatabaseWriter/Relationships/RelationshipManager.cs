@@ -1954,7 +1954,7 @@ internal sealed class RelationshipManager(
         byte[] pageBytes = chain.Bytes;
         if (!this.TryParseFkTDefLayout(pageBytes, out FkTDefLayout layout) || layout.NumIdx <= 0)
         {
-            return baseName;
+            return IndexHelpers.MakeUniqueLogicalIdxName(baseName, []);
         }
 
         List<string> existing = IndexCatalogReader.ReadLogicalIdxNames(this.format, pageBytes, layout.LogIdxNamesStart, layout.NumIdx);

@@ -418,7 +418,7 @@ internal sealed class ComplexColumnManager(
     /// </summary>
     /// <param name="columns">The columns.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="ArgumentException">Thrown when a multi-value column does not declare its element type.</exception>
+    /// <exception cref="ArgumentException">Thrown when a multi-value column does not declare its element type or declares a Text length outside 0..255.</exception>
     /// <exception cref="NotSupportedException">Thrown when complex columns are declared for a non-ACE database or a catalog missing <c>MSysComplexColumns</c>.</exception>
     /// <exception cref="JetNotSupportedException">The complex-column system table is missing.</exception>
     public async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
@@ -433,6 +433,13 @@ internal sealed class ComplexColumnManager(
             {
                 indices ??= new List<int>(2);
                 indices.Add(i);
+
+                if (def.IsMultiValue && def.MultiValueElementType == typeof(string) && (def.MaxLength < 0 || def.MaxLength > ComplexTypeTemplateTextLength))
+                {
+                    throw new ArgumentException(
+                        $"Column '{def.Name}': multi-value Text length must be between 0 (the default) and {ComplexTypeTemplateTextLength} characters.",
+                        nameof(columns));
+                }
 
                 if (def.IsMultiValue && def.MultiValueElementType is null)
                 {
@@ -589,7 +596,20 @@ internal sealed class ComplexColumnManager(
         // flat table; we do the same so the name is unique even when two columns
         // share a name across tables.
         string guid = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture).ToUpperInvariant();
-        return $"f_{guid}_{userColumnName}";
+        return TruncateGeneratedName($"f_{guid}_{userColumnName}");
+    }
+
+    private static string TruncateGeneratedName(string name, int maxLength = AccessObjectName.MaxLength)
+    {
+        if (name.Length <= maxLength)
+        {
+            return name;
+        }
+
+        int length = char.IsHighSurrogate(name[maxLength - 1]) && char.IsLowSurrogate(name[maxLength])
+            ? maxLength - 1
+            : maxLength;
+        return name[..length];
     }
 
     /// <summary>
@@ -618,8 +638,7 @@ internal sealed class ComplexColumnManager(
     /// <para>
     /// The multi-value variant has no empirical fixture; the conservative
     /// schema mirrors the attachment pattern minus the composite
-    /// <c>IdxFKPrimaryScalar</c> (the value column may be a non-indexable
-    /// type such as MEMO).
+    /// <c>IdxFKPrimaryScalar</c> attachment index.
     /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">Thrown when a multi-value flat-table schema is requested without an element type.</exception>
@@ -627,8 +646,12 @@ internal sealed class ComplexColumnManager(
         string parentTableName,
         ColumnDefinition parentColumn)
     {
-        string fkName = $"_{parentColumn.Name}";
-        string scalarName = $"{parentTableName}_{parentColumn.Name}";
+        string fkName = TruncateGeneratedName($"_{parentColumn.Name}");
+        string scalarName = TruncateGeneratedName($"{parentTableName}_{parentColumn.Name}");
+        if (string.Equals(scalarName, fkName, StringComparison.OrdinalIgnoreCase))
+        {
+            scalarName = TruncateGeneratedName(scalarName, AccessObjectName.MaxLength - 2) + "_1";
+        }
         var fk = new ColumnDefinition(fkName, typeof(int))
         {
             ForceVariableLengthStorage = true,
@@ -697,7 +720,7 @@ internal sealed class ComplexColumnManager(
         // other element types ignore them.
         Type elementType = parentColumn.MultiValueElementType
             ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
-        var valueCol = new ColumnDefinition("Value", elementType, maxLength: parentColumn.MaxLength)
+        var valueCol = new ColumnDefinition("Value", elementType, maxLength: elementType == typeof(string) && parentColumn.MaxLength == 0 ? ComplexTypeTemplateTextLength : parentColumn.MaxLength)
         {
             DescriptorExtraFlagsOverride = 0x10,
             DescriptorNonTextMiscOverride = 0x00000409,
@@ -825,6 +848,18 @@ internal sealed class ComplexColumnManager(
         {
             throw new NotSupportedException(
                 $"Column '{tableName}.{columnName}' is an Attachment column; call AddAttachmentAsync instead.");
+        }
+
+        if (!expectAttachment && flatDef.FindColumn("Value") is { Type: TextType } valueColumn
+            && payload is not null and not DBNull)
+        {
+            string text = Convert.ToString(payload, CultureInfo.InvariantCulture) ?? string.Empty;
+            if (text.Length > valueColumn.Size / 2)
+            {
+                throw new ArgumentException(
+                    $"Multi-value Text item exceeds the {valueColumn.Size / 2}-character limit of '{tableName}.{columnName}'.",
+                    "value");
+            }
         }
 
         // Resolve predicate column ordinals + decode parent key (string-form for comparison).

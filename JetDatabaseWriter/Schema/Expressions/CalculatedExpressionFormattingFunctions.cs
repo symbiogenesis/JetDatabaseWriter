@@ -12,14 +12,14 @@ internal static class CalculatedExpressionFormattingFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Formatting, "FORMAT", 1, 4, static function => function.Count == 1 ? ToText(function.Arg(0)) : FormatValue(function.Arg(0), ToText(function.Arg(1)))));
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Formatting, "FORMAT", 1, 4, static function => function.Count == 1 ? ToText(function.Arg(0)) : FormatValue(function.Arg(0), ToText(function.Arg(1)), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : 1, function.Count > 3 ? checked((int)ToDecimal(function.Arg(3))) : 1)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Formatting, "FORMATNUMBER", 1, 6, static function => FormatNumber(ToDecimal(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 2, percent: false, currency: false)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Formatting, "FORMATPERCENT", 1, 6, static function => FormatNumber(ToDecimal(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 2, percent: true, currency: false)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Formatting, "FORMATCURRENCY", 1, 6, static function => FormatNumber(ToDecimal(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 2, percent: false, currency: true)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Formatting, "FORMATDATETIME", 1, 2, static function => FormatDateTime(ToDateTime(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 0)));
     }
 
-    private static string FormatValue(object value, string format)
+    private static string FormatValue(object value, string format, int firstDay, int firstWeek)
     {
         if (IsNull(value))
         {
@@ -36,7 +36,7 @@ internal static class CalculatedExpressionFormattingFunctions
                 "SHORT DATE" => dateTime.ToString("d", CultureInfo.InvariantCulture),
                 "LONG TIME" => dateTime.ToString("T", CultureInfo.InvariantCulture),
                 "SHORT TIME" => dateTime.ToString("t", CultureInfo.InvariantCulture),
-                _ => dateTime.ToString(format, CultureInfo.InvariantCulture),
+                _ => CalculatedExpressionDateFormatter.Format(dateTime, format, firstDay, firstWeek),
             };
         }
 
