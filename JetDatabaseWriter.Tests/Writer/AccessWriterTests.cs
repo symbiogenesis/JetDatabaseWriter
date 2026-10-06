@@ -2193,14 +2193,14 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// with a primary key on <c>Id</c> and one row, <c>Id = 0</c>.
     /// </summary>
     /// <param name="stream">The stream to create the database in.</param>
-    /// <param name="wideRows">Whether to add padding columns and disable page caching.</param>
+    /// <param name="wideRows">Whether to add padding columns and defer spilling until final replay.</param>
     private static async Task<AccessWriter> CreateCancellationTestTableAsync(Stream stream, bool wideRows = false)
     {
+        // Each of the 100 wide rows needs one data page. A 256-frame spill threshold
+        // keeps the data, indexes and allocation pages buffered until final replay.
         AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             DatabaseFormat.AceAccdb,
-            // Each of the 100 wide rows needs one data page. A 256-frame spill threshold
-            // keeps the data, indexes and allocation pages buffered until final replay.
             new AccessWriterOptions { UseLockFile = false, PageCacheSize = wideRows ? 512 : 256 },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
