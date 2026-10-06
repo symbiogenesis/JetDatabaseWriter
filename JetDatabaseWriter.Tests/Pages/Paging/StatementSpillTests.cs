@@ -73,14 +73,14 @@ public sealed class StatementSpillTests
         Array.Fill(page, (byte)37);
         for (int index = 0; index < 64; index++)
         {
-            await pager.WritePageAsync(index, page);
+            await pager.WritePageAsync(index, page, TestContext.Current.CancellationToken);
         }
 
         using var source = new CancellationTokenSource();
         stream.CancelAfterReads(1, source);
         for (int index = 64; index < 127; index++)
         {
-            await pager.WritePageAsync(index, page);
+            await pager.WritePageAsync(index, page, TestContext.Current.CancellationToken);
         }
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pager.WritePageAsync(127, page, source.Token).AsTask());
@@ -118,12 +118,12 @@ public sealed class StatementSpillTests
             {
                 for (int index = 0; index < 140; index++)
                 {
-                    await pager.WritePageAsync(index, page);
+                    await pager.WritePageAsync(index, page, TestContext.Current.CancellationToken);
                     if (index == 64)
                     {
                         byte[] rewritten = new byte[16];
                         Array.Fill(rewritten, (byte)82);
-                        await pager.WritePageAsync(1, rewritten);
+                        await pager.WritePageAsync(1, rewritten, TestContext.Current.CancellationToken);
                     }
                 }
 
@@ -147,7 +147,7 @@ public sealed class StatementSpillTests
 
             Assert.Equal(new byte[16 * 80], stream.ToArray());
             Assert.False(pager.IsFaulted);
-            await pager.WritePageAsync(1, page);
+            await pager.WritePageAsync(1, page, TestContext.Current.CancellationToken);
             Assert.Equal(37, stream.ToArray()[16]);
         }
     }
@@ -170,19 +170,19 @@ public sealed class StatementSpillTests
         Array.Fill(page, (byte)37);
         for (int index = 0; index < 140; index++)
         {
-            await pager.WritePageAsync(index, page);
+            await pager.WritePageAsync(index, page, TestContext.Current.CancellationToken);
             if (index == 64)
             {
                 byte[] rewritten = new byte[16];
                 Array.Fill(rewritten, (byte)82);
-                await pager.WritePageAsync(1, rewritten);
+                await pager.WritePageAsync(1, rewritten, TestContext.Current.CancellationToken);
             }
 
             Assert.InRange(transaction.Count, 0, 63);
         }
 
         Array.Fill(page, (byte)82);
-        await pager.WritePageAsync(1, page);
+        await pager.WritePageAsync(1, page, TestContext.Current.CancellationToken);
         Assert.Equal(82, stream.ToArray()[16]);
         using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(CancellationToken.None))
         {

@@ -118,12 +118,11 @@ internal sealed class LegacyTDefParsers(JetFormat format)
         bool hasDeletedColumns = cols.Count >= 2
             && cols[^1].ColNum - cols[0].ColNum != cols.Count - 1;
 
-        var tableDef = new TableDef
+        return new TableDef
         {
             Columns = cols,
             HasDeletedColumns = hasDeletedColumns,
         };
-        return tableDef;
     }
 
     /// <summary>One column descriptor as stored, before its name is read.</summary>

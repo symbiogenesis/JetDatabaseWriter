@@ -155,6 +155,7 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
             await target.DisposeAsync();
         }
     }
+
     private static async Task AssertFaultAsync(byte[] original, byte[] completed, string statement, Action<WriteFaultStream> arm, string? password = null)
     {
         await using WriteFaultStream stream = Copy(original);

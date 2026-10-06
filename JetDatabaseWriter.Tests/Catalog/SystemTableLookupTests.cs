@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -56,18 +57,18 @@ public sealed class SystemTableLookupTests
     public async Task ReadApis_MSysObjects_OnCreatedDatabase_ReturnCatalogRows(DatabaseFormat format, bool fullCatalog)
     {
         byte[] bytes = await CreateDatabaseAsync(format, fullCatalog, this.ct);
-        TableDef catalog = await ReadCatalogTableDefAsync(bytes, this.ct);
+        (TableDef catalog, long rowCount) = await ReadCatalogTableDefAsync(bytes, this.ct);
         Assert.NotEmpty(catalog.Columns);
 
         await using AccessReader reader = await OpenReaderAsync(bytes, this.ct);
         using DataTable data = await reader.ReadDataTableAsync(CatalogTable, cancellationToken: this.ct);
         Assert.Equal(catalog.Columns.Select(c => c.Name), data.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
-        Assert.Equal(catalog.RowCount, data.Rows.Count);
+        Assert.Equal(rowCount, data.Rows.Count);
         Assert.Contains(data.Rows.Cast<DataRow>(), row => Equals(row["Name"], "T1"));
 
-        Assert.Equal(catalog.RowCount, await reader.GetRealRowCountAsync(CatalogTable, this.ct));
-        Assert.Equal(catalog.RowCount, await CountAsync(reader.Rows(CatalogTable, cancellationToken: this.ct)));
-        Assert.Equal(catalog.RowCount, await CountAsync(reader.RowsAsStrings(CatalogTable, cancellationToken: this.ct)));
+        Assert.Equal(rowCount, await reader.GetRealRowCountAsync(CatalogTable, this.ct));
+        Assert.Equal(rowCount, await CountAsync(reader.Rows(CatalogTable, cancellationToken: this.ct)));
+        Assert.Equal(rowCount, await CountAsync(reader.RowsAsStrings(CatalogTable, cancellationToken: this.ct)));
         Assert.Equal(catalog.Columns.Count, (await reader.GetColumnMetadataAsync(CatalogTable, this.ct)).Count);
         _ = await reader.ListIndexesAsync(CatalogTable, this.ct);
     }
@@ -188,13 +189,15 @@ public sealed class SystemTableLookupTests
         return ms.ToArray();
     }
 
-    private static async ValueTask<TableDef> ReadCatalogTableDefAsync(byte[] bytes, CancellationToken cancellationToken)
+    private static async ValueTask<(TableDef Definition, long RowCount)> ReadCatalogTableDefAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
         TableDef? catalog = await harness.ReadTableDefAsync(2, cancellationToken);
         Assert.NotNull(catalog);
-        return catalog;
+        TableCounters? counters = await harness.Database.TableDefs.ReadTableCountersAsync(2, cancellationToken);
+        Assert.NotNull(counters);
+        return (catalog, counters.Value.RowCount);
     }
 
     private static async ValueTask<AccessReader> OpenReaderAsync(byte[] bytes, CancellationToken cancellationToken)

@@ -6,7 +6,7 @@ using System;
 using JetDatabaseWriter.Schema;
 
 /// <summary>Enables structural cache verification for every reader constructed by the suite.</summary>
-public sealed class SchemaCacheVerificationFixture : IDisposable
+internal sealed class SchemaCacheVerificationFixture : IDisposable
 {
     /// <summary>Initializes a new instance of the <see cref="SchemaCacheVerificationFixture"/> class.</summary>
     public SchemaCacheVerificationFixture() => TableDefReader.VerifyCacheHits = true;

@@ -278,9 +278,7 @@ public class RowMapperTests
     // ── ToRow(TableDef) — reverse mapping ────────────────────────────
 
     private static TableDef MakeTableDef(params string[] columnNames)
-    {
-        return new TableDef { Columns = [.. columnNames.Select(name => new ColumnInfo { Name = name })] };
-    }
+        => new() { Columns = [.. columnNames.Select(name => new ColumnInfo { Name = name })] };
 
     [Fact]
     public void ToRow_AllPropertiesMatch_ReturnsCorrectValues()
