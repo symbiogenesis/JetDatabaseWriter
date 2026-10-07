@@ -111,8 +111,8 @@ public sealed class MixedOleScalarTypeTests
         }
 
         Assert.Equal(255L, widened[0].ByteValue);
-        Assert.Equal((decimal)short.MinValue, widened[0].ShortValue);
-        Assert.Equal((long)int.MaxValue, widened[0].IntValue);
+        Assert.Equal<decimal?>(short.MinValue, widened[0].ShortValue);
+        Assert.Equal<long?>(int.MaxValue, widened[0].IntValue);
         Assert.Equal(123.25d, widened[0].FloatValue);
         Assert.Equal(payload, widened[0].OleValue);
         Assert.Null(widened[2].ByteValue);
