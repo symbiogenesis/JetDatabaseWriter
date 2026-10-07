@@ -230,6 +230,7 @@ public sealed class PageAllocatorTests
 
         Span<byte> referenceMap = bytes.AsSpan(referencePageNumber * pageSize, pageSize);
         referenceMap[0] = Constants.PageTypes.UsageMap;
+        referenceMap[1] = 1;
         int pagesPerReferenceMap = (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
         int bitIndex = freePageNumber % pagesPerReferenceMap;
         referenceMap[Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8)] |= (byte)(1 << (bitIndex % 8));

@@ -32,10 +32,12 @@ inheritable Users SID `FB7B` with mask `0xFFEFF`. DAO gives a new table owner
 placeholder and clearing `FInheritable` on the new rows. The system container's
 own owner is different and must not be copied as the table owner.
 
-These bytes depend on the file. The library derives the masked `7015` owner
+These bytes depend on the file. The library derives the masked `0204` owner
 placeholder from the header's creation-date/password region, takes the actual
 owner from `MSysDb`, and preserves inherited principal bytes and permission
-masks. It does not replace them with fixed identities from a bootstrap file.
+masks. The fixture unmasks Admin to `0301`, Users to `0201`, and the system
+owner to `0203`; fixed stored identities from another header are not plaintext
+principals.
 The regression pins the fixture's placeholder and checks that deriving it does
 not modify page zero. Workgroup variants still require separate native evidence.
 

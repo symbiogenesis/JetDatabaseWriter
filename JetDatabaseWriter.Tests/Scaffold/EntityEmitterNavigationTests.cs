@@ -31,7 +31,7 @@ public sealed class EntityEmitterNavigationTests
 
         string result = EntityEmitter.Emit("Orders", Columns(("Id", typeof(int)), ("CustomerId", typeof(int))), navigations, "NS", useRecords: false, nullable: true);
 
-        Assert.Contains("public Customers? Customer { get; set; }", result, StringComparison.Ordinal);
+        Assert.Contains("public global::NS.Customers? Customer { get; set; }", result, StringComparison.Ordinal);
         Assert.Contains("public int CustomerId { get; set; }", result, StringComparison.Ordinal);
     }
 
@@ -43,7 +43,7 @@ public sealed class EntityEmitterNavigationTests
         string result = EntityEmitter.Emit("Customers", Columns(("Id", typeof(int))), navigations, "NS", useRecords: false, nullable: true);
 
         Assert.Contains("using System.Collections.Generic;", result, StringComparison.Ordinal);
-        Assert.Contains("public ICollection<Orders> Orders { get; set; } = new List<Orders>();", result, StringComparison.Ordinal);
+        Assert.Contains("public global::System.Collections.Generic.ICollection<global::NS.Orders> Orders { get; set; } = new global::System.Collections.Generic.List<global::NS.Orders>();", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -61,6 +61,6 @@ public sealed class EntityEmitterNavigationTests
 
         string result = EntityEmitter.Emit("Orders", Columns(("Id", typeof(int))), navigations, "NS", useRecords: false, nullable: false);
 
-        Assert.Contains("public Customers Customer { get; set; }", result, StringComparison.Ordinal);
+        Assert.Contains("public global::NS.Customers Customer { get; set; }", result, StringComparison.Ordinal);
     }
 }

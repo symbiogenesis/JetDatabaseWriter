@@ -19,6 +19,37 @@ using Xunit;
 /// </summary>
 public sealed class EntityEmitterIdentifierTests
 {
+    [Theory]
+    [InlineData("MyApp.DateTime", false)]
+    [InlineData("Guid.Models", true)]
+    [InlineData("MyApp.ColumnAttribute.Hyperlink", false)]
+    [InlineData("MyApp.System.JetDatabaseWriter", true)]
+    public void Emit_FrameworkShapedNames_BindTypesAttributesAndNavigations(string ns, bool useRecords)
+    {
+        string[] names = ["DateTime", "Guid", "Hyperlink", "ColumnAttribute", "TableAttribute", "System", "JetDatabaseWriter", "ICollection", "List", "Column", "Table", "DateTimeOffset", "TimeSpan"];
+        List<ColumnMetadata> columns =
+        [
+            Column("Created On", typeof(DateTime), isNullable: false),
+            Column("Identity", typeof(Guid), isNullable: false),
+            Column("Website", typeof(Hyperlink)),
+        ];
+        var tables = names.Select(name => (name, (IReadOnlyList<ColumnMetadata>)columns)).ToArray();
+        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables);
+        Assert.Equal(names, names.Select(name => classNames[name]));
+        List<string> sources = [.. names.Select(name => EntityEmitter.Emit(name, name + " Table", columns,
+            [new(IsCollection: true, TargetClassName: "Guid", PreferredName: "Children"), new(IsCollection: false, TargetClassName: "DateTime", PreferredName: "Parent")],
+            ns, useRecords, nullable: true))];
+        Assembly assembly = ScaffoldCompilation.CompileCleanly(sources);
+        Type entity = assembly.GetType(ns + ".Hyperlink", throwOnError: true)!;
+        Assert.Equal(typeof(DateTime), entity.GetProperty("CreatedOn")!.PropertyType);
+        Assert.Equal(typeof(Guid), entity.GetProperty("Identity")!.PropertyType);
+        Assert.Equal(typeof(Hyperlink), entity.GetProperty("Website")!.PropertyType);
+        Assert.Equal(ns + ".DateTime", entity.GetProperty("Parent")!.PropertyType.FullName);
+        Assert.Equal(ns + ".Guid", entity.GetProperty("Children")!.PropertyType.GetGenericArguments()[0].FullName);
+        Assert.Equal("Created On", entity.GetProperty("CreatedOn")!.GetCustomAttribute<System.ComponentModel.DataAnnotations.Schema.ColumnAttribute>()!.Name);
+        Assert.Equal("Hyperlink Table", entity.GetCustomAttribute<System.ComponentModel.DataAnnotations.Schema.TableAttribute>()!.Name);
+    }
+
     [Fact]
     public void Emit_ColumnNamedArrayWithNonNullBlob_Compiles()
     {
@@ -155,21 +186,21 @@ public sealed class EntityEmitterIdentifierTests
             "\r\n" +
             "namespace MyApp.Models;\r\n" +
             "\r\n" +
-            "[Table(\"tbl People\")]\r\n" +
+            "[global::System.ComponentModel.DataAnnotations.Schema.TableAttribute(\"tbl People\")]\r\n" +
             "public sealed class TblPeople\r\n" +
             "{\r\n" +
             "    /// <summary>Column: Person ID (Long Integer, 4 bytes).</summary>\r\n" +
-            "    [Column(\"Person ID\")]\r\n" +
+            "    [global::System.ComponentModel.DataAnnotations.Schema.ColumnAttribute(\"Person ID\")]\r\n" +
             "    public int PersonID { get; set; }\r\n" +
             "\r\n" +
             "    /// <summary>Column: Photo (OLE Object, LVAL).</summary>\r\n" +
             "    public byte[] Photo { get; set; } = global::System.Array.Empty<byte>();\r\n" +
             "\r\n" +
             "    /// <summary>Column: Website (Hyperlink, LVAL).</summary>\r\n" +
-            "    public Hyperlink? Website { get; set; }\r\n" +
+            "    public global::JetDatabaseWriter.Models.Hyperlink? Website { get; set; }\r\n" +
             "\r\n" +
             "    /// <summary>Navigation: related Orders children.</summary>\r\n" +
-            "    public ICollection<Orders> Orders { get; set; } = new List<Orders>();\r\n" +
+            "    public global::System.Collections.Generic.ICollection<global::MyApp.Models.Orders> Orders { get; set; } = new global::System.Collections.Generic.List<global::MyApp.Models.Orders>();\r\n" +
             "}\r\n";
         Assert.Equal(expected, source);
     }
@@ -189,21 +220,21 @@ public sealed class EntityEmitterIdentifierTests
             "\r\n" +
             "namespace MyApp.Models;\r\n" +
             "\r\n" +
-            "[Table(\"tbl People\")]\r\n" +
+            "[global::System.ComponentModel.DataAnnotations.Schema.TableAttribute(\"tbl People\")]\r\n" +
             "public sealed class TblPeople\r\n" +
             "{\r\n" +
             "    /// <summary>Column: Person ID (Long Integer, 4 bytes).</summary>\r\n" +
-            "    [Column(\"Person ID\")]\r\n" +
+            "    [global::System.ComponentModel.DataAnnotations.Schema.ColumnAttribute(\"Person ID\")]\r\n" +
             "    public int PersonID { get; set; }\r\n" +
             "\r\n" +
             "    /// <summary>Column: Photo (OLE Object, LVAL).</summary>\r\n" +
             "    public byte[] Photo { get; set; }\r\n" +
             "\r\n" +
             "    /// <summary>Column: Website (Hyperlink, LVAL).</summary>\r\n" +
-            "    public Hyperlink Website { get; set; }\r\n" +
+            "    public global::JetDatabaseWriter.Models.Hyperlink Website { get; set; }\r\n" +
             "\r\n" +
             "    /// <summary>Navigation: related Orders children.</summary>\r\n" +
-            "    public ICollection<Orders> Orders { get; set; } = new List<Orders>();\r\n" +
+            "    public global::System.Collections.Generic.ICollection<global::MyApp.Models.Orders> Orders { get; set; } = new global::System.Collections.Generic.List<global::MyApp.Models.Orders>();\r\n" +
             "}\r\n";
         Assert.Equal(expected, source);
     }

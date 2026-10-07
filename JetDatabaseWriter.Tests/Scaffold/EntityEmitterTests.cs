@@ -119,7 +119,7 @@ public class EntityEmitterTests
         string result = EntityEmitter.Emit("Site", columns, "NS", useRecords: false, nullable: true);
 
         Assert.Contains("using JetDatabaseWriter.Models;", result, StringComparison.Ordinal);
-        Assert.Contains("public Hyperlink? Website", result, StringComparison.Ordinal);
+        Assert.Contains("public global::JetDatabaseWriter.Models.Hyperlink? Website", result, StringComparison.Ordinal);
     }
 
     [Fact]

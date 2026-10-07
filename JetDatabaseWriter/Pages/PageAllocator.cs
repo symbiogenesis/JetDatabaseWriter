@@ -62,6 +62,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         long reusableStart = FindContiguousRun(freePages, pageCount);
         if (reusableStart > 0)
         {
+            await this.PreflightAllocationRangeAsync(reusableStart, pageCount, appending: false, cancellationToken).ConfigureAwait(false);
             int marked = 0;
             try
             {
@@ -83,6 +84,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             return reusableStart;
         }
 
+        await this.PreflightAllocationRangeAsync(pager.PageCount, pageCount, appending: true, cancellationToken).ConfigureAwait(false);
         long firstAppendedPage = -1;
         int appended = 0;
         try
@@ -101,6 +103,12 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 }
 
                 appended++;
+            }
+
+            // Reserve the complete contiguous run before global-map growth appends bitmap pages.
+            for (int offset = 0; offset < appended; offset++)
+            {
+                await this.SetPageFreeStateAsync(firstAppendedPage + offset, free: false, cancellationToken).ConfigureAwait(false);
             }
         }
         catch
@@ -149,6 +157,8 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             return;
         }
 
+        await this.PreflightGlobalMapAsync(cancellationToken, pageNumber).ConfigureAwait(false);
+        await this.PreflightAllocationRangeAsync(pageNumber, 1, appending: false, cancellationToken).ConfigureAwait(false);
         bool secure = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
         await this.WriteFreedPageAsync(pageNumber, secure, cancellationToken).ConfigureAwait(false);
         await this.SetPageFreeStateAsync(pageNumber, free: true, cancellationToken).ConfigureAwait(false);
@@ -194,6 +204,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
 
     internal async ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken)
     {
+        await this.PreflightGlobalMapAsync(cancellationToken).ConfigureAwait(false);
         if (pager.IsJournalActive)
         {
             throw new InvalidOperationException("ShrinkDatabaseAsync cannot run inside an active transaction.");
@@ -324,6 +335,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
 
     private async ValueTask<List<long>> EnumerateMappedFreePagesAsync(CancellationToken cancellationToken)
     {
+        await this.PreflightGlobalMapAsync(cancellationToken).ConfigureAwait(false);
         if (this.cachedFreePages is not null && this.freePageGeneration == pager.InvalidationGeneration)
         {
             return [.. this.cachedFreePages];
@@ -446,8 +458,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         {
             if (!UsageMap.TryGetFirstRowBound(globalPage, format.DataPage, format.PageSize, out RowBound rowBound))
             {
-                this.InitializeGlobalUsageMapPage(globalPage);
-                rowBound = new RowBound(0, format.PageSize - Constants.UsageMap.RowSize, Constants.UsageMap.RowSize);
+                throw new InvalidDataException("The global usage map has invalid row bounds.");
             }
 
             byte mapType = globalPage[rowBound.RowStart];
@@ -459,13 +470,8 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                     return;
                 }
 
-                if (!free)
-                {
-                    return;
-                }
-
                 await this.PromoteInlineToReferenceAsync(globalPage, rowBound, cancellationToken).ConfigureAwait(false);
-                await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free: true, cancellationToken).ConfigureAwait(false);
+                await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, pageNumber, free, cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -482,23 +488,26 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
 
     private async ValueTask PromoteInlineToReferenceAsync(byte[] globalPage, RowBound rowBound, CancellationToken cancellationToken)
     {
-        var existingFreePages = new List<long>();
-        _ = UsageMap.TryEnumerateInlinePages(
+        if (Ri32(globalPage, rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset) != 0)
+        {
+            throw new InvalidDataException("The global inline usage map must be anchored at page zero.");
+        }
+
+        // Native global maps consider uncovered pages free. Copy every existing bit,
+        // then leave only the newly covered range free until its allocations are marked.
+        byte[] bitmap = this.CreateGlobalReferenceBitmap();
+        Buffer.BlockCopy(
             globalPage,
-            rowBound,
-            format.PageSize,
-            pager.PageCount,
-            minimumPageNumber: GlobalUsageMapPageNumber + 1,
-            strict: false,
-            existingFreePages);
+            rowBound.RowStart + Constants.UsageMap.InlineMapHeaderSize,
+            bitmap,
+            Constants.UsageMap.ReferenceMapBitmapOffset,
+            rowBound.RowSize - Constants.UsageMap.InlineMapHeaderSize);
+        long bitmapPage = await pager.AppendPageAsync(bitmap, cancellationToken).ConfigureAwait(false);
         Array.Clear(globalPage, rowBound.RowStart, rowBound.RowSize);
         globalPage[rowBound.RowStart] = Constants.UsageMap.ReferenceMapType;
+        Wi32(globalPage, rowBound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset, checked((int)bitmapPage));
         await pager.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
-
-        foreach (long freePageNumber in existingFreePages)
-        {
-            await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, freePageNumber, free: true, cancellationToken).ConfigureAwait(false);
-        }
+        await this.SetReferenceFreeStateAsync(globalPage, rowBound.RowStart, rowBound.RowSize, bitmapPage, free: false, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<bool> TryGetReferenceFreeStateAsync(byte[] globalPage, int rowStart, int rowSize, long pageNumber, CancellationToken cancellationToken)
@@ -539,22 +548,23 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         int pointerCount = (rowSize - Constants.UsageMap.ReferenceMapPointerOffset) / 4;
         if (pointerIndex < 0 || pointerIndex >= pointerCount)
         {
-            return;
+            throw new InvalidDataException("The global usage map cannot represent the requested page.");
         }
 
         int pointerOffset = rowStart + Constants.UsageMap.ReferenceMapPointerOffset + (pointerIndex * 4);
         int mapPageNumber = Ri32(globalPage, pointerOffset);
-        byte[] mapPage;
-        bool returnMapPage = false;
-        if (mapPageNumber <= 0)
+        if (mapPageNumber < 0 || mapPageNumber >= pager.PageCount)
         {
-            if (!free)
-            {
-                return;
-            }
+            throw new InvalidDataException("The global usage-map bitmap pointer is outside the database.");
+        }
 
-            mapPage = new byte[format.PageSize];
-            mapPage[0] = Constants.PageTypes.UsageMap;
+        byte[] mapPage;
+        bool allocatedBitmap = mapPageNumber == 0;
+        bool returnMapPage = false;
+        if (mapPageNumber == 0)
+        {
+            mapPage = this.CreateGlobalReferenceBitmap();
+
             mapPageNumber = checked((int)await pager.AppendPageAsync(mapPage, cancellationToken).ConfigureAwait(false));
             Wi32(globalPage, pointerOffset, mapPageNumber);
             await pager.WritePageAsync(GlobalUsageMapPageNumber, globalPage, cancellationToken).ConfigureAwait(false);
@@ -565,8 +575,8 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             returnMapPage = true;
             if (mapPage[0] != Constants.PageTypes.UsageMap)
             {
-                Array.Clear(mapPage, 0, format.PageSize);
-                mapPage[0] = Constants.PageTypes.UsageMap;
+                PageBuffers.Return(mapPage);
+                throw new InvalidDataException("The global usage-map reference does not point to a usage-map bitmap.");
             }
         }
 
@@ -584,6 +594,20 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 PageBuffers.Return(mapPage);
             }
         }
+
+        if (allocatedBitmap)
+        {
+            await this.SetReferenceFreeStateAsync(globalPage, rowStart, rowSize, mapPageNumber, free: false, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private byte[] CreateGlobalReferenceBitmap()
+    {
+        byte[] bitmap = new byte[format.PageSize];
+        bitmap[0] = Constants.PageTypes.UsageMap;
+        bitmap[1] = 1;
+        bitmap.AsSpan(Constants.UsageMap.ReferenceMapBitmapOffset).Fill(byte.MaxValue);
+        return bitmap;
     }
 
     private async ValueTask<byte[]> ReadGlobalUsageMapPageAsync(CancellationToken cancellationToken)
@@ -591,8 +615,8 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         byte[] page = await pager.ReadPageAsync(GlobalUsageMapPageNumber, cancellationToken).ConfigureAwait(false);
         if (!this.IsGlobalUsageMapPage(page))
         {
-            this.InitializeGlobalUsageMapPage(page);
-            await pager.WritePageAsync(GlobalUsageMapPageNumber, page, cancellationToken).ConfigureAwait(false);
+            PageBuffers.Return(page);
+            throw new InvalidDataException("The database global usage map is malformed.");
         }
 
         return page;
@@ -614,24 +638,147 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             && page[rowBound.RowStart] is Constants.UsageMap.InlineMapType or Constants.UsageMap.ReferenceMapType;
     }
 
-    private void InitializeGlobalUsageMapPage(byte[] page)
+    private async ValueTask PreflightGlobalMapAsync(CancellationToken cancellationToken, long? pageToFree = null)
     {
-        Array.Clear(page, 0, format.PageSize);
-        page[0] = Constants.PageTypes.Data;
-        page[1] = 0x01;
-        int rowStart = format.PageSize - Constants.UsageMap.RowSize;
-        int row1Start = rowStart - Constants.UsageMap.RowSize;
-        int slotTableEnd = format.DataPage.RowsStart + 4;
-        int freeSpace = row1Start - slotTableEnd;
-        Wu16(page, 2, freeSpace);
-        Wi32(page, format.DataPage.TDefOff, 1);
-        Wu16(page, format.DataPage.NumRows, 2);
-        Wu16(page, format.DataPage.RowsStart, rowStart);
-        Wu16(page, format.DataPage.RowsStart + 2, row1Start);
-        page[rowStart] = Constants.UsageMap.InlineMapType;
-        Wi32(page, rowStart + 1, 0);
-        page[row1Start] = Constants.UsageMap.InlineMapType;
-        Wi32(page, row1Start + 1, 0);
+        byte[] page = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!UsageMap.TryGetFirstRowBound(page, format.DataPage, format.PageSize, out RowBound row))
+            {
+                throw new InvalidDataException("The global usage map has invalid row bounds.");
+            }
+
+            if (page[row.RowStart] == Constants.UsageMap.InlineMapType)
+            {
+                if (Ri32(page, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset) != 0)
+                {
+                    throw new InvalidDataException("The global inline usage map must be anchored at page zero.");
+                }
+
+                return;
+            }
+
+            var pointers = new HashSet<int>();
+            int count = UsageMap.ReferencePointerCount(row.RowSize);
+            for (int index = 0; index < count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int pointer = Ri32(page, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (index * 4));
+                if (pointer == 0)
+                {
+                    continue;
+                }
+
+                if (pointer <= GlobalUsageMapPageNumber || pointer >= pager.PageCount || !pointers.Add(pointer) || pointer == pageToFree)
+                {
+                    throw new InvalidDataException("The global usage map has an invalid, repeated or self-referencing bitmap pointer.");
+                }
+
+                byte[] bitmap = await pager.ReadPageAsync(pointer, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (bitmap[0] != Constants.PageTypes.UsageMap || bitmap[1] != 1)
+                    {
+                        throw new InvalidDataException("The global usage-map reference does not point to a usage-map bitmap.");
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(bitmap);
+                }
+            }
+
+            foreach (int pointer in pointers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int ownerWindow = UsageMap.ReferencePointerIndex(format.PageSize, pointer);
+                if (ownerWindow >= count || Ri32(page, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (ownerWindow * 4)) == 0
+                    || await this.TryGetReferenceFreeStateAsync(page, row.RowStart, row.RowSize, pointer, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new InvalidDataException("A global usage-map bitmap is itself marked free or is outside allocation coverage.");
+                }
+            }
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
+    }
+
+    private async ValueTask PreflightAllocationRangeAsync(long firstPage, int pageCount, bool appending, CancellationToken cancellationToken)
+    {
+        byte[] page = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!UsageMap.TryGetFirstRowBound(page, format.DataPage, format.PageSize, out RowBound row))
+            {
+                throw new InvalidDataException("The global usage map has invalid row bounds.");
+            }
+
+            long lastPage = checked(firstPage + pageCount - 1);
+            bool inline = page[row.RowStart] == Constants.UsageMap.InlineMapType;
+            int inlineCapacity = (row.RowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
+            if (inline && lastPage < inlineCapacity)
+            {
+                return;
+            }
+
+            int count = UsageMap.ReferencePointerCount(row.RowSize);
+            long capacity = (long)count * UsageMap.PagesPerReferenceMapPage(format.PageSize);
+            if (firstPage < 0 || lastPage >= capacity)
+            {
+                throw new InvalidDataException("The global usage map cannot represent the requested allocation range.");
+            }
+
+            var missingWindows = new HashSet<int>();
+            if (inline)
+            {
+                missingWindows.Add(0);
+            }
+
+            int firstWindow = UsageMap.ReferencePointerIndex(format.PageSize, firstPage);
+            int lastWindow = UsageMap.ReferencePointerIndex(format.PageSize, lastPage);
+            for (int window = firstWindow; window <= lastWindow; window++)
+            {
+                AddMissingWindow(window);
+            }
+
+            long firstBitmapPage = checked(pager.PageCount + (appending ? pageCount : 0));
+            while (missingWindows.Count != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int previousCount = missingWindows.Count;
+                long lastBitmapPage = checked(firstBitmapPage + previousCount - 1);
+                if (lastBitmapPage >= capacity)
+                {
+                    throw new InvalidDataException("The global usage map cannot represent its additional bitmap pages.");
+                }
+
+                int firstBitmapWindow = UsageMap.ReferencePointerIndex(format.PageSize, firstBitmapPage);
+                int lastBitmapWindow = UsageMap.ReferencePointerIndex(format.PageSize, lastBitmapPage);
+                for (int window = firstBitmapWindow; window <= lastBitmapWindow; window++)
+                {
+                    AddMissingWindow(window);
+                }
+
+                if (missingWindows.Count == previousCount)
+                {
+                    break;
+                }
+            }
+
+            void AddMissingWindow(int window)
+            {
+                if (inline || Ri32(page, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (window * 4)) == 0)
+                {
+                    missingWindows.Add(window);
+                }
+            }
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
     }
 
     private async ValueTask WriteFreedPageAsync(long pageNumber, bool secure, CancellationToken cancellationToken)

@@ -14,7 +14,21 @@ internal static class Jet4SecuritySid
     /// <returns>The stored two-byte owner placeholder.</returns>
     /// <exception cref="JetCorruptDataException">The creation date cannot supply a valid SID key.</exception>
     internal static byte[] GetOwnerPlaceholder(JetFormat format, byte[] rawHeader)
+        => Encode(format, rawHeader, [0x02, 0x04]);
+
+    /// <summary>Encodes a security identity for the specified native Jet4 header.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="rawHeader">The raw header.</param>
+    /// <param name="plainIdentity">The unmasked identity.</param>
+    /// <returns>The masked identity.</returns>
+    /// <exception cref="JetCorruptDataException">The header or creation date cannot supply a SID key.</exception>
+    internal static byte[] Encode(JetFormat format, byte[] rawHeader, ReadOnlySpan<byte> plainIdentity)
     {
+        if (rawHeader.Length < 0x92)
+        {
+            throw new JetCorruptDataException("The Jet4 header is too short to derive its security identity key.");
+        }
+
         byte[] header = (byte[])rawHeader.Clone();
         format.TransformHeaderMask(header);
         double creationDate = BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(0x72, 8)));
@@ -31,7 +45,7 @@ internal static class Jet4SecuritySid
             byte value = header[0x42 + (index * 2)];
             if (index * 2 < 40)
             {
-                value ^= dateMask[(index * 2) % 4];
+                value ^= dateMask[index * 2 % 4];
             }
 
             key ^= (uint)value << (index % 24);
@@ -39,7 +53,7 @@ internal static class Jet4SecuritySid
 
         byte[] keyBytes = new byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(keyBytes, key);
-        byte[] identity = [0x70, 0x15];
+        byte[] identity = plainIdentity.ToArray();
         EncryptionManager.Rc4Transform(identity, 0, identity.Length, keyBytes);
         return identity;
     }

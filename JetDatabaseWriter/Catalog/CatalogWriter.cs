@@ -285,19 +285,22 @@ internal sealed class CatalogWriter(
         }
 
         byte[]? owner = null;
-        await ownedPages.ForEachLiveTableRowAsync(2, (row, _) =>
-        {
-            RowLocation location = row.Location;
-            string name = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, nameColumn);
-            if (!string.Equals(name, "MSysDb", StringComparison.OrdinalIgnoreCase))
+        await ownedPages.ForEachLiveTableRowAsync(
+            2,
+            (row, _) =>
             {
-                return new ValueTask<bool>(true);
-            }
+                RowLocation location = row.Location;
+                string name = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, nameColumn);
+                if (!string.Equals(name, "MSysDb", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new ValueTask<bool>(true);
+                }
 
-            string value = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, ownerColumn);
-            owner = value.Length == 0 ? null : ParseHexBytes(value);
-            return new ValueTask<bool>(false);
-        }, cancellationToken).ConfigureAwait(false);
+                string value = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, ownerColumn);
+                owner = value.Length == 0 ? null : ParseHexBytes(value);
+                return new ValueTask<bool>(false);
+            },
+            cancellationToken).ConfigureAwait(false);
         return owner;
     }
 
@@ -329,24 +332,27 @@ internal sealed class CatalogWriter(
         ColumnInfo inheritColumn = acesDef.FindColumn("FInheritable") ?? throw new JetCorruptDataException("MSysACEs has no FInheritable column.");
         int parentId = relationships ? Constants.SystemObjects.RelationshipsParentId : Constants.SystemObjects.TablesParentId;
         var inherited = new List<(byte[] Sid, int Acm)>();
-        await ownedPages.ForEachLiveTableRowAsync(acesTdefPage, (row, _) =>
-        {
-            RowLocation location = row.Location;
-            string Decode(ColumnInfo column) => ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, column);
-
-            if (CatalogValueReader.TryParseInt32(Decode(objectColumn), out int id) && id == parentId
-                && string.Equals(Decode(inheritColumn), "True", StringComparison.Ordinal))
+        await ownedPages.ForEachLiveTableRowAsync(
+            acesTdefPage,
+            (row, _) =>
             {
-                if (!CatalogValueReader.TryParseInt32(Decode(acmColumn), out int acm))
+                RowLocation location = row.Location;
+                string Decode(ColumnInfo column) => ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, column);
+
+                if (CatalogValueReader.TryParseInt32(Decode(objectColumn), out int id) && id == parentId
+                    && string.Equals(Decode(inheritColumn), "True", StringComparison.Ordinal))
                 {
-                    throw new JetCorruptDataException("An inherited MSysACEs entry has an invalid permission mask.");
+                    if (!CatalogValueReader.TryParseInt32(Decode(acmColumn), out int acm))
+                    {
+                        throw new JetCorruptDataException("An inherited MSysACEs entry has an invalid permission mask.");
+                    }
+
+                    inherited.Add((ParseHexBytes(Decode(sidColumn)), acm));
                 }
 
-                inherited.Add((ParseHexBytes(Decode(sidColumn)), acm));
-            }
-
-            return new ValueTask<bool>(true);
-        }, cancellationToken).ConfigureAwait(false);
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
         if (inherited.Count == 0)
         {
             throw new NotSupportedException("The Jet4 database has no inheritable catalog permissions for the new object.");

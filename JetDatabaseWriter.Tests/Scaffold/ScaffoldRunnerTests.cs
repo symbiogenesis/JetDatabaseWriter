@@ -426,7 +426,7 @@ public sealed class ScaffoldRunnerTests : IDisposable
         string[] files = Directory.GetFiles(this.outputDir, "*.cs");
         Assert.Equal(columnsByTable.Count, files.Length);
         Assert.Equal(
-            ["AB2.cs", "Ab.cs", "Column.cs", "ColumnAttributeEntity.cs", "DateTimeEntity.cs", "OrderDetails.cs", "OrderDetails2.cs", "Orders.cs", "SystemEntity.cs", "Table.cs", "ToStringEntity.cs", "Unknown.cs", "Unknown2.cs"],
+            ["AB2.cs", "Ab.cs", "Column.cs", "ColumnAttribute.cs", "DateTime.cs", "OrderDetails.cs", "OrderDetails2.cs", "Orders.cs", "System.cs", "Table.cs", "ToStringEntity.cs", "Unknown.cs", "Unknown2.cs"],
             files.Select(Path.GetFileName).Order(StringComparer.Ordinal));
 
         List<string> sources = [];
@@ -514,27 +514,21 @@ public sealed class ScaffoldRunnerTests : IDisposable
         Assert.Empty(Directory.GetFiles(this.outputDir));
     }
 
-    /// <summary>
-    /// The usings sit above the namespace, and C# looks a type name up in every enclosing
-    /// namespace before it consults them, so a namespace segment named like a type the
-    /// generated code names would hide that type: a property type (CS0118) or a mapping
-    /// attribute class (CS0616). The tool stops before it creates the output directory.
-    /// </summary>
+    /// <summary>Framework-shaped namespace segments compile through global type references.</summary>
     /// <param name="ns">The namespace.</param>
     /// <param name="columnType">The type of the table's one column besides the key.</param>
-    /// <param name="segment">The segment the error names.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
-    [InlineData("MyApp.DateTime", typeof(DateTime), "DateTime")]
-    [InlineData("X.Hyperlink", typeof(Hyperlink), "Hyperlink")]
-    [InlineData("Guid.Models", typeof(Guid), "Guid")]
-    [InlineData("MyApp.TimeSpan.Data", typeof(TimeSpan), "TimeSpan")]
-    [InlineData("MyApp.Version", typeof(Version), "Version")]
-    [InlineData("MyApp.Hyperlink", typeof(int), "Hyperlink")]
-    [InlineData("DateOnly.TimeOnly", typeof(string), "DateOnly")]
-    [InlineData("MyApp.ColumnAttribute", typeof(int), "ColumnAttribute")]
-    [InlineData("TableAttribute.Models", typeof(int), "TableAttribute")]
-    public async Task RunAsync_NamespaceSegmentNamedLikeGeneratedCodeType_ReturnsMinusOneAndWritesNoFiles(string ns, Type columnType, string segment)
+    [InlineData("MyApp.DateTime", typeof(DateTime))]
+    [InlineData("X.Hyperlink", typeof(Hyperlink))]
+    [InlineData("Guid.Models", typeof(Guid))]
+    [InlineData("MyApp.TimeSpan.Data", typeof(TimeSpan))]
+    [InlineData("MyApp.Version", typeof(Version))]
+    [InlineData("MyApp.Hyperlink", typeof(int))]
+    [InlineData("DateOnly.TimeOnly", typeof(string))]
+    [InlineData("MyApp.ColumnAttribute", typeof(int))]
+    [InlineData("TableAttribute.Models", typeof(int))]
+    public async Task RunAsync_NamespaceSegmentNamedLikeGeneratedCodeType_Compiles(string ns, Type columnType)
     {
         ArgumentNullException.ThrowIfNull(columnType);
         string nested = Path.Combine(this.outputDir, "Models");
@@ -547,12 +541,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
 
         int result = await runner.RunAsync(nested, ns, useRecords: false, nullable: true, TestContext.Current.CancellationToken);
 
-        Assert.Equal(-1, result);
-        Assert.Contains(
-            $"Error: the namespace '{ns}' has a segment named '{segment}', which would hide the {segment} type the generated code uses.",
-            stderr.ToString(),
-            StringComparison.Ordinal);
-        Assert.False(Directory.Exists(nested));
+        Assert.Equal(1, result);
+        Assert.Empty(stderr.ToString());
+        ScaffoldCompilation.CompileCleanly(await File.ReadAllTextAsync(Path.Combine(nested, "Orders.cs"), TestContext.Current.CancellationToken));
     }
 
     /// <summary>

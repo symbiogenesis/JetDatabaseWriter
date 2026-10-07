@@ -48,10 +48,10 @@ internal static class EntityEmitter
         [typeof(double)] = "double",
         [typeof(decimal)] = "decimal",
         [typeof(string)] = "string",
-        [typeof(DateTime)] = "DateTime",
-        [typeof(DateTimeOffset)] = "DateTimeOffset",
-        [typeof(TimeSpan)] = "TimeSpan",
-        [typeof(Guid)] = "Guid",
+        [typeof(DateTime)] = "global::System.DateTime",
+        [typeof(DateTimeOffset)] = "global::System.DateTimeOffset",
+        [typeof(TimeSpan)] = "global::System.TimeSpan",
+        [typeof(Guid)] = "global::System.Guid",
         [typeof(byte[])] = "byte[]",
         [typeof(object)] = "object",
     }.ToFrozenDictionary();
@@ -92,10 +92,8 @@ internal static class EntityEmitter
     /// attribute, because the library matches names case-insensitively. A property or
     /// navigation named like the class or a <see cref="ReservedMemberNames">reserved member</see>
     /// gets a <c>Value</c> or <c>Navigation</c> suffix, and a numeric suffix when that name is
-    /// taken too. The using directives precede the namespace declaration, so a namespace segment
-    /// such as <c>System</c> cannot capture them. C# consults them only after the namespace and
-    /// each enclosing one, though, so the caller must refuse a segment named like a type the code
-    /// names (<see cref="ScaffoldNames.FindTypeHidingSegment"/>).
+    /// taken too. Framework types, attributes and navigation targets use global qualifications
+    /// so generated names cannot capture their references.
     /// </summary>
     /// <param name="className">The generated class name.</param>
     /// <param name="tableName">The Access table name the class maps.</param>
@@ -155,8 +153,8 @@ internal static class EntityEmitter
             string navName = DeduplicateName(MemberName(nav.PreferredName, className, "Navigation"), usedNames);
 
             typeDecl = typeDecl.AddMembers(nav.IsCollection
-                ? BuildCollectionNav(navName, nav.TargetClassName)
-                : BuildReferenceNav(navName, nav.TargetClassName, nullable));
+                ? BuildCollectionNav(navName, nav.TargetClassName, ns)
+                : BuildReferenceNav(navName, nav.TargetClassName, ns, nullable));
             anyCollection = anyCollection || nav.IsCollection;
         }
 
@@ -182,33 +180,6 @@ internal static class EntityEmitter
             .WithLeadingTrivia(nullable ? FileTriviaWithNullable : FileTriviaPlain);
 
         return FormatOutput(compilationUnit.NormalizeWhitespace().ToFullString());
-    }
-
-    /// <summary>
-    /// Returns the C# type names the properties for <paramref name="columns"/> spell out
-    /// (such as <c>DateTime</c>, <c>Guid</c> or <c>Hyperlink</c>), leaving out keywords such
-    /// as <c>int</c>. A generated class with one of these names would capture the
-    /// property types of every entity in its namespace, and so would a namespace segment,
-    /// so the class allocation reserves them and the runner refuses such a namespace.
-    /// </summary>
-    /// <param name="columns">The columns of the scaffolded tables.</param>
-    /// <returns>The referenced type names.</returns>
-    internal static IEnumerable<string> ReferencedTypeNames(IEnumerable<ColumnMetadata> columns)
-    {
-        foreach (ColumnMetadata col in columns)
-        {
-            Type type = Nullable.GetUnderlyingType(col.ClrType) ?? col.ClrType;
-            if (type.IsArray)
-            {
-                type = type.GetElementType() ?? type;
-            }
-
-            string name = GetFriendlyTypeName(type);
-            if (SyntaxFacts.GetKeywordKind(name) == SyntaxKind.None)
-            {
-                yield return name;
-            }
-        }
     }
 
     /// <summary>
@@ -293,13 +264,13 @@ internal static class EntityEmitter
     /// <returns>The attribute list.</returns>
     private static AttributeListSyntax NameAttribute(string attributeName, string value) =>
         AttributeList(SingletonSeparatedList(
-            Attribute(IdentifierName(attributeName))
+            Attribute(ParseName("global::System.ComponentModel.DataAnnotations.Schema." + attributeName + "Attribute"))
                 .WithArgumentList(AttributeArgumentList(SingletonSeparatedList(
                     AttributeArgument(LiteralExpression(SyntaxKind.StringLiteralExpression, Literal(value))))))));
 
-    private static PropertyDeclarationSyntax BuildReferenceNav(string name, string targetType, bool nullable)
+    private static PropertyDeclarationSyntax BuildReferenceNav(string name, string targetType, string ns, bool nullable)
     {
-        string type = nullable ? targetType + "?" : targetType;
+        string type = "global::" + ns + "." + targetType + (nullable ? "?" : string.Empty);
         return PropertyDeclaration(ParseTypeName(type), name)
             .AddModifiers(Token(SyntaxKind.PublicKeyword))
             .AddAccessorListAccessors(
@@ -310,13 +281,13 @@ internal static class EntityEmitter
                 ElasticLineFeed);
     }
 
-    private static PropertyDeclarationSyntax BuildCollectionNav(string name, string targetType)
-        => PropertyDeclaration(ParseTypeName($"ICollection<{targetType}>"), name)
+    private static PropertyDeclarationSyntax BuildCollectionNav(string name, string targetType, string ns)
+        => PropertyDeclaration(ParseTypeName($"global::System.Collections.Generic.ICollection<global::{ns}.{targetType}>"), name)
             .AddModifiers(Token(SyntaxKind.PublicKeyword))
             .AddAccessorListAccessors(
                 AccessorDeclaration(SyntaxKind.GetAccessorDeclaration).WithSemicolonToken(Token(SyntaxKind.SemicolonToken)),
                 AccessorDeclaration(SyntaxKind.SetAccessorDeclaration).WithSemicolonToken(Token(SyntaxKind.SemicolonToken)))
-            .WithInitializer(EqualsValueClause(ParseExpression($"new List<{targetType}>()")))
+            .WithInitializer(EqualsValueClause(ParseExpression($"new global::System.Collections.Generic.List<global::{ns}.{targetType}>()")))
             .WithSemicolonToken(Token(SyntaxKind.SemicolonToken))
             .WithLeadingTrivia(
                 Trivia(XmlDocSummary($"Navigation: related {targetType} children.")),
@@ -397,9 +368,17 @@ internal static class EntityEmitter
             return name;
         }
 
-        return Nullable.GetUnderlyingType(type) is { } underlying
-            ? GetFriendlyTypeName(underlying) + "?"
-            : type.Name;
+        if (Nullable.GetUnderlyingType(type) is { } underlying)
+        {
+            return GetFriendlyTypeName(underlying) + "?";
+        }
+
+        if (type.IsArray)
+        {
+            return GetFriendlyTypeName(type.GetElementType()!) + "[" + new string(',', type.GetArrayRank() - 1) + "]";
+        }
+
+        return "global::" + type.FullName!.Replace('+', '.');
     }
 
     private static ExpressionSyntax? DefaultInitializer(Type clrType, bool isNullable, bool nullableEnabled)

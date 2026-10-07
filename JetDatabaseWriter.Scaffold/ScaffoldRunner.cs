@@ -20,11 +20,9 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
     /// <summary>
     /// Generates C# entity files for all user tables visible through the configured reader.
     /// Every table's columns are read first, so each table gets a class and file name no
-    /// other table and no type the generated code uses has
+    /// other table has
     /// (<see cref="ScaffoldNames.AllocateClassNames"/>), navigations name only the
-    /// classes that are generated, and a namespace segment that would hide a type the
-    /// generated code names (<see cref="ScaffoldNames.FindTypeHidingSegment"/>) stops the
-    /// run before the output directory is created.
+    /// classes that are generated. Global type qualifications prevent namespace capture.
     /// </summary>
     /// <param name="outputDir">Directory to write generated .cs files into.</param>
     /// <param name="ns">Namespace for generated classes.</param>
@@ -33,7 +31,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
     /// The number of models generated, or -1 when <paramref name="ns"/> is not a valid C#
-    /// namespace or has a segment named like a type the generated code names.
+    /// namespace.
     /// </returns>
     public async Task<int> RunAsync(
         string outputDir,
@@ -79,12 +77,6 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             {
                 await error.WriteLineAsync($"  Warning: skipping table '{table}': {ex.Message}");
             }
-        }
-
-        if (ScaffoldNames.FindTypeHidingSegment(ns, scaffolded) is { } segment)
-        {
-            await error.WriteLineAsync($"Error: the namespace '{ns}' has a segment named '{segment}', which would hide the {segment} type the generated code uses. Choose a namespace without it.");
-            return -1;
         }
 
         Directory.CreateDirectory(outputDir);

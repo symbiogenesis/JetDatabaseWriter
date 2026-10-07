@@ -45,11 +45,11 @@ public sealed class TextSortOrderTests
         => Assert.Equal(GeneralLegacyTextIndexEncoder.Encode("Éléphant!", true), IndexKeyEncoder.EncodeTextEntry(default, "Éléphant!", true));
 
     [Fact]
-    public void ExpressionComparison_KeepsTrailingSpacesAndLongSuffixes()
+    public void ExpressionComparison_IgnoresTrailingSpacesAndKeepsLongSuffixes()
     {
         JetTextCollation collation = JetTextCollation.GeneralLegacy;
         Assert.Equal(0, collation.Compare("Éléphant!", "éléphant!"));
-        Assert.NotEqual(0, collation.Compare("a", "a "));
+        Assert.Equal(0, collation.Compare("a", "a "));
         string prefix = new('a', Constants.IndexTextEncoding.MaxTextIndexCharLength);
         Assert.True(collation.Compare(prefix + "a", prefix + "b") < 0);
     }
@@ -62,7 +62,7 @@ public sealed class TextSortOrderTests
         Assert.Equal(0, collation.Compare(text, text));
         Assert.True(collation.Compare(text + "a", text + "b") < 0);
         Assert.True(collation.Compare(text + "b", text + "a") > 0);
-        Assert.NotEqual(0, collation.Compare(text, text + " "));
+        Assert.Equal(0, collation.Compare(text, text + " "));
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public sealed class TextSortOrderTests
         Assert.Equal(0, collation.Compare(middle + "\0b", middle + "b"));
         string memo = new('a', 20000);
         Assert.True(collation.Compare("é" + memo + "a", "e" + memo + "z") < 0);
-        Assert.NotEqual(0, collation.Compare(memo, memo + " "));
+        Assert.Equal(0, collation.Compare(memo, memo + " "));
     }
 
     [Theory]
@@ -102,6 +102,10 @@ public sealed class TextSortOrderTests
         {
             foreach (string right in corpus)
             {
+                // Raw key encoding retains spaces; expression comparison uses native trimming.
+                Assert.Equal(
+                    Math.Sign(IndexPageCodec.CompareKeyBytes(EncodeIndexComparison(order, left, trimTrailingSpaces: false), EncodeIndexComparison(order, right, trimTrailingSpaces: false))),
+                    Math.Sign(IndexPageCodec.CompareKeyBytes(collation.EncodeComparisonKey(left), collation.EncodeComparisonKey(right))));
                 byte[] leftIndex = EncodeIndexComparison(order, left);
                 byte[] rightIndex = EncodeIndexComparison(order, right);
                 Assert.Equal(Math.Sign(IndexPageCodec.CompareKeyBytes(leftIndex, rightIndex)), Math.Sign(collation.Compare(left, right)));
@@ -130,15 +134,15 @@ public sealed class TextSortOrderTests
     public void UnsupportedSortOrder_RefusesNonNullText()
         => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeTextEntry(new TextSortOrder(0x041D, 0, true), "a", true));
 
-    private static byte[] EncodeIndexComparison(TextSortOrder order, string text)
+    private static byte[] EncodeIndexComparison(TextSortOrder order, string text, bool trimTrailingSpaces = true)
     {
         if (!order.HasVersion)
         {
-            return General97TextIndexEncoder.Encode(text, true, false);
+            return General97TextIndexEncoder.Encode(text, true, trimTrailingSpaces);
         }
 
         return order.Version == 0
-            ? GeneralLegacyTextIndexEncoder.Encode(text, true, false)
-            : GeneralTextIndexEncoder.Encode(text, true, false);
+            ? GeneralLegacyTextIndexEncoder.Encode(text, true, trimTrailingSpaces)
+            : GeneralTextIndexEncoder.Encode(text, true, trimTrailingSpaces);
     }
 }

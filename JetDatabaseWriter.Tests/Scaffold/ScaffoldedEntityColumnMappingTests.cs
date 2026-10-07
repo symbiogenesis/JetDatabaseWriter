@@ -29,12 +29,12 @@ public sealed class ScaffoldedEntityColumnMappingTests
         string source = EntityEmitter.Emit("TblPeople", TableName, PeopleColumns(), [], "NS", useRecords: false, nullable: true);
 
         Assert.Contains("using System.ComponentModel.DataAnnotations.Schema;", source, StringComparison.Ordinal);
-        Assert.Contains("[Table(\"tbl People\")]", source, StringComparison.Ordinal);
-        Assert.Contains("[Column(\"Person ID\")]", source, StringComparison.Ordinal);
-        Assert.Contains("[Column(\"Last Name\")]", source, StringComparison.Ordinal);
+        Assert.Contains("[global::System.ComponentModel.DataAnnotations.Schema.TableAttribute(\"tbl People\")]", source, StringComparison.Ordinal);
+        Assert.Contains("[global::System.ComponentModel.DataAnnotations.Schema.ColumnAttribute(\"Person ID\")]", source, StringComparison.Ordinal);
+        Assert.Contains("[global::System.ComponentModel.DataAnnotations.Schema.ColumnAttribute(\"Last Name\")]", source, StringComparison.Ordinal);
 
         // "Note" already binds by name, so it needs no attribute.
-        Assert.DoesNotContain("[Column(\"Note\")]", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("[global::System.ComponentModel.DataAnnotations.Schema.ColumnAttribute(\"Note\")]", source, StringComparison.Ordinal);
         Assert.DoesNotContain("\r\n\r\n\r\n", source, StringComparison.Ordinal);
     }
 
@@ -49,8 +49,8 @@ public sealed class ScaffoldedEntityColumnMappingTests
 
         string source = EntityEmitter.Emit("Customer", "customer", columns, [], "NS", useRecords: false, nullable: false);
 
-        Assert.DoesNotContain("[Column(", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("[Table(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("[global::System.ComponentModel.DataAnnotations.Schema.ColumnAttribute(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("[global::System.ComponentModel.DataAnnotations.Schema.TableAttribute(", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DataAnnotations", source, StringComparison.Ordinal);
     }
 
@@ -118,7 +118,7 @@ public sealed class ScaffoldedEntityColumnMappingTests
     /// <summary>
     /// A table named "Column Attribute" used to give a class named ColumnAttribute, which
     /// captured every <c>[Column]</c> in its namespace, and a table named DateTime a class
-    /// that typed every date column as itself. Both now get an <c>Entity</c> class, and the
+    /// that typed every date column as itself. Global qualifications preserve their natural class names, and the
     /// generated types insert and read through the original tables.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
@@ -145,13 +145,13 @@ public sealed class ScaffoldedEntityColumnMappingTests
         }
 
         Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables);
-        Assert.Equal("ColumnAttributeEntity", classNames["Column Attribute"]);
-        Assert.Equal("DateTimeEntity", classNames["DateTime"]);
+        Assert.Equal("ColumnAttribute", classNames["Column Attribute"]);
+        Assert.Equal("DateTime", classNames["DateTime"]);
 
         Assembly assembly = ScaffoldCompilation.CompileCleanly(
             tables.Select(t => EntityEmitter.Emit(classNames[t.Table], t.Table, t.Columns, [], "Generated", useRecords: false, nullable: true)));
-        Type people = assembly.GetType("Generated.ColumnAttributeEntity", throwOnError: true)!;
-        Type dates = assembly.GetType("Generated.DateTimeEntity", throwOnError: true)!;
+        Type people = assembly.GetType("Generated.ColumnAttribute", throwOnError: true)!;
+        Type dates = assembly.GetType("Generated.DateTime", throwOnError: true)!;
         Assert.Equal(typeof(DateTime?), dates.GetProperty("When")!.PropertyType);
 
         object person = people.GetConstructor(Type.EmptyTypes)!.Invoke(null);

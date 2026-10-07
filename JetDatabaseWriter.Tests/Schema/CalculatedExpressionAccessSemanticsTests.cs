@@ -50,15 +50,11 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("\"a   \" <> \"a\"", false)]
     [InlineData("\" a\" = \"a\"", false)]
     public void TextComparison_IgnoresOnlyTrailingSpaces(string expression, bool expected)
-    {
-        Assert.Equal(expected, Assert.IsType<bool>(Evaluate(expression, typeof(bool))));
-    }
+        => Assert.Equal(expected, Assert.IsType<bool>(Evaluate(expression, typeof(bool))));
 
     [Fact]
     public void TextConcatenation_PreservesTrailingSpaces()
-    {
-        Assert.Equal("a b", Assert.IsType<string>(Evaluate("\"a \" & \"b\"", typeof(string))));
-    }
+        => Assert.Equal("a b", Assert.IsType<string>(Evaluate("\"a \" & \"b\"", typeof(string))));
 
     [Fact]
     public void LongOperatorChain_StaysWithinNestingLimit()
@@ -868,7 +864,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [Theory]
     [InlineData("\"é\" < \"z\"", true)]
     [InlineData("\"É\" = \"é\"", true)]
-    [InlineData("\"a\" = \"a \"", false)]
+    [InlineData("\"a\" = \"a \"", true)]
     [InlineData("\"é\" Between \"a\" And \"z\"", true)]
     [InlineData("\"É\" In (\"é\", \"z\")", true)]
     public void TextComparisons_UseAccessSortKeys(string expression, bool expected)

@@ -23,6 +23,10 @@ public sealed class NativeJet4CatalogSecurityTests
         byte[] header = bytes.AsSpan(0, 4096).ToArray();
         byte[] before = (byte[])header.Clone();
         Assert.Equal(new byte[] { 0xFB, 0x7E }, Jet4SecuritySid.GetOwnerPlaceholder(JetFormat.FromHeader(header), header));
+        var format = JetFormat.FromHeader(header);
+        Assert.Equal(new byte[] { 0xFA, 0x7B }, Jet4SecuritySid.Encode(format, header, [0x03, 0x01]));
+        Assert.Equal(new byte[] { 0xFB, 0x7B }, Jet4SecuritySid.Encode(format, header, [0x02, 0x01]));
+        Assert.Equal(new byte[] { 0xFB, 0x79 }, Jet4SecuritySid.Encode(format, header, [0x02, 0x03]));
         Assert.Equal(before, header);
     }
 
