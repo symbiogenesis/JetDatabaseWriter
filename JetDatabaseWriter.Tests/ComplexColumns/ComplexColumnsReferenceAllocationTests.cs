@@ -538,15 +538,20 @@ public sealed class ComplexColumnsReferenceAllocationTests
             await writer.InsertRowsAsync("Docs", [.. Enumerable.Range(1, 5).Select(id => new object?[] { id, DBNull.Value, DBNull.Value })], Ct);
         }
 
-        // Duplicate positive references without introducing missing or mismatched identities.
+        // Rows 3 and 4 share reference 3 in both complex columns. Every
+        // slot is otherwise valid and stays below the persisted counter.
+        // A schema change must refuse the duplicate without reassigning it.
         await SetComplexSlotsAsync(ms, "Docs", r => (int)r[0] == 4, (_, _) => 3);
 
         byte[] baseline = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
             await RunAsync(writer, mode, async () =>
-                _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
-                    await writer.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct)));
+            {
+                JetConstraintException error = await Assert.ThrowsAsync<JetConstraintException>(async () =>
+                    await writer.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct));
+                Assert.Equal(JetErrorCode.UniqueViolation, error.ErrorCode);
+            });
         }
 
         Assert.Equal(baseline, ms.ToArray());
