@@ -12,10 +12,10 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
-using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 /// <summary>Native Jet4 catalog ownership and permissions remain consistent during table creation.</summary>
