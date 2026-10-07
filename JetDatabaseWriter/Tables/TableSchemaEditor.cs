@@ -1217,16 +1217,23 @@ internal sealed class TableSchemaEditor(
             return;
         }
 
-        // The reference each row's surviving complex columns share, and how
-        // many rows share each one.
+        // Every surviving parent reference must belong to one row.
         int?[] shared = new int?[rows.Count];
-        var holders = new Dictionary<int, int>();
+        var holders = new HashSet<int>();
         for (int r = 0; r < rows.Count; r++)
         {
             if (SharedComplexReference(rows[r], complexColumns, newDefs) is int reference)
             {
                 shared[r] = reference;
-                holders[reference] = holders.TryGetValue(reference, out int count) ? count + 1 : 1;
+                if (!holders.Add(reference))
+                {
+                    ColumnDefinition column = newDefs.First(definition => definition.ComplexId != 0 && (definition.IsAttachment || definition.IsMultiValue));
+                    ResolvedTable parent = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptComplexColumn,
+                        $"Parent rows of '{tableName}' reuse complex reference {reference} for '{column.Name}'.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = parent.Entry.TDefPage });
+                }
             }
         }
 
@@ -1240,7 +1247,7 @@ internal sealed class TableSchemaEditor(
             }
 
             // Initialize only added columns; surviving slots are preserved.
-            if (shared[r] is int reference && holders[reference] == 1)
+            if (shared[r] is int reference)
             {
                 FillNullComplexSlots(row, addedColumns, reference);
             }

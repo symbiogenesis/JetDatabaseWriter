@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ComplexColumns;
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -79,7 +80,7 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
     /// <param name="parentTdefPage">The table's TDEF page.</param>
     /// <param name="parentDef">The table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="JetCorruptDataException">An existing complex reference is invalid or exceeds the persisted counter, or its flat-table metadata cannot be read.</exception>
+    /// <exception cref="JetCorruptDataException">An existing complex reference is invalid, repeated in a parent column, or exceeds the persisted counter, or its flat-table metadata cannot be read.</exception>
     internal async ValueTask<long> ReadSeedAsync(long parentTdefPage, TableDef parentDef, CancellationToken cancellationToken)
     {
         long seed = await autoNumbers.ReadComplexHighWaterAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
@@ -89,12 +90,18 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
             return seed;
         }
 
+        var usedReferences = new HashSet<int>[complexColumns.Count];
+        for (int columnIndex = 0; columnIndex < usedReferences.Length; columnIndex++)
+        {
+            usedReferences[columnIndex] = [];
+        }
         await ownedPages.ForEachLiveTableRowAsync(
             parentTdefPage,
             (row, _) =>
             {
-                foreach (ColumnInfo column in complexColumns)
+                for (int columnIndex = 0; columnIndex < complexColumns.Count; columnIndex++)
                 {
+                    ColumnInfo column = complexColumns[columnIndex];
                     if (!TryReadSlot(format, row.Page, row.Location.RowStart, row.Location.RowSize, column, out int reference))
                     {
                         throw new JetCorruptDataException(
@@ -109,6 +116,14 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
                             JetErrorCode.CorruptComplexColumn,
                             $"Complex reference {reference} for '{column.Name}' exceeds the parent TDEF complex AutoNumber counter {seed}.",
                             new JetErrorInfo { ColumnName = column.Name, PageNumber = parentTdefPage });
+                    }
+
+                    if (!usedReferences[columnIndex].Add(reference))
+                    {
+                        throw new JetCorruptDataException(
+                            JetErrorCode.CorruptComplexColumn,
+                            $"Parent rows reuse complex reference {reference} for '{column.Name}'.",
+                            new JetErrorInfo { ColumnName = column.Name, PageNumber = row.Location.DataPageNumber });
                     }
                 }
 

@@ -548,9 +548,11 @@ public sealed class ComplexColumnsReferenceAllocationTests
         {
             await RunAsync(writer, mode, async () =>
             {
-                JetConstraintException error = await Assert.ThrowsAsync<JetConstraintException>(async () =>
+                JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                     await writer.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct));
-                Assert.Equal(JetErrorCode.UniqueViolation, error.ErrorCode);
+                Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
+                Assert.Equal("Files", error.ErrorInfo.ColumnName);
+                Assert.True(error.ErrorInfo.PageNumber > 0);
             });
         }
 
