@@ -311,3 +311,9 @@ The owned-pages rows of the Access-authored fixtures, read raw with PowerShell
 
 Whether Access reads the writer's REFERENCE rows is unchecked (under
 "Unchecked against Access" in docs/todo.md).
+
+Writer snapshots use a write-back decode plan. A located live row that is too
+short for its column-count field or whose layout cannot be decoded raises
+a contextual "MalformedValue" corruption error before row updates or schema
+rewrites. The snapshot cannot omit that row and reinsert only the readable
+rows. Public read APIs retain their own decode-fault policy.
