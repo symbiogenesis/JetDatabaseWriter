@@ -322,6 +322,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
             BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + foreignKey.FixedOff, 4), 2);
             await harness.Pager.WritePageAsync(row.DataPageNumber, page, Ct);
         }
+
         byte[] baseline = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
