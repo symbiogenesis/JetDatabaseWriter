@@ -392,22 +392,22 @@ public sealed class ObjectNameValidationTests
     }
 
     /// <summary>
-    /// A table whose name and column names an earlier writer, or another tool,
-    /// stored against the rules can still be written, altered, read and
-    /// dropped: only names a caller introduces are checked.
+    /// Existing objects with names that violate Access's creation rules remain
+    /// addressable for reading, writing, correction and removal. Only new
+    /// names supplied by the caller are checked.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(AllFormats))]
-    public async Task LegacyInvalidNames_RemainUsable(DatabaseFormat format)
+    public async Task ExistingInvalidNames_RemainAddressable(DatabaseFormat format)
     {
-        const string legacy = "   ";
+        const string invalidName = "   ";
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
         {
             await harness.Services.Schema.CreateTableAsync(
-                legacy,
+                invalidName,
                 [new("Id", typeof(int)), new(" Lead", typeof(string), maxLength: 10), new("a.b", typeof(int))],
                 [new IndexDefinition("ix.Lead", " Lead")],
                 Ct);
@@ -415,26 +415,26 @@ public sealed class ObjectNameValidationTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            await writer.InsertRowAsync(legacy, [1, "one", 10], Ct);
-            await writer.AddColumnAsync(legacy, new ColumnDefinition("Ok", typeof(int)), Ct);
-            await writer.RenameColumnAsync(legacy, " Lead", "Lead", Ct);
-            await writer.DropColumnAsync(legacy, "a.b", Ct);
-            await writer.InsertRowAsync(legacy, [2, "two", 20], Ct);
+            await writer.InsertRowAsync(invalidName, [1, "one", 10], Ct);
+            await writer.AddColumnAsync(invalidName, new ColumnDefinition("Ok", typeof(int)), Ct);
+            await writer.RenameColumnAsync(invalidName, " Lead", "Lead", Ct);
+            await writer.DropColumnAsync(invalidName, "a.b", Ct);
+            await writer.InsertRowAsync(invalidName, [2, "two", 20], Ct);
         }
 
         await using (AccessReader reader = await OpenReaderAsync(ms))
         {
-            Assert.Equal(legacy, Assert.Single(await reader.ListTablesAsync(Ct)));
-            Assert.Equal(["Id", "Lead", "Ok"], (await reader.GetColumnMetadataAsync(legacy, Ct)).Select(c => c.Name));
-            Assert.Contains(await reader.ListIndexesAsync(legacy, Ct), i => i.Name == "ix.Lead");
+            Assert.Equal(invalidName, Assert.Single(await reader.ListTablesAsync(Ct)));
+            Assert.Equal(["Id", "Lead", "Ok"], (await reader.GetColumnMetadataAsync(invalidName, Ct)).Select(c => c.Name));
+            Assert.Contains(await reader.ListIndexesAsync(invalidName, Ct), i => i.Name == "ix.Lead");
             Assert.Equal(
                 ["1|one|", "2|two|20"],
-                (await reader.ReadDataTableAsync(legacy, cancellationToken: Ct)).AsEnumerable().Select(r => $"{r["Id"]}|{r["Lead"]}|{r["Ok"]}").Order(StringComparer.Ordinal));
+                (await reader.ReadDataTableAsync(invalidName, cancellationToken: Ct)).AsEnumerable().Select(r => $"{r["Id"]}|{r["Lead"]}|{r["Ok"]}").Order(StringComparer.Ordinal));
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            await writer.DropTableAsync(legacy, Ct);
+            await writer.DropTableAsync(invalidName, Ct);
         }
 
         await using AccessReader after = await OpenReaderAsync(ms);

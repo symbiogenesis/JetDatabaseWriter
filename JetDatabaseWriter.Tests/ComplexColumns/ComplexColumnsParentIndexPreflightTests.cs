@@ -49,7 +49,7 @@ public sealed class ComplexColumnsParentIndexPreflightTests
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
         {
             ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Table1", Ct);
-            await LegacyDamageInjector.SetPhantomKeyColumnAsync(harness, table.Entry.TDefPage, realIndexNumber, Ct);
+            await IndexMetadataCorruptionInjector.SetPhantomKeyColumnAsync(harness, table.Entry.TDefPage, realIndexNumber, Ct);
         }
 
         RawTable beforeTable = await ReadRawTableAsync(stream, "Table1");

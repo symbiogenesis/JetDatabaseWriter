@@ -14,15 +14,13 @@ using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// Re-creates, in a table the current writer created, the table-definition
-/// damage that JetDatabaseWriter builds before 4.0.0 left behind, for tests of
-/// how the writer treats such tables. Every method patches pages through the
-/// writer's <see cref="JetDatabaseWriter.Pages.Paging.Pager"/> and
-/// <see cref="TDefWriter"/> directly, below any writer workflow. Not to be
-/// confused with legacy-repair's production <c>LegacyTDefDamage</c>, which
-/// detects and repairs the same damage.
+/// Injects malformed index metadata into a table for tests that verify
+/// write operations refuse unmaintainable indexes without changing the file.
+/// Every method patches pages through the writer's
+/// <see cref="JetDatabaseWriter.Pages.Paging.Pager"/> and
+/// <see cref="TDefWriter"/> directly, below any writer workflow.
 /// </summary>
-internal static class LegacyDamageInjector
+internal static class IndexMetadataCorruptionInjector
 {
     /// <summary>
     /// The <c>col_num</c> <see cref="SetPhantomKeyColumnAsync"/> writes: column
@@ -31,21 +29,20 @@ internal static class LegacyDamageInjector
     public const int PhantomColumnNumber = 0x0300;
 
     /// <summary>
-    /// Re-creates the stray <c>used_pages</c> row byte that builds before
-    /// f68a131 wrote into wide Jet4 and ACE tables. They split each real
-    /// index's logical <c>used_pages</c> offset <c>L</c> into a page and an
-    /// offset by plain division by the page size, ignoring the 8-byte header
-    /// of each TDEF continuation page. So the row byte (real index + 2) landed
-    /// at physical offset <c>L % pageSize</c> of chain page <c>L / pageSize</c>,
-    /// 8 bytes early per continuation page, and the real row byte stayed 0.
+    /// Injects a misplaced <c>used_pages</c> row byte into wide Jet4 and ACE
+    /// tables. Each real index's logical <c>used_pages</c> offset <c>L</c> is
+    /// split into a page and an offset by plain division by the page size,
+    /// ignoring the 8-byte header of each TDEF continuation page. The row
+    /// byte (real index + 2) lands at physical offset <c>L % pageSize</c> of
+    /// chain page <c>L / pageSize</c>, 8 bytes early per continuation page,
+    /// and the real row byte is set to 0.
     /// One continuation page early is the high byte of <c>col_map</c> slot 7,
     /// which then reads as key column <c>0x(ri+2)FF</c>, a column the table
     /// does not have. When <c>L</c> is a multiple of the page size, the byte
     /// lands on the page-type byte of that continuation page instead (the
     /// write-atomicity probe's header hit with offset 0). The page then no
     /// longer reads as a TDEF page, so the chain ends before it, and every
-    /// index descriptor, entry and name past that point is cut off. Writes
-    /// the same bytes as those builds (a39a315).
+    /// index descriptor, entry and name past that point is cut off.
     /// </summary>
     /// <param name="writer">The open writer layers.</param>
     /// <param name="tdefPage">The table's first TDEF page.</param>
@@ -57,7 +54,7 @@ internal static class LegacyDamageInjector
         DatabaseFile db = writer.Database;
         if (db.Format.Kind == DatabaseFormat.Jet3Mdb)
         {
-            throw new InvalidOperationException("The stray used_pages byte was written only into Jet4 and ACE tables.");
+            throw new InvalidOperationException("The misplaced used_pages byte injector supports only Jet4 and ACE tables.");
         }
 
         LogicalTDefChain chain = await db.TableDefs.ReadTDefChainAsync(tdefPage, cancellationToken);
@@ -83,10 +80,9 @@ internal static class LegacyDamageInjector
             int pageIndex = usedPagesOffset / pageSize;
             int offset = usedPagesOffset % pageSize;
 
-            // At offset 0 the byte overwrites the continuation page's type, as
-            // it did in those builds. Offsets 1 to 7 hold the rest of the page
-            // header, the next-page pointer included; those hits are not
-            // re-created.
+            // At offset 0 the byte overwrites the continuation page's type.
+            // Offsets 1 to 7 hold the rest of the page header, including the
+            // next-page pointer; the injector avoids those offsets.
             if ((offset is > 0 and < 8) || pageIndex >= chain.PageNumbers.Count)
             {
                 throw new InvalidOperationException(
@@ -112,9 +108,8 @@ internal static class LegacyDamageInjector
     /// <summary>
     /// Writes <see cref="PhantomColumnNumber"/> into <c>col_map</c> slot 1 of
     /// real index <paramref name="realIndexNumber"/>, so the index names a
-    /// second key column the table does not have, as the stray byte does on
-    /// Jet4 and ACE. Used for Jet3, whose wide tables builds before 4.0.0 left
-    /// stale rather than with a phantom column.
+    /// second key column the table does not have. This injects the phantom
+    /// column directly on formats where a misplaced row byte cannot do so.
     /// </summary>
     /// <param name="writer">The open writer layers.</param>
     /// <param name="tdefPage">The table's first TDEF page.</param>

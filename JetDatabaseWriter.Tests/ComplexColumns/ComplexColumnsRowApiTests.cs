@@ -136,10 +136,11 @@ public sealed class ComplexColumnsRowApiTests
     }
 
     [Fact]
-    public void AttachmentWrapper_TryDecode_RejectsLegacyWriterRawDeflate()
+    public void AttachmentWrapper_TryDecode_RejectsMalformedRawDeflateBody()
     {
-        // Earlier builds of this library wrote raw deflate with dataLen set to
-        // the compressed length and the extension length counted in bytes.
+        // This malformed wrapper carries raw deflate, a compressed dataLen
+        // and an extension length counted in bytes. Native wrappers require
+        // zlib, an uncompressed dataLen and an extension character count.
         byte[] wrapped =
         [
             0x01, 0x00, 0x00, 0x00,

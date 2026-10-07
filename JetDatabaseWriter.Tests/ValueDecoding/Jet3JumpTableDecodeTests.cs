@@ -70,11 +70,11 @@ public sealed class Jet3JumpTableDecodeTests
         => AssertRowResolves(fixedLongCount: 1, [250], [0xFF], rowLength: 260);
 
     /// <summary>
-    /// Earlier builds wrote rows up to EOD 255 and left their one jump byte 0.
-    /// The entry's boundary is beyond the EOD, so it is a dummy whatever it holds.
+    /// An unused jump entry has no effect on variable offsets, even when its
+    /// byte is zero: its boundary is beyond the EOD.
     /// </summary>
     [Fact]
-    public void Jet3RowFromEarlierBuild_ZeroJumpByte_DecodesUnchanged()
+    public void HandBuiltJet3Row_UnusedZeroJumpByte_DecodesUnchanged()
         => AssertRowResolves(fixedLongCount: 1, [250], [0x00], rowLength: 260);
 
     /// <summary>

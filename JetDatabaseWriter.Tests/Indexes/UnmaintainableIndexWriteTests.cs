@@ -19,9 +19,8 @@ using Xunit;
 
 /// <summary>
 /// Writes to a table one of whose indexes names a key column the table does
-/// not have, or lies past the end of a TDEF chain cut short, as in the wide
-/// tables of JetDatabaseWriter builds before 4.0.0
-/// (<see cref="LegacyDamageInjector"/>). The writer cannot maintain such an
+/// not have, or lies past the end of a truncated TDEF chain
+/// (<see cref="IndexMetadataCorruptionInjector"/>). The writer cannot maintain such an
 /// index, so every insert, update, delete and schema rewrite must refuse with
 /// <see cref="JetLimitationException"/> before it changes anything, in every
 /// write mode: the file must be byte for byte what it was.
@@ -500,7 +499,7 @@ public sealed class UnmaintainableIndexWriteTests
 
     /// <summary>
     /// Creates the table of <paramref name="layout"/> with <see cref="RowCount"/>
-    /// rows, then damages its TDEF as builds before 4.0.0 did and checks which
+    /// rows, then corrupts its index metadata and checks which
     /// indexes now name a column the table does not have.
     /// </summary>
     /// <param name="format">The database format.</param>
@@ -541,13 +540,13 @@ public sealed class UnmaintainableIndexWriteTests
             IReadOnlyList<int> phantoms;
             if (layout == DamagedTable.Jet3HandSet50)
             {
-                await LegacyDamageInjector.SetPhantomKeyColumnAsync(harness, table.Entry.TDefPage, realIndexNumber: 3, Ct);
-                phantoms = await LegacyDamageInjector.FindPhantomIndexesAsync(harness.Database, table.Entry.TDefPage, Ct);
+                await IndexMetadataCorruptionInjector.SetPhantomKeyColumnAsync(harness, table.Entry.TDefPage, realIndexNumber: 3, Ct);
+                phantoms = await IndexMetadataCorruptionInjector.FindPhantomIndexesAsync(harness.Database, table.Entry.TDefPage, Ct);
             }
             else
             {
                 LogicalTDefChain intact = await harness.Database.TableDefs.ReadTDefChainAsync(table.Entry.TDefPage, Ct);
-                phantoms = await LegacyDamageInjector.InjectStrayUsedPagesByteAsync(harness, table.Entry.TDefPage, Ct);
+                phantoms = await IndexMetadataCorruptionInjector.InjectStrayUsedPagesByteAsync(harness, table.Entry.TDefPage, Ct);
                 if (layout == DamagedTable.ChainHeaderHit101)
                 {
                     // Real index 2's stray byte is now the first continuation
