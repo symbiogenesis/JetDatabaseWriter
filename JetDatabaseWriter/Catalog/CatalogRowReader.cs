@@ -87,6 +87,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// <summary>Validates all local table references, including hidden system tables and ODBC definitions.</summary>
     /// <param name="rows">The decoded catalog rows.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">A catalog table reference is invalid or ambiguous.</exception>
     internal async ValueTask ValidateTableReferencesAsync(List<CatalogRow> rows, CancellationToken cancellationToken)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -94,8 +95,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
         foreach (CatalogRow row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row.ObjectType != Constants.SystemObjects.UserTableType
-                && row.ObjectType != Constants.SystemObjects.LinkedOdbcType)
+            if (row.ObjectType is not Constants.SystemObjects.UserTableType and not Constants.SystemObjects.LinkedOdbcType)
             {
                 continue;
             }

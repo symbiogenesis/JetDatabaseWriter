@@ -406,7 +406,7 @@ internal sealed class CatalogArtifactWriter(
 
         if (tableArtifact.RegisterConstraints)
         {
-            constraints.Register(tableArtifact.TableName, tableArtifact.Columns);
+            constraints.Register(tableArtifact.TableName, tableArtifact.Columns, format);
         }
 
         catalog.Invalidate();

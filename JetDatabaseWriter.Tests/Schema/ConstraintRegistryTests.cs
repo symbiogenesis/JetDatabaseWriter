@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -386,7 +387,7 @@ public sealed class ConstraintRegistryTests
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "7")));
         if (clrDefault)
         {
-            registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }]);
+            registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         }
 
         object[] explicitNull = [DBNull.Value];
@@ -408,7 +409,7 @@ public sealed class ConstraintRegistryTests
     {
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
         var registry = new ConstraintRegistry();
-        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }, new ColumnDefinition("Other", typeof(int))]);
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }, new ColumnDefinition("Other", typeof(int))], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         object[] values = [DbDefault.Value];
 
         Assert.Null(await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
@@ -508,7 +509,7 @@ public sealed class ConstraintRegistryTests
     {
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
         var registry = new ConstraintRegistry();
-        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { IsAutoIncrement = true, DefaultValueExpression = "0", DefaultValue = 5 }]);
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { IsAutoIncrement = true, DefaultValueExpression = "0", DefaultValue = 5 }], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         object[] values = [DbDefault.Value];
 
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
@@ -541,7 +542,7 @@ public sealed class ConstraintRegistryTests
         };
         TableDef tableDef = SingleColumnTable(testCase.Type);
         var registry = new ConstraintRegistry();
-        registry.Register("T", [testCase.Column]);
+        registry.Register("T", [testCase.Column], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         object[] values = [DbDefault.Value];
 
         if (testCase.Expected is DBNull)
@@ -723,7 +724,7 @@ public sealed class ConstraintRegistryTests
     public async Task ApplyAsync_SameNameChangedType_RehydratesDefault()
     {
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "\"text\"")));
-        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }]);
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         object[] values = [DbDefault.Value];
         _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.TextType), values, TestContext.Current.CancellationToken);
         Assert.Equal("text", values[0]);
@@ -735,13 +736,13 @@ public sealed class ConstraintRegistryTests
     public async Task ApplyAsync_SameNameBecomesAutoNumber_RehydratesAndRewindsCounter()
     {
         var registry = new ConstraintRegistry();
-        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }]);
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         var tableDef = new TableDef
         {
             Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, Flags = Constants.ColumnDescriptorFlags.AutoNumber }],
         };
         object[] first = [DbDefault.Value];
-        var checkpoints = await registry.ApplyAsync("T", tableDef, first, TestContext.Current.CancellationToken);
+        List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints = await registry.ApplyAsync("T", tableDef, first, TestContext.Current.CancellationToken);
         Assert.Equal(1, first[0]);
         ConstraintRegistry.RestoreAutoCounters(checkpoints);
         object[] second = [DbDefault.Value];
@@ -755,7 +756,7 @@ public sealed class ConstraintRegistryTests
     public async Task ApplyAsync_SameClrTypeChangedStorageType_RehydratesDefault()
     {
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "9")));
-        registry.Register("T", [new ColumnDefinition("Score", typeof(decimal)) { IsCurrency = true, DefaultValue = 7m }]);
+        registry.Register("T", [new ColumnDefinition("Score", typeof(decimal)) { IsCurrency = true, DefaultValue = 7m }], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         object[] values = [DbDefault.Value];
         _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.NumericType), values, TestContext.Current.CancellationToken);
         Assert.Equal(9m, values[0]);

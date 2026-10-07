@@ -195,7 +195,7 @@ public sealed class PersistedPropertyProjectorTests
 
         Assert.Empty(projected.Targets);
         Assert.NotNull(projected.ToBytes(Format));
-        Assert.Equal(new[] { "Caption" }, Assert.Single(projected.SourceChunks).Names);
+        Assert.Equal(["Caption"], Assert.Single(projected.SourceChunks).Names);
     }
 
     [Fact]

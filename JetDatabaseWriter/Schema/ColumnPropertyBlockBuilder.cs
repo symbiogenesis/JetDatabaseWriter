@@ -222,7 +222,7 @@ internal sealed class ColumnPropertyBlockBuilder
             ColumnPropertySourceChunk chunk = this.sourceChunks[chunkIndex];
             if (chunk.Names is { } names)
             {
-                pools.Add(chunkIndex, new List<string>(names));
+                pools.Add(chunkIndex, [.. names]);
                 poolIndices.Add(chunkIndex, IndexNames(names));
                 currentPool = chunkIndex;
             }
@@ -441,7 +441,7 @@ internal sealed class ColumnPropertyBlockBuilder
             int index = entry.SourceNameIndex is { } sourceIndex && sourceIndex < names.Count && names[sourceIndex] == entry.Name
                 ? sourceIndex
                 : nameIndices.GetValueOrDefault(entry.Name, -1);
-            if (index < 0 || index > ushort.MaxValue)
+            if (index is < 0 or > ushort.MaxValue)
             {
                 throw new InvalidOperationException($"Entry name '{entry.Name}' was not registered in the name pool.");
             }

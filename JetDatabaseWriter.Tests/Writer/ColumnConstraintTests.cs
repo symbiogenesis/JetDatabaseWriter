@@ -1280,8 +1280,7 @@ public sealed class ColumnConstraintTests
         get
         {
             var cases = new TheoryData<DatabaseFormat, string, bool, WriteMode>();
-            string[] surfaces = ["Array", "ArrayBatch", "Poco", "PocoBatch", "Named", "NamedBatch", "CriteriaUpdate", "PredicateUpdate"];
-            foreach (string surface in surfaces)
+            foreach (string surface in new[] { "Array", "ArrayBatch", "Poco", "PocoBatch", "Named", "NamedBatch", "CriteriaUpdate", "PredicateUpdate" })
             {
                 foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
                 {
@@ -1366,8 +1365,41 @@ public sealed class ColumnConstraintTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(new[] { 1, 2 }, rows.AsEnumerable().Select(row => (int)row["Id"]).Order());
+        Assert.Equal<int>([1, 2], rows.AsEnumerable().Select(row => (int)row["Id"]).Order());
         Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
+    }
+
+    /// <summary>Jet3 decimal storage resolution preserves the declaring writer's callback.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task Jet3DecimalConstraint_ResolvedCurrencyStorage_PreservesDeclaredCallback()
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
+        const string table = "DecimalCallback";
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Score", typeof(decimal))
+                    {
+                        NumericPrecision = 10,
+                        NumericScale = 4,
+                        DefaultValue = 7m,
+                        ValidationRule = value => value is decimal score && score > 0m,
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+            byte[] before = stream.ToArray();
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+                await writer.InsertRowAsync(table, [0m], TestContext.Current.CancellationToken));
+            Assert.Equal(before, stream.ToArray());
+            await writer.InsertRowAsync(table, [DbDefault.Value], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(7m, Assert.Single(rows.AsEnumerable())["Score"]);
     }
 
     private static async Task RefuseMutationAsync(AccessWriter writer, string table, string surface, bool badDefault)
@@ -1381,19 +1413,19 @@ public sealed class ColumnConstraintTests
                 await writer.InsertRowAsync(table, [DbDefault.Value, score], TestContext.Current.CancellationToken);
                 break;
             case "ArrayBatch":
-                _ = await writer.InsertRowsAsync(table, new object?[][] { [DbDefault.Value, 1], [DbDefault.Value, score] }, TestContext.Current.CancellationToken);
+                _ = await writer.InsertRowsAsync(table, [[DbDefault.Value, 1], [DbDefault.Value, score]], TestContext.Current.CancellationToken);
                 break;
             case "Poco":
                 await writer.InsertRowAsync(table, poco, TestContext.Current.CancellationToken);
                 break;
             case "PocoBatch":
-                _ = await writer.InsertRowsAsync(table, new[] { new ConstraintBoundaryRow { Score = 1 }, poco }, TestContext.Current.CancellationToken);
+                _ = await writer.InsertRowsAsync<ConstraintBoundaryRow>(table, [new ConstraintBoundaryRow { Score = 1 }, poco], TestContext.Current.CancellationToken);
                 break;
             case "Named":
                 await writer.InsertRowAsync(table, named, TestContext.Current.CancellationToken);
                 break;
             case "NamedBatch":
-                _ = await writer.InsertRowsAsync(table, new[] { new RowValues { ["Score"] = 1 }, named }, TestContext.Current.CancellationToken);
+                _ = await writer.InsertRowsAsync(table, [new RowValues { ["Score"] = 1 }, named], TestContext.Current.CancellationToken);
                 break;
             case "CriteriaUpdate":
                 _ = await writer.UpdateRowsAsync(table, RowCriteria.All(), named, TestContext.Current.CancellationToken);

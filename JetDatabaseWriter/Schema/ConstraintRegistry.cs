@@ -82,14 +82,14 @@ internal sealed class ConstraintRegistry(
         }
     }
 
-    public void Register(string tableName, IReadOnlyList<ColumnDefinition> defs)
+    public void Register(string tableName, IReadOnlyList<ColumnDefinition> defs, JetFormat format)
     {
         this.tableRules.Remove(tableName);
         var list = new List<ColumnConstraint>(defs.Count);
         bool anyConstraint = false;
         foreach (ColumnDefinition def in defs)
         {
-            ColumnConstraint c = ToConstraint(def);
+            ColumnConstraint c = ToConstraint(def, format);
             anyConstraint |= c.HasAnyConstraint;
 
             if (c.IsAutoIncrement && !IsIntegralType(c.ClrType) && c.ClrType != typeof(Guid))
@@ -507,7 +507,7 @@ internal sealed class ConstraintRegistry(
         this.EvaluateTableValidationRule(tableName, tableDef, columns, values, rule);
     }
 
-    private static ColumnConstraint ToConstraint(ColumnDefinition def)
+    private static ColumnConstraint ToConstraint(ColumnDefinition def, JetFormat format)
     {
         // Access gives AutoNumber, calculated and complex columns no default.
         // CreateTable and AddColumn reject one declared on them, but a schema
@@ -518,7 +518,7 @@ internal sealed class ConstraintRegistry(
         return new()
         {
             Name = def.Name,
-            StorageType = JetTypeInfo.TypeCodeFromDefinition(def),
+            StorageType = JetTypeInfo.ResolveStorageType(def, JetTypeInfo.TypeCodeFromDefinition(def), format, nameof(def)),
             ClrType = def.ClrType,
             IsNullable = def.IsNullable,
             DefaultValue = takesDefault ? ToAppliedClrDefault(def) : null,
@@ -780,6 +780,13 @@ internal sealed class ConstraintRegistry(
         return resultType?.Value.Length > 0 ? (ColumnType)resultType.Value[0] : col.Type;
     }
 
+    private static bool MatchesColumnIdentity(ColumnConstraint constraint, ColumnInfo column)
+        => string.Equals(constraint.Name, column.Name, StringComparison.OrdinalIgnoreCase)
+            && constraint.StorageType == column.Type
+            && constraint.IsAutoIncrement == column.IsAutoNumber
+            && constraint.IsCalculated == column.IsCalculated
+            && constraint.IsComplexReference == (column.Type is ComplexType);
+
     /// <summary>Evaluates the complete row against a cached rule.</summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="tableDef">The table definition.</param>
@@ -841,13 +848,6 @@ internal sealed class ConstraintRegistry(
         string? expression = NullIfBlank(PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties!.Format)));
         this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties!.Format));
     }
-
-    private static bool MatchesColumnIdentity(ColumnConstraint constraint, ColumnInfo column)
-        => string.Equals(constraint.Name, column.Name, StringComparison.OrdinalIgnoreCase)
-            && constraint.StorageType == column.Type
-            && constraint.IsAutoIncrement == column.IsAutoNumber
-            && constraint.IsCalculated == column.IsCalculated
-            && constraint.IsComplexReference == (column.Type is ComplexType);
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
     {
