@@ -593,6 +593,11 @@ public sealed class ComplexColumnsReferenceAllocationTests
             "Tags");
 
     [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task AddColumn_ExistingComplexColumnWithoutId_RefusesWithoutWrite(WriteMode mode) =>
+        await AssertCachedAddColumnRefusesAsync(mode, (row, _) => (int)row[0], "Files", clearComplexId: true);
+
+    [Theory]
     [MemberData(nameof(InvalidReferencesAndModes))]
     public async Task AddColumn_CachedCounterWithInvalidExistingReference_RefusesWithoutWrite(int? reference, WriteMode mode) =>
         await AssertCachedAddColumnRefusesAsync(mode, (row, column) => (int)row[0] == 4 && column == "Tags" ? reference : (int)row[0], "Tags");
@@ -731,7 +736,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         return ms;
     }
 
-    private static async Task AssertCachedAddColumnRefusesAsync(WriteMode mode, Func<object[], string, int?> slotFor, string offendingColumn)
+    private static async Task AssertCachedAddColumnRefusesAsync(WriteMode mode, Func<object[], string, int?> slotFor, string offendingColumn, bool clearComplexId = false)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms))
@@ -762,6 +767,16 @@ public sealed class ComplexColumnsReferenceAllocationTests
                 }
 
                 await harness.Pager.WritePageAsync(location.DataPageNumber, page, Ct);
+            }
+
+            if (clearComplexId)
+            {
+                byte[] tdef = await harness.Pager.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
+                int realIndexCount = BinaryPrimitives.ReadInt32LittleEndian(tdef.AsSpan(db.Format.TDef.NumRealIdx, 4));
+                int columnOffset = db.Format.TDef.BlockEnd + (realIndexCount * db.Format.TDef.RealIdxEntrySz)
+                    + (table.Definition.FindColumnIndex("Files") * db.Format.ColumnDescriptor.Size);
+                tdef.AsSpan(columnOffset + db.Format.ColumnDescriptor.MiscOff, 4).Clear();
+                await harness.Pager.WritePageAsync(table.Entry.TDefPage, tdef, Ct);
             }
 
             baseline = ms.ToArray();
