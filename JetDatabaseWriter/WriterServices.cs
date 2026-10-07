@@ -98,7 +98,7 @@ internal sealed class WriterServices
             new JetDatabaseWriter.Indexes.Collation.JetTextCollation(db.Format.DefaultTextSortOrder));
 
         this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
-        var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows);
+        var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows, pager);
         this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
         this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds, this.Snapshots);
 

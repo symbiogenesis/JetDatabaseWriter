@@ -701,7 +701,7 @@ public sealed class ConstraintRegistryTests
             ("Score", Constants.ColumnPropertyNames.ValidationRule, "> 0\0"),
             (string.Empty, Constants.ColumnPropertyNames.ValidationRule, "[Score] > 0\0"));
         ConstraintRegistry registry = RegistryWithProperties(properties);
-        object[] values = [DBNull.Value];
+        object[] values = [DbDefault.Value];
         _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.LongIntegerType), values, TestContext.Current.CancellationToken);
         Assert.Equal(7, values[0]);
         Assert.Equal("> 0\0", properties.FindTarget("Score")!.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties.Format));

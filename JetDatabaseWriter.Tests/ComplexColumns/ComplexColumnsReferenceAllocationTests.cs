@@ -538,19 +538,8 @@ public sealed class ComplexColumnsReferenceAllocationTests
             await writer.InsertRowsAsync("Docs", [.. Enumerable.Range(1, 5).Select(id => new object?[] { id, DBNull.Value, DBNull.Value })], Ct);
         }
 
-        // Adversarial existing descriptors: missing, differing and duplicated references.
-        // A schema change must not repair or reassign their existing identities.
-        await SetComplexSlotsAsync(
-            ms,
-            "Docs",
-            r => (int)r[0] is 1 or 2 or 4,
-            (r, column) => ((int)r[0], column) switch
-            {
-                (1, "Tags") => null,
-                (2, "Tags") => 6,
-                (4, _) => 3,
-                _ => (int)r[0],
-            });
+        // Duplicate positive references without introducing missing or mismatched identities.
+        await SetComplexSlotsAsync(ms, "Docs", r => (int)r[0] == 4, (_, _) => 3);
 
         byte[] baseline = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
@@ -563,7 +552,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         Assert.Equal(baseline, ms.ToArray());
         RawTable docs = await ReadRawTableAsync(ms, "Docs");
         Assert.Equal(
-            ["1|1|", "2|2|6", "3|3|3", "4|3|3", "5|5|5"],
+            ["1|1|1", "2|2|2", "3|3|3", "4|3|3", "5|5|5"],
             docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
     }
 

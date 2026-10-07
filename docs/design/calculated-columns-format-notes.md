@@ -450,3 +450,12 @@ values with 20 UTF-16 characters occupy 63 bytes and stay inline; 21 characters
 occupy 65 bytes and spill. Replacing only the oversized inline AllNames slots
 with native external LVAL slots made the rewritten calculated table readable
 through DAO without changing its rewritten descriptors or other row fields.
+
+### Native text comparisons
+
+Expression comparisons use the database collation and ignore trailing U+0020
+spaces, as the native DAO field-rule oracle demonstrates for both directions
+of `a` versus `a `. Stored strings and concatenation retain those spaces.
+Persisted expressions may have one terminal NUL in their property encoding;
+runtime compilation removes that terminator while preserving the raw property
+bytes and any NUL inside a string literal.

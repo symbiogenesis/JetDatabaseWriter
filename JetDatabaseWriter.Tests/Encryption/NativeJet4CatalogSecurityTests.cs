@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -13,6 +14,18 @@ using Xunit;
 /// <summary>Native Jet4 catalog ownership and permissions remain consistent during table creation.</summary>
 public sealed class NativeJet4CatalogSecurityTests
 {
+    [Fact]
+    public async Task NativeHeader_EncodesInheritedOwnerPlaceholderWithoutMutation()
+    {
+        byte[] bytes = await File.ReadAllBytesAsync(
+            Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"),
+            TestContext.Current.CancellationToken);
+        byte[] header = bytes.AsSpan(0, 4096).ToArray();
+        byte[] before = (byte[])header.Clone();
+        Assert.Equal(new byte[] { 0xFB, 0x7E }, Jet4SecuritySid.GetOwnerPlaceholder(JetFormat.FromHeader(header), header));
+        Assert.Equal(before, header);
+    }
+
     [Fact]
     public async Task CreatedTable_OwnerAndPermissions_MatchDaoCreatedEncryptedTable()
     {

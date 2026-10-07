@@ -43,6 +43,23 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         Assert.Equal(expected, Assert.IsType<double>(result), 12);
     }
 
+    [Theory]
+    [InlineData("\"a\" < \"a \"", false)]
+    [InlineData("\"a \" < \"a\"", false)]
+    [InlineData("\"a\" = \"a   \"", true)]
+    [InlineData("\"a   \" <> \"a\"", false)]
+    [InlineData("\" a\" = \"a\"", false)]
+    public void TextComparison_IgnoresOnlyTrailingSpaces(string expression, bool expected)
+    {
+        Assert.Equal(expected, Assert.IsType<bool>(Evaluate(expression, typeof(bool))));
+    }
+
+    [Fact]
+    public void TextConcatenation_PreservesTrailingSpaces()
+    {
+        Assert.Equal("a b", Assert.IsType<string>(Evaluate("\"a \" & \"b\"", typeof(string))));
+    }
+
     [Fact]
     public void LongOperatorChain_StaysWithinNestingLimit()
     {

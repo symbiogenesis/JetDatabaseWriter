@@ -361,7 +361,7 @@ internal sealed class RowEncoder(JetFormat format)
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnInfo column = tableDef.Columns[i];
-            if (column.Type == BigBinaryType && (format.Kind != DatabaseFormat.Jet4Mdb || !column.IsFixed || column.Size != JetTypeInfo.GetFixedSize(BigBinaryType)))
+            if (column.Type == BigBinaryType && (!format.SupportsBigBinary || !column.IsFixed || column.Size != JetTypeInfo.GetFixedSize(BigBinaryType)))
             {
                 throw new JetLimitationException($"Column '{column.Name}' has a malformed BIGBINARY descriptor; native Jet4 storage requires 3992 fixed bytes.");
             }

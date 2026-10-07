@@ -95,6 +95,7 @@ internal sealed class JetFormat
 
         // Jet3 has no Numeric type; Large Number, Date/Time Extended, complex
         // and calculated columns arrived with ACE.
+        this.SupportsBigBinary = kind == DatabaseFormat.Jet4Mdb;
         this.SupportsNumeric = !jet3;
         this.SupportsBigInt = ace;
         this.SupportsDateTimeExtended = ace;
@@ -174,6 +175,12 @@ internal sealed class JetFormat
     /// </summary>
     internal bool SupportsNumeric { get; }
 
+    /// <summary>Gets a value indicating whether the format supports native fixed BIGBINARY columns: Jet4 only.</summary>
+    internal bool SupportsBigBinary { get; }
+
+    /// <summary>Gets a value indicating whether security identities use the header-derived Jet4 SID mask.</summary>
+    internal bool UsesHeaderMaskedSecuritySids => this.Kind == DatabaseFormat.Jet4Mdb;
+
     /// <summary>Gets a value indicating whether the format has the Large Number (BigInt, type <c>0x13</c>) column type: ACE only.</summary>
     internal bool SupportsBigInt { get; }
 
@@ -235,6 +242,10 @@ internal sealed class JetFormat
     /// higher values into an ACE file.
     /// </summary>
     internal byte NewDatabaseVersion { get; }
+
+    /// <summary>Unmasks or remasks the page-zero header in place using this format.</summary>
+    /// <param name="header">The header bytes.</param>
+    internal void TransformHeaderMask(byte[] header) => EncryptionManager.TransformHeaderMask(header, this.Kind);
 
     /// <summary>
     /// Gets the NUL-terminated signature at header offset 4:

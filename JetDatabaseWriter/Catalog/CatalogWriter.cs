@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Catalog;
 
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 #if !NET5_0_OR_GREATER
 using System.Globalization;
@@ -14,6 +15,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
@@ -34,6 +36,7 @@ using JetDatabaseWriter.ValueEncoding;
 /// <param name="longValueEncoder">Encodes linked-table memo fields as LVAL chains.</param>
 /// <param name="constraints">Follows table renames in the client-side constraint registry.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
+/// <param name="pager">The writer page file.</param>
 internal sealed class CatalogWriter(
     JetFormat format,
     TableDefReader tableDefs,
@@ -43,7 +46,8 @@ internal sealed class CatalogWriter(
     IndexMaintainer indexes,
     LongValueEncoder longValueEncoder,
     ConstraintRegistry constraints,
-    CatalogRowReader catalogRows)
+    CatalogRowReader catalogRows,
+    Pager pager)
 {
     private int checkedCatalogGeneration = -1;
 
@@ -86,7 +90,7 @@ internal sealed class CatalogWriter(
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
-        msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
+        msys.SetValueByName(values, "Owner", await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false) ?? Constants.SystemObjects.DefaultOwnerBlob);
         if (lvProp is not null)
         {
             msys.SetValueByName(values, "LvProp", lvProp);
@@ -265,6 +269,113 @@ internal sealed class CatalogWriter(
         return encoded ?? value;
     }
 
+    private async ValueTask<byte[]?> ReadDatabaseOwnerAsync(CancellationToken cancellationToken)
+    {
+        if (!format.UsesHeaderMaskedSecuritySids)
+        {
+            return null;
+        }
+
+        TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        ColumnInfo? nameColumn = objects.FindColumn("Name");
+        ColumnInfo? ownerColumn = objects.FindColumn("Owner");
+        if (nameColumn is null || ownerColumn is null)
+        {
+            return null;
+        }
+
+        byte[]? owner = null;
+        await ownedPages.ForEachLiveTableRowAsync(2, (row, _) =>
+        {
+            RowLocation location = row.Location;
+            string name = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, nameColumn);
+            if (!string.Equals(name, "MSysDb", StringComparison.OrdinalIgnoreCase))
+            {
+                return new ValueTask<bool>(true);
+            }
+
+            string value = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, ownerColumn);
+            owner = value.Length == 0 ? null : ParseHexBytes(value);
+            return new ValueTask<bool>(false);
+        }, cancellationToken).ConfigureAwait(false);
+        return owner;
+    }
+
+    /// <summary>Inherits native Jet4 container permissions and resolves the masked owner placeholder.</summary>
+    /// <param name="objectId">The new object identifier.</param>
+    /// <param name="relationships">Whether to inherit relationship-container permissions.</param>
+    /// <param name="acesTdefPage">The permissions table page.</param>
+    /// <param name="acesDef">The permissions table definition.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether native permissions were inherited.</returns>
+    /// <exception cref="JetCorruptDataException">Required security metadata is malformed.</exception>
+    /// <exception cref="NotSupportedException">The container has no inheritable permissions.</exception>
+    private async ValueTask<bool> TryInsertInheritedJet4AcesAsync(
+        int objectId,
+        bool relationships,
+        long acesTdefPage,
+        TableDef acesDef,
+        CancellationToken cancellationToken)
+    {
+        byte[]? owner = await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false);
+        if (owner is null)
+        {
+            return false;
+        }
+
+        ColumnInfo objectColumn = acesDef.FindColumn("ObjectId") ?? throw new JetCorruptDataException("MSysACEs has no ObjectId column.");
+        ColumnInfo sidColumn = acesDef.FindColumn("SID") ?? throw new JetCorruptDataException("MSysACEs has no SID column.");
+        ColumnInfo acmColumn = acesDef.FindColumn("ACM") ?? throw new JetCorruptDataException("MSysACEs has no ACM column.");
+        ColumnInfo inheritColumn = acesDef.FindColumn("FInheritable") ?? throw new JetCorruptDataException("MSysACEs has no FInheritable column.");
+        int parentId = relationships ? Constants.SystemObjects.RelationshipsParentId : Constants.SystemObjects.TablesParentId;
+        var inherited = new List<(byte[] Sid, int Acm)>();
+        await ownedPages.ForEachLiveTableRowAsync(acesTdefPage, (row, _) =>
+        {
+            RowLocation location = row.Location;
+            string Decode(ColumnInfo column) => ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, column);
+
+            if (CatalogValueReader.TryParseInt32(Decode(objectColumn), out int id) && id == parentId
+                && string.Equals(Decode(inheritColumn), "True", StringComparison.Ordinal))
+            {
+                if (!CatalogValueReader.TryParseInt32(Decode(acmColumn), out int acm))
+                {
+                    throw new JetCorruptDataException("An inherited MSysACEs entry has an invalid permission mask.");
+                }
+
+                inherited.Add((ParseHexBytes(Decode(sidColumn)), acm));
+            }
+
+            return new ValueTask<bool>(true);
+        }, cancellationToken).ConfigureAwait(false);
+        if (inherited.Count == 0)
+        {
+            throw new NotSupportedException("The Jet4 database has no inheritable catalog permissions for the new object.");
+        }
+
+        byte[] header = await pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
+        byte[] placeholder;
+        try
+        {
+            placeholder = Jet4SecuritySid.GetOwnerPlaceholder(format, header);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(header);
+        }
+
+        foreach ((byte[] sid, int acm) in inherited)
+        {
+            object[] values = acesDef.CreateNullValueRow();
+            acesDef.SetValueByName(values, "ObjectId", objectId);
+            acesDef.SetValueByName(values, "SID", sid.AsSpan().SequenceEqual(placeholder) ? owner : sid);
+            acesDef.SetValueByName(values, "ACM", acm);
+            acesDef.SetValueByName(values, "FInheritable", false);
+            await indexes.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
     private async ValueTask InsertAceRowsForCatalogObjectAsync(
         int objectId,
         bool useRestrictedOwnerAcm,
@@ -278,6 +389,12 @@ internal sealed class CatalogWriter(
         }
 
         TableDef acesDef = await tableDefs.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        if (format.UsesHeaderMaskedSecuritySids
+            && await this.TryInsertInheritedJet4AcesAsync(objectId, useRelationshipGroupAcm, acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
         byte[]? adminsSid = await this.HarvestAdminsSidAsync(acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
 
         byte[][] sids = adminsSid != null

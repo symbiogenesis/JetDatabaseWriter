@@ -76,8 +76,7 @@ public sealed class CalculatedColumnUtilTests
 
     [Theory]
     [InlineData(ComplexType)]
-    [InlineData(BigBinaryType)]
-    public void ReadPayload_ComplexAndAttachment_UseFourByteComplexIdPayload(ColumnType columnType)
+    public void ReadPayload_Complex_UsesFourByteComplexIdPayload(ColumnType columnType)
     {
         byte[] payload = new byte[4];
         BinaryPrimitives.WriteInt32LittleEndian(payload, 42);

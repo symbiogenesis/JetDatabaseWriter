@@ -9,16 +9,16 @@ internal sealed class JetTextCollation(TextSortOrder sortOrder)
     /// <summary>Gets the default collation used by standalone expression tests.</summary>
     internal static JetTextCollation GeneralLegacy { get; } = new(new TextSortOrder(0x0409, 0, true));
 
-    /// <summary>Compares complete text without trimming spaces.</summary>
+    /// <summary>Compares expression text with native trailing-space equivalence.</summary>
     /// <param name="left">The left value.</param>
     /// <param name="right">The right value.</param>
     /// <returns>The relative order.</returns>
     internal int Compare(string left, string right)
-        => IndexPageCodec.CompareKeyBytes(this.EncodeComparisonKey(left), this.EncodeComparisonKey(right));
+        => IndexPageCodec.CompareKeyBytes(this.EncodeComparisonKey(left, trimTrailingSpaces: true), this.EncodeComparisonKey(right, trimTrailingSpaces: true));
 
     /// <summary>Encodes a complete comparison key without stored-index limits.</summary>
     /// <param name="text">The text.</param>
-    /// <param name="trimTrailingSpaces">Whether to trim trailing spaces for joins.</param>
+    /// <param name="trimTrailingSpaces">Whether to omit trailing spaces from the comparison key.</param>
     /// <exception cref="NotSupportedException">The database sort order is unsupported.</exception>
     internal byte[] EncodeComparisonKey(string text, bool trimTrailingSpaces = false)
     {

@@ -62,7 +62,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
         if (type == BigBinaryType)
         {
-            if (format.Kind != DatabaseFormat.Jet4Mdb)
+            if (!format.SupportsBigBinary)
             {
                 throw new NotSupportedException($"Column '{definition.Name}': BIGBINARY is a Jet4-only system-table type.");
             }

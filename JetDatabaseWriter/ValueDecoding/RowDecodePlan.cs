@@ -531,7 +531,7 @@ internal sealed class RowDecodePlan
         out RowLayout layout)
     {
         layout = default;
-        if (this.hasBigBinaryColumns && source.Kind != DatabaseFormat.Jet4Mdb)
+        if (this.hasBigBinaryColumns && !source.SupportsBigBinary)
         {
             return false;
         }

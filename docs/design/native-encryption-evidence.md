@@ -25,6 +25,20 @@ DAO reopened both original `T` and new `Added` successfully. The fixture
 pins native catalog ownership and ACL rows; library-generated schema
 compatibility remains subject to the separate DAO regression.
 
+The native schema oracle stores `MSysDb.Owner = FA7B`. Its Tables container
+has an inheritable owner-placeholder SID `FB7E` with mask `0xF00FE`, and an
+inheritable Users SID `FB7B` with mask `0xFFEFF`. DAO gives a new table owner
+`FA7B` and those inherited permissions, substituting the real owner for the
+placeholder and clearing `FInheritable` on the new rows. The system container's
+own owner is different and must not be copied as the table owner.
+
+These bytes depend on the file. The library derives the masked `7015` owner
+placeholder from the header's creation-date/password region, takes the actual
+owner from `MSysDb`, and preserves inherited principal bytes and permission
+masks. It does not replace them with fixed identities from a bootstrap file.
+The regression pins the fixture's placeholder and checks that deriving it does
+not modify page zero. Workgroup variants still require separate native evidence.
+
 ## JET4
 
 The password-only file has a zero unmasked encoding key; encrypted pages use

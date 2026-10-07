@@ -9,10 +9,12 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -28,11 +30,31 @@ public sealed class NativeBigBinaryTests
     private const int NativeWidth = 3992;
 
     [Fact]
-    public async Task AccessAuthoredBigBinary_ReadsEveryStoredByteThroughPublicApis()
+    public async Task AccessAuthoredBigBinary_CatalogVisibilityAdapter_ReadsEveryStoredByteThroughPublicApis()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
+        // Public readers resolve user tables only. Adapt catalog visibility in a copy;
+        // native table definitions and payload pages remain byte-for-byte unchanged.
+        byte[] original = await File.ReadAllBytesAsync(TestDatabases.TestV2000, ct);
+        byte[] adapted = (byte[])original.Clone();
+        await using (var source = new MemoryStream(original, writable: false))
+        await using (ReaderHarness catalogReader = await ReaderHarness.OpenAsync(source, cancellationToken: ct))
+        {
+            TableDef catalog = Assert.IsType<TableDef>(await catalogReader.ReadTableDefAsync(2, ct));
+            var rows = new CatalogRowReader(catalogReader.Database.Format, catalogReader.Database.TableDefs, catalogReader.Database.OwnedPages);
+            CatalogRow entry = Assert.Single(await rows.GetCatalogRowsAsync(catalog, ct), catalogRow => catalogRow.Name == "MSysAccessObjects");
+            ColumnInfo flags = Assert.IsType<ColumnInfo>(catalog.FindColumn("Flags"));
+            byte[] page = await catalogReader.ReadPageCopyAsync(entry.PageNumber, ct);
+            RowBound row = DataPageRows.EnumerateLiveRowBounds(catalogReader.Database.Format, page).Single(bound => bound.RowIndex == entry.RowIndex);
+            int offset = checked((int)(entry.PageNumber * catalogReader.Database.Format.PageSize)) + row.RowStart + catalogReader.Database.Format.RowFields.NumCols + flags.FixedOff;
+            BinaryPrimitives.WriteInt32LittleEndian(adapted.AsSpan(offset, sizeof(int)), 0);
+            Assert.Equal(original.AsSpan(0, offset).ToArray(), adapted.AsSpan(0, offset).ToArray());
+            Assert.Equal(original.AsSpan(offset + sizeof(int)).ToArray(), adapted.AsSpan(offset + sizeof(int)).ToArray());
+        }
+
+        await using var fixture = new MemoryStream(adapted, writable: false);
         var expected = new List<byte[]>();
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(TestDatabases.TestV2000, cancellationToken: ct))
+        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(fixture, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("MSysAccessObjects", ct));
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
@@ -53,7 +75,7 @@ public sealed class NativeBigBinaryTests
         }
 
         Assert.NotEmpty(expected);
-        await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.TestV2000, new AccessReaderOptions { UseLockFile = false }, ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(fixture, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
         ColumnMetadata metadata = Assert.Single(await reader.GetColumnMetadataAsync("MSysAccessObjects", ct), c => c.Name == "Data");
         Assert.Equal("Big Binary", metadata.TypeName);
         Assert.Equal(typeof(byte[]), metadata.ClrType);
