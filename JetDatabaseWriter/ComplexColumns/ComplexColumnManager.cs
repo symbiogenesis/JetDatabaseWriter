@@ -481,10 +481,15 @@ internal sealed class ComplexColumnManager(
         }
 
         int nextId = await this.GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
+        if ((long)nextId + indices.Count - 1 > int.MaxValue)
+        {
+            throw new InvalidOperationException($"'{Constants.SystemTableNames.ComplexColumns}' does not have enough ComplexID values remaining up to {int.MaxValue} for {indices.Count} columns.");
+        }
+
         var allocations = new ComplexColumnAllocation[indices.Count];
         for (int i = 0; i < indices.Count; i++)
         {
-            int id = nextId++;
+            int id = nextId + i;
             allocations[i] = new ComplexColumnAllocation(indices[i], id);
         }
 

@@ -575,6 +575,52 @@ public sealed class ComplexColumnsWriterTests
         Assert.Equal(counter, await ReadComplexIdCounterAsync(ms));
     }
 
+    [Theory]
+    [MemberData(nameof(ComplexColumnTestSupport.AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task CreateTable_LastAvailableComplexId_IsAllocated(WriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (await ComplexColumnTestSupport.CreateWriterAsync(ms))
+        {
+        }
+
+        await WriteComplexIdCounterAsync(ms, int.MaxValue - 1);
+        await using (AccessWriter writer = await ComplexColumnTestSupport.OpenWriterAsync(ms, mode))
+        {
+            await ComplexColumnTestSupport.RunAsync(writer, mode, async () =>
+                await writer.CreateTableAsync("Docs", [new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }], TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal([int.MaxValue], await ReadComplexIdsAsync(ms, "Docs"));
+        Assert.Equal(int.MaxValue, await ReadComplexIdCounterAsync(ms));
+    }
+
+    [Theory]
+    [MemberData(nameof(ComplexColumnTestSupport.AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task CreateTable_ComplexIdBatchExceedsCapacity_RefusesWithoutWriting(WriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (await ComplexColumnTestSupport.CreateWriterAsync(ms))
+        {
+        }
+
+        await WriteComplexIdCounterAsync(ms, int.MaxValue - 1);
+        byte[] baseline = ms.ToArray();
+        await using (AccessWriter writer = await ComplexColumnTestSupport.OpenWriterAsync(ms, mode))
+        {
+            await ComplexColumnTestSupport.RunAsync(writer, mode, async () =>
+            {
+                InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await writer.CreateTableAsync("Docs", DocsColumns(), TestContext.Current.CancellationToken));
+                Assert.Contains("MSysComplexColumns", error.Message, StringComparison.Ordinal);
+                Assert.Contains("ComplexID", error.Message, StringComparison.Ordinal);
+            });
+        }
+
+        Assert.Equal(baseline, ms.ToArray());
+        Assert.Equal(int.MaxValue - 1, await ReadComplexIdCounterAsync(ms));
+    }
+
     [Fact]
     public async Task CreateTable_RolledBackTransaction_RestoresComplexIdCounter()
     {
@@ -609,6 +655,16 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         return [.. (await reader.GetComplexColumnsAsync(table, TestContext.Current.CancellationToken)).Select(c => c.ComplexId).Order()];
+    }
+
+    private static async Task WriteComplexIdCounterAsync(MemoryStream ms, int counter)
+    {
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+        byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(tdef.AsSpan(ComplexColumnTestSupport.AutoNumberOffset, 4), counter);
+        await harness.Pager.WritePageAsync(page, tdef, TestContext.Current.CancellationToken);
     }
 
     private static async Task<int> ReadComplexIdCounterAsync(MemoryStream ms) =>
