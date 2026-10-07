@@ -130,7 +130,7 @@ public sealed class RelationshipNativeSecurityTests
                     changed.Add(row.Location.PageNumber, bytes);
                 }
 
-                int offset = row.Location.RowStart + layout.NullMaskPos + target.ColNum / 8;
+                int offset = row.Location.RowStart + layout.NullMaskPos + (target.ColNum / 8);
                 int mask = 1 << (target.ColNum % 8);
                 bytes[offset] = (byte)(corruption == "duplicate-sid" ? bytes[offset] | mask : bytes[offset] & ~mask);
                 count++;

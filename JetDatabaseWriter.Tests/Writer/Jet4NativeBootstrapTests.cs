@@ -30,7 +30,7 @@ public sealed class Jet4NativeBootstrapTests
         }
 
         byte[] header = stream.ToArray().AsSpan(0, 4096).ToArray();
-        JetFormat format = JetFormat.FromHeader(header);
+        var format = JetFormat.FromHeader(header);
         byte[] owner = Jet4SecuritySid.Encode(format, header, [0x03, 0x01]);
         byte[] users = Jet4SecuritySid.Encode(format, header, [0x02, 0x01]);
         byte[] systemOwner = Jet4SecuritySid.Encode(format, header, [0x02, 0x03]);

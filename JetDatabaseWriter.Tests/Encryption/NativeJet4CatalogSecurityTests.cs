@@ -30,7 +30,7 @@ public sealed class NativeJet4CatalogSecurityTests
         byte[] header = bytes.AsSpan(0, 4096).ToArray();
         byte[] before = (byte[])header.Clone();
         Assert.Equal(new byte[] { 0xFB, 0x7E }, Jet4SecuritySid.GetOwnerPlaceholder(JetFormat.FromHeader(header), header));
-        JetFormat format = JetFormat.FromHeader(header);
+        var format = JetFormat.FromHeader(header);
         Assert.Equal(new byte[] { 0xFA, 0x7B }, Jet4SecuritySid.Encode(format, header, [0x03, 0x01]));
         Assert.Equal(new byte[] { 0xFB, 0x7B }, Jet4SecuritySid.Encode(format, header, [0x02, 0x01]));
         Assert.Equal(new byte[] { 0xFB, 0x79 }, Jet4SecuritySid.Encode(format, header, [0x02, 0x03]));
@@ -110,7 +110,7 @@ public sealed class NativeJet4CatalogSecurityTests
                         changed.Add(row.Location.PageNumber, bytes);
                     }
 
-                    int offset = row.Location.RowStart + layout.NullMaskPos + inherit.ColNum / 8;
+                    int offset = row.Location.RowStart + layout.NullMaskPos + (inherit.ColNum / 8);
                     int mask = 1 << (inherit.ColNum % 8);
                     bytes[offset] = (byte)(allInheritable ? bytes[offset] | mask : bytes[offset] & ~mask);
                     return new ValueTask<bool>(true);

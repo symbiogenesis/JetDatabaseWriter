@@ -363,7 +363,7 @@ public sealed class TransactionReadVisibilityTests
                 JetCorruptDataException update = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                     await writer.UpdateRowsAsync("T", "Id", 4, new Dictionary<string, object?> { ["Name"] = "u4" }, Ct));
                 Assert.Equal(baseline, ms.ToArray());
-                Assert.All(new[] { delete, update }, failure =>
+                Assert.All<JetCorruptDataException>([delete, update], failure =>
                 {
                     Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
                     Assert.Equal("T", failure.ErrorInfo.TableName);
