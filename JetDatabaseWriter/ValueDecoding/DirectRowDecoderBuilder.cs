@@ -272,7 +272,7 @@ internal static class DirectRowDecoderBuilder
             return Expression.Equal(kindExpr, Expression.Constant(ColumnSliceKind.Bool));
         }
 
-        if (colType is TextType or BinaryType)
+        if (colType is TextType or BinaryType or BigBinaryType)
         {
             return Expression.Equal(kindExpr, Expression.Constant(ColumnSliceKind.Var));
         }
@@ -307,11 +307,10 @@ internal static class DirectRowDecoderBuilder
             GuidType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadGuidAt), StaticNonPublic), pageParam, offsetExpr),
             NumericType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDecimalLE), StaticNonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
             TextType => Expression.Call(formatParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
-            BinaryType => Expression.Call(ReadBinarySliceMethod, pageParam, offsetExpr, dataLenExpr),
+            BinaryType or BigBinaryType => Expression.Call(ReadBinarySliceMethod, pageParam, offsetExpr, dataLenExpr),
             DateTimeExtendedType => Expression.Call(ReadDateTimeExtendedMethod, pageParam, offsetExpr),
             OleType or
             MemoType or
-            AttachmentType or
             ComplexType or
             _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type {JetTypeInfo.GetTypeDisplayName(column.Type)}."),
         };
@@ -324,7 +323,7 @@ internal static class DirectRowDecoderBuilder
 
     private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying)
     {
-        if (colType is OleType or MemoType or AttachmentType or ComplexType)
+        if (colType is OleType or MemoType or ComplexType)
         {
             return false;
         }

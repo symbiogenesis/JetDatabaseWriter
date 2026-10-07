@@ -83,7 +83,7 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
     internal async ValueTask<long> ReadSeedAsync(long parentTdefPage, TableDef parentDef, CancellationToken cancellationToken)
     {
         long seed = await autoNumbers.ReadComplexHighWaterAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
-        var complexColumns = parentDef.Columns.Where(c => c.Type is AttachmentType or ComplexType).ToList();
+        var complexColumns = parentDef.Columns.Where(c => c.Type is ComplexType).ToList();
         if (complexColumns.Count == 0)
         {
             return seed;

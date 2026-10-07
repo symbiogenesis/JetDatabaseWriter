@@ -273,7 +273,6 @@ internal static class IndexKeyEncoder
             // reference, keyed exactly like a Long Integer.
             case LongIntegerType:
             case ComplexType:
-            case AttachmentType:
             {
                 byte[] r = new byte[4];
                 BinaryPrimitives.WriteInt32BigEndian(r, ToInt32(value));
@@ -331,6 +330,7 @@ internal static class IndexKeyEncoder
             case MemoType:
             case GuidType:
             case NumericType:
+            case BigBinaryType:
             case DateTimeExtendedType:
                 throw new NotSupportedException(
                     $"Index key encoding for column type {JetTypeInfo.GetTypeDisplayName(columnType)} is not supported. " +
@@ -921,6 +921,6 @@ internal static class IndexKeyEncoder
     {
         ByteType or IntegerType or LongIntegerType or BigIntType or MoneyType or FloatType or DoubleType
             or DateTimeType or DateTimeExtendedType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
-        BooleanType or OleType or AttachmentType or ComplexType or _ => false,
+        BooleanType or OleType or ComplexType or _ => false,
     };
 }

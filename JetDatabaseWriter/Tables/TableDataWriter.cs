@@ -259,7 +259,7 @@ internal sealed class TableDataWriter(
             // An update cannot assign it: clearing or changing it would orphan
             // the row's items or join the row to another row's.
             ColumnInfo column = tableDef.Columns[columnIndex];
-            if (column.Type is ColumnType.AttachmentType or ColumnType.ComplexType)
+            if (column.Type is ColumnType.ComplexType)
             {
                 throw new ArgumentException(
                     $"Column '{column.Name}' on table '{tableName}' is an Attachment or multi-value column, which an update cannot assign; the row keeps its items. Add items with AddAttachmentAsync or AddMultiValueItemAsync.",

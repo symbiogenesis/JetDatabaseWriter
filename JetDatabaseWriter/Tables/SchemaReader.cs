@@ -194,7 +194,7 @@ internal sealed class SchemaReader(
         }
 
         // Complex columns are named by subtype, keyed by ComplexID (the descriptor's misc slot).
-        Dictionary<int, string>? complexTypeNames = resolved.Definition.Columns.Any(c => c.Type is ComplexType or AttachmentType)
+        Dictionary<int, string>? complexTypeNames = resolved.Definition.Columns.Any(c => c.Type is ComplexType)
             ? await complexColumns.ReadColumnTypeNamesAsync(tableName, cancellationToken).ConfigureAwait(false)
             : null;
 
@@ -213,7 +213,7 @@ internal sealed class SchemaReader(
             return new ColumnMetadata
             {
                 Name = col.Name,
-                TypeName = col.Type is ComplexType or AttachmentType
+                TypeName = col.Type is ComplexType
                     && complexTypeNames != null
                     && complexTypeNames.TryGetValue(col.Misc, out string? complexTypeName)
                         ? complexTypeName

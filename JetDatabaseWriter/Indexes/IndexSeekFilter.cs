@@ -152,7 +152,7 @@ internal static class IndexSeekFilter
         // The operand is the key's own string, Guid, byte array or DateTime.
         TextType or MemoType => column.TextSortOrder.IsSupported,
         GuidType or BinaryType or DateTimeExtendedType => true,
-        BooleanType or OleType or AttachmentType or ComplexType or _ => false,
+        BooleanType or OleType or ComplexType or _ => false,
     };
 
     /// <summary>

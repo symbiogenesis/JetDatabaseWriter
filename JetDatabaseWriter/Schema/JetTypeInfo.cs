@@ -41,11 +41,11 @@ internal static class JetTypeInfo
         NumericType => 17,
         BigIntType => 8,
 
-        // Complex/attachment columns store a 4-byte ComplexId in the row's
-        // fixed area (the actual payload lives in the hidden child table
-        // joined via the ComplexId). Access writes col_len = 4 for both.
+        // All complex-column subtypes share a 4-byte reference into a flat table.
         ComplexType => 4,
-        AttachmentType => 4,
+
+        // Jet4 MSysAccessObjects.Data stores a whole fixed binary chunk.
+        BigBinaryType => 3992,
 
         // Access 2019+ "Date/Time Extended" — 42-byte fixed slot.
         DateTimeExtendedType => 42,
@@ -71,7 +71,7 @@ internal static class JetTypeInfo
     {
         byteCount = type switch
         {
-            ComplexType or AttachmentType => 4,
+            ComplexType => 4,
             ByteType or
             IntegerType or
             LongIntegerType or
@@ -132,7 +132,7 @@ internal static class JetTypeInfo
         MemoType => typeof(string),
         BinaryType => typeof(byte[]),
         OleType => typeof(byte[]),
-        AttachmentType => typeof(byte[]),
+        BigBinaryType => typeof(byte[]),
         ComplexType => typeof(byte[]),
         DateTimeExtendedType => typeof(DateTime),
         _ => null,
@@ -190,7 +190,7 @@ internal static class JetTypeInfo
         MemoType => "Memo",
         GuidType => "GUID",
         NumericType => "Decimal",
-        AttachmentType => "Attachment",
+        BigBinaryType => "Big Binary",
         ComplexType => "Complex",
         BigIntType => "Big Integer",
         DateTimeExtendedType => "Date/Time Extended",
@@ -215,8 +215,8 @@ internal static class JetTypeInfo
         GuidType => ColumnSize.FromBytes(16),
         NumericType => ColumnSize.FromBytes(17),
         TextType => ColumnSize.FromChars(declaredSize > 0 ? declaredSize / 2 : 255),
-        MemoType or OleType or AttachmentType or ComplexType => ColumnSize.Lval,
-        BinaryType or DateTimeExtendedType or _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
+        MemoType or OleType or ComplexType => ColumnSize.Lval,
+        BinaryType or BigBinaryType or DateTimeExtendedType or _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
     };
 
     internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column)
@@ -417,7 +417,7 @@ internal static class JetTypeInfo
             case NumericType:
                 return;
             case OleType:
-            case AttachmentType:
+            case BigBinaryType:
             case ComplexType:
             case DateTimeExtendedType:
                 throw new NotSupportedException(
@@ -565,6 +565,11 @@ internal static class JetTypeInfo
         }
 
         int fixedSize = GetFixedSize(type);
+        if (type == BigBinaryType && size != fixedSize)
+        {
+            return false;
+        }
+
         int required = fixedSize > 0 ? fixedSize : Math.Min(size, 8);
         return start >= 0 && required <= rowLength - start;
     }
@@ -602,7 +607,8 @@ internal static class JetTypeInfo
                 BigIntType => Ri64(row, start).ToString(CultureInfo.InvariantCulture),
                 GuidType => new Guid(row.Slice(start, 16)).ToString("B"),
                 NumericType => ReadNumericString(row, start, scale: 0, strictNumeric),
-                ComplexType or AttachmentType => size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty,
+                BigBinaryType => ToHexStringNoSeparator(row.Slice(start, size)),
+                ComplexType => size >= 4 ? $"__CX:{Ri32(row, start)}__" : string.Empty,
                 DateTimeExtendedType => ReadDateTimeExtended(row, start, size).ToString("yyyy-MM-dd HH:mm:ss.fffffff", CultureInfo.InvariantCulture),
                 BooleanType or
                 BinaryType or
@@ -644,7 +650,8 @@ internal static class JetTypeInfo
     /// the typed path keeps full precision),
     /// <c>Money → decimal</c>, <c>BigInt → long</c>, <c>Guid → Guid</c>,
     /// <c>Numeric → decimal</c>,
-    /// <c>Complex</c>/<c>Attachment → <see cref="ComplexIdRef"/></c> typed
+    /// <c>BigBinary → byte[]</c>,
+    /// <c>Complex → <see cref="ComplexIdRef"/></c> typed
     /// sentinel carrying the row's complex_id directly (the legacy
     /// <c>"__CX:N__"</c> string round-trip used by <c>ReadFixedString</c>
     /// is avoided on the typed hot path), and unknown types fall through to
@@ -694,7 +701,8 @@ internal static class JetTypeInfo
                 GuidType => new Guid(row.Slice(start, 16)),
                 NumericType => ReadNumericTyped(row, start, scale: 0, strictNumeric),
                 DateTimeExtendedType => ReadDateTimeExtended(row, start, size),
-                ComplexType or AttachmentType => size >= 4
+                BigBinaryType => row.Slice(start, size).ToArray(),
+                ComplexType => size >= 4
                                         ? new ComplexIdRef(Ri32(row, start))
                                         : DBNull.Value,
                 BooleanType or
@@ -1604,7 +1612,7 @@ internal static class JetTypeInfo
 }
 
 /// <summary>
-/// Typed-row sentinel for <c>Complex</c>/<c>Attachment</c> slots emitted
+/// Typed-row sentinel for <c>Complex</c> slots emitted
 /// by <c>JetTypeInfo.ReadFixedTyped</c>. Carries the parent row's
 /// complex_id directly so the post-processing pass can resolve attachment
 /// bytes without parsing the legacy <c>"__CX:N__"</c> string format.

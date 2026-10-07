@@ -55,7 +55,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         int limit = Math.Min(columns.Count, typedRow.Length);
         for (int i = 0; i < limit; i++)
         {
-            if (columns[i].Type is ComplexType or AttachmentType)
+            if (columns[i].Type is ComplexType)
             {
                 typedRow[i] = typedRow[i] is ComplexIdRef reference && TryGetCell(complexData, i, reference.Id, out byte[] cell)
                     ? cell
@@ -80,7 +80,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         int limit = Math.Min(columns.Count, row.Length);
         for (int i = 0; i < limit; i++)
         {
-            if (columns[i].Type is not ComplexType and not AttachmentType)
+            if (columns[i].Type is not ComplexType)
             {
                 continue;
             }
@@ -125,7 +125,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
         foreach (ColumnInfo column in columns)
         {
-            if (column.Type is ComplexType or AttachmentType && column.Misc > 0)
+            if (column.Type is ComplexType && column.Misc > 0)
             {
                 byComplexId[column.Misc] = (column.Name, column.Type);
             }
@@ -199,7 +199,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             cancellationToken.ThrowIfCancellationRequested();
 
             ColumnInfo col = columns[i];
-            if (col.Type is not ComplexType and not AttachmentType
+            if (col.Type is not ComplexType
                 || (wantedColumns is not null && (i >= wantedColumns.Length || !wantedColumns[i])))
             {
                 continue;

@@ -850,7 +850,7 @@ internal sealed class ComplexColumnManager(
         ColumnInfo complexCol = parentDef.FindColumn(columnName)
             ?? throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{columnName}' was not found in table '{tableName}'.", nameof(columnName), errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = columnName });
 
-        bool isComplexCol = complexCol.Type is AttachmentType or ComplexType;
+        bool isComplexCol = complexCol.Type is ComplexType;
         if (!isComplexCol)
         {
             throw new NotSupportedException(
@@ -865,7 +865,7 @@ internal sealed class ComplexColumnManager(
         }
 
         TableDef flatDef = await this.tableDefs.ReadRequiredTableDefAsync(flatTdefPage, "<flat>", cancellationToken).ConfigureAwait(false);
-        ComplexColumnKind kind = ClassifyComplexColumnKind(complexCol.Type, flatDef);
+        ComplexColumnKind kind = ClassifyComplexColumnKind(flatDef);
         if (kind == ComplexColumnKind.Unknown)
         {
             throw new NotSupportedException(
@@ -955,13 +955,8 @@ internal sealed class ComplexColumnManager(
         await autoNumbers.UpdateHighWaterAsync(flatTdefPage, flatDef, [flatValues], cancellationToken).ConfigureAwait(false);
     }
 
-    private static ComplexColumnKind ClassifyComplexColumnKind(ColumnType parentType, TableDef flatDef)
+    private static ComplexColumnKind ClassifyComplexColumnKind(TableDef flatDef)
     {
-        if (parentType == AttachmentType)
-        {
-            return ComplexColumnKind.Attachment;
-        }
-
         if (flatDef.FindColumn("FileData") != null && flatDef.FindColumn("FileName") != null)
         {
             return ComplexColumnKind.Attachment;
@@ -1190,7 +1185,7 @@ internal sealed class ComplexColumnManager(
         var complexCols = new List<ColumnInfo>();
         foreach (ColumnInfo col in parentDef.Columns)
         {
-            if (col.Type is AttachmentType or ComplexType)
+            if (col.Type is ComplexType)
             {
                 complexCols.Add(col);
             }
@@ -1574,7 +1569,7 @@ internal sealed class ComplexColumnManager(
         var complexCols = new List<ColumnInfo>();
         foreach (ColumnInfo col in parentDef.Columns)
         {
-            if (col.Type is AttachmentType or ComplexType)
+            if (col.Type is ComplexType)
             {
                 complexCols.Add(col);
             }

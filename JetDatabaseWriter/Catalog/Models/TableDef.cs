@@ -181,7 +181,7 @@ internal sealed class TableDef
                 hasVar = true;
             }
 
-            if (c.Type is ComplexType or AttachmentType)
+            if (c.Type is ComplexType)
             {
                 hasComplex = true;
             }

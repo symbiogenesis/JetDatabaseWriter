@@ -127,7 +127,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     // Complex columns hold raw references, and MEMO / OLE cells
                     // (including a calculated column whose result type is MEMO or
                     // OLE) may hold an UnreadableLongValue, so those columns are untyped.
-                    Type clrType = column.Type is ComplexType or AttachmentType || ResolveValueType(column) is MemoType or OleType
+                    Type clrType = column.Type is ComplexType || ResolveValueType(column) is MemoType or OleType
                         ? typeof(object)
                         : ResolveClrType(column);
                     _ = table.Columns.Add(column.Name, clrType);

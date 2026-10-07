@@ -70,7 +70,7 @@ public sealed class ComplexColumnIndexFixtureTests
 
         RawTable table = await ReadRawTableAsync(ms, tableName);
         ColumnType columnType = table.Definition.FindColumn(key.Name)!.Type;
-        Assert.True(columnType is ColumnType.ComplexType or ColumnType.AttachmentType);
+        Assert.True(columnType is ColumnType.ComplexType);
 
         List<byte[]> expected = [.. table.Rows
             .Select(row => IndexKeyEncoder.EncodeEntry(columnType, Slot(table, row, key.Name), key.IsAscending))
@@ -205,7 +205,7 @@ public sealed class ComplexColumnIndexFixtureTests
             Assert.Equal(index.Columns.Select(c => c.Name), kept.Columns.Select(c => c.Name));
             IndexColumnReference first = index.Columns[0];
             ColumnType type = original.Definition.FindColumn(first.Name)!.Type;
-            if (type is ColumnType.ComplexType or ColumnType.AttachmentType)
+            if (type is ColumnType.ComplexType)
             {
                 List<byte[]> expected = [.. rewritten.Rows
                     .Select(row => IndexKeyEncoder.EncodeEntry(type, Slot(rewritten, row, first.Name), first.IsAscending))

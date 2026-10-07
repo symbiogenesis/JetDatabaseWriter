@@ -523,7 +523,7 @@ internal sealed class TableReader(
     {
         foreach (ColumnInfo column in tableDef.Columns)
         {
-            if (column.Type is MemoType or OleType or ComplexType or AttachmentType)
+            if (column.Type is MemoType or OleType or ComplexType)
             {
                 return true;
             }
@@ -787,7 +787,7 @@ internal sealed class TableReader(
         long rowCount = 0;
 
         bool needsComplexPass = td.HasComplexColumns
-            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType));
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 
@@ -884,7 +884,7 @@ internal sealed class TableReader(
         // projection mask is supplied, skip a pass entirely if no wanted
         // column requires it; otherwise run with the table-wide flag.
         bool needsComplexPass = td.HasComplexColumns
-            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
+            && (wantedColumns == null || HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType));
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
 

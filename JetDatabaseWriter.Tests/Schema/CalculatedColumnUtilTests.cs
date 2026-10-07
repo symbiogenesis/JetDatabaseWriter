@@ -76,7 +76,7 @@ public sealed class CalculatedColumnUtilTests
 
     [Theory]
     [InlineData(ComplexType)]
-    [InlineData(AttachmentType)]
+    [InlineData(BigBinaryType)]
     public void ReadPayload_ComplexAndAttachment_UseFourByteComplexIdPayload(ColumnType columnType)
     {
         byte[] payload = new byte[4];

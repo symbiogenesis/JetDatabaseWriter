@@ -416,7 +416,7 @@ internal sealed class IndexRowReader(
         (Func<object?[], TRow> factory, bool[]? wantedColumns) = createProjection(td);
 
         bool needsComplexPass = td.HasComplexColumns
-            && (wantedColumns == null || TableReader.HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType, AttachmentType));
+            && (wantedColumns == null || TableReader.HasWantedColumnOfType(td.Columns, wantedColumns, ComplexType));
         bool needsHyperlinkPass = td.HasHyperlinkColumns
             && (wantedColumns == null || TableReader.HasWantedHyperlinkColumn(td.ClrTypes, wantedColumns));
         Dictionary<int, Dictionary<int, byte[]>>? complexData = needsComplexPass

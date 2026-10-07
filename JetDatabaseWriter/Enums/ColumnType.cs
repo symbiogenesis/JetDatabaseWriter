@@ -56,8 +56,8 @@ public enum ColumnType : byte
     /// <summary>mdbtools <c>MDB_NUMERIC</c> (0x10): 17-byte scaled decimal cell (sign + 16-byte magnitude; descriptor carries scale).</summary>
     NumericType = 0x10,
 
-    /// <summary>Legacy/private attachment alias (0x11). Access-authored ACCDB complex columns use <see cref="ComplexType"/> and classify attachments via <c>MSysComplexColumns</c>.</summary>
-    AttachmentType = 0x11,
+    /// <summary>Jet4 BIGBINARY (0x11): 3992-byte fixed binary payload used by the Data column of MSysAccessObjects.</summary>
+    BigBinaryType = 0x11,
 
     /// <summary>Access 2007+ complex parent column (0x12): attachment, multi-value, or version-history with hidden flat-table backing.</summary>
     ComplexType = 0x12,

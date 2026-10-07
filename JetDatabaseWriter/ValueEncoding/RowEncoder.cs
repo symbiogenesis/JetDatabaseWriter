@@ -114,7 +114,6 @@ internal sealed class RowEncoder(JetFormat format)
                 return EncodeDateTimeExtendedValue(column, value, dest);
 
             case ComplexType:
-            case AttachmentType:
                 int complexId = value is ComplexIdRef complexRef
                     ? complexRef.Id
                     : Convert.ToInt32(value, CultureInfo.InvariantCulture);
@@ -134,6 +133,7 @@ internal sealed class RowEncoder(JetFormat format)
                 return 16;
             case BooleanType:
             case BinaryType:
+            case BigBinaryType:
             case TextType:
             case OleType:
             case MemoType:
@@ -341,7 +341,7 @@ internal sealed class RowEncoder(JetFormat format)
             numCols = Math.Max(numCols, col.ColNum + 1);
             if (col.IsFixed && col.Type != BooleanType)
             {
-                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + (col.Type is TextType or BinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type)));
+                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + (col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type)));
             }
             else if (!col.IsFixed)
             {
@@ -361,7 +361,12 @@ internal sealed class RowEncoder(JetFormat format)
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnInfo column = tableDef.Columns[i];
-            if (column.IsFixed && column.Type == BinaryType && values[i] is { } binary && binary is not DBNull
+            if (column.Type == BigBinaryType && (format.Kind != DatabaseFormat.Jet4Mdb || !column.IsFixed || column.Size != JetTypeInfo.GetFixedSize(BigBinaryType)))
+            {
+                throw new JetLimitationException($"Column '{column.Name}' has a malformed BIGBINARY descriptor; native Jet4 storage requires 3992 fixed bytes.");
+            }
+
+            if (column.IsFixed && column.Type is BinaryType or BigBinaryType && values[i] is { } binary && binary is not DBNull
                 && this.EncodeBinaryValue(binary, maxSize: 0) is { } bytes && bytes.Length > column.Size)
             {
                 throw new JetLimitationException($"Fixed Binary column '{column.Name}' holds at most {column.Size} bytes; the value occupies {bytes.Length}.");
@@ -413,7 +418,7 @@ internal sealed class RowEncoder(JetFormat format)
                 continue;
             }
 
-            if (column.IsFixed && column.Type == BinaryType)
+            if (column.IsFixed && column.Type is BinaryType or BigBinaryType)
             {
                 fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
                 if (value is not DBNull && this.EncodeBinaryValue(value, maxSize: 0) is { } bytes)
@@ -447,7 +452,7 @@ internal sealed class RowEncoder(JetFormat format)
 
             if (value is DBNull)
             {
-                if (column.IsFixed && (column.Type == AttachmentType || column.Type == ComplexType))
+                if (column.IsFixed && (column.Type == ComplexType))
                 {
                     fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + JetTypeInfo.GetFixedSize(column.Type));
                 }

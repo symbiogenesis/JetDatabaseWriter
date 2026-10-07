@@ -1142,7 +1142,7 @@ internal sealed class TableSchemaEditor(
             // Their catalog ownership must follow the transplanted TDEF too.
             foreach (ColumnInfo column in tempDef.Columns)
             {
-                if ((column.Type is ComplexType or AttachmentType) && column.Misc > 0)
+                if ((column.Type is ComplexType) && column.Misc > 0)
                 {
                     await complexColumns.UpdateComplexColumnParentTableIdAsync(
                         column.Misc,
@@ -1380,25 +1380,13 @@ internal sealed class TableSchemaEditor(
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
             case BinaryType:
+            case BigBinaryType:
                 int binarySize = column.IsCalculated ? CalculatedPayloadSize(column, sizedByDescriptor, 0) : column.Size;
-                baseDef = new ColumnDefinition(column.Name, typeof(byte[]), binarySize > 0 ? binarySize : 255);
-                break;
-            case AttachmentType:
-                // preserve attachment columns across
-                // AddColumnAsync / DropColumnAsync / RenameColumnAsync. The parent
-                // TDEF descriptor round-trips with the ComplexID intact (ColumnInfo.Misc
-                // → ColumnDefinition.ComplexId → re-emitted into the rebuilt TDEF's
-                // misc slot), and the existing hidden flat child table + MSysComplexColumns
-                // row are kept attached because the rewrite path skips the cascade-on-drop
-                // step. Each row's per-row complex reference is copied to the rebuilt
-                // parent row, so the flat table's `_<columnName>` FK back-reference
-                // still joins to it.
-                return new ColumnDefinition(column.Name, typeof(byte[]))
+                baseDef = new ColumnDefinition(column.Name, typeof(byte[]), binarySize > 0 ? binarySize : 255)
                 {
-                    IsAttachment = true,
-                    ComplexId = column.Misc,
-                    SourceColumn = column,
+                    ColumnTypeOverride = valueType,
                 };
+                break;
             case ComplexType:
                 // Access stores all complex parent descriptors as the generic
                 // 0x12 type; the subtype lives in MSysComplexColumns. This

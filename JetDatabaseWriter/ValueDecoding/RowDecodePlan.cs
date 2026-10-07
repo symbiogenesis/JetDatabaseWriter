@@ -24,6 +24,7 @@ internal sealed class RowDecodePlan
     private readonly bool strictParsing;
     private readonly bool hasDeletedColumns;
     private readonly bool hasVarColumns;
+    private readonly bool hasBigBinaryColumns;
 
     private RowDecodePlan(TableDef tableDef, bool[]? wantedColumns, int[]? columnOrdinals, bool strictParsing, bool preserveLongValueBytes = false)
     {
@@ -35,6 +36,11 @@ internal sealed class RowDecodePlan
         this.strictParsing = strictParsing;
         this.hasDeletedColumns = tableDef.HasDeletedColumns;
         this.hasVarColumns = tableDef.HasVarColumns;
+        foreach (ColumnInfo column in this.columns)
+        {
+            this.hasBigBinaryColumns |= column.Type == BigBinaryType;
+        }
+
         this.PreservesLongValueBytes = preserveLongValueBytes;
     }
 
@@ -204,16 +210,22 @@ internal sealed class RowDecodePlan
             return new ColumnSlice(ColumnSliceKind.Null, 0, 0, false);
         }
 
+        if (col.Type == BigBinaryType && (!col.IsFixed || col.Size != JetTypeInfo.GetFixedSize(BigBinaryType)))
+        {
+            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
+        }
+
         if (col.IsFixed)
         {
             int start = rowFields.NumCols + col.FixedOff;
-            int sz = col.IsCalculated || col.Type is TextType or BinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
-            if (sz == 0 || start + sz > rowSize)
+            int sz = col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
+            if (sz == 0 || start + sz > rowSize
+                || col.Type == BigBinaryType && start + sz > Math.Min(layout.Eod, layout.NullMaskPos))
             {
                 return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
             }
 
-            return new ColumnSlice(col.IsCalculated || col.Type is TextType or BinaryType ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
+            return new ColumnSlice(col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
         }
 
         if (col.VarIdx >= layout.VarLen)
@@ -324,7 +336,7 @@ internal sealed class RowDecodePlan
         {
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                if (column.Type is ComplexType or AttachmentType || length < required)
+                if (column.Type is ComplexType || length < required)
                 {
                     return false;
                 }
@@ -339,7 +351,7 @@ internal sealed class RowDecodePlan
                 return true;
             }
 
-            if (column.Type == BinaryType)
+            if (column.Type is BinaryType or BigBinaryType)
             {
                 value = BinaryBuffer.CopySlice(page, start, length);
                 return true;
@@ -519,6 +531,11 @@ internal sealed class RowDecodePlan
         out RowLayout layout)
     {
         layout = default;
+        if (this.hasBigBinaryColumns && source.Kind != DatabaseFormat.Jet4Mdb)
+        {
+            return false;
+        }
+
         if (rowSize < source.RowFields.NumCols)
         {
             return false;
@@ -597,7 +614,7 @@ internal sealed class RowDecodePlan
                 return source.DecodeText(page, start, length);
             }
 
-            if (column.Type == BinaryType)
+            if (column.Type is BinaryType or BigBinaryType)
             {
                 return JetTypeInfo.ToHexStringNoSeparator(page.AsSpan(start, length));
             }
@@ -744,7 +761,7 @@ internal sealed class RowDecodePlan
                 return source.DecodeText(page, start, length);
             }
 
-            if (column.Type == BinaryType)
+            if (column.Type is BinaryType or BigBinaryType)
             {
                 return BinaryBuffer.CopySlice(page, start, length);
             }

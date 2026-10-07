@@ -18,7 +18,7 @@ internal static class ComplexParentKeyComparer
     /// <exception cref="NotSupportedException">The column or text collation is unsupported.</exception>
     internal static byte[] Encode(JetFormat format, ColumnInfo column, object? value)
     {
-        if (column.Type is ColumnType.ComplexType or ColumnType.AttachmentType)
+        if (column.Type is ColumnType.ComplexType)
         {
             throw new NotSupportedException($"Complex column '{column.Name}' cannot identify a parent row.");
         }

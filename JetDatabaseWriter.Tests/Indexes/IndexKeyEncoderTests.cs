@@ -406,6 +406,7 @@ public sealed class IndexKeyEncoderTests
 
     [Theory]
     [InlineData(NumericType)]
+    [InlineData(BigBinaryType)]
     public void UnsupportedColumnType_Throws(ColumnType columnType) => Assert.Throws<NotSupportedException>(() => IndexKeyEncoder.EncodeEntry(columnType, 1, ascending: true));
 
     /// <summary>
@@ -416,7 +417,6 @@ public sealed class IndexKeyEncoderTests
     /// <param name="columnType">The complex column type.</param>
     [Theory]
     [InlineData(ComplexType)]
-    [InlineData(AttachmentType)]
     public void EncodeEntry_ComplexReference_UsesLongIntegerLayout(ColumnType columnType)
     {
         Assert.Equal(new byte[] { 0x7F, 0x80, 0x00, 0x00, 0x01 }, IndexKeyEncoder.EncodeEntry(columnType, new ComplexIdRef(1), ascending: true));

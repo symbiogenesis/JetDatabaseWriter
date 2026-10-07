@@ -289,12 +289,17 @@ internal static class IndexHelpers
                 ColumnInfo column = tableDef.FindColumn(columnName)
                     ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
 
+                if (column.Type == BigBinaryType)
+                {
+                    throw new NotSupportedException($"IndexDefinition '{def.Name}' references column '{columnName}'; native BIGBINARY index encoding is unsupported.");
+                }
+
                 // Public declarations cannot index OLE or complex values. Access's
                 // own complex-reference indexes use the stored Long Integer key.
                 bool complexReference = def.IsComplexReferenceIndex
                     && def.Columns.Count == 1 && def.IsUnique && def.IsRequired && !def.IsPrimaryKey
-                    && column.Type is AttachmentType or ComplexType;
-                if (column.Type == OleType || (column.Type is AttachmentType or ComplexType && !complexReference))
+                    && column.Type is ComplexType;
+                if (column.Type == OleType || (column.Type is ComplexType && !complexReference))
                 {
                     throw new NotSupportedException(
                         $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {GetTypeDisplayName(column.Type)}; "

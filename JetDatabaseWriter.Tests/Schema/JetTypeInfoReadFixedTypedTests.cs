@@ -34,7 +34,6 @@ public sealed class JetTypeInfoReadFixedTypedTests
     [InlineData(GuidType, 16)]
     [InlineData(DateTimeExtendedType, 42)]
     [InlineData(ComplexType, 4)]
-    [InlineData(AttachmentType, 4)]
     public void TryGetVariableSlotFixedPayloadSize_FixedPayloadTypes_ReturnsRequiredSize(ColumnType columnType, int expectedSize)
     {
         Assert.True(JetTypeInfo.TryGetVariableSlotFixedPayloadSize(columnType, out int actualSize));
@@ -306,7 +305,6 @@ public sealed class JetTypeInfoReadFixedTypedTests
 
     [Theory]
     [InlineData(ComplexType)]
-    [InlineData(AttachmentType)]
     public void Complex_ReturnsCxSentinelString(ColumnType columnType)
     {
         byte[] row = new byte[4];
@@ -326,7 +324,6 @@ public sealed class JetTypeInfoReadFixedTypedTests
 
     [Theory]
     [InlineData(ComplexType)]
-    [InlineData(AttachmentType)]
     public void Complex_TooShort_ReturnsDBNull(ColumnType columnType)
     {
         byte[] row = new byte[2]; // size < 4

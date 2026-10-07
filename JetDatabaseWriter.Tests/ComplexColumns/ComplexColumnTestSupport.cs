@@ -141,7 +141,7 @@ internal static class ComplexColumnTestSupport
             byte[] page = await db.Pages.ReadPageCopyAsync(location.DataPageNumber, Ct);
             int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(db.Format.ReadRowColumnCount(page, location.RowStart));
             Span<byte> nullMask = page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize);
-            foreach (ColumnInfo column in table.Definition.Columns.Where(c => c.Type is ColumnType.ComplexType or ColumnType.AttachmentType))
+            foreach (ColumnInfo column in table.Definition.Columns.Where(c => c.Type is ColumnType.ComplexType))
             {
                 int? reference = slotFor(row.Values, column.Name);
                 JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, reference.HasValue);

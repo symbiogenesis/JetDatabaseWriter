@@ -54,7 +54,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
         {
             ColumnInfo column = tableDef.Columns[colIndex];
             if ((column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) == 0
-                || column.Type is ColumnType.ComplexType or ColumnType.AttachmentType
+                || column.Type is ColumnType.ComplexType
                 || row[colIndex] is null or DBNull)
             {
                 continue;
@@ -81,7 +81,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
         long highWater = 0;
         for (int colIndex = 0; colIndex < tableDef.Columns.Count && colIndex < row.Length; colIndex++)
         {
-            if (tableDef.Columns[colIndex].Type is not (ColumnType.ComplexType or ColumnType.AttachmentType))
+            if (tableDef.Columns[colIndex].Type is not (ColumnType.ComplexType))
             {
                 continue;
             }

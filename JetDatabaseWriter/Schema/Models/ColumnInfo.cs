@@ -101,7 +101,7 @@ internal sealed record ColumnInfo
     /// Complex columns (<c>Attachment</c> / <c>Complex</c>) carry the magic <c>0x07</c>
     /// marker in that byte rather than flag bits, so they never count.
     /// </summary>
-    public bool IsAutoNumber => this.Type is not AttachmentType and not ComplexType
+    public bool IsAutoNumber => this.Type is not ComplexType
         && (this.Flags & (this.Type == GuidType ? Constants.ColumnDescriptorFlags.AutoNumberGuid : Constants.ColumnDescriptorFlags.AutoNumber)) != 0;
 
     public string Name { get; init; } = string.Empty;

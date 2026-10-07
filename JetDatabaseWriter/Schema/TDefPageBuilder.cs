@@ -60,7 +60,24 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 $"Column '{definition.Name}': Date/Time Extended columns are only supported in ACCDB databases.");
         }
 
-        if (type is ComplexType or AttachmentType && !format.SupportsComplexColumns)
+        if (type == BigBinaryType)
+        {
+            if (format.Kind != DatabaseFormat.Jet4Mdb)
+            {
+                throw new NotSupportedException($"Column '{definition.Name}': BIGBINARY is a Jet4-only system-table type.");
+            }
+
+            int width = definition.SourceColumn?.Size ?? definition.MaxLength;
+            if (width != GetFixedSize(BigBinaryType)
+                || definition.SourceColumn is { IsFixed: false }
+                || definition.ForceVariableLengthStorage
+                || definition.DescriptorFlagsOverride is byte binaryFlags && (binaryFlags & Constants.ColumnDescriptorFlags.Fixed) == 0)
+            {
+                throw new NotSupportedException($"Column '{definition.Name}': BIGBINARY requires its native 3992-byte fixed descriptor.");
+            }
+        }
+
+        if (type == ComplexType && !format.SupportsComplexColumns)
         {
             throw new NotSupportedException(
                 $"Column '{definition.Name}': Attachment and multi-value columns are an Access 2007+ ACE feature; declare them only on .accdb databases.");
@@ -77,7 +94,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
         // The Hyperlink flag marks a Memo column. A complex column carries no
         // descriptor flags, so the flag is ignored on one.
-        if ((definition.IsHyperlink || definition.ClrType == typeof(Hyperlink)) && type is not (MemoType or AttachmentType or ComplexType))
+        if ((definition.IsHyperlink || definition.ClrType == typeof(Hyperlink)) && type is not (MemoType or ComplexType))
         {
             throw new ArgumentException(
                 $"Column '{definition.Name}' has IsHyperlink = true but resolves to JET type {GetTypeDisplayName(type)}; " +
@@ -111,7 +128,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 descriptors.Add(preserved);
                 if (source.IsFixed)
                 {
-                    fixedOffset += source.Type is TextType or BinaryType ? source.Size : GetFixedSize(source.Type);
+                    fixedOffset += source.Type is TextType or BinaryType or BigBinaryType ? source.Size : GetFixedSize(source.Type);
                 }
                 else
                 {
@@ -123,7 +140,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
             bool isCalculated = definition.IsCalculated;
             bool variable = isCalculated || definition.ForceVariableLengthStorage || (type != BinaryType && IsAlwaysVariableLength(type));
-            if (type is TextType or BinaryType && definition.DescriptorFlagsOverride is byte storageFlags)
+            if (type is TextType or BinaryType or BigBinaryType && definition.DescriptorFlagsOverride is byte storageFlags)
             {
                 variable = (storageFlags & Constants.ColumnDescriptorFlags.Fixed) == 0;
             }
@@ -132,7 +149,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
             byte flags;
-            bool isComplex = type is AttachmentType or ComplexType;
+            bool isComplex = type is ComplexType;
             if (isComplex)
             {
                 flags = Constants.ColumnDescriptorFlags.ComplexColumn;
@@ -191,7 +208,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             }
             else
             {
-                fixedOffset += type is TextType or BinaryType ? size : GetFixedSize(type);
+                fixedOffset += type is TextType or BinaryType or BigBinaryType ? size : GetFixedSize(type);
             }
         }
 
@@ -281,7 +298,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             Wu16(page, o + format.ColumnDescriptor.FixedOff, col.FixedOff);
             Wu16(page, o + format.ColumnDescriptor.SzOff, col.Size);
 
-            if (col.Type is AttachmentType or ComplexType)
+            if (col.Type is ComplexType)
             {
                 Wi32(page, o + format.ColumnDescriptor.MiscOff, col.Misc);
             }
@@ -800,7 +817,8 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             NumericType => 17,
             TextType => GetTextDeclaredSize(maxLength, format),
             BinaryType => maxLength > 0 ? maxLength : 255,
-            AttachmentType or ComplexType => 4,
+            BigBinaryType => GetFixedSize(BigBinaryType),
+            ComplexType => 4,
             DateTimeExtendedType => GetFixedSize(DateTimeExtendedType),
             OleType or
             MemoType or

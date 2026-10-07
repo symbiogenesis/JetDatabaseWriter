@@ -458,6 +458,11 @@ internal sealed class IndexMaintainer(
                 foreach (KeyColumnInfo keyColumn in keyColumns)
                 {
                     ColumnInfo column = keyColumn.Col;
+                    if (column.Type == BigBinaryType)
+                    {
+                        throw CreateUnmaintainableIndexesException(tableName, $"index '{catalog.Catalog.GetNameOrFallback(realIdxNum)}' requires unsupported native BIGBINARY encoding");
+                    }
+
                     ThrowIfTextCollationUnsupported(column, tableName);
                 }
             }
@@ -813,7 +818,7 @@ internal sealed class IndexMaintainer(
     {
         foreach (ColumnInfo column in tableDef.Columns)
         {
-            if (column.Type is MemoType or OleType or AttachmentType or ComplexType)
+            if (column.Type is MemoType or OleType or ComplexType)
             {
                 return true;
             }

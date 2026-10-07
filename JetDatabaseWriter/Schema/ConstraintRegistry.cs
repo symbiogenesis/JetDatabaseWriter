@@ -912,7 +912,7 @@ internal sealed class ConstraintRegistry(
             // Bit 0x02 is now always set by the writer for DAO compatibility (Jackcess
             // UNKNOWN_FF_FLAG_MASK), so it can no longer carry IsNullable. IsNullable
             // is sourced from MSysObjects.LvProp's Required Boolean (DAO wire format).
-            bool isComplex = col.Type is AttachmentType or ComplexType;
+            bool isComplex = col.Type is ComplexType;
             bool isNullable;
             bool isAutoIncrement = col.IsAutoNumber;
             if (isComplex)

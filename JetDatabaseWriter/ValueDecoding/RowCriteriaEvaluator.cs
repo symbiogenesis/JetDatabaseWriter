@@ -52,7 +52,7 @@ internal sealed class RowCriteriaEvaluator
             }
 
             ColumnInfo column = tableDef.Columns[columnIndex];
-            if (column.Type == Enums.ColumnType.BinaryType && column.IsFixed && !column.IsCalculated)
+            if (column.Type is Enums.ColumnType.BinaryType or Enums.ColumnType.BigBinaryType && column.IsFixed && !column.IsCalculated)
             {
                 predicate = NormalizeBinaryPredicate(predicate, column.Size);
             }
