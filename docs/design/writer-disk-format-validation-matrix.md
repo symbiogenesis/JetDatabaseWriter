@@ -6,37 +6,51 @@ This document is the compact map of writer-emitted Access disk-format surfaces, 
 
 ## Microsoft interoperability evidence
 
-The local DAO runs on 2026-10-06 used matching CI-built net10.0 and net8.0
-runners for `a086b014b61c36e23ed47a9c79b0a431acac3e5e`, from
-[CI run 37566717618](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37566717618).
-Each ran exactly the guarded DAO selection: **41 passed, 0 failed, 2 skipped**.
-The installed DAO120 engine activated through the x64 test runner on Windows
-Arm64. Its Access97 refusal caused both Jet3 skips; DAO3.6 registration alone
-does not establish usable Jet3 coverage.
+Validation on 2026-10-06 used revision
+`4b347f95886abdd72aadcfa59a997652e46badea`:
 
-Passing cases include native JET4 encrypted DML/DDL/rollback and DAO write/compact,
+- [Windows CI 37571001909](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37571001909)
+  passed all six jobs: Release analyzers/package checks and both ordinary test
+  legs. Each leg had zero failures; its 50 skips were the 47 guarded DAO cases
+  and three explicit-only fuzz harnesses.
+- [Portability 37571002529](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37571002529)
+  passed Release builds and ordinary tests on Linux and macOS, on net10.0 and
+  net8.0. The net8.0 leg loads the netstandard2.1 library.
+- [Bounded fuzz 37571005439](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37571005439)
+  passed 64 cases per harness and framework, 384 total, seed `20261008`.
+  Each process had a 30-second timeout and 512 MiB memory limit.
+- Matching Windows CI-built runners executed all 43 guarded DAO methods locally:
+  **45 cases passed, 0 failed, 2 skipped on each framework**. The installed
+  DAO120 engine activated through x64 hosts on Windows Arm64. Its Access97
+  refusal caused both Jet3 skips; DAO3.6 registration alone is not activation
+  evidence. No ordinary tests, builds or fuzzers ran locally.
+
+Passing DAO cases include native JET4 encrypted DML/DDL/rollback and write/compact,
 native ACE Agile mutation and compact, unenforced relationship deletion,
 calculated/complex schema rewrites, table-rule rename/set, text comparisons,
-BINARY values and owned-map growth. These cases establish their tested behavior,
-not every feature or hostile-input combination. Subsequent code changes require
-matching-revision checks.
+BINARY values and owned-map growth. Fresh Jet4 creation includes native FK
+rejection and exact compacted relationship/row readback. The three native
+qualified calculated-reference forms survive writer mutation, column rename
+and DAO compact/readback. See [Jet4 bootstrap security](jet4-bootstrap-security.md)
+and [calculated expression notes](calculated-columns-format-notes.md).
 
-The same revision passed [bounded fuzz run 37566720409](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37566720409):
-32 cases per harness and framework, 192 cases total, seed `20261007`.
-Ordinary hosted tests had seven failures plus analyzer findings; those repairs
-still require a settled passing gate. This is not a complete acceptance result.
+Logs, XML results, matching runners, fuzz manifests and native oracle databases
+are retained locally under `artifacts/retained/jet-ace-20261006/`. The source
+regressions reproduce the checks on a compatible DAO host. These results prove
+the tested cases, not complete format coverage or resistance to every hostile
+input; subsequent code changes require matching-revision validation.
 
 | Generation | Available evidence | Required evidence |
 |---|---|---|
 | JET before3 / Access1.x–2.0 | No supported parser or verified fixtures in the current matrix | Microsoft-authored corpus, format identification and read/write implementation |
 | JET3 / Access97 | Microsoft-authored reader fixtures and library mutation tests | A working Access97-compatible engine; DAO open/write/compact parity |
-| JET4 / Access2000–2003 | Microsoft-authored fixtures and guarded DAO tests | Complete feature, code-page, collation, security and malformed-file coverage |
-| ACE / Access2007 and later | Microsoft-authored fixtures; successful guarded DAO cases in the runs above | Resolve failing cases; cover later descriptor variants and real encrypted files |
+| JET4 / Access2000–2003 | Microsoft-authored fixtures and successful guarded DAO tests, including fresh creation with an enforced relationship | Complete feature, code-page, collation, security and malformed-file coverage |
+| ACE / Access2007 and later | Microsoft-authored fixtures and successful guarded DAO cases | Later descriptor, complex, collation and encryption variants |
 | Encryption variants | DAO-produced JET4 RC4/password-only and ACE Agile fixtures; [hashes and producer details](native-encryption-evidence.md) | Additional real providers, native maintenance and matching-revision DAO mutation/compact checks |
 
-The feature rows below describe available test mechanisms. A conditional DAO
-test is evidence only when it actually ran successfully on the revision and
-engine being evaluated.
+A conditional DAO test is evidence only when it actually ran successfully on
+the revision and engine being evaluated.
+
 ## Validation Levels
 
 Use the canonical ladder in [dao-validation-strategy.md](dao-validation-strategy.md). In this matrix, the levels are named as follows:
@@ -61,7 +75,7 @@ When the matrix says "writer-created", read that as the output under validation.
 
 | Area | Base fixture / oracle | Strongest automated signal | Current coverage and tests / probes | Residual trigger |
 |---|---|---|---|---|
-| Fresh Jet4/ACE bootstrap | Writer-created ACCDB bootstrap output under validation; not a comparison oracle for unrelated Access behavior. | DAO CompactDatabase | Fresh writer-created ACCDB streams scaffold hidden core system tables, `MSysRelationships`, `MSysComplexColumns`, complex-type attachment template metadata, a simple user table, and inserted rows; the compacted copy reopens through this reader. Current signal: `FreshWriterCreatedDatabase_DaoCompactSmokeTest` in [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs), plus [CreateDatabaseTests.cs](../../JetDatabaseWriter.Tests/Writer/CreateDatabaseTests.cs) and [ComplexColumnsWriterTests.cs](../../JetDatabaseWriter.Tests/ComplexColumns/ComplexColumnsWriterTests.cs). | Add byte-for-byte comparison with a DAO-created empty database only if empty-database parity becomes a release requirement. |
+| Fresh Jet4/ACE bootstrap | Writer-created Jet4/ACCDB bootstrap output under validation, checked against DAO and native header/security fixtures. | DAO CompactDatabase | Fresh Jet4 output passes DAO open, insert, FK enforcement and exact compact/readback in `Jet4NativeBootstrapTests.FreshJet4_DaoOpensWritesAndCompacts`; see [native bootstrap notes](jet4-bootstrap-security.md). Fresh writer-created ACCDB streams scaffold hidden core system tables, `MSysRelationships`, `MSysComplexColumns`, complex-type attachment template metadata, a simple user table, and inserted rows; the compacted copy reopens through this reader. Current signal: `FreshWriterCreatedDatabase_DaoCompactSmokeTest` in [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs), plus [CreateDatabaseTests.cs](../../JetDatabaseWriter.Tests/Writer/CreateDatabaseTests.cs) and [ComplexColumnsWriterTests.cs](../../JetDatabaseWriter.Tests/ComplexColumns/ComplexColumnsWriterTests.cs). | Add byte-for-byte comparison with a DAO-created empty database only if empty-database parity becomes a release requirement. |
 | Scalar user tables and LVAL values | DAO-authored ACCDB host mutated by the writer, plus DAO-authored memo payloads as reader oracles. | DAO OpenRecordset | DAO can count writer-mutated rows, seek primary keys, continue AutoNumber values, and round-trip MEMO embedded NUL/CJK text plus deterministic OLE binary payloads large enough to force LVAL storage. Current signal: `DaoOpenRecordset_RowCount_MatchesWriterOutput`, `DaoIndexTraversal_Seek_LocatesRowByPrimaryKey`, `DaoAutoNumber_Continuation_NextIdFollowsLastWriterInsert`, and `DaoMemoAndOleLvalFidelity_EmbeddedNulsCjkAndBinary_RoundTripExactly` in [DaoValidationTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoValidationTests.cs). | Automate Access UI save/export workflows only if those UI paths become release blockers. |
 | Jet3 LVAL pages | Access 97-authored LVAL pages in `test2V1997.mdb` (Jackcess), plus the Access-authored Jet3 read fixtures. | Byte-level comparison with Access-authored pages | The writer's Jet3 LVAL pages use the Jet3 data-page header (row count at 8, row offset at 10), pack single-page rows and last chunks at the page end, and store no token. A 348-byte single-page value written by the writer equals Access 97's page 49 in all 2048 bytes, and a 22,970-byte chain equals pages 37-48 apart from the next-row pointers. Current signals: `LvalPages_MatchAccess97PagesByteForByte`, `RoundTrip_EveryStorageForm_ReadsBackThroughEveryReadApi`, `AccessAuthoredJet3LongValues_ReadExactly`, `CreateTable_LvPropOver256Bytes_PropertiesRoundTrip` and `DropTable_ChainedLongValue_FreesOnlyItsLvalPages` in [Jet3LongValueTests.cs](../../JetDatabaseWriter.Tests/ValueEncoding/Jet3LongValueTests.cs), Jet3 cases in `LongValueWriteBackTests`, `DataRemanenceTests` and `EmittedPageInvariantTests.SingleAndChainedLval_Jet3_EmitWellFormedPages`, and `LinkedTableCatalogWriterTests.CreateLinkedTableAsync_Jet3_DatabasePathRoundTrips`. | Modern Access/DAO 120 can reject Jet3 files, so there is no DAO signal. Add a DAO OpenRecordset of writer-created Jet3 MEMO/OLE values when a host that opens Access 97 files is available. |
 | Jet3 rows over 255 bytes (jump table) and the row-size limit | The Access 97 row in `test2V1997.mdb` (MSP_PROJECTS, the only Access-authored jump table in the fixtures, with one `0xFF` dummy), the mdbtools/Jackcess Jet3 row readers, and writer-created Jet3 streams. | Byte-level comparison with the Access-authored trailer and a port of Jackcess's reader; conditional DAO CompactDatabase | The writer sizes the Jet3 jump table as `(rowLength - 1) / 256`, stores the low bytes of the EOD and offsets, and writes each entry as the index of the first offset at or past its 256-byte boundary, `0xFF` for a dummy; the reader applies the same rule. Rows at every boundary (exactly 256 bytes, a dummy entry, an offset at 256, 512-byte rows, EOD 1025), 200-Long fixed-only rows and 20,000 random rows decode identically through the reference and the library, and the MSP_PROJECTS trailer rebuilds byte for byte. A row larger than one data page (2,036 / 4,080 bytes) moves its largest inline MEMO and OLE values to LVAL pages until it fits, and throws `JetLimitationException` on every format when none is left to move. Current signals: [Jet3LongRowTests.cs](../../JetDatabaseWriter.Tests/Writer/Jet3LongRowTests.cs), [Jet3JumpTableDecodeTests.cs](../../JetDatabaseWriter.Tests/ValueDecoding/Jet3JumpTableDecodeTests.cs), [RowSizeLimitTests.cs](../../JetDatabaseWriter.Tests/Writer/RowSizeLimitTests.cs), `ColumnConstraintTests.Jet3ClrDefaults_ExternalProperties_AreAppliedByALaterWriter`, and the conditional `Jet3LongRows_SurviveCompactAndRepair` in [DaoStorageMaintenanceTests.cs](../../JetDatabaseWriter.Tests/RoundTrip/DaoStorageMaintenanceTests.cs). | No fixture has a real (non-dummy) jump entry, so real entries rest on the mdbtools/Jackcess rule until the DAO test runs on a host that opens Access 97 files. Whether Access accepts rows between its documented 2,000-character record limit and the page capacity is unchecked. |
