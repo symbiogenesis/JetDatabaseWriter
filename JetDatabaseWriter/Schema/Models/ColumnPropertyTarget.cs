@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Schema.Models;
 
 using System;
 using System.Collections.Generic;
+using System.Text;
 using JetDatabaseWriter.Enums;
 
 /// <summary>
@@ -17,6 +18,9 @@ internal sealed record ColumnPropertyTarget(
     ColumnPropertyChunkType ChunkType,
     IReadOnlyList<ColumnPropertyEntry> Entries)
 {
+    /// <summary>Gets the actual stored text encoding when parsed from a property blob.</summary>
+    internal Encoding? TextEncoding { get; init; }
+
     /// <summary>Returns the first entry with the given property name (case-insensitive), or <see langword="null"/>.</summary>
     /// <param name="propertyName">The property name.</param>
     public ColumnPropertyEntry? Find(string propertyName)
@@ -52,7 +56,7 @@ internal sealed record ColumnPropertyTarget(
             return null;
         }
 
-        return format.PropertyTextEncoding.GetString(entry.Value);
+        return (this.TextEncoding ?? format.PropertyTextEncoding).GetString(entry.Value);
     }
 
     /// <summary>

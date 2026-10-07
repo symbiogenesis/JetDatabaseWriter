@@ -47,12 +47,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
         // an encrypted file reports, as when the code page was decoded after
         // the page keys.
         this.Format = JetFormat.FromHeader(header);
-        bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
         Type ownerType = writable ? typeof(AccessWriter) : typeof(AccessReader);
         string passwordOptionName = writable
             ? EncryptionManager.WriterPasswordOption
             : EncryptionManager.ReaderPasswordOption;
-        IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, isLegacyAesCfb, password, passwordOptionName);
+        IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, password, passwordOptionName);
         this.Pages = writable
             ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize)
             : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType);

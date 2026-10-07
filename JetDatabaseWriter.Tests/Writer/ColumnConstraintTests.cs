@@ -1138,11 +1138,10 @@ public sealed class ColumnConstraintTests
     }
 
     /// <summary>
-    /// A rule written with syntax or functions this library cannot evaluate is not
-    /// enforced by the writer, rather than blocking every insert into the table.
+    /// An unsupported persisted rule refuses insertion before any bytes change.
     /// </summary>
     [Fact]
-    public async Task ValidationRuleExpression_ThisLibraryCannotEvaluate_IsNotEnforced()
+    public async Task ValidationRuleExpression_ThisLibraryCannotEvaluate_IsRefused()
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
         const string table = "RuleUnsupported";
@@ -1158,14 +1157,17 @@ public sealed class ColumnConstraintTests
                 TestContext.Current.CancellationToken);
         }
 
+        byte[] before = stream.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.InsertRowAsync(table, [1, -1], TestContext.Current.CancellationToken);
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync(table, [1, -1], TestContext.Current.CancellationToken));
         }
+
+        Assert.Equal(before, stream.ToArray());
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(-1, Assert.Single(dt.AsEnumerable())["Score"]);
+        Assert.Empty(dt.Rows);
     }
 
     [Fact]

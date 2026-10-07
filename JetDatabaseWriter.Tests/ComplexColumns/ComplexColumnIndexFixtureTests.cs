@@ -170,6 +170,51 @@ public sealed class ComplexColumnIndexFixtureTests
         Assert.Equal(rows.Skip(1).Select(r => r[0]), (await after.Rows("Table1", cancellationToken: Ct).ToListAsync(Ct)).Select(r => r[0]));
     }
 
+    [Theory]
+    [MemberData(nameof(UpdateCases))]
+    public async Task SchemaEdits_PreserveAccessComplexIndexesAndRows(string fixture, WriteMode mode)
+    {
+        string tableName = fixture == TestDatabases.NorthwindTraders ? "ProductCategories" : "Table1";
+        await using MemoryStream stream = await CopyFixtureAsync(fixture);
+        RawTable original = await ReadRawTableAsync(stream, tableName);
+        IReadOnlyList<IndexMetadata> before;
+        await using (AccessReader reader = await OpenReaderAsync(stream))
+        {
+            before = await reader.ListIndexesAsync(tableName, Ct);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                await writer.AddColumnAsync(tableName, new ColumnDefinition("AddedMarker", typeof(int)), Ct);
+                await writer.RenameColumnAsync(tableName, "AddedMarker", "RenamedMarker", Ct);
+                await writer.DropColumnAsync(tableName, "RenamedMarker", Ct);
+            });
+        }
+
+        RawTable rewritten = await ReadRawTableAsync(stream, tableName);
+        Assert.Equal(original.Rows, rewritten.Rows);
+        await using AccessReader after = await OpenReaderAsync(stream);
+        IReadOnlyList<IndexMetadata> indexes = await after.ListIndexesAsync(tableName, Ct);
+        foreach (IndexMetadata index in before.Where(i => i.Kind is IndexKind.Normal or IndexKind.PrimaryKey))
+        {
+            IndexMetadata kept = Assert.Single(indexes, i => i.Name == index.Name);
+            Assert.Equal(index.HasUniqueFlag, kept.HasUniqueFlag);
+            Assert.Equal(index.IsRequired, kept.IsRequired);
+            Assert.Equal(index.Columns.Select(c => c.Name), kept.Columns.Select(c => c.Name));
+            IndexColumnReference first = index.Columns[0];
+            ColumnType type = original.Definition.FindColumn(first.Name)!.Type;
+            if (type is ColumnType.ComplexType or ColumnType.AttachmentType)
+            {
+                List<byte[]> expected = [.. rewritten.Rows
+                    .Select(row => IndexKeyEncoder.EncodeEntry(type, Slot(rewritten, row, first.Name), first.IsAscending))
+                    .OrderBy(key => key, ByteArrayComparer.Instance)];
+                Assert.Equal(expected, await ReadIndexLeafKeysAsync(stream, tableName, index.Name));
+            }
+        }
+    }
+
     private static async Task<Dictionary<string, object[]>> ReadRowsByKeyAsync(MemoryStream ms, string table, string keyColumn)
     {
         await using AccessReader reader = await OpenReaderAsync(ms);

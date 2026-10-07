@@ -23,11 +23,11 @@ using Xunit;
 /// the open path cannot change a decrypted byte unnoticed.
 /// </para>
 /// <para>
-/// The six fixtures under <c>Databases/Encrypted/</c> were written once, at
+/// The five fixtures under <c>Databases/Encrypted/</c> were written once, at
 /// <c>af1ca4d</c>, and are frozen: never regenerate them, or every digest
 /// below changes with the new creation date. Each started as a database the
 /// writer created, a Jet4 <c>.mdb</c> for <see cref="GoldenFixture.Jet4Rc4"/>
-/// and an ACE <c>.accdb</c> for the other five, holding table <c>T</c>
+/// and an ACE <c>.accdb</c> for the other four, holding table <c>T</c>
 /// (<c>Id</c> Long, <c>Body</c> Memo) with three rows, the second a
 /// 20,480-character Memo stored on LVAL pages. Each was then encrypted by
 /// <c>AccessWriter.EncryptAsync</c> with the password
@@ -39,7 +39,7 @@ using Xunit;
 /// <para>
 /// Every format decrypts to its source database: the recorded plaintext
 /// digest is the source file's, page 0 included, and every page from 1 on
-/// reads as the source's page. The five ACE formats therefore share one set
+/// reads as the source's page. The four ACE formats therefore share one set
 /// of digests.
 /// </para>
 /// </summary>
@@ -60,9 +60,6 @@ public sealed class EncryptedGoldenFixtureTests
 
         /// <summary><c>Databases/Encrypted/AccdbLegacyPassword.accdb</c>.</summary>
         AccdbLegacyPassword = 2,
-
-        /// <summary><c>Databases/Encrypted/AccdbAesCfbWrapped.accdb</c>.</summary>
-        AccdbAesCfbWrapped = 3,
 
         /// <summary><c>Databases/Encrypted/AccdbAgile.accdb</c>, flat Agile.</summary>
         AccdbAgile = 4,
@@ -206,7 +203,6 @@ public sealed class EncryptedGoldenFixtureTests
         GoldenFixture.Jet3Xor => throw new ArgumentException("Jet3 XOR is built by the test, not stored.", nameof(fixture)),
         GoldenFixture.Jet4Rc4 => TestDatabases.EncryptedJet4Rc4,
         GoldenFixture.AccdbLegacyPassword => TestDatabases.EncryptedAccdbLegacyPassword,
-        GoldenFixture.AccdbAesCfbWrapped => TestDatabases.EncryptedAccdbAesCfbWrapped,
         GoldenFixture.AccdbAgile => TestDatabases.EncryptedAccdbAgile,
         GoldenFixture.AccdbAgileCfb => TestDatabases.EncryptedAccdbAgileCfb,
         GoldenFixture.AccdbStandard => TestDatabases.EncryptedAccdbStandard,
@@ -226,7 +222,6 @@ public sealed class EncryptedGoldenFixtureTests
         GoldenFixture.Jet3Xor => AccessEncryptionFormat.None,
         GoldenFixture.Jet4Rc4 => AccessEncryptionFormat.Jet4Rc4,
         GoldenFixture.AccdbLegacyPassword => AccessEncryptionFormat.AccdbLegacyPassword,
-        GoldenFixture.AccdbAesCfbWrapped => AccessEncryptionFormat.AccdbAesCfbWrapped,
         GoldenFixture.AccdbAgile => AccessEncryptionFormat.AccdbAgile,
         GoldenFixture.AccdbAgileCfb => AccessEncryptionFormat.AccdbAgileCfb,
         GoldenFixture.AccdbStandard => AccessEncryptionFormat.AccdbStandard,
@@ -237,7 +232,7 @@ public sealed class EncryptedGoldenFixtureTests
     {
         GoldenFixture.Jet3Xor => (Golden.Jet3PlaintextSha256, Golden.Jet3PageSha256),
         GoldenFixture.Jet4Rc4 => (Golden.Jet4PlaintextSha256, Golden.Jet4PageSha256),
-        GoldenFixture.AccdbLegacyPassword or GoldenFixture.AccdbAesCfbWrapped or GoldenFixture.AccdbAgile
+        GoldenFixture.AccdbLegacyPassword or GoldenFixture.AccdbAgile
             or GoldenFixture.AccdbAgileCfb or GoldenFixture.AccdbStandard => (Golden.AcePlaintextSha256, Golden.AcePageSha256),
         _ => throw new ArgumentOutOfRangeException(nameof(fixture), fixture, null),
     };
@@ -264,7 +259,7 @@ public sealed class EncryptedGoldenFixtureTests
         /// <summary>SHA-256 of the writer-created Jet4 source of Jet4Rc4.mdb.</summary>
         internal const string Jet4PlaintextSha256 = "A2C3E1D3270D2927F1735CC546391BC7334329F6A61166D83B4826CB9E42DB11";
 
-        /// <summary>SHA-256 of the writer-created ACE source of the five ACE fixtures.</summary>
+        /// <summary>SHA-256 of the writer-created ACE source of the four ACE fixtures.</summary>
         internal const string AcePlaintextSha256 = "D62DB73FBEB8ECA886FC05922A959050C6DD7CCA1863EECC9C2DB10DE7A37494";
 
         /// <summary>The rows of table T in every writer-created fixture, by Id.</summary>

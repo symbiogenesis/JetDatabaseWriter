@@ -13,17 +13,14 @@ using Xunit;
 public sealed class StatementSpillTests
 {
     /// <summary>A file-backed log crosses its threshold using only raw ciphertext images.</summary>
-    /// <param name="encryption">The production page codec.</param>
-    [Theory]
-    [InlineData("aes")]
-    [InlineData("rc4")]
-    public async Task FileUndoLog_RetainsCiphertextAcrossSpill(string encryption)
+    [Fact]
+    public async Task FileUndoLog_RetainsCiphertextAcrossSpill()
     {
         string path = Path.Combine(Path.GetTempPath(), "jdw-spill-test-" + Guid.NewGuid().ToString("N") + ".tmp");
         await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
         byte[] ciphertext = new byte[16 * 80];
         Array.Fill(ciphertext, (byte)0xA5);
-        using IPageCodec codec = encryption == "aes" ? new AesEcbPageCodec(new byte[16]) : new Jet4Rc4PageCodec(0x12345678);
+        using IPageCodec codec = new Jet4Rc4PageCodec(0x12345678);
         for (int page = 1; page < 80; page++)
         {
             codec.Encode(ciphertext, page * 16, page, 16);

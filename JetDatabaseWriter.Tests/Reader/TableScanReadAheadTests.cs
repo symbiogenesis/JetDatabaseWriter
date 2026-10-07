@@ -203,10 +203,10 @@ public sealed class TableScanReadAheadTests : IDisposable
     }
 
     [Fact]
-    public async Task ReadPageAsync_ConcurrentReadsOfAesEncryptedFile_DecryptEveryPage()
+    public async Task ReadPageAsync_ConcurrentReads_ReturnEveryPage()
     {
-        string path = await this.CreateDatabaseAsync(DatabaseFormat.AceAccdb, withLongValues: true, encrypt: true);
-        var options = new AccessReaderOptions(Password) { PageCacheSize = 0, UseLockFile = false };
+        string path = await this.CreateDatabaseAsync(DatabaseFormat.AceAccdb, withLongValues: true, encrypt: false);
+        var options = new AccessReaderOptions() { PageCacheSize = 0, UseLockFile = false };
 
         byte[][] expected;
         await using (ReaderHarness sequential = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken))
@@ -219,8 +219,7 @@ public sealed class TableScanReadAheadTests : IDisposable
             }
         }
 
-        // A fresh reader has not built its AES transforms yet, so the first
-        // round also races the lazy build.
+        // A fresh reader starts without cached pages.
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken);
         DatabaseFile db = reader.Database;
         for (int round = 0; round < 8; round++)
@@ -230,7 +229,7 @@ public sealed class TableScanReadAheadTests : IDisposable
             byte[][] actual = await Task.WhenAll(reads);
             for (int page = 1; page < expected.Length; page++)
             {
-                Assert.True(expected[page].AsSpan().SequenceEqual(actual[page - 1]), $"Page {page} decrypted differently in round {round}.");
+                Assert.True(expected[page].AsSpan().SequenceEqual(actual[page - 1]), $"Page {page} read differently in round {round}.");
             }
         }
     }
@@ -545,7 +544,7 @@ public sealed class TableScanReadAheadTests : IDisposable
 
         if (encrypt)
         {
-            await AccessWriter.EncryptAsync(path, Password.AsMemory(), AccessEncryptionFormat.AccdbAesCfbWrapped, options, TestContext.Current.CancellationToken);
+            await AccessWriter.EncryptAsync(path, Password.AsMemory(), AccessEncryptionFormat.AccdbAgileCfb, options, TestContext.Current.CancellationToken);
         }
 
         return path;

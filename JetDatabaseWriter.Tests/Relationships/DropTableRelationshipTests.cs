@@ -198,7 +198,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task DropTable_OfSelfReferencingTable_Throws(DatabaseFormat format)
+    public async Task DropTable_OfSelfReferencingTable_RemovesRelationship(DatabaseFormat format)
     {
         const string tree = "DtTree";
         const string relationship = "FK_DtTree";
@@ -219,33 +219,21 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
                 Ct);
         }
 
-        byte[] before = stream.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await AssertDropRefusedAsync(writer, tree, relationship);
-        }
-
-        Assert.Equal(before, stream.ToArray());
-        Dictionary<long, List<IndexMetadata>> fks = await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream);
-        ForeignKeyLinks.AssertConsistent(fks);
-        Assert.Equal(2, fks[await GetTDefPageAsync(stream, tree)].Count);
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await Assert.ThrowsAsync<JetConstraintException>(async () =>
-                await writer.InsertRowAsync(tree, RowValues.Create().Set("Id", 9).Set("ParentId", 99), Ct));
-            await writer.DropRelationshipAsync(relationship, Ct);
             await writer.DropTableAsync(tree, Ct);
         }
 
+        ForeignKeyLinks.AssertConsistent(await ForeignKeyLinks.ReadForeignKeyEntriesAsync(stream));
         await using AccessReader reader = await OpenReaderAsync(stream);
         Assert.DoesNotContain(tree, await reader.ListTablesAsync(Ct));
+        Assert.DoesNotContain(await reader.ListRelationshipsAsync(Ct), r => r.Name == relationship);
     }
 
     [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task DropTable_WithRelationshipThatDoesNotEnforceIntegrity_Throws(DatabaseFormat format)
+    public async Task DropTable_WithRelationshipThatDoesNotEnforceIntegrity_RemovesRelationship(DatabaseFormat format)
     {
         MemoryStream stream = await this.CreateDatabaseAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -253,17 +241,16 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
             await CreateParentAndChildAsync(writer, enforceIntegrity: false);
         }
 
-        byte[] before = stream.ToArray();
+        long droppedPage = await GetTDefPageAsync(stream, Parent);
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await AssertDropRefusedAsync(writer, Parent, RelationshipName);
-            await AssertDropRefusedAsync(writer, Child, RelationshipName);
+            await writer.DropTableAsync(Parent, Ct);
         }
 
-        Assert.Equal(before, stream.ToArray());
+        await AssertDroppedAndUnlinkedAsync(stream, Parent, droppedPage, Child);
+        await AssertPartnerWritableAsync(stream, dropParent: true);
         await using AccessReader reader = await OpenReaderAsync(stream);
-        RelationshipMetadata relationship = Assert.Single(await reader.ListRelationshipsAsync(Ct), r => r.Name == RelationshipName);
-        Assert.False(relationship.EnforcesReferentialIntegrity);
+        Assert.DoesNotContain(await reader.ListRelationshipsAsync(Ct), r => r.Name == RelationshipName);
     }
 
     /// <summary>

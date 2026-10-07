@@ -120,10 +120,10 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", new[] { new GuidAutoNumberRow { Number = 1 } }, Ct));
-                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", new[] { new RowValues { ["Number"] = 2 } }, Ct));
+                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", (GuidAutoNumberRow[])[new() { Number = 1 }], Ct));
+                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", (RowValues[])[new() { ["Number"] = 2 }], Ct));
                 await writer.RenameColumnAsync("ReplicationIds", "Number", "Value", Ct);
-                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", new[] { new RowValues { ["Value"] = 3 } }, Ct));
+                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", (RowValues[])[new() { ["Value"] = 3 }], Ct));
             });
         }
 
@@ -556,10 +556,8 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
-            {
                 _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 3 }, Ct));
-            });
+                    await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 3 }, Ct)));
         }
 
         Assert.Equal(["1|one"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));

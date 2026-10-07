@@ -2072,7 +2072,10 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         object[] values = new object[columns.Count];
         for (int i = 0; i < columns.Count; i++)
         {
-            values[i] = GetDummyValue(columns[i].ClrType, seed + i);
+            ColumnMetadata column = columns[i];
+            values[i] = column.IsFixedLength && column.ClrType == typeof(string)
+                ? new string((char)('A' + ((seed + i) % 26)), column.Size.Value ?? throw new InvalidOperationException("Fixed Text requires a descriptor width."))
+                : GetDummyValue(column.ClrType, seed + i);
         }
 
         return values;

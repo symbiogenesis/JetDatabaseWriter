@@ -289,15 +289,12 @@ internal static class IndexHelpers
                 ColumnInfo column = tableDef.FindColumn(columnName)
                     ?? throw new ArgumentException($"IndexDefinition '{def.Name}' references unknown column '{columnName}'.", nameof(indexes));
 
-                // match Microsoft Access — neither the UI
-                // nor the engine permits CREATE INDEX over OLE Object,
-                // Attachment, or Multi-Value (Complex) columns. Previously
-                // these silently fell through to a "schema-only" path that
-                // emitted a stale empty leaf and let Access rebuild on
-                // Compact & Repair; that fallback masked a programmer error
-                // and disagreed with Access semantics. Reject with a clear
-                // diagnostic so callers correct the index definition.
-                if (column.Type is OleType or AttachmentType or ComplexType)
+                // Public declarations cannot index OLE or complex values. Access's
+                // own complex-reference indexes use the stored Long Integer key.
+                bool complexReference = def.IsComplexReferenceIndex
+                    && def.Columns.Count == 1 && def.IsUnique && def.IsRequired && !def.IsPrimaryKey
+                    && column.Type is AttachmentType or ComplexType;
+                if (column.Type == OleType || (column.Type is AttachmentType or ComplexType && !complexReference))
                 {
                     throw new NotSupportedException(
                         $"IndexDefinition '{def.Name}' references column '{columnName}' whose type is {GetTypeDisplayName(column.Type)}; "
@@ -383,9 +380,14 @@ internal static class IndexHelpers
     {
         var result = new List<IndexDefinition>(existing.Count);
         var newColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var complexColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (ColumnDefinition c in newDefs)
         {
             newColumnNames.Add(c.Name);
+            if (c.IsAttachment || c.IsMultiValue)
+            {
+                complexColumnNames.Add(c.Name);
+            }
         }
 
         foreach (IndexMetadata idx in existing)
@@ -455,6 +457,8 @@ internal static class IndexHelpers
                     DescendingColumns = descendingCols,
                     IgnoreNulls = idx.IgnoreNulls,
                     IsRequired = idx.IsRequired,
+                    IsComplexReferenceIndex = idx.HasUniqueFlag && idx.IsRequired
+                        && keyColumns.Count == 1 && complexColumnNames.Contains(keyColumns[0]),
                 });
             }
         }

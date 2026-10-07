@@ -133,7 +133,7 @@ public sealed class WriteBackTests
         await using var stream = new CountingStream();
         stream.SetLength(16);
 #pragma warning disable CA2000 // The awaited pager owns the selected codec.
-        await using var pager = new Pager(stream, 16, encrypted ? new AesEcbPageCodec(new byte[16]) : new NoPageCodec(), true, typeof(AccessWriter), 0);
+        await using var pager = new Pager(stream, 16, encrypted ? new Jet4Rc4PageCodec(0x12345678) : new NoPageCodec(), true, typeof(AccessWriter), 0);
 #pragma warning restore CA2000
         byte[] page = Enumerable.Repeat((byte)37, 16).ToArray();
         await using (pager.BeginWriteScope())

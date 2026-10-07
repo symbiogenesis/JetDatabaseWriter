@@ -451,6 +451,16 @@ public sealed class DaoStorageMaintenanceTests
                 TestContext.Current.CancellationToken);
         }
 
+        await using (AccessReader beforeCompact = await AccessReader.OpenAsync(
+            session.SourcePath,
+            new AccessReaderOptions { UseLockFile = false },
+            TestContext.Current.CancellationToken))
+        {
+            IReadOnlyList<AttachmentRecord> before = await beforeCompact.GetAttachmentsAsync(tableName, attachmentColumn, TestContext.Current.CancellationToken);
+            Assert.Equal(textAttachmentPayload, Assert.Single(before, attachment => attachment.FileName == "fixture-compressed.txt").FileData);
+            Assert.Equal(extensionlessAttachmentPayload, Assert.Single(before, attachment => attachment.FileName == "fixture-extensionless").FileData);
+        }
+
         session.RunDaoCompact();
 
         await using AccessReader reader = await AccessReader.OpenAsync(

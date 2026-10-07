@@ -349,7 +349,6 @@ public sealed class JetTransactionTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.None)]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.None)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     public async Task Commit_WhenCancelledAfterReplayStarts_CompletesReplay(DatabaseFormat format, AccessEncryptionFormat encryption)
     {
         await using var stream = new FaultInjectingStream();

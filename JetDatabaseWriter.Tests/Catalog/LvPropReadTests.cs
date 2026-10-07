@@ -397,6 +397,106 @@ public sealed class LvPropReadTests
         await Assert.ThrowsAsync<JetValidationRuleException>(async () => await later.InsertRowAsync("T", [1, "r", -2d], Ct));
     }
 
+    /// <summary>A lookup must not read an unrelated corrupt property chain.</summary>
+    /// <param name="format">The database format.</param>
+    /// <returns>A task representing the asynchronous check.</returns>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ReadLvProp_DoesNotReadEarlierUnrelatedChains(DatabaseFormat format)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("Earlier", [new ColumnDefinition("Id", typeof(int)) { Description = new string('x', 10_000) }], Ct);
+            await writer.CreateTableAsync("Wanted", [new ColumnDefinition("Id", typeof(int)) { Description = "Selected property" }], Ct);
+        }
+
+        await PatchLvPropAsync(ms, "Earlier", breakChain: true);
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        ColumnMetadata column = Assert.Single(await reader.GetColumnMetadataAsync("Wanted", Ct));
+        Assert.Equal("Selected property", column.Description);
+    }
+
+    /// <summary>A present unreadable property block prevents every schema rewrite before mutation.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="rewrite">The requested rewrite.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>A task representing the asynchronous check.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsRewritesAndModes))]
+    public async Task MalformedPresentLvProp_RefusesRewriteWithoutChangingBytes(DatabaseFormat format, Rewrite rewrite, WriteMode mode)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { Description = "Stored rule" }, new("Note", typeof(string), maxLength: 20)], Ct);
+        }
+
+        await PatchLvPropAsync(ms, "T", breakChain: false);
+        byte[] before = ms.ToArray();
+        await using AccessWriter writer = await OpenWriterAsync(ms, mode);
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => RunAsync(writer, mode, async () =>
+        {
+            switch (rewrite)
+            {
+                case Rewrite.AddColumn:
+                    await writer.AddColumnAsync("T", new("New", typeof(int)), Ct);
+                    break;
+                case Rewrite.DropOtherColumn:
+                    await writer.DropColumnAsync("T", "Note", Ct);
+                    break;
+                case Rewrite.RenameOtherColumn:
+                    await writer.RenameColumnAsync("T", "Note", "Renamed", Ct);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(rewrite));
+            }
+        }));
+        Assert.Equal(before, ms.ToArray());
+    }
+
+    private static async Task PatchLvPropAsync(MemoryStream stream, string tableName, bool breakChain)
+    {
+        stream.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        TableDef catalog = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, Ct));
+        ColumnInfo nameColumn = Assert.IsType<ColumnInfo>(catalog.FindColumn("Name"));
+        ColumnInfo propertyColumn = Assert.IsType<ColumnInfo>(catalog.FindColumn("LvProp"));
+        bool found = false;
+        await harness.Database.OwnedPages.ForEachLiveTableRowAsync(2, async (row, token) =>
+        {
+            string name = ScalarColumnReader.DecodeSimpleColumnValue(harness.Database.Format, row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn);
+            if (!string.Equals(name, tableName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            Assert.True(RowDecodePlan.TryParseRowLayout(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, catalog.HasVarColumns, out RowLayout layout));
+            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, propertyColumn);
+            Assert.Equal(ColumnSliceKind.Var, slice.Kind);
+            byte[] patched = (byte[])row.Page.Clone();
+            int start = row.Location.RowStart + slice.DataStart;
+            if (breakChain)
+            {
+                Assert.NotEqual(0x80, patched[start + 3] & 0xC0);
+                patched.AsSpan(start + 4, 4).Fill(0xFF);
+            }
+            else
+            {
+                Assert.Equal(0x80, patched[start + 3] & 0xC0);
+                patched[start + 12] ^= 0x01;
+            }
+
+            await harness.Pager.WritePageAsync(row.Location.DataPageNumber, patched, token);
+            found = true;
+            return false;
+        }, Ct);
+        Assert.True(found);
+        await harness.Pager.FlushAsync(toDisk: false, Ct);
+    }
+
     private static ColumnDefinition ScoreColumn(string description) => new("Score", typeof(double))
     {
         Description = description,

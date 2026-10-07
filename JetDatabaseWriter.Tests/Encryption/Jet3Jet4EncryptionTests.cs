@@ -6,23 +6,18 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-#pragma warning disable CA5358 // ECB mode is intentional for deterministic test fixture encryption
-#pragma warning disable CA5390 // Hard-coded key is intentional for deterministic test fixtures
 
 /// <summary>
 /// Tests for database encryption across all Jet/ACE versions:
 ///   1. Jet3 XOR mask  — fixed XOR pattern applied to all pages after page 0
 ///   2. Jet4 RC4 flag  — password verified against the XOR-encoded header hash (0x42)
 ///   3. Jet4 RC4 pages — RC4 page decryption
-///   4. ACCDB AES      — detection and page decryption (OLE2 CFB magic)
-///   5. ACCDB AES      — writer round trip through a synthetic legacy AES CFB-wrapped file.
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
@@ -246,55 +241,6 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
         Assert.Equal(7, row["Id"]);
         Assert.Equal("jet3-xor-write", row["Label"]);
-    }
-
-    [Fact]
-    public async Task Encryption_AccdbCfbWrapped_LegacyAes_Writer_RoundTripsRow()
-    {
-        // Synthetic legacy AES-128 CFB-wrapped .accdb files (CFB magic at byte 0
-        // but flat per-page AES-128-ECB beneath) are now writable in place: the
-        // existing PrepareEncryptedPageForWrite pipeline re-encrypts every page
-        // we flush. Verify a round-trip by inserting a row and reading it back.
-        const string tableName = "AesWriteRoundTrip";
-
-        byte[] data = await this.CloneFileAsync(TestDatabases.NorthwindTraders);
-        SetAccdbEncryptionHeader(data);
-        string temp = this.WriteTempBytes(data, ".accdb");
-
-        var options = new AccessWriterOptions
-        {
-            UseLockFile = false,
-            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
-        };
-
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, options, TestContext.Current.CancellationToken))
-        {
-            await writer.CreateTableAsync(
-                tableName,
-                [
-                    new ColumnDefinition("Id", typeof(int)),
-                    new ColumnDefinition("Label", typeof(string), maxLength: 64),
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowAsync(
-                tableName,
-                [11, "legacy-aes-cfb-write"],
-                TestContext.Current.CancellationToken);
-        }
-
-        var readerOptions = new AccessReaderOptions
-        {
-            UseLockFile = false,
-            Password = TestDatabases.AesEncryptedPassword.AsMemory(),
-        };
-        await using AccessReader reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
-
-        Assert.NotNull(dt);
-        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
-        Assert.Equal(11, row["Id"]);
-        Assert.Equal("legacy-aes-cfb-write", row["Label"]);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -556,57 +502,6 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             y = (y + s[x]) & 0xFF;
             (s[x], s[y]) = (s[y], s[x]);
             data[offset + k] ^= s[(s[x] + s[y]) & 0xFF];
-        }
-    }
-
-    /// <summary>
-    /// Writes the OLE2 Compound File Binary (CFB) magic bytes at the start of the file,
-    /// simulating a genuinely AES-encrypted Access 2007+ .accdb.
-    /// The reader detects the CFB magic (D0 CF 11 E0) and throws
-    /// <see cref="UnauthorizedAccessException"/> regardless of password.
-    /// </summary>
-    /// <param name="data">The data bytes or values.</param>
-    private static void SetAccdbEncryptionHeader(byte[] data)
-    {
-        // OLE2 CFB magic: first 8 bytes of any Compound File Binary container.
-        // Access 2007+ AES-encrypts the .accdb by wrapping it in a CFB document.
-        Constants.CompoundFile.Signature.CopyTo(data.AsSpan(0, Constants.CompoundFile.Signature.Length));
-
-        // Encode password at offset 0x42 using the Jet4/ACCDB XOR scheme
-        byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(TestDatabases.AesEncryptedPassword);
-        byte[] encoded = new byte[40];
-        for (int i = 0; i < 40; i++)
-        {
-            byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ EncryptionManager.Jet4PasswordMask[i] ^ data[0x72 + (i % 4)]);
-        }
-
-        Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
-
-        // AES-encrypt all data pages (pages 1+) using the same key derivation
-        // as the reader: SHA256(TestDatabases.AesEncryptedPassword)[0..16].
-        byte[] aesKey = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(TestDatabases.AesEncryptedPassword))[..16];
-
-        for (int page = 1; page * Constants.PageSizes.Jet4 < data.Length; page++)
-        {
-            int offset = page * Constants.PageSizes.Jet4;
-            int length = Math.Min(Constants.PageSizes.Jet4, data.Length - offset);
-            if (length % 16 != 0)
-            {
-                continue;
-            }
-
-            using var aes = Aes.Create();
-            aes.Key = aesKey;
-#pragma warning disable RS0030 // ECB mode is intentional to support legacy AES-encrypted .accdb fixtures.
-            aes.Mode = CipherMode.ECB;
-#pragma warning restore RS0030
-            aes.Padding = PaddingMode.None;
-            using ICryptoTransform encryptor = aes.CreateEncryptor();
-            byte[] block = new byte[length];
-            Buffer.BlockCopy(data, offset, block, 0, length);
-            byte[] encrypted = encryptor.TransformFinalBlock(block, 0, length);
-            Buffer.BlockCopy(encrypted, 0, data, offset, length);
         }
     }
 

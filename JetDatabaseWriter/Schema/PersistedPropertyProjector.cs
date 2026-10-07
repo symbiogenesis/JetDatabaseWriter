@@ -147,8 +147,8 @@ internal static class PersistedPropertyProjector
         ColumnDefinition projected,
         JetFormat format)
     {
-        List<ColumnPropertyEntryBuilder> before = ModelledEntries(existing, format);
-        List<ColumnPropertyEntryBuilder> after = ModelledEntries(projected, format);
+        List<ColumnPropertyEntryBuilder> before = ModelledEntries(builder, existing, format);
+        List<ColumnPropertyEntryBuilder> after = ModelledEntries(builder, projected, format);
         ColumnPropertyTargetBuilder? target = null;
 
         foreach (ColumnPropertyEntryBuilder entry in after)
@@ -185,11 +185,12 @@ internal static class PersistedPropertyProjector
     }
 
     /// <summary>Returns the entries <see cref="JetExpressionConverter.ApplyColumn"/> emits for <paramref name="column"/>.</summary>
+    /// <param name="source">The source property builder.</param>
     /// <param name="column">The column definition.</param>
     /// <param name="format">The database format.</param>
-    private static List<ColumnPropertyEntryBuilder> ModelledEntries(ColumnDefinition column, JetFormat format)
+    private static List<ColumnPropertyEntryBuilder> ModelledEntries(ColumnPropertyBlockBuilder source, ColumnDefinition column, JetFormat format)
     {
-        var scratch = new ColumnPropertyBlockBuilder();
+        ColumnPropertyBlockBuilder scratch = source.CreateEmptyWithSameEncoding();
         JetExpressionConverter.ApplyColumn(scratch, column, format);
         return scratch.Targets.Count == 0 ? [] : scratch.Targets[0].Entries;
     }

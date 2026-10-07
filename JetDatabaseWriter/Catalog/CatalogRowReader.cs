@@ -30,6 +30,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// </summary>
     /// <param name="msys">The <c>MSysObjects</c> table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">The catalog is missing a required field.</exception>
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
@@ -61,7 +62,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
                     RowIndex: location.RowIndex,
                     Name: ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn),
                     ObjectType: CatalogValueReader.ParseInt32OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn)),
-                    Flags: CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn!)),
+                    Flags: CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn)),
                     TDefPage: CatalogValueReader.TdefPageFromId(id),
                     Id: id,
                     ParentId: parentId,
@@ -115,13 +116,11 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// <param name="nameMatches">The name test.</param>
     /// <param name="includeLinkedOdbc">Whether linked ODBC tables, which carry a local TDEF, also match.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">The catalog definition is unreadable.</exception>
     internal async ValueTask<long> FindTableTdefPageAsync(Predicate<string> nameMatches, bool includeLinkedOdbc, CancellationToken cancellationToken)
     {
-        TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
-        }
+        TableDef msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false)
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
 
         List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)

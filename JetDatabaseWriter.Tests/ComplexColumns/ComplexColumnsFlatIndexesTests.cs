@@ -38,6 +38,19 @@ public sealed class ComplexColumnsFlatIndexesTests
     }
 
     [Fact]
+    public async Task Attachment_ParentTable_EmitsUniqueRequiredReferenceIndex()
+    {
+        await using AccessReader reader = await CreateAndReadAttachmentFlat();
+        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Documents", TestContext.Current.CancellationToken);
+        IndexMetadata reference = Assert.Single(indexes, index => index.Columns.Count == 1 && index.Columns[0].Name == "Files");
+        Assert.Equal(IndexKind.Normal, reference.Kind);
+        Assert.True(reference.HasUniqueFlag);
+        Assert.True(reference.IsRequired);
+        Assert.StartsWith("Files_", reference.Name, StringComparison.Ordinal);
+        Assert.Equal(38, reference.Name.Length);
+    }
+
+    [Fact]
     public async Task Attachment_FlatTable_EmitsThreeIndexes()
     {
         await using AccessReader reader = await CreateAndReadAttachmentFlat();

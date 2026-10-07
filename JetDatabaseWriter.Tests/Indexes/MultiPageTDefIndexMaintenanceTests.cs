@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -353,7 +354,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             await writer.CreateTableAsync(TableName, WideColumns(format), WideIndexes(format), this.ct);
         }
 
-        await AccessWriter.EncryptAsync(path, password.AsMemory(), AccessEncryptionFormat.AccdbAesCfbWrapped, new AccessWriterOptions { UseLockFile = false }, this.ct);
+        await AccessWriter.EncryptAsync(path, password.AsMemory(), AccessEncryptionFormat.AccdbAgileCfb, new AccessWriterOptions { UseLockFile = false }, this.ct);
 
         var writerOptions = new AccessWriterOptions { UseLockFile = false, Password = password.AsMemory() };
         await using (AccessWriter writer = await AccessWriter.OpenAsync(path, writerOptions, this.ct))
@@ -364,8 +365,10 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             Assert.Equal(1, await writer.DeleteRowsAsync(TableName, "C000", 2, this.ct));
         }
 
-        await using FileStream stream = File.OpenRead(path);
-        await this.AssertIndexesMatchRowsAsync(stream, format, expectedKeys: [1, 3], password);
+        await using FileStream encryptedStream = File.OpenRead(path);
+        (byte[] plaintext, _) = await EncryptionConverter.ReadDecryptedAsync(encryptedStream, password.AsMemory(), this.ct);
+        await using var stream = new MemoryStream(plaintext, writable: false);
+        await this.AssertIndexesMatchRowsAsync(stream, format, expectedKeys: [1, 3]);
     }
 
     /// <inheritdoc/>

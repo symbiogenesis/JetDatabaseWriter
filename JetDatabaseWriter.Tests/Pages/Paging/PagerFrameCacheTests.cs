@@ -191,7 +191,6 @@ public sealed class PagerFrameCacheTests
     /// <summary>Encrypted pages are decoded once while resident and writes preserve their input.</summary>
     /// <param name="scheme">The page-encryption scheme.</param>
     [Theory]
-    [InlineData("aes")]
     [InlineData("rc4")]
     [InlineData("xor")]
     public async Task EncryptedFrame_DecodesOnce_AndWriteUsesScratch(string scheme)
@@ -199,7 +198,6 @@ public sealed class PagerFrameCacheTests
 #pragma warning disable CA2000 // Cipher ownership flows through CountingCodec into the awaited pager; the pager also owns the store.
         IPageCodec cipher = scheme switch
         {
-            "aes" => new AesEcbPageCodec(new byte[16]),
             "rc4" => new Jet4Rc4PageCodec(0x12345678),
             _ => new Jet3XorPageCodec([1, 2, 3]),
         };

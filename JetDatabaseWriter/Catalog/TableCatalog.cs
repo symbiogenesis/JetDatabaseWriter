@@ -198,11 +198,8 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
     private async ValueTask<CatalogScanSummary> ScanAsync(CancellationToken cancellationToken)
     {
         long totalPages = pages.PageCount;
-        TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
-        }
+        TableDef msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false)
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
 
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var result = new List<CatalogEntry>();

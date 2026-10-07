@@ -40,7 +40,6 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     private const string IdColumn = "Id";
     private const string ChildTable = "C";
     private const string ParentIdColumn = "ParentId";
-    private const string Password = "Secret1!";
 
     private static readonly AccessReaderOptions ReaderOptions = new() { UseLockFile = false };
 
@@ -105,57 +104,6 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         }
 
         await AssertReopenedTableAndPrimaryKeyMatchAsync(stream, seededIds, this.ct);
-    }
-
-    [Fact]
-    public async Task SingleInserts_IntoOneKeyRangeAfterAppendedPages_InTransactionOnEncryptedFile_KeepPrimaryKeyConsistent()
-    {
-        // The journal holds plaintext; commit encrypts each page as it is
-        // written, including the pages the index split reserved past the
-        // physical end of file.
-        string path = Path.Combine(Path.GetTempPath(), $"IndexMaintenanceInTransaction_{Guid.NewGuid():N}.accdb");
-        try
-        {
-            var expectedIds = new List<int>();
-            await using (MemoryStream seeded = await CreateSeededDatabaseAsync(DatabaseFormat.AceAccdb, baseRows: 4000, keyStep: 1000, expectedIds))
-            {
-                await File.WriteAllBytesAsync(path, seeded.ToArray(), this.ct);
-            }
-
-            await AccessWriter.EncryptAsync(
-                path,
-                Password.AsMemory(),
-                AccessEncryptionFormat.AccdbAesCfbWrapped,
-                new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false },
-                this.ct);
-
-            await using (WriterHarness writer = await WriterHarness.OpenAsync(
-                path,
-                new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, Password = Password.AsMemory() },
-                this.ct))
-            {
-                await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
-                await this.InsertTailThenSingleKeysAsync(writer, expectedIds);
-                await AssertTableAndPrimaryKeyMatchAsync(writer.Database, expectedIds, this.ct);
-                await tx.CommitAsync(this.ct);
-            }
-
-            await using ReaderHarness reopened = await ReaderHarness.OpenAsync(
-                path,
-                new AccessReaderOptions { UseLockFile = false, Password = Password.AsMemory() },
-                this.ct);
-            await AssertTableAndPrimaryKeyMatchAsync(reopened.Database, expectedIds, this.ct);
-        }
-        finally
-        {
-            try
-            {
-                File.Delete(path);
-            }
-            catch (IOException)
-            {
-            }
-        }
     }
 
     [Theory]

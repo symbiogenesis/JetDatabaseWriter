@@ -1,9 +1,38 @@
 # Writer Disk-Format Validation Matrix
 
-**Status:** Active cross-feature coverage matrix, reconciled on 2026-05-25 with the earlier matrix shape and the completed validation backlog, with test-name references re-verified against the suite on 2026-06-30. No broad unresolved validation item is currently open.
+**Status:** Incomplete interoperability evidence. Test presence and library round trips do not establish Microsoft compatibility. The open requirements are in [the TODO](../todo.md).
 
 This document is the compact map of writer-emitted Access disk-format surfaces, their base fixture or oracle, their strongest automated validation signal, and the residual trigger that would justify more coverage. General validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md). Detailed compatibility history lives in [round-trip-openrecordset-hypothesis.md](round-trip-openrecordset-hypothesis.md) and [catalog-index-maintenance-notes.md](catalog-index-maintenance-notes.md).
 
+## Microsoft interoperability evidence
+
+The local DAO run on 2026-10-06 used the CI-built net10.0 runner for
+`3430f8324ec771619fb05a6172e1ed532389e98a`, from
+[CI run37554859084](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37554859084).
+Exactly the 36 DAO-guarded methods ran: 25 passed, 9 failed, 2 skipped.
+The installed DAO120 engine activated through the x64 test runner on Windows
+Arm64. Its Access97 refusal caused both Jet3 skips; registration of DAO3.6
+alone does not establish usable Jet3 coverage.
+
+The failed cases identify separate evidence gaps: assumptions about dropping
+unenforced/self relationships and calculated dependencies; exact exception
+assertions; PowerShell scalar marshalling; native attachment data after
+compaction; reference usage-map growth; complex-index schema preservation;
+and calculated-column rewrites that DAO cannot open. Changes addressing them
+require another run of CI-built binaries. Hosted CI also failed on that
+revision and is not a passing acceptance result.
+
+| Generation | Available evidence | Required evidence |
+|---|---|---|
+| JET before3 / Access1.x–2.0 | No supported parser or verified fixtures in the current matrix | Microsoft-authored corpus, format identification and read/write implementation |
+| JET3 / Access97 | Microsoft-authored reader fixtures and library mutation tests | A working Access97-compatible engine; DAO open/write/compact parity |
+| JET4 / Access2000–2003 | Microsoft-authored fixtures and guarded DAO tests | Complete feature, code-page, collation, security and malformed-file coverage |
+| ACE / Access2007 and later | Microsoft-authored fixtures; 25 successful DAO cases in the run above | Resolve failing cases; cover later descriptor variants and real encrypted files |
+| Encryption variants | Primarily library-produced synthetic fixtures | Microsoft-produced encrypted files, exact algorithm/detection evidence and DAO password/compact checks |
+
+The feature rows below describe available test mechanisms. A conditional DAO
+test is evidence only when it actually ran successfully on the revision and
+engine being evaluated.
 ## Validation Levels
 
 Use the canonical ladder in [dao-validation-strategy.md](dao-validation-strategy.md). In this matrix, the levels are named as follows:
@@ -51,7 +80,7 @@ When the matrix says "writer-created", read that as the output under validation.
 
 ## Current Scope Decisions
 
-- There is no standing cross-feature validation backlog in this document.
+- The TODO contains the required compatibility and hostile-input validation backlog.
 - The former ESE-inspired coverage review is closed. ESE remains useful only as
 	a reference checklist for analogous storage-engine risk categories: page
 	mutation invariants, structural validation, delete/replace scrubbing,

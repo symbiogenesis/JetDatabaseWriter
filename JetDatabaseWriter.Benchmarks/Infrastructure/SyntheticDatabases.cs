@@ -169,8 +169,8 @@ internal static class SyntheticDatabases
 
     public static string LargeLongValueDbPath => Path.Combine(TempRoot, "LargeLongValue_v1.accdb");
 
-    /// <summary>Gets the path of an <c>AccdbAesCfbWrapped</c>-encrypted copy of <see cref="NumericDbPath"/>.</summary>
-    public static string AesNumericDbPath => Path.Combine(TempRoot, $"Numeric_{NumericRows}_aes_v1.accdb");
+    /// <summary>Gets the path of an <c>AccdbAgileCfb</c>-encrypted copy of <see cref="NumericDbPath"/>.</summary>
+    public static string AesNumericDbPath => Path.Combine(TempRoot, $"Numeric_{NumericRows}_agile_cfb_v1.accdb");
 
     public static string RelationalDbPath => Path.Combine(TempRoot, $"Relational_{RelationalCustomers}_{RelationalOrders}_v1.accdb");
 
@@ -259,7 +259,7 @@ internal static class SyntheticDatabases
 
     /// <summary>
     /// Ensures <see cref="AesNumericDbPath"/> exists: a copy of the numeric
-    /// database encrypted as <see cref="AccessEncryptionFormat.AccdbAesCfbWrapped"/>
+    /// database encrypted as <see cref="AccessEncryptionFormat.AccdbAgileCfb"/>
     /// with <see cref="AesPassword"/>.
     /// </summary>
     /// <returns>A task that completes when the file exists.</returns>
@@ -274,7 +274,7 @@ internal static class SyntheticDatabases
 
         string building = Path.ChangeExtension(AesNumericDbPath, ".building.accdb");
         File.Copy(NumericDbPath, building, overwrite: true);
-        await AccessWriter.EncryptAsync(building, AesPassword.AsMemory(), AccessEncryptionFormat.AccdbAesCfbWrapped).ConfigureAwait(false);
+        await AccessWriter.EncryptAsync(building, AesPassword.AsMemory(), AccessEncryptionFormat.AccdbAgileCfb).ConfigureAwait(false);
         File.Move(building, AesNumericDbPath);
     }
 

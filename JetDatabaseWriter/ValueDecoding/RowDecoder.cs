@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -125,10 +126,36 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     /// <param name="td">Parsed table definition.</param>
     /// <param name="wantedColumns">The columns to decode, by column index, or <see langword="null"/> for every column.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async IAsyncEnumerable<object?[]> EnumerateTypedRowsForTdefAsync(
+    internal IAsyncEnumerable<object?[]> EnumerateTypedRowsForTdefAsync(
         long tdefPage,
         TableDef td,
         bool[]? wantedColumns,
+        CancellationToken cancellationToken)
+        => this.EnumerateFilteredTypedRowsAsync(tdefPage, td, wantedColumns, matchColumn: -1, matchValue: null, requireReadableMatch: false, cancellationToken);
+
+    /// <summary>Decodes selected columns only after a scalar column matches, requiring readable matching rows.</summary>
+    /// <param name="tdefPage">The table-definition page.</param>
+    /// <param name="td">The table definition.</param>
+    /// <param name="wantedColumns">The columns to decode after matching.</param>
+    /// <param name="matchColumn">The scalar column used to select rows.</param>
+    /// <param name="matchValue">The value required in that column.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal IAsyncEnumerable<object?[]> EnumerateTypedRowsMatchingColumnAsync(
+        long tdefPage,
+        TableDef td,
+        bool[] wantedColumns,
+        int matchColumn,
+        object matchValue,
+        CancellationToken cancellationToken)
+        => this.EnumerateFilteredTypedRowsAsync(tdefPage, td, wantedColumns, matchColumn, matchValue, requireReadableMatch: true, cancellationToken);
+
+    private async IAsyncEnumerable<object?[]> EnumerateFilteredTypedRowsAsync(
+        long tdefPage,
+        TableDef td,
+        bool[]? wantedColumns,
+        int matchColumn,
+        object? matchValue,
+        bool requireReadableMatch,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         bool[]? mask = null;
@@ -138,7 +165,15 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             Array.Copy(wantedColumns, mask, Math.Min(wantedColumns.Length, mask.Length));
         }
 
-        var decodePlan = RowDecodePlan.CreateTyped(td, mask, strictParsing);
+        var decodePlan = RowDecodePlan.CreateTyped(td, mask, strictParsing || requireReadableMatch);
+        RowDecodePlan? matchPlan = null;
+        if (matchColumn >= 0)
+        {
+            bool[] matchMask = new bool[td.Columns.Count];
+            matchMask[matchColumn] = true;
+            matchPlan = RowDecodePlan.CreateTyped(td, matchMask, strictParsing: true);
+        }
+
         IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         foreach (long pageNumber in pageNumbers)
         {
@@ -164,7 +199,40 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
                     continue;
                 }
 
+                if (matchPlan is not null)
+                {
+                    object?[]? candidate = await this.CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, matchPlan, cancellationToken).ConfigureAwait(false);
+                    if (candidate is null || candidate[matchColumn] is null or DBNull)
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A catalog row's identity is unreadable.", new JetErrorInfo { PageNumber = pageNumber });
+                    }
+
+                    if (!Equals(candidate[matchColumn], matchValue))
+                    {
+                        continue;
+                    }
+
+                    if (!RowDecodePlan.TryParseRowLayout(format.RowFields, page, rb.RowStart, rb.RowSize, td.HasVarColumns, out RowLayout layout))
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A matching catalog row's layout is unreadable.", new JetErrorInfo { PageNumber = pageNumber });
+                    }
+
+                    for (int columnIndex = 0; columnIndex < td.Columns.Count; columnIndex++)
+                    {
+                        if ((mask is null || mask[columnIndex])
+                            && RowDecodePlan.ResolveColumnSlice(format.RowFields, page, rb.RowStart, rb.RowSize, layout, td.Columns[columnIndex]).Kind == ColumnSliceKind.Empty)
+                        {
+                            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A matching catalog row's selected value is unreadable.", new JetErrorInfo { PageNumber = pageNumber, ColumnName = td.Columns[columnIndex].Name });
+                        }
+                    }
+                }
+
                 object?[]? row = await this.CrackRowTypedAsync(page, rb.RowStart, rb.RowSize, decodePlan, cancellationToken).ConfigureAwait(false);
+                if (row is null && requireReadableMatch)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A matching catalog row is unreadable.", new JetErrorInfo { PageNumber = pageNumber });
+                }
+
                 if (row != null)
                 {
                     yield return row;

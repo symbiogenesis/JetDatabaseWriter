@@ -83,9 +83,6 @@ internal static class TestDatabases
     /// <summary>A writer-created ACE <c>.accdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.AccdbLegacyPassword"/>.</summary>
     public static readonly string EncryptedAccdbLegacyPassword = Path.Combine(EncryptedRoot, "AccdbLegacyPassword.accdb");
 
-    /// <summary>A writer-created ACE <c>.accdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.AccdbAesCfbWrapped"/>.</summary>
-    public static readonly string EncryptedAccdbAesCfbWrapped = Path.Combine(EncryptedRoot, "AccdbAesCfbWrapped.accdb");
-
     /// <summary>A writer-created ACE <c>.accdb</c> encrypted as flat <see cref="Enums.AccessEncryptionFormat.AccdbAgile"/>.</summary>
     public static readonly string EncryptedAccdbAgile = Path.Combine(EncryptedRoot, "AccdbAgile.accdb");
 

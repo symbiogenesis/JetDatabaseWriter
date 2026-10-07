@@ -6,10 +6,20 @@ using System.IO;
 using System.Text;
 using System.Xml;
 using JetDatabaseWriter.Encryption;
+using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 public sealed class AgileDescriptorCorruptionTests
 {
+    [Fact]
+    public void Decrypt_RejectsNoncanonicalReservedHeaderFlags()
+    {
+        byte[] info = Info(DescriptorXml());
+        info[4] = 0x41;
+
+        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(info, new byte[8], "password"));
+    }
+
     [Theory]
     [InlineData("spinCount=\"2147483647\"")]
     [InlineData("spinCount=\"-1\"")]
@@ -19,7 +29,9 @@ public sealed class AgileDescriptorCorruptionTests
     [InlineData("saltSize=\"65537\"")]
     public void Decrypt_RejectsInvalidParametersBeforePasswordWork(string replacement)
     {
-        string name = replacement[..replacement.IndexOf('=')];
+        ArgumentNullException.ThrowIfNull(replacement);
+
+        string name = replacement[..replacement.IndexOf('=', StringComparison.Ordinal)];
         string xml = DescriptorXml();
         string original = name switch
         {
@@ -33,6 +45,17 @@ public sealed class AgileDescriptorCorruptionTests
 
         byte[] info = Info(xml.Replace(original, replacement, StringComparison.Ordinal));
         Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(info, [], "password"));
+    }
+
+    [Fact]
+    public void Decrypt_RefusesConfiguredSpinBudgetBeforeHashing()
+    {
+        string xml = DescriptorXml().Replace("spinCount=\"0\"", "spinCount=\"100001\"", StringComparison.Ordinal);
+
+        JetLimitationException failure = Assert.Throws<JetLimitationException>(() =>
+            OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password", maxSpinCount: 100000));
+
+        Assert.Equal(JetErrorCode.ValueTooLarge, failure.ErrorCode);
     }
 
     [Fact]
@@ -55,9 +78,9 @@ public sealed class AgileDescriptorCorruptionTests
     [Fact]
     public void Decrypt_RejectsOversizedXmlBeforeParsing()
     {
-        byte[] info = Info(new string(' ', 1024 * 1024 + 1));
+        byte[] info = Info(new string(' ', (1024 * 1024) + 1));
 
-        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(info, [], "password"));
+        Assert.Throws<JetLimitationException>(() => OfficeCryptoAgile.Decrypt(info, [], "password"));
     }
 
     private static byte[] Info(string xml)

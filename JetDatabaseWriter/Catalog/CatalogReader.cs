@@ -121,9 +121,8 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
     /// Reads and parses the stored <c>MSysObjects.LvProp</c> bytes of the catalog
     /// row whose <c>Id</c> is exactly <paramref name="tdefPage"/> (see
     /// <see cref="ColumnPropertyReader.ReadLvPropForTableAsync"/>). Returns
-    /// <see langword="null"/> when the catalog has no <c>LvProp</c> column (slim
-    /// schemas written by older versions of this library), the row is missing, the
-    /// blob is empty or cannot be read, or the magic header is unrecognised.
+    /// <see langword="null"/> when no property value is present. A present malformed
+    /// or unreadable blob throws instead of becoming absent metadata.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

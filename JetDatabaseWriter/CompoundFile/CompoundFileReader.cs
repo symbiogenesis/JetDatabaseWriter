@@ -8,6 +8,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 
 /// <summary>
@@ -31,9 +32,21 @@ internal static class CompoundFileReader
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public static async ValueTask<Dictionary<string, byte[]>> ReadStreamsAsync(Stream stream, CancellationToken cancellationToken)
+    /// <param name="maxBytes">The physical file and aggregate decoded stream byte budget.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The byte budget is not positive.</exception>
+    /// <exception cref="JetLimitationException">The container exceeds the configured byte budget.</exception>
+    public static async ValueTask<Dictionary<string, byte[]>> ReadStreamsAsync(Stream stream, CancellationToken cancellationToken, int maxBytes = 256 * 1024 * 1024)
     {
         Guard.NotNull(stream, nameof(stream));
+        if (maxBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        }
+
+        if (stream.Length > maxBytes)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The compound file exceeds the configured container byte budget.");
+        }
 
         byte[] header = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
         CfbHeader hdr = ParseHeader(header);
@@ -46,7 +59,7 @@ internal static class CompoundFileReader
             byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, cancellationToken).ConfigureAwait(false);
             byte[] miniStream = await ReadMiniStreamAsync(stream, directory, hdr, fat, cancellationToken).ConfigureAwait(false);
 
-            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, cancellationToken).ConfigureAwait(false);
+            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, cancellationToken, maxBytes).ConfigureAwait(false);
         }
         finally
         {
@@ -94,6 +107,7 @@ internal static class CompoundFileReader
         {
             throw new InvalidDataException($"Unsupported CFB mini-sector shift: {miniSectorShift}.");
         }
+
         return new CfbHeader(
             SectorSize: 1 << sectorShift,
             MiniSectorSize: 1 << miniSectorShift,
@@ -247,9 +261,11 @@ internal static class CompoundFileReader
         CfbHeader hdr,
         uint[] fat,
         uint[] miniFat,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maxBytes)
     {
         int dirCount = directory.Length / Constants.CompoundFile.DirEntrySize;
+        long aggregateBytes = (long)directory.Length + miniStream.Length + ((long)fat.Length * 4) + ((long)miniFat.Length * 4);
 
         // Upper-bound the capacity to the directory entry count so the
         // dictionary never has to rehash while we walk the directory.
@@ -288,6 +304,13 @@ internal static class CompoundFileReader
                 continue;
             }
 
+            if (size > maxBytes - aggregateBytes)
+            {
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Compound file streams exceed the configured aggregate byte budget.");
+            }
+
+            aggregateBytes += size;
+
             // Pass the exact size so the chain readers can size the
             // destination buffer precisely and avoid a tail Array.Resize.
             streams[name] = size < hdr.MiniStreamCutoff
@@ -307,6 +330,7 @@ internal static class CompoundFileReader
         {
             throw new InvalidDataException("CFB sector points beyond the physical file.");
         }
+
         _ = stream.Seek(offset, SeekOrigin.Begin);
         await stream.ReadExactlyAsync(buffer.AsMemory(0, sectorSize), cancellationToken).ConfigureAwait(false);
     }
@@ -371,7 +395,7 @@ internal static class CompoundFileReader
             int remaining = result.Length - dstOffset;
             (uint runStart, int runSectors, uint next) = CoalesceRun(sector, miniFat, miniSectorSize, remaining);
 
-            long offset = (long)runStart * miniSectorSize;
+            long offset = runStart * miniSectorSize;
             long runBytes = (long)runSectors * miniSectorSize;
             if (offset + runBytes > miniStream.Length)
             {
@@ -464,6 +488,7 @@ internal static class CompoundFileReader
     /// <param name="chainLength">The chain length.</param>
     /// <param name="sectorSize">The sector size.</param>
     /// <param name="exactSize">The exact size.</param>
+    /// <exception cref="InvalidDataException">The logical size exceeds the chain capacity or buffer limit.</exception>
     private static byte[] AllocateChainBuffer(int chainLength, int sectorSize, long exactSize)
     {
         long capacity = (long)chainLength * sectorSize;

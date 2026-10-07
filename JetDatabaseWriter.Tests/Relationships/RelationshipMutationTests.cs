@@ -218,10 +218,8 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         IReadOnlyList<IndexMetadata> parentIdx = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> childIdx = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
-        // The TDEF logical-idx name cookie should now reflect the new name on
-        // both sides — neither the old name nor the auto-renamed catalog row
-        // should leave a stale cookie behind.
-        Assert.Single(parentIdx, ix => ix.Kind == IndexKind.ForeignKey && ix.Name == newName);
+        // The child follows the visible name; the hidden parent name is preserved.
+        Assert.Single(parentIdx, ix => ix.Kind == IndexKind.ForeignKey && ix.Name == ".rB");
         Assert.Single(childIdx, ix => ix.Kind == IndexKind.ForeignKey && ix.Name == newName);
         Assert.DoesNotContain(parentIdx, ix => ix.Name == oldName);
         Assert.DoesNotContain(childIdx, ix => ix.Name == oldName);
@@ -328,7 +326,7 @@ public sealed class RelationshipMutationTests(DatabaseCache db) : IClassFixture<
         IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken);
 
-        Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);
+        Assert.Single(parentIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == ".rB");
         Assert.Single(childIndexes, index => index.Kind == IndexKind.ForeignKey && index.Name == newName);
         Assert.DoesNotContain(parentIndexes, index => index.Name == oldName);
         Assert.DoesNotContain(childIndexes, index => index.Name == oldName);

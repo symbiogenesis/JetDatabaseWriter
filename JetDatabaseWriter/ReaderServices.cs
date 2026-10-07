@@ -30,7 +30,7 @@ internal sealed class ReaderServices : IDisposable
     {
         Guard.NotNull(options, nameof(options));
 
-        if (options.MaxLongValueBytes <= 0 || options.MaxLongValueBytes > 0xFFFFFF)
+        if (options.MaxLongValueBytes is <= 0 or > 0xFFFFFF)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "MaxLongValueBytes must be between 1 and 16,777,215.");
         }

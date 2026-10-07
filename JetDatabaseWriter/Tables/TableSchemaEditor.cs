@@ -202,6 +202,20 @@ internal sealed class TableSchemaEditor(
             }
 
             columns = rewritten;
+            var withComplexIndexes = new List<IndexDefinition>(indexes);
+            foreach (ComplexColumnAllocation allocation in complexAllocs)
+            {
+                string columnName = columns[allocation.ColumnIndex].Name;
+                string prefix = columnName.Length > 31 ? columnName[..31] : columnName;
+                withComplexIndexes.Add(new IndexDefinition($"{prefix}_{Guid.NewGuid():N}", columnName)
+                {
+                    IsUnique = true,
+                    IsRequired = true,
+                    IsComplexReferenceIndex = true,
+                });
+            }
+
+            indexes = withComplexIndexes;
         }
 
         uint catalogFlags = 0;
@@ -245,15 +259,18 @@ internal sealed class TableSchemaEditor(
 
         // A missing table still reports "does not exist" from the drop below,
         // even when MSysRelationships has rows left that name it.
-        IReadOnlyList<string> relationshipNames =
-            await relationships.FindRelationshipNamesForTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        if (relationshipNames.Count > 0
-            && await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null)
+        IReadOnlyList<string> relationshipNames = [];
+        if (await catalog.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false) is not null)
         {
-            RelationshipManager.EnsureTableHasNoRelationships(tableName, relationshipNames);
+            relationshipNames = await relationships.PlanTableDropRelationshipsAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
 
         await catalogArtifacts.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
+        foreach (string relationshipName in relationshipNames)
+        {
+            await relationships.DropRelationshipAsync(relationshipName, cancellationToken).ConfigureAwait(false);
+        }
+
         await this.DropTableCoreAsync(tableName, rewriting: false, cancellationToken).ConfigureAwait(false);
     }
 
@@ -1317,9 +1334,7 @@ internal sealed class TableSchemaEditor(
         bool isAutoIncrement = column.IsAutoNumber;
         bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
             .GetBooleanValue(Constants.ColumnPropertyNames.Required);
-        bool isNullable = !isAutoIncrement && (requiredFromLvProp is bool req
-                ? !req
-                : true);
+        bool isNullable = !isAutoIncrement && requiredFromLvProp is not true;
 
         ColumnDefinition def = baseDef with
         {

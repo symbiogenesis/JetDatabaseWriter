@@ -974,6 +974,7 @@ internal sealed class RelationshipManager(
     /// <param name="tableDef">The table's current definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The captured state.</returns>
+    /// <exception cref="JetOperationException">A foreign-key partner link is invalid.</exception>
     internal async ValueTask<RelationshipRewriteState> CaptureForRewriteAsync(
         string tableName,
         long tdefPage,
@@ -1516,6 +1517,38 @@ internal sealed class RelationshipManager(
         return [.. names];
     }
 
+    /// <summary>Plans relationships to remove with a table, refusing enforced relationships to another table.</summary>
+    /// <param name="tableName">The table being dropped.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The removable relationship names.</returns>
+    /// <exception cref="JetOperationException">An enforced relationship connects the table to another table.</exception>
+    internal async ValueTask<IReadOnlyList<string>> PlanTableDropRelationshipsAsync(string tableName, CancellationToken cancellationToken)
+    {
+        var removable = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var restricted = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (RelationshipRowSnapshot row in await this.CollectAllRelationshipRowsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            bool primary = string.Equals(row.SzReferencedObject, tableName, StringComparison.OrdinalIgnoreCase);
+            bool foreign = string.Equals(row.SzObject, tableName, StringComparison.OrdinalIgnoreCase);
+            if (!primary && !foreign)
+            {
+                continue;
+            }
+
+            if ((!primary || !foreign) && (row.Grbit & Constants.RelationshipFlags.NoRefIntegrity) == 0)
+            {
+                _ = restricted.Add(row.SzRelationship);
+            }
+            else
+            {
+                _ = removable.Add(row.SzRelationship);
+            }
+        }
+
+        EnsureTableHasNoRelationships(tableName, [.. restricted]);
+        return [.. removable];
+    }
+
     /// <summary>
     /// Throws when <paramref name="relationshipNames"/> is not empty: a table
     /// that takes part in a relationship cannot be dropped. Microsoft Access
@@ -1904,23 +1937,16 @@ internal sealed class RelationshipManager(
 
         await this.catalog.RewriteRowsAsync(msysRelTdefPage, msysRelDef, replacementRows, cancellationToken).ConfigureAwait(false);
 
-        // Update the TDEF logical-idx name cookies on both sides so the
-        // on-disk index name matches the catalog row.
+        // Update the child-side name to follow the visible catalog relationship.
         await this.ForEachRelationshipFkPairAsync(
             matches,
             async (ctx, ct) =>
             {
-                // Reproduce the cookie-naming convention from CreateRelationshipAsync:
-                // PK side uses the relationship name; FK side appends "_FK"
-                // when both endpoints land on the same TDEF (self-referential).
-                string newPkBase = newName;
+                // The parent-side name is an internal .rB/.rC identifier,
+                // independent of the visible relationship name.
                 string newFkBase = ctx.PkEntry.TDefPage == ctx.FkEntry.TDefPage
                     ? newName + "_FK"
                     : newName;
-
-                string newPkName = await this.PickUniqueLogicalIdxNameAsync(ctx.PkEntry.TDefPage, newPkBase, ct).ConfigureAwait(false);
-                _ = await this.TryRenameFkLogicalIdxNameAsync(ctx.PkEntry.TDefPage, ctx.PkColNums, ctx.FkEntry.TDefPage, newPkName, ct).ConfigureAwait(false);
-
                 string newFkName = await this.PickUniqueLogicalIdxNameAsync(ctx.FkEntry.TDefPage, newFkBase, ct).ConfigureAwait(false);
                 _ = await this.TryRenameFkLogicalIdxNameAsync(ctx.FkEntry.TDefPage, ctx.FkColNums, ctx.PkEntry.TDefPage, newFkName, ct).ConfigureAwait(false);
             },

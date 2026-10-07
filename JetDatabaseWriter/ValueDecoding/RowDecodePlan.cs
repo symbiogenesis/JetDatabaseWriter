@@ -294,6 +294,7 @@ internal sealed class RowDecodePlan
             }
 
             int inlineLength = valueLength;
+
             // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
             return isOle
                 ? BinaryBuffer.CopySlice(page, valueStart, inlineLength)

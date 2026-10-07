@@ -367,7 +367,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     }
 
     [Fact]
-    public async Task RenameRelationship_Jet3_RenamesBothEntriesAndKeepsNameOrder()
+    public async Task RenameRelationship_Jet3_PreservesHiddenParentNameAndKeepsNameOrder()
     {
         await using MemoryStream stream = await this.CopyFixtureAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -386,13 +386,13 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         TDefIndexSection parent = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection child = await this.ReadIndexSectionAsync(stream, Child);
         Assert.Equal(["PrimaryKey", "Zedé"], child.Names);
-        Assert.Equal([".rC", "id", "PrimaryKey", "Zedé"], parent.Names);
+        Assert.Equal([".rB", ".rC", "id", "PrimaryKey"], parent.Names);
         Assert.Equal(4, child.Td[child.NameStarts[1]]);
         Assert.Equal(0xE9, child.Td[child.NameStarts[1] + 4]);
         Assert.Equal(child.NamesEnd - 8, Ri32(child.Td, 8));
         Assert.Equal(parent.NamesEnd + parent.TrailingLength - 8, Ri32(parent.Td, 8));
 
-        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == "Zedé");
+        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rB");
         IndexMetadata childFk = Assert.Single(await this.ListIndexesAsync(stream, Child), i => i.Kind == IndexKind.ForeignKey);
         Assert.Equal("Zedé", childFk.Name);
         Assert.Equal(childFk.IndexNumber, parentFk.RelatedIndexNumber);

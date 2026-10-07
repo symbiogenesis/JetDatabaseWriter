@@ -286,9 +286,8 @@ public sealed class TransactionReadVisibilityTests
     [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAesCfbWrapped)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbStandard)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb)]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbStandard)]
     public async Task EncryptedDatabase_TransactionReadsSeeTheirOwnWrites(DatabaseFormat format, AccessEncryptionFormat encryption)
     {
         const string password = "visibility";

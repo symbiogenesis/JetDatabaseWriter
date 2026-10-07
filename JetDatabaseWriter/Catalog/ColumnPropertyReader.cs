@@ -1,9 +1,11 @@
 namespace JetDatabaseWriter.Catalog;
 
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
@@ -39,13 +41,12 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
     /// <summary>
     /// Reads and parses the <c>MSysObjects.LvProp</c> blob of the catalog row whose
     /// <c>Id</c> is exactly <paramref name="tdefPage"/>. The blob is the column's
-    /// stored bytes, decoded with only <c>Id</c> and <c>LvProp</c> of each row.
-    /// Matching the whole Id matters: a form, report, module or query can have an
-    /// Id with the high bit set whose low 24 bits equal a table's TDEF page.
-    /// Returns <see langword="null"/> when the catalog has no <c>LvProp</c> column
-    /// (slim schemas written by older versions of this library), the row is
-    /// missing, the blob is empty or cannot be read, or its magic header is
-    /// unrecognised.
+    /// stored bytes; Id is matched before any property payload is read. No unrelated
+    /// LvProp chains are followed. Matching the whole Id matters: a form, report,
+    /// module or query can have an Id with the high bit set whose low 24 bits equal
+    /// a table's TDEF page. A null stored value, missing catalog row or missing
+    /// LvProp column means absent properties; present unreadable or malformed
+    /// properties throw rather than becoming absent metadata.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -61,7 +62,12 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
 
         int idxId = msys.FindColumnIndex("Id");
         int idxLvProp = msys.FindColumnIndex("LvProp");
-        if (idxId < 0 || idxLvProp < 0)
+        if (idxId < 0)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects has no Id column.", new JetErrorInfo { TableName = "MSysObjects", ColumnName = "Id" });
+        }
+
+        if (idxLvProp < 0)
         {
             return null;
         }
@@ -69,11 +75,21 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
         bool[] wantedColumns = new bool[msys.Columns.Count];
         wantedColumns[idxId] = true;
         wantedColumns[idxLvProp] = true;
-        await foreach (object?[] row in rows.EnumerateTypedRowsForTdefAsync(2, msys, wantedColumns, cancellationToken).ConfigureAwait(false))
+        await foreach (object?[] row in rows.EnumerateTypedRowsMatchingColumnAsync(2, msys, wantedColumns, idxId, checked((int)tdefPage), cancellationToken).ConfigureAwait(false))
         {
             if (row[idxId] is int id && id == tdefPage)
             {
-                return ColumnPropertyBlock.Parse(row[idxLvProp] as byte[], format);
+                if (row[idxLvProp] is null or DBNull)
+                {
+                    return null;
+                }
+
+                if (row[idxLvProp] is not byte[] blob)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects.LvProp is not a readable stored byte value.", new JetErrorInfo { TableName = "MSysObjects", ColumnName = "LvProp", PageNumber = tdefPage });
+                }
+
+                return ColumnPropertyBlock.Parse(blob, format);
             }
         }
 

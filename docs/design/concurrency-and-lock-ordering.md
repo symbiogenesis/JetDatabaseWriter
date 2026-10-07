@@ -34,7 +34,6 @@ its transaction journal and plaintext frame cache.
 | `frameSync` | `Pager` | Frame dictionary, CLOCK bookkeeping, counters and invalidation generation; memory only |
 | `ioGate` | `StreamPageStore` | Seek-based reads, writes, length changes and flushes; positional reads bypass it |
 | Per-page and commit locks | `JetByteRangeLock` | Advisory cross-process page writes and transaction replay |
-| `aesGate` | `AesEcbPageCodec` | Lazy transform creation, transforms and key disposal |
 | `insertPageHintLock` | `DataPageInserter` | Insert-page hint; memory only |
 | `ownedMapSetsLock` | `CatalogOwnedMapPolicy` | Writable and refused TDEF sets; memory only |
 | `ownedDataPagesCacheLock` | `OwnedDataPages` | Per-table owned-page cache and writer observer state; memory only |
@@ -232,7 +231,6 @@ lockFileCoordinator.DisposeAfterAsync(
 | `ownedMapSetsLock` | No | Plain `lock`; leaf only |
 | `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
 | `TDefImageCache.cacheLock` | No | Plain `lock`; leaf only |
-| `aesGate` | No | Plain `lock`; leaf only |
 
 ## Writer-owned caches and the exclusive-writer assumption
 

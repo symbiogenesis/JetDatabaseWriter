@@ -37,14 +37,6 @@ public enum AccessEncryptionFormat
     AccdbLegacyPassword = 2,
 
     /// <summary>
-    /// The library's AES-128 layout for <c>.accdb</c> files: a CFB magic prefix
-    /// (<c>D0 CF 11 E0 …</c>) over a flat per-page AES-128-ECB body. Key is
-    /// <c>SHA-256(password)[..16]</c>; password is XOR-verified at <c>0x42</c>
-    /// using the Jet4 mask. No file Access wrote is known to use it.
-    /// </summary>
-    AccdbAesCfbWrapped = 3,
-
-    /// <summary>
     /// Access-native ECMA-376 "Agile" encryption used by Access 2010 SP1+
     /// and Microsoft 365 (<c>.accdb</c>). The <c>EncryptionInfo</c> descriptor
     /// is embedded in page 0 and data pages are encrypted in place. This is the

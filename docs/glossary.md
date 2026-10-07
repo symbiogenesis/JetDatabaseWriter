@@ -71,7 +71,7 @@ Acronyms, constants and unusual Access/JET terms used throughout this codebase, 
 | Term | Meaning |
 |---------|---------|
 | **RC4** | Rivest Cipher 4 — stream cipher used by Jet4 per-page encryption |
-| **AES** | Advanced Encryption Standard — AES-128-ECB (legacy ACCDB) and AES-256-CBC (Agile) |
+| **AES** | Advanced Encryption Standard; algorithm, mode and key size are determined by the verified encryption descriptor |
 | **ECB** | Electronic Codebook — AES block mode for legacy encryption |
 | **CBC** | Cipher Block Chaining — AES block mode for Agile encryption |
 | **Agile** | ECMA-376 password encryption used by Access 2010 SP1+ and Microsoft 365; AES-256-CBC + SHA-512 + PBKDF spin loop |

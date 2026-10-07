@@ -29,6 +29,26 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     public ReadOnlyMemory<char> Password { get; init; }
 
     /// <summary>
+    /// Gets the maximum Agile password-hash iteration count permitted while
+    /// opening an encrypted file. Default: 1,000,000. The format permits at most
+    /// 10,000,000; increase this budget explicitly for a trusted costly file.
+    /// Zero permits only descriptors that require no iterations.
+    /// </summary>
+    public int MaxEncryptionSpinCount { get; init; } = 1_000_000;
+
+    /// <summary>
+    /// Gets the byte budget for an encrypted compound container's physical file
+    /// and aggregate decoded streams. Default: 256 MiB. Increase explicitly for
+    /// larger trusted containers. This applies to compound packages; native flat
+    /// databases use page storage rather than this container budget.
+    /// </summary>
+    public int MaxEncryptionContainerBytes { get; init; } = 256 * 1024 * 1024;
+    /// <summary>
+    /// Gets the maximum Agile XML descriptor size in bytes, excluding its
+    /// eight-byte version header. Default: 1 MiB. Must be positive.
+    /// </summary>
+    public int MaxEncryptionInfoBytes { get; init; } = 1024 * 1024;
+    /// <summary>
     /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
     /// alongside the database while it is open, and deleted on dispose.
     /// Default: true.

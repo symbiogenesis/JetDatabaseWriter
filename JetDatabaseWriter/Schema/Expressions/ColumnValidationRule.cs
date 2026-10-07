@@ -105,10 +105,12 @@ internal sealed class ColumnValidationRule
     /// </summary>
     /// <param name="context">The evaluation context over the candidate row.</param>
     /// <returns>Whether the value is accepted.</returns>
+    /// <exception cref="NotSupportedException">The rule cannot be evaluated.</exception>
     public bool Accepts(CalculatedExpressionEvaluationContext context)
         => this.root is null
             ? throw new NotSupportedException("The validation rule cannot be evaluated.")
             : this.root.Evaluate(context) != false;
+
     private static List<Token> Tokenize(string rule)
     {
         var tokens = new List<Token>();

@@ -94,7 +94,7 @@ release-quality benchmark results justify reopening a specific area.
   values (about 490 pages each) are each longer than the default 256-page cache;
   every other long-value fixture fits in the cache, which is how a cache-eviction
   bug that dropped the rows after a large MEMO went unmeasured. The numeric
-  database also has an `AccdbAesCfbWrapped`-encrypted copy. The relational
+  database also has an `AccdbAgileCfb`-encrypted copy. The relational
   database has 1,000 `Customers` and 10,000 `Orders` (primary keys, a non-unique
   `OrderDate` index, and the `FK_Orders_Customers` relationship), the query
   database has a 6-row `QuerySmall` table and a 25K-row `QueryLarge` table

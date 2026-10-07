@@ -21,6 +21,7 @@ internal static class LongValueReadPolicy
         catch (Exception)
 #pragma warning restore CA1031 // A diagnostic listener must not turn an explicitly lenient read into a failure.
         {
+            return DBNull.Value;
         }
 
         return DBNull.Value;

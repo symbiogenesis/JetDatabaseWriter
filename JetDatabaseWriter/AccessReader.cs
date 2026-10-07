@@ -98,17 +98,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
             services = new ReaderServices(this.Database, options);
             this.services = services;
 
-            bool isLegacyAesCfb = EncryptionManager.IsCompoundFileEncrypted(header);
-            if (isLegacyAesCfb)
-            {
-                // ACCDB AES (legacy synthetic CFB header path): page-level
-                // decryption is now configured; skip catalog validation because
-                // the header bytes themselves are still raw CFB until ReadPageAsync
-                // decrypts page 1+ on first access.
-                constructionComplete = true;
-                return;
-            }
-
             if (options.ValidateOnOpen)
             {
                 this.ValidateDatabaseFormat();
@@ -212,7 +201,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
             // package decryption; on success we re-enter on the inner ACCDB
             // bytes.
             byte[]? decryptedAgile = await EncryptionManager
-                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, EncryptionManager.ReaderPasswordOption, cancellationToken)
+                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, EncryptionManager.ReaderPasswordOption, cancellationToken, options)
                 .ConfigureAwait(false);
             if (decryptedAgile != null)
             {

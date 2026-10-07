@@ -34,6 +34,9 @@ internal sealed class ColumnPropertyBlockBuilder
     private const int PropertyBlockTargetHeaderLength = sizeof(uint) + sizeof(ushort);
     private const int PropertyEntryHeaderLength = sizeof(ushort) + sizeof(byte) + sizeof(byte) + sizeof(ushort) + sizeof(ushort);
 
+    private Encoding? sourceTextEncoding;
+    private uint? sourceMagic;
+
     /// <summary>
     /// Gets the mutable list of property targets in emission order. Column targets
     /// carry the column's name; the table-level target has an empty name and can be
@@ -59,7 +62,11 @@ internal sealed class ColumnPropertyBlockBuilder
     public static ColumnPropertyBlockBuilder FromBlock(ColumnPropertyBlock block)
     {
         Guard.NotNull(block, nameof(block));
-        var b = new ColumnPropertyBlockBuilder();
+        var b = new ColumnPropertyBlockBuilder
+        {
+            sourceTextEncoding = block.TextEncoding,
+            sourceMagic = block.Magic == 0 ? null : block.Magic,
+        };
         foreach (ColumnPropertyTarget t in block.Targets)
         {
             b.Targets.Add(FromTarget(t));
@@ -85,6 +92,7 @@ internal sealed class ColumnPropertyBlockBuilder
         {
             Name = target.Name,
             ChunkType = target.ChunkType,
+            TextEncoding = target.TextEncoding,
         };
         foreach (ColumnPropertyEntry e in target.Entries)
         {
@@ -117,7 +125,7 @@ internal sealed class ColumnPropertyBlockBuilder
             }
         }
 
-        var table = new ColumnPropertyTargetBuilder { Name = string.Empty, ChunkType = ColumnPropertyChunkType.PropertyBlock };
+        var table = new ColumnPropertyTargetBuilder { Name = string.Empty, ChunkType = ColumnPropertyChunkType.PropertyBlock, TextEncoding = this.sourceTextEncoding };
         this.Targets.Insert(0, table);
         return table;
     }
@@ -138,7 +146,7 @@ internal sealed class ColumnPropertyBlockBuilder
             }
         }
 
-        var nt = new ColumnPropertyTargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1 };
+        var nt = new ColumnPropertyTargetBuilder { Name = name, ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1, TextEncoding = this.sourceTextEncoding };
         this.Targets.Add(nt);
         return nt;
     }
@@ -194,7 +202,7 @@ internal sealed class ColumnPropertyBlockBuilder
             return null;
         }
 
-        Encoding stringEncoding = format.PropertyTextEncoding;
+        Encoding stringEncoding = this.sourceTextEncoding ?? format.PropertyTextEncoding;
 
         // Build the name pool from every distinct entry name encountered, in stable
         // first-seen order. The parser indexes by uint16 so we cap at 65,535 names entries.
@@ -236,7 +244,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
         byte[] blob = new byte[totalLength];
         int offset = 0;
-        WriteUInt32(blob, ref offset, JetFormat.PropertyBlockMagicOf(format.Kind));
+        WriteUInt32(blob, ref offset, this.sourceMagic ?? JetFormat.PropertyBlockMagicOf(format.Kind));
 
         // Name-pool chunk (always first; mdbtools requires it before property blocks).
         WriteChunk(blob, ref offset, ColumnPropertyChunkType.NamePool, namePoolPayload);
@@ -256,6 +264,13 @@ internal sealed class ColumnPropertyBlockBuilder
 
         return blob;
     }
+
+    /// <summary>Creates an empty builder with the same preserved property signature and text encoding.</summary>
+    internal ColumnPropertyBlockBuilder CreateEmptyWithSameEncoding() => new()
+    {
+        sourceTextEncoding = this.sourceTextEncoding,
+        sourceMagic = this.sourceMagic,
+    };
 
     private static byte[] BuildNamePoolPayload(List<string> names, Encoding encoding)
     {

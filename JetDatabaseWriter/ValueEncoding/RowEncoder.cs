@@ -328,6 +328,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// A Jet3 row would have more than 255 columns or variable columns, or 255
     /// variable columns with an EOD the jump table cannot encode.
     /// </exception>
+    /// <exception cref="NotSupportedException">A fixed Text value does not occupy its descriptor's exact encoded width.</exception>
     internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength)
     {
         int numCols = 0;

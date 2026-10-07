@@ -123,7 +123,6 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(DatabaseFormat.AceAccdb, null, AccessEncryptionFormat.AccdbAgile)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword, AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAesCfbWrapped, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, AccessEncryptionFormat.AccdbAgile)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb, AccessEncryptionFormat.AccdbAgileCfb)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbStandard, AccessEncryptionFormat.AccdbStandard)]

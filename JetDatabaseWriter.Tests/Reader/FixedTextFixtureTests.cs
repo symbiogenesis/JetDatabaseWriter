@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Reader;
 using System;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Data;
-using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
@@ -19,20 +18,20 @@ using Xunit;
 public sealed class FixedTextFixtureTests
 {
     /// <summary>Gets the four fixed Text fixtures from Jackcess.</summary>
-    public static TheoryData<string> Fixtures => new()
-    {
+    public static TheoryData<string> Fixtures =>
+    [
         TestDatabases.FixedTextTestV2000,
         TestDatabases.FixedTextTestV2003,
         TestDatabases.FixedTextTestV2007,
         TestDatabases.FixedTextTestV2010,
-    };
+    ];
 
     [Theory]
     [MemberData(nameof(Fixtures))]
     public async Task FixedText_ReadsThroughTypedStringAndPocoPaths(string path)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
-        ColumnMetadata column = Assert.Single((await reader.GetColumnMetadataAsync("users", TestContext.Current.CancellationToken)).Where(c => c.Name == "c_flag_"));
+        ColumnMetadata column = Assert.Single(await reader.GetColumnMetadataAsync("users", TestContext.Current.CancellationToken), c => c.Name == "c_flag_");
         Assert.True(column.IsFixedLength);
         using DataTable table = await reader.ReadDataTableAsync("users", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("N", table.Rows[0]["c_flag_"]);
@@ -53,8 +52,8 @@ public sealed class FixedTextFixtureTests
     [Fact]
     public void FixedText_ExactWidthSerializesInTheFixedArea()
     {
-        JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
-        var definition = FixedTextDefinition();
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        TableDef definition = FixedTextDefinition();
         byte[] row = new RowEncoder(format).SerializeRow(definition, ["Y"]);
         Assert.Equal(new byte[] { 0x59, 0x00 }, row[2..4]);
         byte[] nullRow = new RowEncoder(format).SerializeRow(definition, [DBNull.Value]);
@@ -75,6 +74,7 @@ public sealed class FixedTextFixtureTests
     {
         Columns = [new ColumnInfo { Name = "Flag", Type = ColumnType.TextType, Size = 2, Flags = Constants.ColumnDescriptorFlags.Fixed }],
     };
+
     private sealed class FlagRow
     {
         [Column("c_flag_")]

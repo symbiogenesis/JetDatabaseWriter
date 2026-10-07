@@ -114,8 +114,7 @@ internal static class EncryptionManager
     /// <summary>Returns true when the file begins with the OLE2 Compound File Binary magic bytes.</summary>
     /// <param name="header">The header.</param>
     public static bool IsCompoundFileEncrypted(byte[] header) =>
-        header?.Length >= 4 &&
-        header[0] == 0xD0 && header[1] == 0xCF && header[2] == 0x11 && header[3] == 0xE0;
+        header is not null && CompoundFileReader.HasCompoundFileMagic(header);
 
     /// <summary>
     /// Returns the Jet3 page XOR mask if the header has the Jet3 Office97 password
@@ -154,25 +153,16 @@ internal static class EncryptionManager
     /// </summary>
     /// <param name="header">The database header bytes.</param>
     /// <param name="format">The format.</param>
-    /// <param name="isLegacyAesCfb">Whether the database uses the legacy AES CFB page-encryption path.</param>
     /// <param name="password">The password.</param>
     /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database requires a password and the supplied password is missing or incorrect.</exception>
-    /// <exception cref="InvalidDataException">CFB magic appears on a non-ACE header.</exception>
     internal static IPageCodec OpenPageCodec(
         byte[] header,
         DatabaseFormat format,
-        bool isLegacyAesCfb,
         ReadOnlyMemory<char> password,
         string passwordOptionName)
     {
-        if (isLegacyAesCfb && format != DatabaseFormat.AceAccdb)
-        {
-            throw new InvalidDataException("A compound-file encryption header requires an ACE database.");
-        }
-
         uint? rc4DbKey = null;
-        byte[]? aesPageKey = null;
 
         // Jet4 .mdb (Access 2000 – 2003): the library's Jet4 RC4 scheme keeps
         // its flag in raw header byte 0x62. That byte is byte 32 of the masked
@@ -213,7 +203,7 @@ internal static class EncryptionManager
         // ACCDB legacy password-only mode, on every ACE version: flag 0x07 in
         // raw header byte 0x62, which, as for Jet4, counts only when the
         // header password area holds a password.
-        if (format == DatabaseFormat.AceAccdb && !isLegacyAesCfb && header.Length > 0x62)
+        if (format == DatabaseFormat.AceAccdb && header.Length > 0x62)
         {
             byte encFlag = header[0x62];
             if (encFlag == 0x07 && HasHeaderPassword(header, format))
@@ -233,56 +223,13 @@ internal static class EncryptionManager
             }
         }
 
-        // ACCDB genuine AES encryption (CFB-wrapped file presented as a raw
-        // header by the synthetic legacy path).
-        if (isLegacyAesCfb)
+        byte[]? mask = GetJet3PageMask(format, header);
+        if (rc4DbKey.HasValue)
         {
-            if (password.IsEmpty)
-            {
-                throw new UnauthorizedAccessException(
-                    "This .accdb file is encrypted with Access 2007+ AES encryption. " +
-                    $"Provide the database password via {passwordOptionName} to open it, " +
-                    "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
-            }
-
-            // ACCDB uses the same XOR scheme as Jet4 for the header password area.
-            if (!HeaderPasswordMatches(header, Jet4PasswordMask, password.Span))
-            {
-                throw new UnauthorizedAccessException(
-                    "The provided password is incorrect for this database.");
-            }
-
-            aesPageKey = DeriveAesPageKey(password.Span);
+            return new Jet4Rc4PageCodec(rc4DbKey.Value);
         }
 
-        try
-        {
-            byte[]? mask = GetJet3PageMask(format, header);
-            IPageCodec keys;
-            if (aesPageKey is not null)
-            {
-                keys = new AesEcbPageCodec(aesPageKey);
-            }
-            else if (rc4DbKey.HasValue)
-            {
-                keys = new Jet4Rc4PageCodec(rc4DbKey.Value);
-            }
-            else if (mask is not null)
-            {
-                keys = new Jet3XorPageCodec(mask);
-            }
-            else
-            {
-                keys = new NoPageCodec();
-            }
-
-            aesPageKey = null;
-            return keys;
-        }
-        finally
-        {
-            OfficeCryptoPrimitives.ZeroIfNotNull(aesPageKey);
-        }
+        return mask is not null ? new Jet3XorPageCodec(mask) : new NoPageCodec();
     }
 
     /// <summary>
@@ -773,13 +720,15 @@ internal static class EncryptionManager
     /// <param name="password">The password.</param>
     /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="options">Optional cryptographic resource budgets.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when a flat Agile encrypted database is detected and no password was supplied.</exception>
     public static async ValueTask<byte[]?> TryDecryptAgileCompoundFileAsync(
         Stream stream,
         byte[] header,
         ReadOnlyMemory<char> password,
         string passwordOptionName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AccessOptions? options = null)
     {
         if (!CompoundFileReader.HasCompoundFileMagic(header))
         {
@@ -805,7 +754,7 @@ internal static class EncryptionManager
                 _ = stream.Seek(0, SeekOrigin.Begin);
                 byte[] rawFile = new byte[stream.Length];
                 await stream.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
-                return OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span);
+                return OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? 1024 * 1024);
             }
             finally
             {
@@ -816,7 +765,7 @@ internal static class EncryptionManager
             }
         }
 
-        (byte[]? plaintext, _) = await TryDecryptCompoundFileWithFormatAsync(stream, header, password, passwordOptionName, cancellationToken)
+        (byte[]? plaintext, _) = await TryDecryptCompoundFileWithFormatAsync(stream, header, password, passwordOptionName, cancellationToken, options)
             .ConfigureAwait(false);
         return plaintext;
     }
@@ -831,25 +780,30 @@ internal static class EncryptionManager
     /// <param name="password">The password.</param>
     /// <param name="passwordOptionName">Where the caller supplies the password, named by a missing-password message (<see cref="ReaderPasswordOption"/>, <see cref="WriterPasswordOption"/>).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="options">Optional cryptographic resource budgets.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when an encrypted Standard or Agile package is detected and no password was supplied.</exception>
+    /// <exception cref="InvalidDataException">Required encryption streams are missing.</exception>
+    /// <exception cref="NotSupportedException">The encrypted compound format is unsupported.</exception>
     internal static async ValueTask<(byte[]? Plaintext, AccessEncryptionFormat Format)> TryDecryptCompoundFileWithFormatAsync(
         Stream stream,
         byte[] header,
         ReadOnlyMemory<char> password,
         string passwordOptionName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AccessOptions? options = null)
     {
         if (!CompoundFileReader.HasCompoundFileMagic(header))
         {
             return (null, AccessEncryptionFormat.None);
         }
 
-        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken).ConfigureAwait(false);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken, options?.MaxEncryptionContainerBytes ?? 256 * 1024 * 1024).ConfigureAwait(false);
         if (!streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo)
             || !streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage))
         {
             throw new InvalidDataException("The compound database is missing EncryptionInfo or EncryptedPackage.");
         }
+
         if (OfficeCryptoAgile.IsStandardEncryptionInfo(encryptionInfo))
         {
             if (password.IsEmpty)
@@ -877,7 +831,7 @@ internal static class EncryptionManager
                 "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
         }
 
-        return (OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span),
+        return (OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? 1024 * 1024),
             AccessEncryptionFormat.AccdbAgileCfb);
     }
 
@@ -1401,39 +1355,4 @@ internal static class EncryptionManager
         Wu32(destination, 0, passwordByteLength);
     }
 
-    /// <summary>
-    /// Derives a 128-bit AES key from a password using SHA-256 (truncated to 16 bytes).
-    /// </summary>
-    /// <param name="password">The password.</param>
-    private static byte[] DeriveAesPageKey(ReadOnlySpan<char> password)
-    {
-        // Header-area passwords are capped at 15 UTF-16 chars by
-        // EncryptionConverter.EncodeJet4StylePassword, so 256 bytes of stack is
-        // ample headroom; we still allocate a heap buffer for any unexpectedly
-        // long password rather than risk a stack overflow.
-        int maxBytes = Encoding.UTF8.GetMaxByteCount(password.Length);
-        Span<byte> stackBuf = stackalloc byte[256];
-        byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
-        Span<byte> utf8 = rented ?? stackBuf;
-
-        try
-        {
-            int utf8Len = Encoding.UTF8.GetBytes(password, utf8);
-            Span<byte> hash = stackalloc byte[32];
-            try
-            {
-                OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
-                return hash[..16].ToArray(); // AES-128
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(hash);
-            }
-        }
-        finally
-        {
-            // Scrub any password bytes from the buffer we used.
-            CryptographicOperations.ZeroMemory(utf8);
-        }
-    }
 }

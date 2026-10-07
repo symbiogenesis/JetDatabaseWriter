@@ -51,9 +51,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     /// <summary>Lower bound for the test databases, so a whole-file read is far above <see cref="MaxOpenBytes"/>.</summary>
     private const long MinDatabaseBytes = 64L * Constants.PageSizes.Jet4;
 
-    /// <summary>The bytes the compound-file probe reads from a CFB-magic file before it gives up: one 512-byte CFB header.</summary>
-    private const long CfbHeaderProbeBytes = 512;
-
     private static readonly AccessWriterOptions NoLockOptions = new() { UseLockFile = false };
 
     private readonly List<string> tempFiles = [];
@@ -67,7 +64,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         {
             AccessEncryptionFormat.Jet4Rc4,
             AccessEncryptionFormat.AccdbLegacyPassword,
-            AccessEncryptionFormat.AccdbAesCfbWrapped,
             AccessEncryptionFormat.AccdbAgileCfb,
             AccessEncryptionFormat.AccdbStandard,
         })
@@ -105,7 +101,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     public async Task ReaderOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -130,17 +125,13 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     public async Task WriterOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream backing = await this.BuildDatabaseAsync(source, encryption, ct);
 
         // Page 0 is read once; the header and the flat-Agile probe share it.
-        // A CFB-magic file also has its compound-file header checked.
-        long maxBytes = encryption == AccessEncryptionFormat.AccdbAesCfbWrapped
-            ? Constants.PageSizes.Jet4 + CfbHeaderProbeBytes
-            : Constants.PageSizes.Jet4;
+        long maxBytes = Constants.PageSizes.Jet4;
         await using var counting = new CountingStream(backing);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, WriterOptions(encryption), leaveOpen: true, ct))
         {
@@ -288,7 +279,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbAgileCfb)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbStandard)]
     public async Task WriterOpen_PathOverload_OpensDatabaseFileOnce(string source, AccessEncryptionFormat encryption)

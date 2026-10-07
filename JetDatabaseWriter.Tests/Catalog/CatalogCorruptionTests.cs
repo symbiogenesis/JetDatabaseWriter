@@ -6,7 +6,6 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -51,6 +50,7 @@ public sealed class CatalogCorruptionTests
             await reader.ListTablesAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(JetErrorCode.CorruptCatalog, failure.ErrorCode);
+
         // A failed scan must not cache an empty list: the same read fails again.
         await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await reader.ListTablesAsync(TestContext.Current.CancellationToken));

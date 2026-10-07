@@ -708,7 +708,13 @@ public sealed class ConstraintRegistryTests
         var builder = new ColumnPropertyBlockBuilder();
         foreach ((string column, string name, string value) in properties)
         {
-            builder.GetOrAddTarget(column).AddText(name, value, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
+            ColumnPropertyTargetBuilder target = column.Length == 0 ? builder.GetOrAddTableTarget() : builder.GetOrAddTarget(column);
+            target.AddText(name, value, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
+            if (column.Length == 0)
+            {
+                builder.Targets.Remove(target);
+                builder.Targets.Add(target);
+            }
         }
 
         return ColumnPropertyBlock.Parse(builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb)), JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb))!;

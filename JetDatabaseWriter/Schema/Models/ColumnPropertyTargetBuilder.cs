@@ -17,6 +17,9 @@ internal sealed class ColumnPropertyTargetBuilder
     /// <summary>Gets the mutable list of property entries in emission order.</summary>
     public List<ColumnPropertyEntryBuilder> Entries { get; } = [];
 
+    /// <summary>Gets or sets the preserved source property encoding.</summary>
+    internal Encoding? TextEncoding { get; set; }
+
     /// <summary>Adds a Text-typed (<c>0x0A</c>) string property using the supplied database format's encoding.</summary>
     /// <param name="propertyName">The property name.</param>
     /// <param name="value">The value.</param>
@@ -25,7 +28,7 @@ internal sealed class ColumnPropertyTargetBuilder
     {
         Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
         Guard.NotNull(value, nameof(value));
-        Encoding enc = format.PropertyTextEncoding;
+        Encoding enc = this.TextEncoding ?? format.PropertyTextEncoding;
         this.Entries.Add(new ColumnPropertyEntryBuilder
         {
             Name = propertyName,
@@ -43,7 +46,7 @@ internal sealed class ColumnPropertyTargetBuilder
     {
         Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
         Guard.NotNull(value, nameof(value));
-        Encoding enc = format.PropertyTextEncoding;
+        Encoding enc = this.TextEncoding ?? format.PropertyTextEncoding;
         this.Entries.Add(new ColumnPropertyEntryBuilder
         {
             Name = propertyName,

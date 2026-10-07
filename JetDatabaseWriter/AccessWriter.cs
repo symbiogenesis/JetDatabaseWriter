@@ -145,7 +145,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             {
                 _ = stream.Seek(0, SeekOrigin.Begin);
                 (byte[]? decryptedPackage, AccessEncryptionFormat outerFormat) = await EncryptionManager
-                    .TryDecryptCompoundFileWithFormatAsync(stream, header, options.Password, EncryptionManager.WriterPasswordOption, cancellationToken)
+                    .TryDecryptCompoundFileWithFormatAsync(stream, header, options.Password, EncryptionManager.WriterPasswordOption, cancellationToken, options)
                     .ConfigureAwait(false);
 
                 if (decryptedPackage != null)
@@ -165,11 +165,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                         outerEncryptedFormat: outerFormat);
                 }
 
-                // CFB magic but not a real Agile compound document: treat as
-                // the synthetic legacy AES-128 layout (flat per-page AES-ECB
-                // beneath a CFB-magic header byte). The constructor sets up
-                // the page key and writes are re-encrypted on every flush.
-                _ = stream.Seek(0, SeekOrigin.Begin);
+                throw new InvalidDataException("Compound file does not contain a supported encrypted package.");
             }
 
             return new AccessWriter(

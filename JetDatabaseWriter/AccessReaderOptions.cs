@@ -42,6 +42,7 @@ public sealed class AccessReaderOptions : AccessOptions
     /// This limit applies before decompression, including when parsing is lenient.
     /// </summary>
     public int MaxAttachmentContentBytes { get; init; } = 64 * 1024 * 1024;
+
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; init; } = 256;
 

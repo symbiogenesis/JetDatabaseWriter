@@ -4,20 +4,12 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-/// <summary>
-/// DAO oracle for <see cref="AccessWriter.DropTableAsync"/> on a related
-/// table. The writer refuses to drop a table that any <c>MSysRelationships</c>
-/// row names, including a relationship that does not enforce referential
-/// integrity and one that relates a table to itself, on the understanding
-/// that Jet refuses the same <c>TableDefs.Delete</c> with error 3303
-/// ("Could not delete; currently participates in one or more
-/// relationships"). These tests record what DAO actually does on a host with
-/// Microsoft Access, and that the writer agrees.
-/// </summary>
+/// <summary>Compares related-table deletion with Microsoft's Access engine.</summary>
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class DaoRelationshipDropTests
 {
@@ -43,7 +35,7 @@ public sealed class DaoRelationshipDropTests
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
-    public async Task DaoTableDefsDelete_OfTableInRelationshipWithoutIntegrity_IsRefused()
+    public async Task DaoTableDefsDelete_OfTableInRelationshipWithoutIntegrity_IsDeleted()
     {
         const string parent = "DaoDtParent";
         const string child = "DaoDtChild";
@@ -55,19 +47,23 @@ public sealed class DaoRelationshipDropTests
             await writer.CreateRelationshipAsync(
                 new RelationshipDefinition("FK_DaoDtChild_DaoDtParent", parent, "Id", child, "ParentId") { EnforceReferentialIntegrity = false },
                 Ct);
+            await writer.CreateTableAsync("WriterParent", [new("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+            await writer.CreateTableAsync("WriterChild", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("ParentId", typeof(int))], Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_WriterChild", "WriterParent", "Id", "WriterChild", "ParentId") { EnforceReferentialIntegrity = false }, Ct);
         }
 
-        Assert.StartsWith(Refused, RunTableDefsDelete(session, parent), StringComparison.Ordinal);
-        Assert.StartsWith(Refused, RunTableDefsDelete(session, child), StringComparison.Ordinal);
-        await AssertWriterRefusesAsync(session, parent);
-        await AssertWriterRefusesAsync(session, child);
+        Assert.Equal(DropMarker + "DELETED", RunTableDefsDelete(session, parent));
+        Assert.Equal(DropMarker + "DELETED", RunTableDefsDelete(session, child));
+        await using AccessWriter writer2 = await session.OpenWriterAsync(Ct);
+        await writer2.DropTableAsync("WriterParent", Ct);
+        await writer2.DropTableAsync("WriterChild", Ct);
     }
 
     [Fact(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
-    public async Task DaoTableDefsDelete_OfSelfReferencingTable_IsRefused()
+    public async Task DaoTableDefsDelete_OfSelfReferencingTable_IsDeleted()
     {
         const string tree = "DaoDtTree";
         await using AccessRoundTripSession session = await AccessRoundTripSession.CreateFromNorthwindAsync(Ct);
@@ -75,10 +71,13 @@ public sealed class DaoRelationshipDropTests
         {
             await writer.CreateTableAsync(tree, [new("Id", typeof(int)) { IsPrimaryKey = true }, new("ParentId", typeof(int))], Ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_DaoDtTree", tree, "Id", tree, "ParentId"), Ct);
+            await writer.CreateTableAsync("WriterTree", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("ParentId", typeof(int))], Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_WriterTree", "WriterTree", "Id", "WriterTree", "ParentId"), Ct);
         }
 
-        Assert.StartsWith(Refused, RunTableDefsDelete(session, tree), StringComparison.Ordinal);
-        await AssertWriterRefusesAsync(session, tree);
+        Assert.Equal(DropMarker + "DELETED", RunTableDefsDelete(session, tree));
+        await using AccessWriter writer2 = await session.OpenWriterAsync(Ct);
+        await writer2.DropTableAsync("WriterTree", Ct);
     }
 
     /// <summary>
@@ -115,8 +114,8 @@ public sealed class DaoRelationshipDropTests
     {
         await using (AccessWriter writer = await session.OpenWriterAsync(Ct))
         {
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await writer.DropTableAsync(table, Ct));
-            Assert.Contains("participates in", ex.Message, StringComparison.Ordinal);
+            JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropTableAsync(table, Ct));
+            Assert.Equal(JetErrorCode.TableInRelationship, ex.ErrorCode);
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(session.SourcePath, new AccessReaderOptions { UseLockFile = false }, cancellationToken: Ct);

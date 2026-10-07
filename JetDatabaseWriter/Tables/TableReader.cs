@@ -1054,8 +1054,7 @@ internal sealed class TableReader(
     /// three pages used to be excluded because the cache returned evicted
     /// buffers to the shared pool while a scan still read them; it now leaves
     /// them to the GC, so the prefetch cannot overwrite the page being decoded.
-    /// The two reads in flight can decrypt pages on two threads at once, which
-    /// <see cref="Encryption.AesEcbPageCodec"/> serializes for AES.
+    /// The two reads in flight can decode pages on two threads at once.
     /// </para>
     /// <para>
     /// Tables with MEMO, OLE, complex or attachment columns stay sequential.

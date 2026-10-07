@@ -20,8 +20,7 @@ using Xunit;
 /// journal is attached, and returns to the file's bytes on rollback; and a
 /// page cache over the writer's file must not cache. That the reader's graph
 /// holds no pager is checked in <see cref="Architecture.ServiceGraphTests"/>.
-/// Each case runs on writer-created Jet3, Jet4 and ACCDB databases and on an
-/// ACCDB encrypted as <see cref="AccessEncryptionFormat.AccdbAesCfbWrapped"/>.
+/// Each case runs on writer-created Jet3, Jet4 and ACCDB databases .
 /// </summary>
 public sealed class PagerTests
 {
@@ -33,10 +32,9 @@ public sealed class PagerTests
     [InlineData(DatabaseFormat.Jet3Mdb, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, false)]
     [InlineData(DatabaseFormat.AceAccdb, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true)]
     public async Task ReadPage_WhileJournalAttached_ReturnsJournaledPlaintext(DatabaseFormat format, bool encrypted)
     {
-        await using MemoryStream stream = await CreateDatabaseAsync(format, encrypted);
+        await using MemoryStream stream = await CreateDatabaseAsync(format);
         byte[] fileBefore = stream.ToArray();
         await using WriterHarness harness = await OpenAsync(stream, encrypted);
         DatabaseFile db = harness.Database;
@@ -66,10 +64,9 @@ public sealed class PagerTests
     [InlineData(DatabaseFormat.Jet3Mdb, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, false)]
     [InlineData(DatabaseFormat.AceAccdb, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true)]
     public async Task PageCount_WhileJournalAttached_IncludesAppendedPages(DatabaseFormat format, bool encrypted)
     {
-        await using MemoryStream stream = await CreateDatabaseAsync(format, encrypted);
+        await using MemoryStream stream = await CreateDatabaseAsync(format);
         await using WriterHarness harness = await OpenAsync(stream, encrypted);
         DatabaseFile db = harness.Database;
         Pager pager = harness.Pager;
@@ -104,19 +101,18 @@ public sealed class PagerTests
     /// commit, the positional read returns the file's bytes.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="encrypted">Whether the file is encrypted as <see cref="AccessEncryptionFormat.AccdbAesCfbWrapped"/>.</param>
+    /// <param name="encrypted">Whether the file requires a password.</param>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, false)]
     [InlineData(DatabaseFormat.AceAccdb, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true)]
     public async Task ReadPage_PositionalReadsEnabled_WhileJournalAttached_ReadsTheJournal(DatabaseFormat format, bool encrypted)
     {
         string extension = format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb";
         string path = Path.Combine(Path.GetTempPath(), $"PagerPositionalReads_{Guid.NewGuid():N}{extension}");
         try
         {
-            await using (MemoryStream created = await CreateDatabaseAsync(format, encrypted))
+            await using (MemoryStream created = await CreateDatabaseAsync(format))
             {
                 await File.WriteAllBytesAsync(path, created.ToArray(), Ct);
             }
@@ -165,10 +161,9 @@ public sealed class PagerTests
     [InlineData(DatabaseFormat.Jet3Mdb, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, false)]
     [InlineData(DatabaseFormat.AceAccdb, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true)]
     public async Task Commit_WritesJournaledPages_EncryptedOnlyOnDisk(DatabaseFormat format, bool encrypted)
     {
-        await using MemoryStream stream = await CreateDatabaseAsync(format, encrypted);
+        await using MemoryStream stream = await CreateDatabaseAsync(format);
         byte[] page;
         long appended;
         int pageSize;
@@ -280,7 +275,7 @@ public sealed class PagerTests
     private static ValueTask<WriterHarness> OpenAsync(MemoryStream stream, bool encrypted)
         => WriterHarness.OpenAsync(stream, WriterOptions(encrypted), cancellationToken: Ct);
 
-    private static async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format, bool encrypted)
+    private static async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format)
     {
         var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -292,12 +287,6 @@ public sealed class PagerTests
         {
             await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], Ct);
             await writer.InsertRowAsync("Items", [1], Ct);
-        }
-
-        if (encrypted)
-        {
-            stream.Position = 0;
-            await AccessWriter.EncryptAsync(stream, Password.AsMemory(), AccessEncryptionFormat.AccdbAesCfbWrapped, Ct);
         }
 
         stream.Position = 0;

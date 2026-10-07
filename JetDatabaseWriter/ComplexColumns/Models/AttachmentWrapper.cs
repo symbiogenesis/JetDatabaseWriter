@@ -81,6 +81,7 @@ internal static class AttachmentWrapper
     /// <param name="fileExtension">The file extension.</param>
     /// <param name="payload">The payload.</param>
     /// <param name="maxContentBytes">The maximum uncompressed content size.</param>
+    /// <exception cref="JetLimitationException">The declared content exceeds the configured byte budget.</exception>
     public static bool TryDecode(byte[] wrapped, out string fileExtension, out byte[] payload, int maxContentBytes = 64 * 1024 * 1024)
     {
         fileExtension = string.Empty;

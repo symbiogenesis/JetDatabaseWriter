@@ -7,6 +7,7 @@ using System.Text;
 using System.Xml;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -57,10 +58,10 @@ internal static class OfficeCryptoAgile
         ushort minor = Ru16(encryptionInfo, 2);
         uint flags = Ru32(encryptionInfo, 4);
 
-        // Agile = (4, 4) with AgileEncryption flag (0x40) set.
+        // Agile requires version (4, 4) and reserved value exactly 0x40.
         return major == Constants.AgileEncryption.VersionMajor
             && minor == Constants.AgileEncryption.VersionMinor
-            && (flags & Constants.AgileEncryption.Flags) != 0;
+            && flags == Constants.AgileEncryption.Flags;
     }
 
     /// <summary>
@@ -92,8 +93,10 @@ internal static class OfficeCryptoAgile
     /// <param name="encryptionInfo">The encryption info.</param>
     /// <param name="encryptedPackage">The encrypted package.</param>
     /// <param name="password">The password.</param>
+    /// <param name="maxSpinCount">The password hashing budget.</param>
+    /// <param name="maxDescriptorBytes">The XML descriptor byte budget.</param>
     /// <exception cref="InvalidDataException">Thrown when <paramref name="encryptionInfo"/> is not an Agile 4.4 descriptor.</exception>
-    public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password)
+    public static byte[] Decrypt(byte[] encryptionInfo, byte[] encryptedPackage, ReadOnlySpan<char> password, int maxSpinCount = 1_000_000, int maxDescriptorBytes = 1024 * 1024)
     {
         Guard.NotNull(encryptionInfo, nameof(encryptionInfo));
         Guard.NotNull(encryptedPackage, nameof(encryptedPackage));
@@ -104,7 +107,7 @@ internal static class OfficeCryptoAgile
                 "EncryptionInfo header is not in Agile (version 4.4) format.");
         }
 
-        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
+        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo, maxSpinCount, maxDescriptorBytes);
         ValidatePackageSize(descriptor, encryptedPackage);
         byte[] passwordUtf16 = PasswordToUtf16(password);
         byte[]? intermediateKey = null;
@@ -317,8 +320,10 @@ internal static class OfficeCryptoAgile
     /// </summary>
     /// <param name="encryptedDatabase">The encrypted database.</param>
     /// <param name="password">The password.</param>
+    /// <param name="maxSpinCount">The password hashing budget.</param>
+    /// <param name="maxDescriptorBytes">The XML descriptor byte budget.</param>
     /// <exception cref="InvalidDataException">Thrown when the ACCDB header has no flat Agile descriptor or the descriptor is not Agile.</exception>
-    public static byte[] DecryptFlatDatabase(byte[] encryptedDatabase, ReadOnlySpan<char> password)
+    public static byte[] DecryptFlatDatabase(byte[] encryptedDatabase, ReadOnlySpan<char> password, int maxSpinCount = 1_000_000, int maxDescriptorBytes = 1024 * 1024)
     {
         Guard.NotNull(encryptedDatabase, nameof(encryptedDatabase));
         if (!TryGetFlatEncryptionInfo(encryptedDatabase, out byte[] encryptionInfo))
@@ -331,7 +336,7 @@ internal static class OfficeCryptoAgile
             throw new InvalidDataException("ACCDB header EncryptionInfo is not in Agile format.");
         }
 
-        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
+        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo, maxSpinCount, maxDescriptorBytes);
         byte[] headerPage = GetUnmaskedHeaderPage(encryptedDatabase);
         byte[] encodingKey = new byte[4];
         Buffer.BlockCopy(headerPage, Constants.AgileEncryption.FlatEncodingKeyOffset, encodingKey, 0, encodingKey.Length);
@@ -371,12 +376,26 @@ internal static class OfficeCryptoAgile
     // EncryptionInfo XML parser
     // ════════════════════════════════════════════════════════════════
 
-    private static AgileDescriptor ParseDescriptor(byte[] encryptionInfo)
+    private static AgileDescriptor ParseDescriptor(byte[] encryptionInfo, int maxSpinCount, int maxDescriptorBytes)
     {
-        const int maxDescriptorBytes = 1024 * 1024;
-        if (encryptionInfo.Length < 8 || encryptionInfo.Length - 8 > maxDescriptorBytes)
+        if (maxSpinCount is < 0 or > 10_000_000)
         {
-            throw new InvalidDataException("Agile EncryptionInfo exceeds the supported XML descriptor size.");
+            throw new ArgumentOutOfRangeException(nameof(maxSpinCount), "The spin budget must be between zero and 10,000,000.");
+        }
+
+        if (maxDescriptorBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxDescriptorBytes), "The XML byte budget must be positive.");
+        }
+
+        if (encryptionInfo.Length < 8)
+        {
+            throw new InvalidDataException("Agile EncryptionInfo is missing its version header.");
+        }
+
+        if (encryptionInfo.Length - 8 > maxDescriptorBytes)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Agile EncryptionInfo exceeds the configured XML descriptor size.");
         }
 
         // Skip 8-byte header (version + flags), parse the trailing UTF-8 XML.
@@ -476,11 +495,16 @@ internal static class OfficeCryptoAgile
             || d.KeyDataHashSize != 64 || d.PasswordHashSize != 64
             || d.KeyDataSaltSize is < 1 or > 65536 || d.PasswordSaltSize is < 1 or > 65536
             || d.KeyDataSalt.Length != d.KeyDataSaltSize || d.PasswordSalt.Length != d.PasswordSaltSize
-            || d.EncryptedVerifierHashInput.Length != ((d.PasswordSaltSize + 15) / 16 * 16)
+            || d.EncryptedVerifierHashInput.Length != (d.PasswordSaltSize + 15) / 16 * 16
             || d.EncryptedVerifierHashValue.Length != 64
-            || d.EncryptedKeyValue.Length != ((d.KeyDataKeyBits / 8 + 15) / 16 * 16))
+            || d.EncryptedKeyValue.Length != ((d.KeyDataKeyBits / 8) + 15) / 16 * 16)
         {
             throw new InvalidDataException("Agile EncryptionInfo contains inconsistent or unsupported cryptographic parameter sizes.");
+        }
+
+        if (d.SpinCount > maxSpinCount)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Agile password hashing requires {d.SpinCount} iterations, exceeding the configured limit {maxSpinCount}.");
         }
 
         if (!string.Equals(d.KeyDataCipherChaining, "ChainingModeCBC", StringComparison.Ordinal)
@@ -488,13 +512,19 @@ internal static class OfficeCryptoAgile
         {
             throw new NotSupportedException("Only Agile AES CBC chaining is supported.");
         }
+
         return d;
     }
 
     private static int ReadIntAttr(XmlReader reader, string name)
     {
         string? raw = reader.GetAttribute(name);
-        return string.IsNullOrEmpty(raw) ? 0 : int.Parse(raw, System.Globalization.CultureInfo.InvariantCulture);
+        if (!int.TryParse(raw, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int value))
+        {
+            throw new InvalidDataException($"Agile EncryptionInfo attribute '{name}' is missing or not a supported unsigned integer.");
+        }
+
+        return value;
     }
 
     private static byte[] ReadBase64Attr(XmlReader reader, string name)
@@ -625,7 +655,7 @@ internal static class OfficeCryptoAgile
 
         long size = Ri64(encryptedPackage, 0);
         if (size is < 0 or > int.MaxValue
-            || (((size + descriptor.KeyDataBlockSize - 1) / descriptor.KeyDataBlockSize) * descriptor.KeyDataBlockSize) > encryptedPackage.Length - 8L)
+            || (size + descriptor.KeyDataBlockSize - 1) / descriptor.KeyDataBlockSize * descriptor.KeyDataBlockSize > encryptedPackage.Length - 8L)
         {
             throw new InvalidDataException("EncryptedPackage length cannot contain its declared plaintext size.");
         }
@@ -647,7 +677,7 @@ internal static class OfficeCryptoAgile
 
         int blockSize = d.KeyDataBlockSize;
 
-        long requiredCipherBytes = ((decryptedSize + blockSize - 1) / blockSize) * blockSize;
+        long requiredCipherBytes = (decryptedSize + blockSize - 1) / blockSize * blockSize;
         if (requiredCipherBytes > encryptedPackage.Length - 8L)
         {
             throw new InvalidDataException("EncryptedPackage length cannot contain its declared plaintext size.");

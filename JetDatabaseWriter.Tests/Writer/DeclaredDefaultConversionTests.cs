@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -34,7 +35,6 @@ public sealed class DeclaredDefaultConversionTests
                     new("DateText", typeof(string), 50) { DefaultValue = new DateTime(2024, 2, 29, 8, 30, 15).AddMilliseconds(125) },
                     new("NumericText", typeof(int)) { DefaultValue = "42" },
                     new("DateValue", typeof(DateTime)) { DefaultValue = new DateTime(2024, 2, 29, 8, 30, 15).AddMilliseconds(125) },
-                    new("InvalidNumber", typeof(int)) { DefaultValue = "not a number" },
                 ],
                 ct);
             await writer.InsertRowAsync("Defaults", new RowValues { ["Id"] = 1 }, ct);
@@ -57,8 +57,36 @@ public sealed class DeclaredDefaultConversionTests
             Assert.Equal("2/29/2024 8:30:15 AM", row["DateText"]);
             Assert.Equal(42, row["NumericText"]);
             Assert.Equal(new DateTime(2024, 2, 29, 8, 30, 15), row["DateValue"]);
-            Assert.Equal(DBNull.Value, row["InvalidNumber"]);
         }
+    }
+
+    /// <summary>An invalid declared default refuses inserts in the declaring and reopened writer.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task InvalidDefault_RefusesWithoutChangingBytes(DatabaseFormat format)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using var stream = new MemoryStream();
+        var options = new AccessWriterOptions { UseLockFile = false };
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync("InvalidDefault", [new ColumnDefinition("Value", typeof(int)) { DefaultValue = "not a number" }], ct);
+            byte[] before = stream.ToArray();
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync("InvalidDefault", new RowValues(), ct));
+            Assert.Equal(before, stream.ToArray());
+        }
+
+        byte[] reopenedBefore = stream.ToArray();
+        stream.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, ct))
+        {
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync("InvalidDefault", new RowValues(), ct));
+        }
+
+        Assert.Equal(reopenedBefore, stream.ToArray());
     }
 
     /// <summary>Schema rewrites retain converted defaults even when the catalog cannot persist them.</summary>

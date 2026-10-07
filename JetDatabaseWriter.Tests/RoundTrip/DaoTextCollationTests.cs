@@ -22,18 +22,19 @@ public sealed class DaoTextCollationTests
             $$"""
             $db = $engine.CreateDatabase({{literal}}, ';LANGID=0x0409;CP=1252;COUNTRY=0')
             try {
-                $pairs = @(@('é','z'), @('a!','a?'), @('a','a '), @('a ','a'))
-                for ($i = 0; $i -lt $pairs.Count; $i++) {
+                $values = @('é', 'a!', 'a', 'a ')
+                $bounds = @('z', 'a?', 'a ', 'a')
+                for ($i = 0; $i -lt $values.Count; $i++) {
                     $table = "TextRules$i"
                     $db.Execute("CREATE TABLE [$table] ([Id] LONG, [Value] TEXT(100))")
                     $tdf = $db.TableDefs($table)
-                    $tdf.Fields('Value').ValidationRule = '< "' + $pairs[$i][1] + '"'
+                    $tdf.Fields('Value').ValidationRule = '< "' + [string]$bounds[$i] + '"'
                     $tdf = $null
                     $rs = $db.OpenRecordset($table, 2)
                     try {
                         $rs.AddNew()
                         $rs.Fields('Id').Value = $i
-                        $rs.Fields('Value').Value = $pairs[$i][0]
+                        $rs.Fields('Value').Value = [string]$values[$i]
                         try { $rs.Update(); Write-Output "ACCEPT_$i=True" }
                         catch { Write-Output "ACCEPT_$i=False"; $rs.CancelUpdate() }
                     } finally { $rs.Close() }

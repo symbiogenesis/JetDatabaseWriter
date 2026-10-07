@@ -94,7 +94,6 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
     /// <returns>The test completion.</returns>
     [Theory]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAesCfbWrapped)]
     public async Task EncryptedDefaultStatement_RestoresCiphertext(DatabaseFormat format, AccessEncryptionFormat encryption)
     {
         byte[] plaintext = await this.CreateSourceAsync(format);

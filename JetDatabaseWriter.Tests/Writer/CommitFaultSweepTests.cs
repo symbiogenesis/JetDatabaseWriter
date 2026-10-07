@@ -27,8 +27,6 @@ public class CommitFaultSweepTests
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.None, true)]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, true)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAesCfbWrapped, false)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAesCfbWrapped, true)]
     public async Task CommitFaults_RestoreOriginalImage(DatabaseFormat format, AccessEncryptionFormat encryption, bool automatic)
     {
         byte[] baseline;

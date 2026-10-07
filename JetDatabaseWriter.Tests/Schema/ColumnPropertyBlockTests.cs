@@ -3,6 +3,9 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System.IO;
 using System.Text;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
 
@@ -12,13 +15,13 @@ public class ColumnPropertyBlockTests
     public void Parse_NullBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse(null, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
 
     [Fact]
-    public void Parse_EmptyBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse([], JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+    public void Parse_EmptyBlob_ThrowsCorruption() => Assert.Throws<JetCorruptDataException>(() => ColumnPropertyBlock.Parse([], JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
 
     [Fact]
-    public void Parse_UnknownMagic_Returns_Null()
+    public void Parse_UnknownMagic_ThrowsCorruption()
     {
         byte[] blob = [(byte)'X', (byte)'X', (byte)'X', 0x00];
-        Assert.Null(ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Throws<JetCorruptDataException>(() => ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     [Fact]
@@ -143,22 +146,18 @@ public class ColumnPropertyBlockTests
     }
 
     [Fact]
-    public void Parse_TruncatedChunkLength_StopsAtBoundary()
+    public void Parse_TruncatedChunkLength_ThrowsCorruption()
     {
-        var ms = new MemoryStream();
+        using var ms = new MemoryStream();
         WriteMagic(ms, mr2: true);
-
         WriteUInt32(ms, 0xFFFFFFFFu);
         WriteUInt16(ms, 0x0080);
-
-        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(ms.ToArray(), JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb))!;
-
-        Assert.Empty(parsed.Targets);
-        Assert.Empty(parsed.UnknownChunks);
+        JetCorruptDataException error = Assert.Throws<JetCorruptDataException>(() => ColumnPropertyBlock.Parse(ms.ToArray(), JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
     }
 
     [Fact]
-    public void Parse_NameIndexOutOfRange_Stops_DoesNotThrow()
+    public void Parse_NameIndexOutOfRange_ThrowsCorruption()
     {
         SyntheticEntry[] entries = [new SyntheticEntry(5, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("oops"))];
         SyntheticBlock[] blocks = [new SyntheticBlock("X", 0x0000, entries)];
@@ -166,9 +165,7 @@ public class ColumnPropertyBlockTests
 
         byte[] blob = BuildBlob(true, names, blocks);
 
-        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb))!;
-        ColumnPropertyTarget target = parsed.FindTarget("X")!;
-        Assert.Empty(target.Entries);
+        Assert.Throws<JetCorruptDataException>(() => ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     [Fact]
@@ -192,6 +189,58 @@ public class ColumnPropertyBlockTests
         Assert.Equal("a", parsed.FindTarget("A")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
         Assert.Equal("b", parsed.FindTarget("B")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
         Assert.Equal("c", parsed.FindTarget("C")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+    }
+
+    [Fact]
+    public void Parse_EveryTruncatedFieldIsRejected()
+    {
+        byte[][] malformed =
+        [
+            [0x4D],
+            [0x4D, 0x52, 0x32, 0x00, 0xFF],
+            [0x4D, 0x52, 0x32, 0x00, 0x07, 0, 0, 0, 0x80, 0, 0x01],
+            [0x4D, 0x52, 0x32, 0x00, 0x0A, 0, 0, 0, 0x80, 0, 0x04, 0, 0x41, 0],
+            [0x4D, 0x52, 0x32, 0x00, 0x0B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0x4D, 0x52, 0x32, 0x00, 0x0D, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x04, 0, 0x41],
+        ];
+        foreach (byte[] blob in malformed)
+        {
+            Assert.Throws<JetCorruptDataException>(() => ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        }
+    }
+
+    [Fact]
+    public void Parse_TruncationAfterValidEntriesDoesNotReturnPartialMetadata()
+    {
+        byte[] valid = BuildBlob(true, ["Required"], [new SyntheticBlock("Id", 0, [new SyntheticEntry(0, ColumnType.BooleanType, 1, [0xFF])])]);
+        byte[] trailing = [.. valid, 0x01];
+        Assert.Throws<JetCorruptDataException>(() => ColumnPropertyBlock.Parse(trailing, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+    }
+
+    [Fact]
+    public void Parse_InvalidTextEncodingIsNotReplacedSilently()
+    {
+        byte[] blob = BuildBlob(true, ["Description"], [new SyntheticBlock("Id", 0, [new SyntheticEntry(0, ColumnType.TextType, 0, [0x41])])]);
+        Assert.Throws<JetCorruptDataException>(() => ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+    }
+
+    [Fact]
+    public void Parse_RecognizedSignatureIsPreservedAcrossOuterFormatDifferences()
+    {
+        JetFormat source = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb);
+        JetFormat outer = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var builder = new ColumnPropertyBlockBuilder();
+        builder.GetOrAddTarget("A").AddText("Description", "Café", source);
+        byte[] blob = builder.ToBytes(source)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, outer)!;
+        Assert.Equal("Café", parsed.FindTarget("A")!.GetTextValue("Description", outer));
+
+        ColumnDefinition original = new("A", typeof(int)) { Description = "Café" };
+        ColumnDefinition changed = original with { Description = "New café" };
+        ColumnPropertyBlock rewritten = PersistedPropertyProjector.ProjectForRewrite(parsed, [original], [changed], static name => name, outer);
+        byte[] bytes = rewritten.ToBytes(outer)!;
+        Assert.Equal(blob[0..4], bytes[0..4]);
+        Assert.Equal("New café", ColumnPropertyBlock.Parse(bytes, outer)!.FindTarget("A")!.GetTextValue("Description", outer));
     }
 
     private static byte[] BuildBlob(bool magicMr2, string[] namePool, SyntheticBlock[] propertyBlocks)

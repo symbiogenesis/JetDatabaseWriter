@@ -97,10 +97,7 @@ internal static class EncryptionConverter
                 return (inner, cfbFormat);
             }
 
-            // Synthetic legacy AES-128 CFB-wrapped layout (CFB magic at byte 0
-            // but flat per-page AES beneath).
-            return (await ReadFlatDecryptedAsync(source, header, password, isLegacyAesCfb: true, cancellationToken)
-                .ConfigureAwait(false), AccessEncryptionFormat.AccdbAesCfbWrapped);
+            throw new InvalidDataException("Compound file does not contain a supported encrypted package.");
         }
 
         _ = source.Seek(0, SeekOrigin.Begin);
@@ -122,7 +119,7 @@ internal static class EncryptionConverter
         DatabaseFormat fmt = JetFormat.DetectFormat(header);
         AccessEncryptionFormat src = DetectFlatFormat(rawFile, fmt);
         await using var rawStream = new MemoryStream(rawFile, writable: false);
-        byte[] plaintext = await ReadFlatDecryptedAsync(rawStream, header, password, isLegacyAesCfb: false, cancellationToken)
+        byte[] plaintext = await ReadFlatDecryptedAsync(rawStream, header, password, cancellationToken)
             .ConfigureAwait(false);
 
         return (plaintext, src);
@@ -159,21 +156,18 @@ internal static class EncryptionConverter
             AccessEncryptionFormat.Jet4Rc4 when fmt != DatabaseFormat.Jet4Mdb
                 => throw new NotSupportedException($"Target format {targetFormat} is only valid for Jet4 (.mdb) databases."),
             AccessEncryptionFormat.AccdbLegacyPassword or
-            AccessEncryptionFormat.AccdbAesCfbWrapped or
             AccessEncryptionFormat.AccdbAgile or
             AccessEncryptionFormat.AccdbStandard or
             AccessEncryptionFormat.AccdbAgileCfb when fmt != DatabaseFormat.AceAccdb
                 => throw new NotSupportedException($"Target format {targetFormat} is only valid for ACE (.accdb) databases."),
             AccessEncryptionFormat.Jet4Rc4 or
             AccessEncryptionFormat.AccdbLegacyPassword or
-            AccessEncryptionFormat.AccdbAesCfbWrapped or
             AccessEncryptionFormat.AccdbAgile or
             AccessEncryptionFormat.AccdbStandard or
             AccessEncryptionFormat.AccdbAgileCfb when targetPassword.IsEmpty
                 => throw new ArgumentException("A non-empty password is required to apply encryption.", nameof(targetPassword)),
             AccessEncryptionFormat.Jet4Rc4 => BuildJet4Rc4(plaintext, pageSize, targetPassword.Span),
             AccessEncryptionFormat.AccdbLegacyPassword => BuildAccdbLegacy(plaintext, targetPassword.Span),
-            AccessEncryptionFormat.AccdbAesCfbWrapped => BuildAccdbAesCfbWrapped(plaintext, pageSize, targetPassword.Span),
             AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbStandard => BuildAccdbStandard(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbAgileCfb => BuildAccdbAgileCfb(plaintext, targetPassword.Span),
@@ -194,7 +188,7 @@ internal static class EncryptionConverter
         {
             return IsValidCompoundFileHeader(rawFile)
                 ? AccessEncryptionFormat.AccdbAgileCfb
-                : AccessEncryptionFormat.AccdbAesCfbWrapped;
+                : throw new InvalidDataException("Invalid compound-file header.");
         }
 
         DatabaseFormat fmt = JetFormat.DetectFormat(rawFile);
@@ -221,20 +215,18 @@ internal static class EncryptionConverter
     /// <param name="source">The source.</param>
     /// <param name="header">The header.</param>
     /// <param name="password">The password.</param>
-    /// <param name="isLegacyAesCfb">Whether the source uses the legacy AES CFB wrapper.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when the source database is shorter than one whole JET page.</exception>
     private static async ValueTask<byte[]> ReadFlatDecryptedAsync(
         Stream source,
         byte[] header,
         ReadOnlyMemory<char> password,
-        bool isLegacyAesCfb,
         CancellationToken cancellationToken)
     {
-        DatabaseFormat fmt = isLegacyAesCfb ? DatabaseFormat.AceAccdb : JetFormat.DetectFormat(header);
+        DatabaseFormat fmt = JetFormat.DetectFormat(header);
         int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
 
-        using IPageCodec pageKeys = PageCodecFactory.Open(header, fmt, isLegacyAesCfb, password, EncryptionManager.OldPasswordArgument);
+        using IPageCodec pageKeys = PageCodecFactory.Open(header, fmt, password, EncryptionManager.OldPasswordArgument);
 
         long length = source.Length;
         if (length % pageSize != 0)
@@ -254,7 +246,7 @@ internal static class EncryptionConverter
         // Page 0: copy the header verbatim, then sanitise it.
         _ = source.Seek(0, SeekOrigin.Begin);
         await source.ReadExactlyAsync(result.AsMemory(0, pageSize), cancellationToken).ConfigureAwait(false);
-        StripEncryptionFromHeader(result, fmt, isLegacyAesCfb);
+        StripEncryptionFromHeader(result, fmt);
 
         bool hasPageEncryption = pageKeys.HasEncryption;
 
@@ -310,26 +302,6 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildAccdbAesCfbWrapped(byte[] plaintext, int pageSize, ReadOnlySpan<char> password)
-    {
-        byte[] result = (byte[])plaintext.Clone();
-
-        // Encode the password using the Jet4 mask (the legacy AES layout
-        // verifies passwords via DecodeJet4Password, not the ACCDB legacy mask).
-        EncodeJet4StylePassword(result, password, useAccdbLegacyMask: false);
-
-        // Stamp the CFB compound-file magic over the first 8 bytes of the
-        // header so the reader / writer detect the legacy AES path. The
-        // rest of the ACCDB header (including code page, format byte at
-        // 0x14, and the password-area we just wrote) survives intact.
-        Constants.CompoundFile.Signature.CopyTo(result);
-
-        byte[] aesKey = DeriveAesPageKey(password);
-        using var keys = new AesEcbPageCodec(aesKey);
-        EncryptAllPages(result, pageSize, keys);
-        return result;
-    }
-
     private static byte[] BuildAccdbAgile(byte[] plaintext, ReadOnlySpan<char> password) => OfficeCryptoAgile.EncryptFlatDatabase(plaintext, password);
 
     private static byte[] BuildAccdbAgileCfb(byte[] plaintext, ReadOnlySpan<char> password)
@@ -379,9 +351,8 @@ internal static class EncryptionConverter
 
     /// <summary>
     /// Removes any encryption residue from a freshly-read header so the page
-    /// becomes the header Access writes for an unencrypted database. Restores
-    /// the magic bytes for the legacy AES CFB-wrapped layout (which overlays
-    /// bytes 0–7 with CFB magic). Then, in the masked header region, sets the
+    /// becomes the header Access writes for an unencrypted database. In
+    /// the masked header region, sets the
     /// encoding key to 0 and writes the empty-password pattern over the
     /// password area, which also covers the Jet4 / ACE flag byte at
     /// <c>0x62</c>; on Jet3, whose password area ends at <c>0x55</c>, the
@@ -389,25 +360,8 @@ internal static class EncryptionConverter
     /// </summary>
     /// <param name="db">The database input.</param>
     /// <param name="fmt">The database format.</param>
-    /// <param name="isLegacyAesCfb">Whether the database used the legacy AES CFB wrapper.</param>
-    private static void StripEncryptionFromHeader(byte[] db, DatabaseFormat fmt, bool isLegacyAesCfb)
+    private static void StripEncryptionFromHeader(byte[] db, DatabaseFormat fmt)
     {
-        if (isLegacyAesCfb)
-        {
-            // Restore the standard ACCDB header prefix that was overwritten
-            // when CFB magic was stamped over bytes 0–7.
-            db[0] = 0x00;
-            db[1] = 0x01;
-            db[2] = 0x00;
-            db[3] = 0x00;
-
-            // Bytes 4–7 are the first four characters of "Standard ACE DB\0".
-            db[4] = (byte)'S';
-            db[5] = (byte)'t';
-            db[6] = (byte)'a';
-            db[7] = (byte)'n';
-        }
-
         // The encoding key, the password area and the flag byte all lie in
         // the masked header region, so edit them unmasked. Writing raw zeros
         // instead would leave an unmasked key of 0x4EBC8AFB, which Jackcess and
@@ -425,8 +379,8 @@ internal static class EncryptionConverter
 
     /// <summary>
     /// Encodes <paramref name="password"/> into the 40-byte header password
-    /// area at offset <c>0x42</c>, using either the Jet4 XOR mask (Jet4 RC4 +
-    /// legacy AES CFB-wrapped layouts) or the ACCDB legacy password mask.
+    /// area at offset <c>0x42</c>, using either the Jet4 XOR mask (Jet4 RC4).
+    /// The alternative is the ACCDB legacy password mask.
     /// The encoding is the inverse of <see cref="EncryptionManager"/>'s
     /// <c>DecodeJet4Password</c> / <c>DecodeAccdbPassword</c>.
     /// </summary>
@@ -451,7 +405,7 @@ internal static class EncryptionConverter
         {
             throw new JetLimitationException(
                 $"Password is too long for this database format: {password.Length} characters (maximum {maxPasswordLength}). " +
-                "The Jet4 RC4, ACCDB legacy password and ACCDB AES CFB-wrapped formats all store the password in a fixed " +
+                "The Jet4 RC4, ACCDB legacy password formats all store the password in a fixed " +
                 "40-byte header area whose 32nd byte is reused by the encryption flag, restricting the password to " +
                 $"{maxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile or " +
                 "AccessEncryptionFormat.AccdbAgileCfb for longer passwords.");
@@ -470,37 +424,6 @@ internal static class EncryptionConverter
         }
 
         CryptographicOperations.ZeroMemory(padded);
-    }
-
-    /// <summary>SHA-256(password)[..16] — matches <c>EncryptionManager.DeriveAesPageKey</c>.</summary>
-    /// <param name="password">The password.</param>
-    private static byte[] DeriveAesPageKey(ReadOnlySpan<char> password)
-    {
-        int maxBytes = System.Text.Encoding.UTF8.GetMaxByteCount(password.Length);
-        Span<byte> stackBuf = stackalloc byte[256];
-        byte[]? rented = maxBytes > stackBuf.Length ? new byte[maxBytes] : null;
-        Span<byte> utf8 = rented ?? stackBuf;
-        try
-        {
-            int utf8Len = System.Text.Encoding.UTF8.GetBytes(password, utf8);
-            Span<byte> hash = stackalloc byte[32];
-            try
-            {
-                OfficeCryptoPrimitives.HashSha256(utf8[..utf8Len], hash);
-
-                byte[] key = new byte[16];
-                hash[..16].CopyTo(key);
-                return key;
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(hash);
-            }
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(utf8);
-        }
     }
 
     private static AccessEncryptionFormat DetectFlatFormat(byte[] header, DatabaseFormat fmt)
