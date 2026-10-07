@@ -316,13 +316,13 @@ Helpers now live on `ComplexColumnManager` and are called from `AccessWriter`:
 
 - `CreateMSysComplexTypeTemplatesAsync` — emits the nine tables in declaration order (TDEF page + catalog row, no indexes, no rows). Skipped for Jet3 / Jet4 `.mdb`; every fresh ACCDB receives these templates.
 - `ResolveComplexTypeTemplateName(ColumnDefinition)` (static) — returns the canonical template name for a complex column declaration, or `null` if the element type has no matching template.
-- `EmitComplexColumnArtifactsAsync` now calls `ResolveComplexTypeTemplateName` + `FindSystemTableTdefPageAsync` to obtain the template's catalog id (= TDEF page) and passes it to `InsertMSysComplexColumnsRowAsync` instead of `0`.
+- `ReadRequiredComplexTypeTemplateAsync` resolves the catalog ID (= TDEF page), checks file bounds, reads the definition and verifies the native column schema. Allocation validates every required template before creating the parent; emission uses the same check before creating child artifacts.
 
 C10 caveats:
 
-- **Required type templates.** Complex-column creation requires a real `MSysComplexType_*` catalog ID. A missing template is a contextual corruption error; the writer refuses the operation instead of emitting a zero placeholder.
+- **Required type templates.** Complex-column creation requires a readable native `MSysComplexType_*` definition. Missing, out-of-file, unreadable or malformed templates produce a contextual corruption error before any parent or child mutation. Genuine filesystem errors propagate.
 - **Decimal template `col_len`.** The format-probe appendix shows `col_len = 9` (precision 9 / scale 0); the C10 implementation emits whatever the writer's default `decimal` mapping produces. The template table is never populated with rows, so the precise `col_len` value carries no observable semantic.
-- **Validation status.** Round-trip through this library's reader is verified in 6 tests in `ComplexColumnsWriterTests` (template scaffolding, hidden-from-`ListTablesAsync`, attachment template column list, Jet4 skip, attachment + multi-value `ComplexTypeObjectID` non-zero). Writer-authored complex payloads on the `ComplexFields` fixture have representative DAO CompactDatabase coverage in `ComplexFixture_WriterAttachmentRowsSurviveCompactAndRepair`, with `ComplexFixtureCatalog_SurvivesCompactAndRepair` covering the compacted complex catalog; the Northwind-hosted compact test remains the Access-authored-base coverage for schema evolution and chained-LVAL attachment payloads. See [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
+- **Validation status.** Round-trip through this library's reader is covered in `ComplexColumnsWriterTests` (template scaffolding, hidden-from-`ListTablesAsync`, attachment template column list, Jet4 skip, attachment + multi-value `ComplexTypeObjectID` non-zero). Writer-authored complex payloads on the `ComplexFields` fixture have representative DAO CompactDatabase coverage in `ComplexFixture_WriterAttachmentRowsSurviveCompactAndRepair`, with `ComplexFixtureCatalog_SurvivesCompactAndRepair` covering the compacted complex catalog; the Northwind-hosted compact test remains the Access-authored-base coverage for schema evolution and chained-LVAL attachment payloads. See [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 ## 5. Validation strategy
 
@@ -355,5 +355,5 @@ Complex-item parent predicates now use strict projected typed rows and native
 comparison semantics. Null and empty values remain distinct, fixed Binary
 values use their declared zero padding, and complete Memo comparison keys
 avoid truncation to index widths. Schema edits initialize references only
-for newly added complex columns; existing slots are preserved rather than
-repaired as output from an older library build.
+for newly added complex columns; existing slots are preserved. Inconsistent
+references and counters are refused before mutation.
