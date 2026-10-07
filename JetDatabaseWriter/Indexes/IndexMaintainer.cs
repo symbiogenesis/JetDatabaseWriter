@@ -469,8 +469,7 @@ internal sealed class IndexMaintainer(
     /// <summary>
     /// Refuses a table whose index section runs past the end of its table
     /// definition as read. The chain read stops at a page whose type byte is
-    /// not a TDEF page's, as when the stray <c>used_pages</c> byte of a build
-    /// before 4.0.0 landed on a continuation page's header, and the catalog
+    /// not a TDEF page's, including a corrupted continuation-page header. Catalog
     /// decode stops at the first descriptor or entry it cannot read, so the
     /// indexes past that point would be neither checked nor maintained, and
     /// a schema rewrite would not carry them over.

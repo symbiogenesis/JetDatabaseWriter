@@ -466,6 +466,20 @@ internal sealed class ComplexColumnManager(
             throw new JetNotSupportedException(JetErrorCode.SystemTableMissing, "The database does not contain a 'MSysComplexColumns' table. Create the database via AccessWriter.CreateDatabaseAsync (which scaffolds it automatically) before declaring complex columns, or open an Access-authored .accdb that already contains the catalog.", new JetErrorInfo { ObjectName = "MSysComplexColumns" });
         }
 
+        foreach (int columnIndex in indices)
+        {
+            ColumnDefinition column = columns[columnIndex];
+            string templateName = ResolveComplexTypeTemplateName(column)
+                ?? throw new NotSupportedException($"Column '{column.Name}' has no supported native complex type template.");
+            if (await catalogRows.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false) <= 0)
+            {
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptComplexColumn,
+                    $"Required complex type template '{templateName}' is missing for '{column.Name}'.",
+                    new JetErrorInfo { ColumnName = column.Name, ObjectName = templateName });
+            }
+        }
+
         int nextId = await this.GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
         var allocations = new ComplexColumnAllocation[indices.Count];
         for (int i = 0; i < indices.Count; i++)

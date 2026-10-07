@@ -42,7 +42,6 @@ public sealed class ExceptionModelContractTests
         Assert.Equal(308, (int)JetErrorCode.TableValidationRuleViolation);
         Assert.Equal(808, (int)JetErrorCode.UnsupportedTextCollation);
         Assert.Equal(903, (int)JetErrorCode.LinkedTableHasNoIndexes);
-        Assert.Equal(1003, (int)JetErrorCode.RepairRefused);
         Assert.False(Enum.IsDefined(typeof(JetErrorCode), 902));
     }
 }

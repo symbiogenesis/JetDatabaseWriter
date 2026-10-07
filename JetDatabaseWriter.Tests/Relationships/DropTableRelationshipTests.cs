@@ -23,7 +23,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <c>MSysRelationships</c> row names the table, so the writer refuses too,
 /// before it writes anything, and the caller drops the relationships first.
 /// A table whose foreign-key index entries have no <c>MSysRelationships</c>
-/// row left (damage from earlier builds) can still be dropped, and the drop
+/// row left in a damaged catalog can still be dropped, and the drop
 /// removes its partners' entries, so none is left naming the freed TDEF page.
 /// Jet4 runs over a copy of the Access-authored <c>AdventureLT2008.mdb</c>
 /// (fresh Jet4 files have no <c>MSysRelationships</c>), ACCDB over a fresh
@@ -349,8 +349,8 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     }
 
     /// <summary>
-    /// A table whose FK entries have no <c>MSysRelationships</c> row left (the
-    /// rows were removed by hand, or by earlier builds) is not refused. The
+    /// A table whose FK entries have no <c>MSysRelationships</c> row left after
+    /// catalog corruption is not refused. The
     /// drop removes every partner entry that names the dropped TDEF page, and
     /// on the child gives back the FK real index those entries left trailing.
     /// </summary>
@@ -471,8 +471,8 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
 
     /// <summary>
     /// Removes the <c>MSysRelationships</c> rows of <paramref name="relationshipName"/>
-    /// and nothing else, leaving its FK entries in both TDEFs: the state an
-    /// earlier build's partial cleanup leaves behind.
+    /// and nothing else, leaving orphaned FK entries in both TDEFs to exercise
+    /// safe cleanup of an inconsistent catalog.
     /// </summary>
     /// <param name="stream">The database.</param>
     /// <param name="relationshipName">The relationship whose rows to remove.</param>

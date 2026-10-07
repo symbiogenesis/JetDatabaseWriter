@@ -1044,8 +1044,8 @@ public sealed class CalculatedColumnWriteTests
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         // The public CreateTableAsync now refuses this expression, so plant it
-        // through the internal schema service, the way an older writer (or a
-        // newer Access syntax this engine lacks) would have left it in the file.
+        // through the internal schema service to exercise a stored expression
+        // using Access syntax this engine cannot evaluate.
         stream.Position = 0;
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {

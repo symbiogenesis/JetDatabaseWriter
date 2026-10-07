@@ -50,7 +50,7 @@ public sealed record ColumnMetadata
     /// Gets or initializes the persisted Jet expression string used as the column default at the
     /// database engine level (e.g. <c>"0"</c>, <c>"\"hi\""</c>, <c>"=Now()"</c>). Sourced from
     /// <c>MSysObjects.LvProp</c>; <see langword="null"/> when no default is persisted or the blob
-    /// is absent (typical for databases created by this library prior to write-side support).
+    /// is absent from the database property map.
     /// <see cref="AccessWriter"/> applies it on insert; see
     /// <see cref="ColumnDefinition.DefaultValueExpression"/>.
     /// </summary>

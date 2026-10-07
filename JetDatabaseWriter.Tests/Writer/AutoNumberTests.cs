@@ -635,9 +635,9 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     // ── Seed from the TDEF counter and the index ───────────────────────
 
     /// <summary>
-    /// A file whose TDEF counter lags its rows, as releases before the counter
-    /// was maintained left it: the first value a session hands out follows the
-    /// largest key in the primary-key index, in every write mode.
+    /// When explicit row values exceed the TDEF counter, the first value a
+    /// session hands out follows the largest key in the primary-key index,
+    /// in every write mode.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode"><c>plain</c>, <c>transactional</c> or <c>explicit</c>.</param>
@@ -656,8 +656,8 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     }
 
     /// <summary>
-    /// With no index on the AutoNumber column and a counter of 0, as a file an
-    /// earlier build wrote with explicit values, the seed scans the column.
+    /// With no index on the AutoNumber column and explicit values beyond a
+    /// counter of 0, the seed scans the column to avoid allocating a duplicate.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>

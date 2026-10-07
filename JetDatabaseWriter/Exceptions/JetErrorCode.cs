@@ -212,7 +212,4 @@ public enum JetErrorCode
 
     /// <summary>Identifies SystemIndexMaintenanceFailed.</summary>
     SystemIndexMaintenanceFailed = 1002,
-
-    /// <summary>Identifies RepairRefused.</summary>
-    RepairRefused = 1003,
 }

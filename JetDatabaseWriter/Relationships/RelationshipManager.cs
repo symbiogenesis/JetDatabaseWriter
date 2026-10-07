@@ -1495,7 +1495,7 @@ internal sealed class RelationshipManager(
     // enforce referential integrity and self-referencing ones too.
     //
     // A table can still carry FK logical-idx entries that no MSysRelationships
-    // row names, left by earlier builds or by a catalog edited by hand. Once
+    // row names in an inconsistent catalog. Once
     // the table's TDEF page is freed, its partners' entries would name a free
     // page, and later an unrelated table that reuses it. RemovePartnerLinksAsync
     // removes them, by TDEF page rather than by catalog name, before the drop

@@ -191,9 +191,9 @@ public interface IAccessWriter : IAccessBase
     /// row into the hidden flat child table carrying the wrapper-encoded payload
     /// (per <see href="docs/design/complex-columns-format-notes.md" /> §3),
     /// joined to the parent through the row's per-row complex reference, which
-    /// every inserted row gets from the table's complex AutoNumber. A row whose
-    /// reference is still null (written by an earlier build of this library)
-    /// gets the next one first, in every null complex slot of the row.
+    /// every inserted row gets from the table's complex AutoNumber. The existing
+    /// reference must be positive and covered by the persisted counter; malformed
+    /// references are refused before any child row is written.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Attachment column on <paramref name="tableName"/>.</param>
@@ -221,9 +221,9 @@ public interface IAccessWriter : IAccessBase
     /// row into the hidden flat child table whose <c>value</c> column carries
     /// <paramref name="value"/>, joined to the parent through the row's per-row
     /// complex reference, which every inserted row gets from the table's complex
-    /// AutoNumber. A row whose reference is still null (written by an earlier
-    /// build of this library) gets the next one first, in every null complex
-    /// slot of the row.
+    /// AutoNumber. The existing reference must be positive and covered by the
+    /// persisted counter; malformed references are refused before any child row
+    /// is written.
     /// </summary>
     /// <param name="tableName">Parent table name (case-insensitive).</param>
     /// <param name="columnName">Name of the Multi-Value column on <paramref name="tableName"/>.</param>
