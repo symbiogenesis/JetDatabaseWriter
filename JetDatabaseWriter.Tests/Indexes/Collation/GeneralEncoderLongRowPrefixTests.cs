@@ -149,6 +149,19 @@ public sealed class GeneralEncoderLongRowPrefixTests
         Assert.Equal(expectedSuffix, actualSuffix);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LongRowSuffix_InteriorBoundarySpacesSurviveTrailingSpaceTrimming(bool ascending)
+    {
+        string text = await BuildDaoDerivedSampleTextAsync("auxiliary", 'a', 'a', ' ');
+        Assert.True(text.Length > Constants.IndexTextEncoding.MaxTextIndexByteLength);
+        Assert.NotEqual(' ', text[^1]);
+        byte[] untrimmed = GeneralTextIndexEncoder.Encode(text, ascending, trimTrailingSpaces: false);
+        Assert.Equal(untrimmed, GeneralTextIndexEncoder.Encode(text, ascending));
+        Assert.Equal(untrimmed, GeneralTextIndexEncoder.Encode(text + "   ", ascending));
+    }
+
     private static async Task ValidateLongRowStressTableAsync(
         string fixturePath,
         string tableName,

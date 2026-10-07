@@ -137,9 +137,10 @@ internal sealed class CatalogWriter(
 
         if (artifact.Owner is not null && msys.FindColumn("Owner") is not null)
         {
-            msys.SetValueByName(values, "Owner", format.UsesHeaderMaskedSecuritySids && artifact.AcePolicy != CatalogObjectAcePolicy.None
+            byte[] owner = format.UsesHeaderMaskedSecuritySids && artifact.AcePolicy != CatalogObjectAcePolicy.None
                 ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false)
-                : artifact.Owner);
+                : artifact.Owner;
+            msys.SetValueByName(values, "Owner", owner);
         }
 
         if (artifact.LvProp is not null && msys.FindColumn("LvProp") is not null)

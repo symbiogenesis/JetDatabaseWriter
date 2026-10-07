@@ -173,7 +173,7 @@ internal sealed class ComplexColumnManager(
 
             objects = objects.Select(artifact => artifact with
             {
-                Owner = Jet4SecuritySid.Encode(this.format, header, artifact.ObjectName == "MSysDb" ? new byte[] { 0x03, 0x01 } : new byte[] { 0x02, 0x03 }),
+                Owner = Jet4SecuritySid.Encode(this.format, header, artifact.ObjectName == "MSysDb" ? [0x03, 0x01] : [0x02, 0x03]),
             }).ToArray();
         }
 
