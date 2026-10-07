@@ -12,7 +12,7 @@
 
 Non-primary unique indexes allow multiple all-Null keys; partly Null composite keys still participate in uniqueness. IgnoreNulls omits all-Null keys in rebuilds, incremental changes and catalog splices. Required and primary indexes reject a Null component before mutation. Northwind Employees supplies real-file evidence for repeated Null WindowsUserName keys; the format/write-mode regression matrix covers batch inserts, updates and reopen behavior.
 
-Cascade updates plan the transitive relationship graph against stored old rows and merged new rows before mutation, with cancellation and a depth limit. Restricted deletes count seek locations without loading child MEMO/OLE payloads; unsupported seeks retain the snapshot fallback. Broader graph/DAO characterization remains explicit in the TODO.
+Cascade updates plan the transitive relationship graph against stored old rows and merged new rows before mutation, with cancellation and a depth limit. Converging paths must agree on each assigned column within a planning generation; disagreement refuses before writes. Agreement and stable-cycle convergence use relationship key normalization, including fixed binary padding, rather than object identity. Library regressions cover composite diamonds and stable cyclic diamonds; these are not native DAO characterization. Restricted deletes count seek locations without loading child MEMO/OLE payloads; unsupported seeks retain the snapshot fallback. Broader graph/DAO characterization remains explicit in the TODO.
 
 Unenforced relationships persist catalog metadata without physical foreign-key
 indexes. Native DAO emits only the existing primary indexes for a relationship

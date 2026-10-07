@@ -51,6 +51,15 @@ input; subsequent code changes require matching-revision validation.
 A conditional DAO test is evidence only when it actually ran successfully on
 the revision and engine being evaluated.
 
+## Focused correctness regressions
+
+These checks exercise library behavior; they do not add Microsoft interoperability evidence:
+
+- `ForeignKeyCascadeUpdateTests` covers contradictory-path refusal without byte changes, composite diamonds, stable cyclic diamonds and independently allocated equal binary keys across formats and write modes.
+- `ColumnPropertyBlockTests` and `SchemaRewritePropertyPreservationTests` cover opaque target headers in KKD/MR2 blobs, recognized native name lengths, Access-authored schema rewrites and table-rule edits. `LvPropReadTests` checks malformed-property refusal before a table-rule write.
+- `OwnedDataPagesTests` checks full row-directory removal from INLINE/REFERENCE free-space maps and transaction rollback on Jet4/ACE, while retaining ownership. Native free-space thresholds, Jet3 variants and LVAL maps remain open.
+- `AtomicReplacementTests` and `JetByteRangeLockTests` check pre-cancellation, replacement with open readers, temporary-file cleanup and preservation of unrelated files. The hosted Portability workflow covers Windows, Linux and macOS on both frameworks. Power-loss directory durability and cross-process contention remain unverified.
+
 ## Validation Levels
 
 Use the canonical ladder in [dao-validation-strategy.md](dao-validation-strategy.md). In this matrix, the levels are named as follows:

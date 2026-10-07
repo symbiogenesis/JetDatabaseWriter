@@ -601,7 +601,9 @@ internal static class EncryptionManager
     /// <paramref name="contents"/> atomically: the contents go to a temp file
     /// beside it (<c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>), which is flushed to
     /// disk and then renamed over the original by <see cref="ReplaceFileWithTemp"/>.
-    /// After a crash the file holds either its old or its new contents.
+    /// The rename does not expose a partially written file. The containing
+    /// directory is not flushed, so persistence of the new name after a power
+    /// loss depends on the host filesystem.
     /// </para>
     /// <para>
     /// When the replace is refused, as it is on Windows while any handle
@@ -628,6 +630,7 @@ internal static class EncryptionManager
     /// </exception>
     internal static async ValueTask ReplaceFileAtomicAsync(string path, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         string tempPath = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {

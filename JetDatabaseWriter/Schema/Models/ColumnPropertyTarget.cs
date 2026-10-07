@@ -18,6 +18,12 @@ internal sealed record ColumnPropertyTarget(
     ColumnPropertyChunkType ChunkType,
     IReadOnlyList<ColumnPropertyEntry> Entries)
 {
+    /// <summary>Gets the four-byte inner header preserved from the source target.</summary>
+    internal uint? SourceHeader { get; init; }
+
+    /// <summary>Gets a value indicating whether the source header matches the native target-name byte count.</summary>
+    internal bool SourceHeaderIsNameLength { get; init; }
+
     /// <summary>Gets the actual stored text encoding when parsed from a property blob.</summary>
     internal Encoding? TextEncoding { get; init; }
 

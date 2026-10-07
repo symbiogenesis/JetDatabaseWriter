@@ -17,6 +17,12 @@ internal sealed class ColumnPropertyTargetBuilder
     /// <summary>Gets the mutable list of property entries in emission order.</summary>
     public List<ColumnPropertyEntryBuilder> Entries { get; } = [];
 
+    /// <summary>Gets or sets the source inner header; absent for a newly created target.</summary>
+    internal uint? SourceHeader { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the source header is the native target-name byte count.</summary>
+    internal bool SourceHeaderIsNameLength { get; set; }
+
     /// <summary>Gets or sets the preserved source property encoding.</summary>
     internal Encoding? TextEncoding { get; set; }
 

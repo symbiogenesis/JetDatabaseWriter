@@ -28,6 +28,63 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="pageAllocator">Allocates new bitmap pages.</param>
 internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocator pageAllocator)
 {
+    /// <summary>Clears a page from an existing INLINE or REFERENCE usage-map row without allocating pages.</summary>
+    /// <param name="usageMapPageNumber">The usage-map page.</param>
+    /// <param name="rowIndex">The row to edit.</param>
+    /// <param name="pageNumber">The page to clear.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes after any changed map is written.</returns>
+    internal async ValueTask ClearPageAsync(long usageMapPageNumber, int rowIndex, long pageNumber, CancellationToken cancellationToken)
+    {
+        byte[] map = await pager.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!UsageMap.TryGetRowBound(map, format.DataPage, format.PageSize, rowIndex, out RowBound bound))
+            {
+                return;
+            }
+
+            if (map[bound.RowStart] == Constants.UsageMap.InlineMapType)
+            {
+                if (UsageMap.TrySetInlinePageState(map, bound.RowStart, bound.RowSize, pageNumber, isMarked: false))
+                {
+                    await pager.WritePageAsync(usageMapPageNumber, map, cancellationToken).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
+            long window = pageNumber / UsageMap.PagesPerReferenceMapPage(format.PageSize);
+            if (map[bound.RowStart] != Constants.UsageMap.ReferenceMapType || pageNumber < 0 || window >= UsageMap.ReferencePointerCount(bound.RowSize))
+            {
+                return;
+            }
+
+            int bitmapNumber = Ri32(map, bound.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + checked((int)(window * 4)));
+            if (bitmapNumber <= 0 || bitmapNumber >= pager.PageCount)
+            {
+                return;
+            }
+
+            byte[] bitmap = await pager.ReadPageAsync(bitmapNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (bitmap[0] == Constants.PageTypes.UsageMap && UsageMap.TrySetReferencePageState(bitmap, format.PageSize, pageNumber, isMarked: false))
+                {
+                    await pager.WritePageAsync(bitmapNumber, bitmap, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(bitmap);
+            }
+        }
+        finally
+        {
+            PageBuffers.Return(map);
+        }
+    }
+
     /// <summary>
     /// Marks <paramref name="pageNumber"/> in each of <paramref name="rowIndexes"/>,
     /// rows of usage-map page <paramref name="usageMapPageNumber"/>, and writes

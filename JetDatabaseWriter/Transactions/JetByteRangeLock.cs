@@ -135,6 +135,8 @@ internal sealed class JetByteRangeLock
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     public async ValueTask<IDisposable> AcquirePageLockAsync(long pageNumber, int pageSize, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (!this.IsEnabled)
         {
             return NoOpDisposable.Instance;
@@ -157,6 +159,8 @@ internal sealed class JetByteRangeLock
     /// <returns>The locked offset, or <see langword="null"/> when locking is disabled.</returns>
     public async ValueTask<long?> AcquireCommitLockOffsetAsync(long offset, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (!this.IsEnabled)
         {
             return null;
@@ -196,6 +200,7 @@ internal sealed class JetByteRangeLock
         var backoff = new PollBackoff(this.lockTimeoutMs);
         while (true)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (this.TryAcquire(offset, length))
             {
                 return;

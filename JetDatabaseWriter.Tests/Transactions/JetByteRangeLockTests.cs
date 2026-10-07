@@ -148,6 +148,35 @@ public sealed class JetByteRangeLockTests : IDisposable
         using IDisposable t2 = b.AcquirePageLock(pageNumber: 6, pageSize: 4096);
     }
 
+    /// <summary>Cancellation is honored even when acquisition would succeed immediately or be a no-op.</summary>
+    /// <param name="enabled">Whether byte-range locking is requested.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Acquire_CanceledBeforeAttempt_DoesNotAcquire(bool enabled)
+    {
+        await using FileStream stream = OpenReadWriteStream(this.tempPath, FileOptions.Asynchronous);
+        var helper = JetByteRangeLock.Create(stream, enabled, lockTimeoutMilliseconds: 1_000);
+        using var canceled = new System.Threading.CancellationTokenSource();
+        await canceled.CancelAsync();
+
+        OperationCanceledException pageError = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            using IDisposable unexpected = await helper.AcquirePageLockAsync(1, 4096, canceled.Token);
+        });
+        Assert.Equal(canceled.Token, pageError.CancellationToken);
+
+        OperationCanceledException commitError = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            long? unexpected = await helper.AcquireCommitLockOffsetAsync(65536, canceled.Token);
+            helper.ReleaseCommitLock(unexpected);
+        });
+        Assert.Equal(canceled.Token, commitError.CancellationToken);
+
+        using IDisposable acquired = await helper.AcquirePageLockAsync(1, 4096, TestContext.Current.CancellationToken);
+        Assert.NotNull(acquired);
+    }
+
     private static FileStream OpenReadWriteStream(string path, FileOptions options = FileOptions.None) =>
         new(
             path,

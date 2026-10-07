@@ -459,6 +459,28 @@ public sealed class LvPropReadTests
         Assert.Equal(before, ms.ToArray());
     }
 
+    /// <summary>Malformed properties prevent table rule edits in every write mode.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task MalformedPresentLvProp_RefusesTableRuleEditWithoutChangingBytes(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { Description = "Stored property" }], Ct);
+        }
+
+        await PatchLvPropAsync(ms, "T", breakChain: false);
+        byte[] before = ms.ToArray();
+        await using AccessWriter writer = await OpenWriterAsync(ms, mode);
+        await Assert.ThrowsAsync<JetCorruptDataException>(() => RunAsync(writer, mode, async () =>
+            await writer.SetTableValidationRuleAsync("T", new TableValidationRule("[Id] > 0"), Ct)));
+        Assert.Equal(before, ms.ToArray());
+    }
+
     private static async Task PatchLvPropAsync(MemoryStream stream, string tableName, bool breakChain)
     {
         stream.Position = 0;

@@ -22,9 +22,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <see cref="ColumnPropertyBlock.Parse(byte[], JetFormat)"/> and re-serialized via
 /// <see cref="FromBlock(ColumnPropertyBlock)"/> + <see cref="ToBytes(JetFormat)"/>
 /// reproduces a byte stream that the parser interprets identically (entries, targets,
-/// and unknown chunks all preserved). Byte-identity with the original is *not*
-/// guaranteed because the inner property-block header carries opaque bytes that the
-/// parser discards.
+/// opaque target headers and unknown chunks all preserved). Name-pool ordering and
+/// unknown-chunk placement may be normalized during serialization.
 /// </para>
 /// </remarks>
 internal sealed class ColumnPropertyBlockBuilder
@@ -93,6 +92,8 @@ internal sealed class ColumnPropertyBlockBuilder
             Name = target.Name,
             ChunkType = target.ChunkType,
             TextEncoding = target.TextEncoding,
+            SourceHeader = target.SourceHeader,
+            SourceHeaderIsNameLength = target.SourceHeaderIsNameLength,
         };
         foreach (ColumnPropertyEntry e in target.Entries)
         {
@@ -319,10 +320,11 @@ internal sealed class ColumnPropertyBlockBuilder
         byte[] payload = new byte[payloadLength];
         int offset = 0;
 
-        // Inner header — first 4 bytes are opaque per mdbtools (read & discarded).
+        // Preserve unrecognized headers. Update a recognized native name-length field.
         // DAO writes the byte count through the target-name field, not the whole
         // payload length: sizeof(uint32) + sizeof(uint16) + targetNameBytes.
-        WriteUInt32(payload, ref offset, (uint)(PropertyBlockTargetHeaderLength + targetNameByteCount));
+        uint nameHeaderLength = (uint)(PropertyBlockTargetHeaderLength + targetNameByteCount);
+        WriteUInt32(payload, ref offset, target.SourceHeaderIsNameLength ? nameHeaderLength : target.SourceHeader ?? nameHeaderLength);
         WriteLengthPrefixedEncodedString(payload, ref offset, encoding, target.Name, targetNameByteCount);
 
         for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)

@@ -79,6 +79,18 @@ native fixture reading, original-key mutation, wrong passwords and refusal
 of a spin budget below 100000 before data pages are read. DAO validation of
 library-mutated files must be recorded separately from library readback.
 
+## File replacement guarantees
+
+The internal replacement helper writes and flushes a unique adjacent temporary
+file before renaming it over the destination. Pre-canceled operations stop
+before creating the temporary file. A refused rename cleans up only that
+operation's file; unrelated temporary files remain untouched. Windows handles
+without delete sharing refuse replacement; Unix readers may retain the old
+inode while new opens see the replacement. The containing directory is not
+flushed, so this does not establish persistence of the new name after power
+loss. These helper semantics do not enable the native encryption maintenance
+operations that are still refused above.
+
 ## Evidence limits
 
 The DAO fixtures do not establish native JET3 producer interoperability, RC4 CryptoAPI or Standard ACE

@@ -306,6 +306,26 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         Wu16(page, format.DataPage.NumRows, numRows + 1);
         Wu16(page, 2, freeSpace);
         await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        if (!this.CanInsertRow(page, rowLength: 1))
+        {
+            long owner = Ri32(page, format.DataPage.TDefOff);
+            if (await ownedMaps.CanMaintainAsync(owner, cancellationToken).ConfigureAwait(false))
+            {
+                byte[] tdef = await pager.ReadPageAsync(owner, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    int freePage = UsageMap.ReadUInt24(tdef, format.TDef.FreePagesPage);
+                    if (freePage != 0)
+                    {
+                        await usageMaps.ClearPageAsync(freePage, tdef[format.TDef.FreePages], pageNumber, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(tdef);
+                }
+            }
+        }
     }
 
     /// <summary>

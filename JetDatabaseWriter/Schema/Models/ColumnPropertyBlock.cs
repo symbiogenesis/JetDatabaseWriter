@@ -278,7 +278,12 @@ internal sealed class ColumnPropertyBlock
             pos += entryLen;
         }
 
-        return new ColumnPropertyTarget(targetName, chunkType, entries) { TextEncoding = stringEncoding };
+        return new ColumnPropertyTarget(targetName, chunkType, entries)
+        {
+            TextEncoding = stringEncoding,
+            SourceHeader = Ru32(blob, start),
+            SourceHeaderIsNameLength = Ru32(blob, start) == (uint)(sizeof(uint) + sizeof(ushort) + targetNameLen),
+        };
     }
 
     private static string ReadText(byte[] blob, int start, int length, Encoding encoding)

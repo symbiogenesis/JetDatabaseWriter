@@ -283,9 +283,14 @@ pages of 4 KB, so 17 reach page 556,511, past the 524,288 pages of a 2 GB file.
   REFERENCE rows with its other pages
   (`TableSchemaEditor.ReclaimTableStoragePagesAsync`).
 
-The writer never clears a bit in the free-space row, where Access lists only
-the pages with room (binIdxTestV2010's free-space row lists only the last of
-its table's four pages).
+After insertion, the writer clears the free-space bit when the page cannot
+fit even one nonempty row or has exhausted its 255 row slots. It preserves
+the owned-pages bit and edits existing INLINE or REFERENCE maps without
+allocating bitmap pages. The map writes participate in transaction rollback.
+A page that merely rejects a particular large row stays marked: it may still
+fit a smaller row. Access's exact free-space threshold and deletion/reuse
+behavior need further evidence (binIdxTestV2010's free-space row lists only
+the last of its table's four pages).
 
 ### What Access writes
 

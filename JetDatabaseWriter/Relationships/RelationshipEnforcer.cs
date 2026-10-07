@@ -361,6 +361,7 @@ internal sealed class RelationshipEnforcer(
             cancellationToken.ThrowIfCancellationRequested();
             RelationshipCascadePolicy.ThrowIfDepthExceeded(depth++);
             bool changed = false;
+            var generationAssignments = new Dictionary<(object[] Row, int Column), object>();
             ownRowChanges.Clear();
             foreach (ReferencedKeyChange change in keyChanges)
             {
@@ -408,6 +409,7 @@ internal sealed class RelationshipEnforcer(
 
                 foreach ((object[] newRow, object[] newPkSubset) in ownDependents)
                 {
+                    CheckAssignments(newRow, fkIdx, newPkSubset, rel, change.ChildTable.Definition);
                     ownRowChanges.Add((newRow, fkIdx, newPkSubset));
                     RecordKeyAssignments(newRow, fkIdx, primaryTable, primaryDef);
                 }
@@ -444,10 +446,12 @@ internal sealed class RelationshipEnforcer(
                         rewrites.Add((row.Location, newRow));
                     }
 
+                    CheckAssignments(newRow, fkIdx, newPkSubset, rel, change.ChildTable.Definition);
+
                     for (int column = 0; column < fkIdx.Length; column++)
                     {
                         object replacement = newPkSubset[column] ?? DBNull.Value;
-                        if (!Equals(newRow[fkIdx[column]], replacement))
+                        if (!SameKeyValue(newRow[fkIdx[column]], replacement, fkIdx[column], change.ChildTable.Definition))
                         {
                             newRow[fkIdx[column]] = replacement;
                             changed = true;
@@ -467,11 +471,28 @@ internal sealed class RelationshipEnforcer(
                 for (int column = 0; column < fkIdx.Length; column++)
                 {
                     object replacement = newPkSubset[column] ?? DBNull.Value;
-                    if (!Equals(newRow[fkIdx[column]], replacement))
+                    if (!SameKeyValue(newRow[fkIdx[column]], replacement, fkIdx[column], primaryDef))
                     {
                         newRow[fkIdx[column]] = replacement;
                         changed = true;
                     }
+                }
+            }
+
+            // Check each generation independently: later generations can refine
+            // a composed key, but simultaneous paths must agree on each column.
+            void CheckAssignments(object[] row, int[] columns, object[] values, FkRelationship relationship, TableDef definition)
+            {
+                for (int index = 0; index < columns.Length; index++)
+                {
+                    object replacement = values[index] ?? DBNull.Value;
+                    var target = (row, columns[index]);
+                    if (generationAssignments.TryGetValue(target, out object? previous) && !SameKeyValue(previous, replacement, columns[index], definition))
+                    {
+                        throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' has contradictory cascade assignments through relationship '{relationship.Name}' to '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
+                    }
+
+                    generationAssignments[target] = replacement;
                 }
             }
 
@@ -544,6 +565,15 @@ internal sealed class RelationshipEnforcer(
         }
 
         return cascades;
+
+        static bool SameKeyValue(object? first, object? second, int column, TableDef definition)
+        {
+            int[] fixedBinaryLengths = RelationshipKeyBuilder.GetFixedBinaryLengths(definition, [column]);
+            return string.Equals(
+                RelationshipKeyBuilder.Build([first], [0], fixedBinaryLengths),
+                RelationshipKeyBuilder.Build([second], [0], fixedBinaryLengths),
+                StringComparison.Ordinal);
+        }
 
         void RecordKeyAssignments(object[] newRow, int[] columns, string tableName, TableDef definition)
         {

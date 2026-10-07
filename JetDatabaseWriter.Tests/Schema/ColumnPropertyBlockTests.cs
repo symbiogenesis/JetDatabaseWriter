@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
+using System;
 using System.IO;
 using System.Text;
 using JetDatabaseWriter.Enums;
@@ -241,6 +242,46 @@ public class ColumnPropertyBlockTests
         byte[] bytes = rewritten.ToBytes(outer)!;
         Assert.Equal(blob[0..4], bytes[0..4]);
         Assert.Equal("New café", ColumnPropertyBlock.Parse(bytes, outer)!.FindTarget("A")!.GetTextValue("Description", outer));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    public void Rewrite_PreservesOpaqueTargetHeaders(DatabaseFormat databaseFormat)
+    {
+        var format = JetFormat.ForNewDatabase(databaseFormat);
+        var builder = new ColumnPropertyBlockBuilder();
+        builder.GetOrAddTarget("A").AddText("Description", "Old", format);
+        byte[] blob = builder.ToBytes(format)!;
+        int targetOffset = 4 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(blob.AsSpan(4)) + 6;
+        byte[] opaque = [0xFF, 0x80, 0xAB, 0xCD];
+        opaque.CopyTo(blob, targetOffset);
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, format)!;
+        Assert.Equal(blob, parsed.ToBytes(format));
+
+        ColumnDefinition original = new("A", typeof(int)) { Description = "Old" };
+        ColumnDefinition changed = new("LongerName", typeof(int)) { Description = "New" };
+        ColumnPropertyBlock projected = PersistedPropertyProjector.ProjectForRewrite(parsed, [original], [changed], static _ => "LongerName", format);
+        byte[] rewritten = projected.ToBytes(format)!;
+        Assert.Equal(opaque, rewritten[targetOffset..(targetOffset + 4)]);
+        Assert.Equal("New", ColumnPropertyBlock.Parse(rewritten, format)!.FindTarget("LongerName")!.GetTextValue("Description", format));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    public void Rename_UpdatesNativeTargetNameLength(DatabaseFormat databaseFormat)
+    {
+        var format = JetFormat.ForNewDatabase(databaseFormat);
+        var builder = new ColumnPropertyBlockBuilder();
+        builder.GetOrAddTarget("A").AddText("Description", "Keep", format);
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(builder.ToBytes(format), format)!;
+        ColumnPropertyBlockBuilder renamed = ColumnPropertyBlockBuilder.FromBlock(parsed);
+        renamed.RenameTarget("A", "LongerName");
+        byte[] bytes = renamed.ToBytes(format)!;
+        int targetOffset = 4 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(4)) + 6;
+        Assert.Equal((uint)(6 + format.PropertyTextEncoding.GetByteCount("LongerName")), System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(targetOffset)));
+        Assert.Equal("Keep", ColumnPropertyBlock.Parse(bytes, format)!.FindTarget("LongerName")!.GetTextValue("Description", format));
     }
 
     private static byte[] BuildBlob(bool magicMr2, string[] namePool, SyntheticBlock[] propertyBlocks)

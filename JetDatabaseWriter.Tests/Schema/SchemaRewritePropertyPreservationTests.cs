@@ -383,6 +383,43 @@ public sealed class SchemaRewritePropertyPreservationTests
         Assert.Contains($"Expression|12|1|{Hex("[Pay]/12")}", monthly.Entries);
     }
 
+    /// <summary>Editing and removing a table rule keeps opaque target headers.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(JetDatabaseWriter.Tests.Catalog.LvPropReadTests.FormatsAndModes), MemberType = typeof(JetDatabaseWriter.Tests.Catalog.LvPropReadTests))]
+    public async Task TableRuleEdit_PreservesOpaqueHeaders(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await CreateDatabaseAsync(format);
+        await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await initial.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], Ct);
+        }
+
+        await PlantPropertiesAsync(ms, "T", builder =>
+        {
+            ColumnPropertyTargetBuilder table = builder.GetOrAddTableTarget();
+            table.SourceHeader = 0xCDAB80FF;
+            table.SourceHeaderIsNameLength = false;
+            table.AddText("Caption", "Keep table", JetFormat.ForNewDatabase(format));
+            ColumnPropertyTargetBuilder column = builder.GetOrAddTarget("Id");
+            column.SourceHeader = 0xFEDC1234;
+            column.SourceHeaderIsNameLength = false;
+            column.AddText("Caption", "Keep column", JetFormat.ForNewDatabase(format));
+        });
+        List<TargetView> before = await ReadTargetsAsync(ms, "T");
+        Assert.Equal(0xCDAB80FFu, Assert.Single(before, target => target.Name.Length == 0).SourceHeader);
+        Assert.Equal(0xFEDC1234u, Assert.Single(before, target => target.Name == "Id").SourceHeader);
+        await RunRewriteAsync(ms, mode, (Func<AccessWriter, Task>)(async writer =>
+        {
+            await writer.SetTableValidationRuleAsync("T", new TableValidationRule("[Id] > 0", "Positive"), Ct);
+            await writer.SetTableValidationRuleAsync("T", null, Ct);
+        }));
+
+        AssertSameTargets(before, await ReadTargetsAsync(ms, "T"));
+    }
+
     private static string RewriteSalary(string entry)
     {
         string[] parts = entry.Split('|');
@@ -448,6 +485,7 @@ public sealed class SchemaRewritePropertyPreservationTests
         for (int i = 0; i < expected.Count; i++)
         {
             Assert.Equal(expected[i].ChunkType, actual[i].ChunkType);
+            Assert.Equal(expected[i].SourceHeader, actual[i].SourceHeader);
             Assert.True(expected[i].Entries.SequenceEqual(actual[i].Entries), $"Target '{expected[i].Name}': expected [{string.Join("; ", expected[i].Entries)}], got [{string.Join("; ", actual[i].Entries)}].");
         }
     }
@@ -463,7 +501,7 @@ public sealed class SchemaRewritePropertyPreservationTests
         ColumnPropertyBlock? block = await harness.Services.Catalog.ReadLvPropForTableAsync(entry.TDefPage, Ct);
         return block is null
             ? []
-            : [.. block.Targets.Select(t => new TargetView(t.Name, (int)t.ChunkType, [.. t.Entries.Select(e => $"{e.Name}|{(int)e.DataType}|{e.DdlFlag}|{Convert.ToHexString(e.Value)}")]))];
+            : [.. block.Targets.Select(t => new TargetView(t.Name, (int)t.ChunkType, t.SourceHeaderIsNameLength ? null : t.SourceHeader, [.. t.Entries.Select(e => $"{e.Name}|{(int)e.DataType}|{e.DdlFlag}|{Convert.ToHexString(e.Value)}")]))];
     }
 
     private static async Task RunRewriteAsync(MemoryStream ms, WriteMode mode, Func<AccessWriter, Task> rewrite)
@@ -524,14 +562,15 @@ public sealed class SchemaRewritePropertyPreservationTests
     /// <summary>One property target as its name, chunk type and entry lines.</summary>
     /// <param name="Name">The target name; empty for the table.</param>
     /// <param name="ChunkType">The property-block chunk type.</param>
+    /// <param name="SourceHeader">The preserved opaque inner target header, or null for a recognized native name length.</param>
     /// <param name="Entries">One line per entry: name, data type, DDL flag and value bytes in hex.</param>
-    private sealed record TargetView(string Name, int ChunkType, List<string> Entries)
+    private sealed record TargetView(string Name, int ChunkType, uint? SourceHeader, List<string> Entries)
     {
         /// <inheritdoc/>
         public bool Equals(TargetView? other)
-            => other is not null && this.Name == other.Name && this.ChunkType == other.ChunkType && this.Entries.SequenceEqual(other.Entries);
+            => other is not null && this.Name == other.Name && this.ChunkType == other.ChunkType && this.SourceHeader == other.SourceHeader && this.Entries.SequenceEqual(other.Entries);
 
         /// <inheritdoc/>
-        public override int GetHashCode() => HashCode.Combine(this.Name, this.ChunkType, this.Entries.Count);
+        public override int GetHashCode() => HashCode.Combine(this.Name, this.ChunkType, this.SourceHeader, this.Entries.Count);
     }
 }

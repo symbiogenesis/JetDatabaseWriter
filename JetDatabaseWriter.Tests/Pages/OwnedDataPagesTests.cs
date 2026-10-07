@@ -34,6 +34,54 @@ public sealed class OwnedDataPagesTests
 
     public static TheoryData<string> Fixtures => ["Jet3Test", "AdventureLT2008", "NorthwindTraders"];
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task FullRowDirectory_ClearsFreeMapAndRollbackRestoresIt(DatabaseFormat format, bool referenceMap)
+    {
+        await using MemoryStream stream = await CreateDatabaseAsync(format);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await writer.CreateTableAsync("Tiny", [new ColumnDefinition("Id", typeof(int))], [], Ct);
+        CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync("Tiny", Ct);
+        Assert.NotNull(entry);
+        await writer.InsertRowsAsync("Tiny", Enumerable.Range(1, 254).Select(id => new object?[] { id }), Ct);
+        byte[] tdef = await writer.Database.Pages.ReadPageCopyAsync(entry.TDefPage, Ct);
+        int mapPage = UsageMap.ReadUInt24(tdef, writer.Database.Format.TDef.FreePagesPage);
+        int freeRow = tdef[writer.Database.Format.TDef.FreePages];
+        byte[] before = await writer.Database.Pages.ReadPageCopyAsync(mapPage, Ct);
+        if (referenceMap)
+        {
+            Assert.True(UsageMap.TryGetRowBound(before, writer.Database.Format.DataPage, writer.Database.Format.PageSize, freeRow, out RowBound freeBound));
+            long dataPage = Assert.Single(await writer.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+            Array.Clear(before, freeBound.RowStart, freeBound.RowSize);
+            before[freeBound.RowStart] = Constants.UsageMap.ReferenceMapType;
+            var editor = new UsageMapEditor(writer.Database.Format, writer.Pager, writer.Services.PageAllocator);
+            await editor.WriteRowAsync(before, freeBound.RowStart, freeBound.RowSize, [dataPage], keepReferencePages: true, Ct);
+            await writer.Pager.WritePageAsync(mapPage, before, Ct);
+        }
+
+        await using (JetTransaction transaction = await writer.BeginTransactionAsync(Ct))
+        {
+            await writer.InsertRowAsync("Tiny", [255], Ct);
+            byte[] map = await writer.Database.Pages.ReadPageCopyAsync(mapPage, Ct);
+            Assert.True(UsageMap.TryGetRowBound(map, writer.Database.Format.DataPage, writer.Database.Format.PageSize, freeRow, out RowBound bound));
+            var freePages = new List<long>();
+            Assert.True(await UsageMap.TryEnumeratePagesAsync(map, bound, writer.Database.Format.PageSize, writer.Pager.PageCount, 1, true, writer.Pager.ReadPageAsync, PageBuffers.Return, freePages, Ct));
+            Assert.Empty(freePages);
+            Assert.Single(await writer.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct));
+            await transaction.RollbackAsync(Ct);
+        }
+
+        byte[] restored = await writer.Database.Pages.ReadPageCopyAsync(mapPage, Ct);
+        Assert.Equal(before, restored);
+        Assert.True(UsageMap.TryGetRowBound(restored, writer.Database.Format.DataPage, writer.Database.Format.PageSize, freeRow, out RowBound restoredBound));
+        var restoredFreePages = new List<long>();
+        Assert.True(await UsageMap.TryEnumeratePagesAsync(restored, restoredBound, writer.Database.Format.PageSize, writer.Pager.PageCount, 1, true, writer.Pager.ReadPageAsync, PageBuffers.Return, restoredFreePages, Ct));
+        Assert.Equal(await writer.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct), restoredFreePages);
+    }
+
     [Fact]
     public async Task CachingOverPager_IsRejected()
     {

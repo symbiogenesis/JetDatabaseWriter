@@ -878,6 +878,157 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         Assert.Equal([3L], rowCounts);
     }
 
+    /// <summary>Conflicting paths to one foreign-key column refuse before any bytes change.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_ContradictoryCascadePaths_ChangesNothing(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("P", [new ColumnDefinition("A", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("B", typeof(int))], [new IndexDefinition("UX_B", "B") { IsUnique = true }], Ct);
+            await writer.CreateTableAsync("C", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))], Ct);
+            Assert.Equal(1, await writer.InsertRowsAsync("P", [[1, 1]], Ct));
+            Assert.Equal(1, await writer.InsertRowsAsync("C", [[10, 1]], Ct));
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_A", "P", "A", "C", "ParentId") { CascadeUpdates = true }, Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_B", "P", "B", "C", "ParentId") { CascadeUpdates = true }, Ct);
+        }
+
+        byte[] before = ms.ToArray();
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                JetConstraintException exception = await Assert.ThrowsAsync<JetConstraintException>(async () =>
+                    await writer.UpdateRowsAsync("P", RowCriteria.Where("A", 1), new RowValues { ["A"] = 5, ["B"] = 6 }, Ct));
+                Assert.Equal(JetErrorCode.ForeignKeyRestrictUpdate, exception.ErrorCode);
+                Assert.Contains("contradictory", exception.Message, StringComparison.Ordinal);
+            });
+        }
+
+        Assert.Equal(before, ms.ToArray());
+        Assert.Equal(["1|1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+        Assert.Equal(["10|1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
+    }
+
+    /// <summary>A stable cycle and a converging diamond stop after composing the same assignment.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_DiamondWithStableCycle_RewritesEveryRowOnce(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            foreach (string name in new[] { "A", "B", "C", "D" })
+            {
+                await writer.CreateTableAsync(name, [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+                Assert.Equal(1, await writer.InsertRowsAsync(name, [[1]], Ct));
+            }
+
+            foreach ((string parent, string child) in new[] { ("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "A") })
+            {
+                await writer.CreateRelationshipAsync(new RelationshipDefinition($"FK_{child}_{parent}", parent, "Id", child, "Id") { CascadeUpdates = true }, Ct);
+            }
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("A", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct)));
+        }
+
+        foreach (string name in new[] { "A", "B", "C", "D" })
+        {
+            Assert.Equal(["5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, name));
+        }
+
+        Assert.Equal([1L, 1L, 1L, 1L], await ReadRowCountsAsync(ms, "A", "B", "C", "D"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C", "D");
+    }
+
+    /// <summary>Composite diamond paths compose both key components without rewriting an unrelated row.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_CompositeDiamond_MergesBothKeyComponents(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            foreach (string name in new[] { "A", "B", "C", "D" })
+            {
+                await writer.CreateTableAsync(name, [new ColumnDefinition("X", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("Y", typeof(int)) { IsPrimaryKey = true }], Ct);
+                Assert.Equal(2, await writer.InsertRowsAsync(name, [[1, 2], [1, 3]], Ct));
+            }
+
+            foreach ((string parent, string child) in new[] { ("A", "B"), ("A", "C"), ("B", "D"), ("C", "D") })
+            {
+                await writer.CreateRelationshipAsync(new RelationshipDefinition($"FK_{child}_{parent}", parent, ["X", "Y"], child, ["X", "Y"]) { CascadeUpdates = true }, Ct);
+            }
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("A", RowCriteria.Where("Y", 2), new RowValues { ["X"] = 5, ["Y"] = 6 }, Ct)));
+        }
+
+        foreach (string name in new[] { "A", "B", "C", "D" })
+        {
+            Assert.Equal(["1|3", "5|6"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, name));
+        }
+
+        Assert.Equal([2L, 2L, 2L, 2L], await ReadRowCountsAsync(ms, "A", "B", "C", "D"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C", "D");
+    }
+
+    /// <summary>Distinct binary objects with the same key agree when cascade paths converge.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_EquivalentBinaryCascadePaths_Converge(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("P", [new ColumnDefinition("A", typeof(byte[]), 4) { IsPrimaryKey = true }, new ColumnDefinition("B", typeof(byte[]), 4)], [new IndexDefinition("UX_B", "B") { IsUnique = true }], Ct);
+            await writer.CreateTableAsync("C", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(byte[]), 4)], Ct);
+            Assert.Equal(1, await writer.InsertRowsAsync("P", [[new byte[] { 1, 2, 3, 4 }, new byte[] { 1, 2, 3, 4 }]], Ct));
+            Assert.Equal(1, await writer.InsertRowsAsync("C", [[10, new byte[] { 1, 2, 3, 4 }]], Ct));
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_A", "P", "A", "C", "ParentId") { CascadeUpdates = true }, Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_B", "P", "B", "C", "ParentId") { CascadeUpdates = true }, Ct);
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.All(), new RowValues { ["A"] = new byte[] { 5, 6, 7, 8 }, ["B"] = new byte[] { 5, 6, 7, 8 } }, Ct)));
+        }
+
+        ms.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, Ct))
+        {
+            await foreach (object[] row in reader.Rows("C", cancellationToken: Ct))
+            {
+                Assert.Equal(new byte[] { 5, 6, 7, 8 }, Assert.IsType<byte[]>(row[1]));
+            }
+        }
+
+        Assert.Equal([1L, 1L], await ReadRowCountsAsync(ms, "P", "C"));
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
+    }
+
     /// <summary>Plants a cascading relationship without checking an existing orphan.</summary>
     /// <param name="ms">The database.</param>
     /// <returns>The asynchronous operation.</returns>

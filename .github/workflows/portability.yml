@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
         tf: [net10.0, net8.0]
     steps:
       - name: Checkout

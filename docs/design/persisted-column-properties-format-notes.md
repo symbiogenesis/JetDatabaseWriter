@@ -66,7 +66,7 @@ Payload layout (`chunkLen − 6` bytes total):
 N       ...     entries       sequence of property entries until payload exhausted
 ```
 
-Writer parity: treat the first 4 bytes as opaque on read and preserve existing values during round-trip. For new DAO-shaped column property blocks, prefer the DAO-observed `4 + 2 + targetNameLen` value.
+Writer parity: preserve unrecognized inner-header values verbatim. When a parsed header matches `4 + 2 + targetNameLen`, treat it as the native name-length field and recompute it if the target name changes. New targets use that DAO-observed value. Both the encoding and opaque headers survive property edits and Add/Drop/Rename rewrites; name-pool ordering, entry padding and unknown-chunk placement are not guaranteed byte-identical.
 
 ### 2.5 Property entry
 
@@ -133,7 +133,7 @@ These LvProp differences were real DAO deltas, but matching them was not suffici
 
 Observed linked-table facts:
 
-- The ODBC Type 4 fixture row stores a 6,465-byte `MR2\0` `LvProp` payload with 21 parsed targets, no unknown chunks, and a table-level `NameMap` property. The parser/builder pair is not byte-identical because the builder normalizes opaque inner property-block headers, but parse/build/parse structural parity is true.
+- The ODBC Type 4 fixture row stores a 6,465-byte `MR2\0` `LvProp` payload with 21 parsed targets, no unknown chunks, and a table-level `NameMap` property. The parser/builder pair retains opaque inner property-block headers and has parse/build/parse structural parity. Name-pool ordering, entry padding and unknown-chunk placement may still be normalized, so this does not promise byte identity for every blob.
 - The linked Access Type 6 comparison fixture also stores a real `MR2\0` cache in this older Access-authored Jackcess corpus, but DAO-authored Access-file and text links are separately observed to tolerate null `Lv`/`LvProp`/`LvModule`/`LvExtra` cache columns.
 - `NameMap` is `dataType = 0x0B` and remains partly opaque. The probe extracts recognizable UTF-16 string runs for human inspection, while the writer now synthesizes a conservative generated `NameMap` with table/column GUID records and source table/column names. The generated payload is parseable and structurally useful, but it is not expected to be byte-identical to Access-authored ODBC caches.
 - Linked-cache `GUID` properties appear as `dataType = 0x09` Binary with 16-byte GUID payloads, not `dataType = 0x0F`.
