@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -61,17 +62,16 @@ public sealed class SystemTableLookupTests
 
     /// <summary>
     /// The reader's and the writer's system-table lookups resolve <c>MSysObjects</c>
-    /// to TDEF page 2 when its catalog row is missing or undecodable.
+    /// to TDEF page 2 when its catalog row is absent from a created Jet3 or Jet4 database.
     /// </summary>
     /// <param name="format">The database format.</param>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task FindSystemTable_MSysObjects_WithMissingOrUndecodableCatalogRow_ResolvesPage2(DatabaseFormat format)
+    public async Task FindSystemTable_MSysObjects_WithMissingCatalogRow_ResolvesPage2(DatabaseFormat format)
     {
         byte[] bytes = await CreateDatabaseAsync(format, this.ct);
-        await CorruptCatalogSelfRowAsync(bytes, this.ct);
+        Assert.False(await CorruptCatalogSelfRowAsync(bytes, this.ct));
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
         await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
@@ -84,6 +84,29 @@ public sealed class SystemTableLookupTests
         await writeStream.WriteAsync(bytes, this.ct);
         await using WriterHarness writer = await WriterHarness.OpenAsync(writeStream, cancellationToken: this.ct);
         Assert.Equal(2, await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(CatalogTable, this.ct));
+    }
+
+    /// <summary>A malformed present catalog self-row cannot trigger the absent-row bootstrap fallback.</summary>
+    [Fact]
+    public async Task FindSystemTable_MSysObjects_WithMalformedCatalogRow_RefusesCorruption()
+    {
+        byte[] bytes = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, this.ct);
+        Assert.True(await CorruptCatalogSelfRowAsync(bytes, this.ct));
+
+        await using (var readStream = new MemoryStream(bytes, writable: false))
+        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
+        {
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await reader.Services.Catalog.FindSystemTablePageAsync(CatalogTable, this.ct));
+            Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+        }
+
+        await using var writeStream = new MemoryStream();
+        await writeStream.WriteAsync(bytes, this.ct);
+        await using WriterHarness writer = await WriterHarness.OpenAsync(writeStream, cancellationToken: this.ct);
+        JetCorruptDataException writerError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(CatalogTable, this.ct));
+        Assert.Equal(JetErrorCode.CorruptCatalog, writerError.ErrorCode);
     }
 
     /// <summary>
@@ -132,9 +155,8 @@ public sealed class SystemTableLookupTests
     }
 
     /// <summary>
-    /// The predicate lookup that finds complex-column flat tables by name suffix
-    /// (the fallback when <c>MSysComplexColumns</c> cannot be read) resolves every
-    /// flat table of ComplexFields.accdb to the TDEF the exact name resolves to.
+    /// The general catalog predicate lookup resolves each ComplexFields.accdb
+    /// flat table by its name suffix to the TDEF the exact name resolves to.
     /// </summary>
     [Fact]
     public async Task FindSystemTable_ByNameSuffix_FindsComplexFlatTables()
@@ -160,7 +182,7 @@ public sealed class SystemTableLookupTests
         }
     }
 
-    private static async ValueTask CorruptCatalogSelfRowAsync(byte[] bytes, CancellationToken cancellationToken)
+    private static async ValueTask<bool> CorruptCatalogSelfRowAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: cancellationToken);
@@ -171,13 +193,14 @@ public sealed class SystemTableLookupTests
         CatalogRow? selfRow = rows.FirstOrDefault(row => row.IsDecoded && string.Equals(row.Name, CatalogTable, StringComparison.OrdinalIgnoreCase));
         if (selfRow is null)
         {
-            return;
+            return false;
         }
 
         byte[] page = await harness.ReadPageCopyAsync(selfRow.PageNumber, cancellationToken);
         RowBound bound = DataPageRows.EnumerateLiveRowBounds(database.Format, page).Single(row => row.RowIndex == selfRow.RowIndex);
         int rowOffset = checked((int)(selfRow.PageNumber * database.Format.PageSize)) + bound.RowStart;
         bytes.AsSpan(rowOffset, database.Format.RowFields.NumCols).Clear();
+        return true;
     }
 
     private static async ValueTask<byte[]> CreateDatabaseAsync(DatabaseFormat format, CancellationToken cancellationToken)

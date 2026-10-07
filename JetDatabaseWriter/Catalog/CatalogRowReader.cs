@@ -30,7 +30,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// </summary>
     /// <param name="msys">The <c>MSysObjects</c> table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="JetCorruptDataException">The catalog is missing a required field.</exception>
+    /// <exception cref="JetCorruptDataException">The catalog is missing a required field or a live row has malformed required values.</exception>
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
@@ -50,23 +50,33 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
             {
                 byte[] page = row.Page;
                 RowLocation location = row.Location;
-                long id = idColumn is null
-                    ? 0
-                    : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn));
+                if (!this.CanDecodeRow(page, location))
+                {
+                    throw CorruptRow(location, "The catalog row layout cannot be decoded.");
+                }
+
+                string name = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn);
+                if (string.IsNullOrEmpty(name)
+                    || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn), out long id)
+                    || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn), out int objectType)
+                    || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn), out long flags))
+                {
+                    throw CorruptRow(location, "A required catalog row value is missing or malformed.");
+                }
+
                 long parentId = parentIdColumn is null
                     ? 0
                     : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, parentIdColumn));
-
                 result.Add(new CatalogRow(
                     PageNumber: location.PageNumber,
                     RowIndex: location.RowIndex,
-                    Name: ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn),
-                    ObjectType: CatalogValueReader.ParseInt32OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn)),
-                    Flags: CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn)),
+                    Name: name,
+                    ObjectType: objectType,
+                    Flags: flags,
                     TDefPage: CatalogValueReader.TdefPageFromId(id),
                     Id: id,
                     ParentId: parentId,
-                    IsDecoded: this.CanDecodeRow(page, location)));
+                    IsDecoded: true));
                 return new ValueTask<bool>(true);
             },
             cancellationToken).ConfigureAwait(false);
@@ -109,8 +119,8 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// <summary>
     /// Returns the TDEF page of the first <c>MSysObjects</c> row whose name satisfies
     /// <paramref name="nameMatches"/> and that is a local table (type 1) or, with
-    /// <paramref name="includeLinkedOdbc"/>, a linked ODBC table (type 4). Rows the
-    /// scan cannot decode are skipped. Returns <c>0</c> when none matches.
+    /// <paramref name="includeLinkedOdbc"/>, a linked ODBC table (type 4). Malformed required row values are refused.
+    /// Returns <c>0</c> when none matches.
     /// </summary>
     /// <param name="nameMatches">The name test.</param>
     /// <param name="includeLinkedOdbc">Whether linked ODBC tables, which carry a local TDEF, also match.</param>
@@ -134,6 +144,14 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
 
         return 0;
     }
+
+    private static JetCorruptDataException CorruptRow(RowLocation location, string reason)
+        => new(JetErrorCode.CorruptCatalog, reason, new JetErrorInfo
+        {
+            TableName = Constants.SystemTableNames.Objects,
+            PageNumber = location.PageNumber,
+            Reason = reason,
+        });
 
     /// <summary>
     /// Applies the table reader's skip rules: a row shorter than the column-count

@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Catalog;
 
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -13,6 +12,7 @@ using JetDatabaseWriter;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -22,8 +22,8 @@ using Xunit;
 /// <summary>
 /// Pins the <c>MSysObjects</c> scan summary that <see cref="AccessReader.LastDiagnostics"/>
 /// prints after <see cref="AccessReader.ListTablesAsync"/>. "Total rows scanned" counts the
-/// live catalog rows the scan could decode; rows too short or malformed to decode are skipped,
-/// as the table reader skips them.
+/// live catalog rows of a validated scan. Malformed required catalog values are refused
+/// before a successful scan summary is published.
 /// </summary>
 public sealed partial class CatalogDiagnosticsTests
 {
@@ -73,16 +73,15 @@ public sealed partial class CatalogDiagnosticsTests
     }
 
     /// <summary>
-    /// A live catalog row whose column count is zero cannot be decoded. The scan
-    /// leaves it out of "Total rows scanned", as the table reader leaves it out of
-    /// <c>MSysObjects</c>.
+    /// A live catalog row whose column count is zero refuses the scan before a
+    /// successful diagnostic summary or partial table list can be cached.
     /// </summary>
     [Fact]
-    public async Task ListTables_Diagnostics_SkipsUndecodableCatalogRow()
+    public async Task ListTables_Diagnostics_RejectsUndecodableCatalogRow()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.TestV2003, ct);
-        long declaredRows = await ZeroColumnCountOfLastUserTableRowAsync(bytes, ct);
+        await ZeroColumnCountOfLastUserTableRowAsync(bytes, ct);
 
         await using var ms = new MemoryStream(bytes, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -91,12 +90,13 @@ public sealed partial class CatalogDiagnosticsTests
             leaveOpen: true,
             ct);
 
-        _ = await reader.ListTablesAsync(ct);
-        int rowsScanned = ParseRowsScanned(reader.LastDiagnostics);
-        using DataTable msys = await reader.ReadTableAsync("MSysObjects", cancellationToken: ct);
-
-        Assert.Equal(declaredRows - 1, rowsScanned);
-        Assert.Equal(msys.Rows.Count, rowsScanned);
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await reader.ListTablesAsync(ct));
+            Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+            Assert.Empty(reader.LastDiagnostics);
+        }
     }
 
     /// <summary>
@@ -194,12 +194,11 @@ public sealed partial class CatalogDiagnosticsTests
 
     /// <summary>
     /// Zeroes the column-count field of the last user table's <c>MSysObjects</c>
-    /// row in <paramref name="bytes"/> and returns the row count the catalog's
-    /// TDEF declares.
+    /// row in <paramref name="bytes"/>.
     /// </summary>
     /// <param name="bytes">The database image, changed in place.</param>
     /// <param name="cancellationToken">A token used to cancel the reads.</param>
-    private static async ValueTask<long> ZeroColumnCountOfLastUserTableRowAsync(byte[] bytes, CancellationToken cancellationToken)
+    private static async ValueTask ZeroColumnCountOfLastUserTableRowAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
@@ -214,9 +213,6 @@ public sealed partial class CatalogDiagnosticsTests
         RowBound bound = DataPageRows.EnumerateLiveRowBounds(db.Format, page).Single(b => b.RowIndex == target.RowIndex);
         int rowOffset = checked((int)(target.PageNumber * db.Format.PageSize)) + bound.RowStart;
         bytes.AsSpan(rowOffset, db.Format.RowFields.NumCols).Clear();
-
-        byte[] tdef = await harness.ReadPageCopyAsync(2, cancellationToken);
-        return BinaryPrimitives.ReadUInt32LittleEndian(tdef.AsSpan(db.Format.TDef.NumRows));
     }
 
     [GeneratedRegex(@"Total rows scanned: (\d+)")]

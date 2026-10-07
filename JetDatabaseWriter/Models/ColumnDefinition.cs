@@ -239,10 +239,12 @@ public sealed record ColumnDefinition
     /// </para>
     /// <para>
     /// The expression is evaluated with this library's calculated-column expression engine.
-    /// When it uses a function or syntax the engine does not support (for example
-    /// <c>GenGUID()</c> or <c>CurrentUser()</c>), evaluates to Null, or yields a value that
-    /// cannot be converted to the column's type, no default is applied and the column stays
-    /// null (so a NOT NULL column then rejects the row). Microsoft Access still applies it.
+    /// Unsupported syntax or functions (for example <c>DLookUp</c>), failed evaluation, or
+    /// a result that cannot be converted to the column's type refuses the write with
+    /// <see cref="JetDatabaseWriter.Exceptions.JetValidationRuleException"/> before mutation.
+    /// A Null result is subject to the column's nullability constraint. <c>GenGUID()</c>
+    /// generates a GUID; <c>CurrentUser()</c> returns <c>Admin</c> for the supported session
+    /// without workgroup authentication.
     /// </para>
     /// <para>
     /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,
@@ -284,8 +286,8 @@ public sealed record ColumnDefinition
     /// <para>
     /// The rule is evaluated with this library's calculated-column expression engine. A rule
     /// that uses syntax or a function the engine does not support (for example
-    /// <c>DLookUp</c>), or whose evaluation fails, is not enforced by the writer rather than
-    /// blocking every write to the table. Microsoft Access still enforces it. Text
+    /// <c>DLookUp</c>), or whose evaluation fails, refuses the write with
+    /// <see cref="JetDatabaseWriter.Exceptions.JetValidationRuleException"/> before mutation. Text
     /// comparisons use the database's Access sort order, including accents, punctuation
     /// and trailing spaces.
     /// </para>

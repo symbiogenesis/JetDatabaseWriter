@@ -205,6 +205,8 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
         var result = new List<CatalogEntry>();
         var catalogPages = new HashSet<long>();
         int rowsDecoded = 0;
+        var tableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tablePages = new HashSet<long>();
         foreach (CatalogRow row in rows)
         {
             _ = catalogPages.Add(row.PageNumber);
@@ -224,9 +226,14 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
                 continue;
             }
 
-            if (string.IsNullOrEmpty(row.Name) || row.TDefPage <= 0)
+            if (row.TDefPage < 2 || row.TDefPage >= totalPages
+                || !tableNames.Add(row.Name) || !tablePages.Add(row.TDefPage)
+                || await tableDefs.ReadTableDefAsync(row.TDefPage, cancellationToken).ConfigureAwait(false) is null)
             {
-                continue;
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptCatalog,
+                    "A catalog table reference is invalid or ambiguous.",
+                    new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
             }
 
             result.Add(new CatalogEntry(row.Name, row.TDefPage));

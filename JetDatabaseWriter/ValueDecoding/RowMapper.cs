@@ -6,9 +6,11 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Mapping;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 
 /// <summary>
 /// Maps <c>object[]</c> rows (keyed by column headers) to POCO instances of <typeparamref name="T"/>.
@@ -256,7 +258,30 @@ internal static class RowMapper<T>
             writer = entry.Write ??= BuildToRow(td);
         }
 
-        return writer(item);
+        object[] row = writer(item);
+        long? sharedReference = null;
+        string? sharedColumn = null;
+        for (int i = 0; i < td.Columns.Count; i++)
+        {
+            if (td.Columns[i].Type == ColumnType.ComplexType)
+            {
+                long? reference = ValidateComplexReference(row[i], td.Columns[i].Name, nameof(item));
+                if (reference.HasValue)
+                {
+                    if (sharedReference.HasValue && sharedReference != reference)
+                    {
+                        throw new ArgumentException(
+                            $"Properties mapped to complex columns '{sharedColumn}' and '{td.Columns[i].Name}' supply different per-row references ({sharedReference} and {reference}); every complex column of a row must share one reference.",
+                            nameof(item));
+                    }
+
+                    sharedReference = reference;
+                    sharedColumn = td.Columns[i].Name;
+                }
+            }
+        }
+
+        return row;
     }
 
     /// <summary>
@@ -333,6 +358,32 @@ internal static class RowMapper<T>
 
         NewArrayExpression body = Expression.NewArrayInit(typeof(object), values);
         return Expression.Lambda<Func<T, object[]>>(body, itemParam).Compile();
+    }
+
+    private static long? ValidateComplexReference(object value, string columnName, string parameterName)
+    {
+        if (value is DBNull or DbDefault)
+        {
+            return null;
+        }
+
+        long? reference = value switch
+        {
+            ComplexIdRef complexReference => complexReference.Id,
+            int number => number,
+            long number => number,
+            short number => number,
+            byte number => number,
+            _ => null,
+        };
+        if (reference is >= 1 and <= int.MaxValue)
+        {
+            return reference;
+        }
+
+        throw new ArgumentException(
+            $"Property mapped to complex column '{columnName}' must supply an integral per-row reference from 1 to {int.MaxValue}, null, or DbDefault.Value. Use the complex item APIs to write attachments and multi-value items.",
+            parameterName);
     }
 
     /// <summary>
