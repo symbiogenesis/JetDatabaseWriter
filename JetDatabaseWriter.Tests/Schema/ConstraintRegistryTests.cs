@@ -693,6 +693,30 @@ public sealed class ConstraintRegistryTests
         _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.LongIntegerType), [1], TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task ApplyAsync_TerminatedPersistedExpressions_EnforcesWithoutChangingProperties()
+    {
+        ColumnPropertyBlock properties = BuildColumnProperties(
+            ("Score", Constants.ColumnPropertyNames.DefaultValue, "7\0"),
+            ("Score", Constants.ColumnPropertyNames.ValidationRule, "> 0\0"),
+            (string.Empty, Constants.ColumnPropertyNames.ValidationRule, "[Score] > 0\0"));
+        ConstraintRegistry registry = RegistryWithProperties(properties);
+        object[] values = [DBNull.Value];
+        _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.LongIntegerType), values, TestContext.Current.CancellationToken);
+        Assert.Equal(7, values[0]);
+        Assert.Equal("> 0\0", properties.FindTarget("Score")!.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties.Format));
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+            await registry.ApplyAsync("T", SingleColumnTable(ColumnType.LongIntegerType), [-1], TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void PersistedExpressionNormalization_PreservesLiteralAndInteriorNulls()
+    {
+        Assert.Equal("\"a\0b\"", PersistedExpressionText.Normalize("\"a\0b\"\0"));
+        Assert.Equal("\"a\0\"", PersistedExpressionText.Normalize("\"a\0\""));
+        Assert.Equal("True\0", PersistedExpressionText.Normalize("True\0\0"));
+    }
+
     private static async Task AssertRuleAsync(string rule, ColumnType type, object? value, bool accepted)
     {
         TableDef tableDef = SingleColumnTable(type);

@@ -65,10 +65,10 @@ A timing-sensitive test can fail on CI and pass on a re-run. Re-run the failed j
 Expected results on both legs:
 
 - Nothing fails.
-- Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is installed neither on CI nor on the development machines, so they always skip.
+- Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is absent on hosted CI, so those cases skip there. A local DAO host can run them with CI-built binaries when authorized; engine-specific skips remain evidence gaps.
 - 3 explicit-only fuzz tests are not run.
 
-The Microsoft Testing Platform summary counts both groups as skipped: 36 + 3 = 39 in October 2026. Any other skip is a regression.
+The Microsoft Testing Platform summary counts both groups as skipped: 43 + 3 = 46 after the native encryption cases. Any other skip is a regression.
 
 For a quick local loop, build in Release and run the test executable directly. `JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -longRunning 300` runs one leg in about 1.5 minutes; add `-method "<Namespace.Class.Method>"` to run one test.
 

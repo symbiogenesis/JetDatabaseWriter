@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -74,6 +75,11 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
 
         byte[] chain = await ReadTDefChainPagesAsync(harness, entry.TDefPage);
 
+        if (format == DatabaseFormat.AceAccdb)
+        {
+            NormalizeComplexIndexNames(chain);
+        }
+
         AssertGolden(expectedSha256, chain, $"{format} Golden TDEF chain");
     }
 
@@ -122,6 +128,37 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
         return stream;
     }
 
+    /// <summary>
+    /// Normalizes only the generated GUID suffixes of the two native complex
+    /// reference index names; their prefixes, lengths and all descriptor bytes
+    /// remain covered by the golden hash.
+    /// </summary>
+    /// <param name="chain">The ACE table-definition bytes.</param>
+    private static void NormalizeComplexIndexNames(byte[] chain)
+    {
+        string[] names = ["Files_", "Tags_"];
+        byte[] canonical = Encoding.Unicode.GetBytes(new string('0', 32));
+        foreach (string name in names)
+        {
+            byte[] prefix = Encoding.Unicode.GetBytes(name);
+            int count = 0;
+            for (int offset = 0; offset <= chain.Length - prefix.Length - canonical.Length; offset++)
+            {
+                if (!chain.AsSpan(offset, prefix.Length).SequenceEqual(prefix))
+                {
+                    continue;
+                }
+
+                string suffix = Encoding.Unicode.GetString(chain, offset + prefix.Length, canonical.Length);
+                Assert.True(Guid.TryParseExact(suffix, "N", out _), $"Invalid complex reference index name: {name}{suffix}");
+                canonical.CopyTo(chain, offset + prefix.Length);
+                count++;
+                offset += prefix.Length + canonical.Length - 1;
+            }
+
+            Assert.Equal(1, count);
+        }
+    }
     private static ColumnDefinition[] ColumnsFor(DatabaseFormat format)
     {
         var columns = new List<ColumnDefinition>

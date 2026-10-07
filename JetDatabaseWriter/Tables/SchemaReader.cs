@@ -60,7 +60,7 @@ internal sealed class SchemaReader(
             ?? throw new JetObjectNotFoundException(JetErrorCode.TableNotFound, $"Table '{tableName}' was not found.", nameof(tableName));
         ColumnPropertyBlock? properties = await catalog.ReadLvPropForTableAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         ColumnPropertyTarget? target = properties?.FindTableTarget();
-        string? expression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format);
+        string? expression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format));
         return string.IsNullOrWhiteSpace(expression) ? null : new TableValidationRule(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format));
     }
 
@@ -206,7 +206,7 @@ internal sealed class SchemaReader(
             ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
             bool isCalc = col.IsCalculated;
             string? calcExpr = isCalc
-                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format)
+                ? PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format))
                 : null;
             ColumnType calcResultType = isCalc ? CatalogReader.ResolveCalculatedResultType(target) : default;
 
@@ -225,8 +225,8 @@ internal sealed class SchemaReader(
                 IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = GetColumnSize(ResolveValueType(col), GetMetadataDeclaredSize(col)),
-                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format),
-                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format),
+                DefaultValueExpression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format)),
+                ValidationRuleExpression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format)),
                 ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format),
                 Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, format),
                 NumericPrecision = col.NumericPrecision,

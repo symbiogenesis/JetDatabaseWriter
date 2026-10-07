@@ -213,7 +213,7 @@ Acronyms, constants and unusual Access/JET terms used throughout this codebase, 
 | **Single-page LVAL** | Long-value payload stored in one external LVAL page |
 | **Chained LVAL** | Long-value payload spread across multiple linked LVAL pages |
 | **Storage mode** | LVAL header bit pattern selecting inline, single-page, or chained storage |
-| **24-bit length** | LVAL payload-length field width; caps addressable MEMO/OLE/attachment payloads at 16,777,215 bytes |
+| **30-bit LVAL length** | Native MEMO/OLE descriptor length; the remaining two bits select inline, single-page or chained storage. The default read budget and current writer limit are 16,777,215 bytes, below the native field maximum. |
 | **Magic bytes** | File-signature bytes at the start of an OLE value or its unwrapped content; `OleObjectValue.DetectMediaType` maps them to a media type |
 | **JPEG** | Joint Photographic Experts Group image format; detected by `FF D8 FF` magic bytes |
 | **PNG** | Portable Network Graphics image format; detected by `89 50 4E 47` magic bytes |

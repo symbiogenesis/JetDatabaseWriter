@@ -42,7 +42,27 @@ public sealed class NativeJet4CatalogSecurityTests
             new AccessReaderOptions("Native123") { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
-        Assert.Equal(expected, await ReadSecurityAsync(reader));
+        string[] actual = await ReadSecurityAsync(reader);
+        string nativeCatalog = await ReadNativeSecurityCatalogAsync();
+        Assert.True(expected.SequenceEqual(actual),
+            $"Native permissions:\n{string.Join("\n", expected)}\nWriter permissions:\n{string.Join("\n", actual)}\nNative catalog:\n{nativeCatalog}");
+    }
+
+    private static async Task<string> ReadNativeSecurityCatalogAsync()
+    {
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"),
+            new AccessReaderOptions("Native123") { UseLockFile = false },
+            TestContext.Current.CancellationToken);
+        using DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable permissions = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: TestContext.Current.CancellationToken);
+        string[] owners = objects.AsEnumerable().Select(row => string.Concat(
+            "OBJECT:", row["Id"], ":", row["Name"], ":",
+            row["Owner"] is byte[] owner ? Convert.ToHexString(owner) : "NULL")).ToArray();
+        string[] aces = permissions.AsEnumerable().Select(row => string.Concat(
+            "ACE:", row["ObjectId"], ":", Convert.ToHexString(Assert.IsType<byte[]>(row["SID"])),
+            ":", row["ACM"], ":", row["FInheritable"])).ToArray();
+        return string.Join("\n", owners.Concat(aces));
     }
 
     private static async Task<string[]> ReadSecurityAsync(string path)
@@ -66,8 +86,10 @@ public sealed class NativeJet4CatalogSecurityTests
             .Where(row => Convert.ToInt64(row["ObjectId"], CultureInfo.InvariantCulture) == objectId)
             .Select(row => string.Concat(
                 "ACE:",
-                Convert.ToHexString(Assert.IsType<byte[]>(row["SID"])), ":",
-                Convert.ToInt64(row["ACM"], CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture), ":",
+                Convert.ToHexString(Assert.IsType<byte[]>(row["SID"])),
+                ":",
+                Convert.ToInt64(row["ACM"], CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture),
+                ":",
                 Convert.ToBoolean(row["FInheritable"], CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)))
             .Append("OWNER:" + owner)
             .OrderBy(entry => entry, StringComparer.Ordinal)

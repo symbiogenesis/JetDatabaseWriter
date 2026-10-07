@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.RoundTrip;
 
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -52,6 +53,23 @@ public sealed class DaoRelationshipDropTests
             await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_WriterChild", "WriterParent", "Id", "WriterChild", "ParentId") { EnforceReferentialIntegrity = false }, Ct);
         }
 
+        File.Copy(session.SourcePath, Path.Combine(session.WorkDir, "before-delete.accdb"));
+        AccessRoundTripEnvironment.CompactResult preflight = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            """
+            foreach ($name in @('DaoDtParent', 'DaoDtChild')) {
+                $tdf = $db.TableDefs($name)
+                Write-Output "TABLE=$name FIELDS=$($tdf.Fields.Count) INDEXES=$($tdf.Indexes.Count)"
+                $rs = $db.OpenRecordset($name, 2)
+                try { Write-Output "READ=$name OK" } finally { $rs.Close() }
+            }
+            """,
+            DaoTimeout);
+        Assert.True(preflight.ExitCode == 0, $"DAO pre-delete failed: {preflight.StdOut}\n{preflight.StdErr}");
+        Assert.Contains("TABLE=DaoDtParent FIELDS=1 INDEXES=1", preflight.StdOut, StringComparison.Ordinal);
+        Assert.Contains("TABLE=DaoDtChild FIELDS=2 INDEXES=1", preflight.StdOut, StringComparison.Ordinal);
+        Assert.Contains("READ=DaoDtParent OK", preflight.StdOut, StringComparison.Ordinal);
+        Assert.Contains("READ=DaoDtChild OK", preflight.StdOut, StringComparison.Ordinal);
         Assert.Equal(DropMarker + "DELETED", RunTableDefsDelete(session, parent));
         Assert.Equal(DropMarker + "DELETED", RunTableDefsDelete(session, child));
         await using AccessWriter writer2 = await session.OpenWriterAsync(Ct);

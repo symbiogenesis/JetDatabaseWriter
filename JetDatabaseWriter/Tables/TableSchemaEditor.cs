@@ -853,7 +853,7 @@ internal sealed class TableSchemaEditor(
     /// <exception cref="JetOperationException">The rewrite drops a field used by the table rule.</exception>
     private ColumnPropertyBlock? ProjectTableRuleReferences(string tableName, ColumnPropertyBlock? properties, IReadOnlyList<ColumnDefinition> existing, Func<string, string?> mapColumnName)
     {
-        string? expression = properties?.FindTableTarget()?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format);
+        string? expression = PersistedExpressionText.Normalize(properties?.FindTableTarget()?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format));
         if (expression is null)
         {
             return properties;
@@ -960,9 +960,9 @@ internal sealed class TableSchemaEditor(
             {
                 baseDef = baseDef with
                 {
-                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format)
+                    DefaultValueExpression = PersistedExpressionText.Normalize(target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format))
                         ?? baseDef.DefaultValueExpression,
-                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format)
+                    ValidationRuleExpression = PersistedExpressionText.Normalize(target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format))
                         ?? baseDef.ValidationRuleExpression,
                     ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format)
                         ?? baseDef.ValidationText,
@@ -1472,7 +1472,7 @@ internal sealed class TableSchemaEditor(
             def = def with
             {
                 IsCalculated = true,
-                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format),
+                CalculationExpression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format)),
                 CalculatedResultType = resultType,
                 IsCompressedUnicode = false,
             };

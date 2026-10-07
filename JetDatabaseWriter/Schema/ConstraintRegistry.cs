@@ -839,7 +839,7 @@ internal sealed class ConstraintRegistry(
     {
         ValidatePersistedConstraintProperties(tableName, properties);
         ColumnPropertyTarget? target = properties?.FindTableTarget();
-        string? expression = NullIfBlank(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties!.Format));
+        string? expression = NullIfBlank(PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties!.Format)));
         this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties!.Format));
     }
 
@@ -932,7 +932,8 @@ internal sealed class ConstraintRegistry(
             ColumnType calculatedResultType = ResolveCalculatedResultType(col, propertyTarget);
             ColumnType constraintType = calculatedResultType != default ? calculatedResultType : col.Type;
             JetFormat? propertyFormat = properties?.Format;
-            string? calculationExpression = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat!);
+            string? calculationExpression = PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat!));
+
 
             // Access gives AutoNumber, calculated and complex columns no default; a stray
             // DefaultValue property on one must not stop the column generating its value.
@@ -945,12 +946,13 @@ internal sealed class ConstraintRegistry(
                 IsNullable = isNullable,
                 IsAutoIncrement = isAutoIncrement,
                 DefaultValueExpression = takesDefault
-                    ? NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat!))
+                    ? NullIfBlank(PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat!)))
                     : null,
                 ValidationRuleExpression = isComplex
                     ? null
-                    : NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, propertyFormat!)),
+                    : NullIfBlank(PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, propertyFormat!))),
                 ValidationText = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, propertyFormat!),
+
                 IsCalculated = col.IsCalculated,
                 CalculationExpression = calculationExpression,
                 CalculatedResultType = calculatedResultType,
