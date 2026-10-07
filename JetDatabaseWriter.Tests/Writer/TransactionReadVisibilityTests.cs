@@ -325,7 +325,7 @@ public sealed class TransactionReadVisibilityTests
 
     [Theory]
     [MemberData(nameof(AllFormatsAndModes))]
-    public async Task DeleteAndUpdate_PastARowTheDecoderSkips_ChangeOnlyTheMatchingRows(DatabaseFormat format, WriteMode mode)
+    public async Task DeleteAndUpdate_UndecodableLiveRow_RefuseWithoutChangingFile(DatabaseFormat format, WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms, format, WriteMode.Direct))
@@ -338,7 +338,7 @@ public sealed class TransactionReadVisibilityTests
         }
 
         // Zero row 1's column count. The row stays live on its page, but no
-        // decoder can read it, so every snapshot of the table skips it.
+        // decoder can read it. Reads omit it; write-back snapshots must refuse it.
         await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, WriterOptions(WriteMode.Direct), cancellationToken: Ct))
         {
             CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", Ct);
@@ -352,16 +352,28 @@ public sealed class TransactionReadVisibilityTests
             await harness.Pager.WritePageAsync(first.PageNumber, page, Ct);
         }
 
+        byte[] baseline = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
             await RunAsync(writer, mode, async () =>
             {
-                Assert.Equal(1, await writer.DeleteRowsAsync("T", "Id", 3, Ct));
-                Assert.Equal(1, await writer.UpdateRowsAsync("T", "Id", 4, new Dictionary<string, object?> { ["Name"] = "u4" }, Ct));
+                JetCorruptDataException delete = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.DeleteRowsAsync("T", "Id", 3, Ct));
+                Assert.Equal(baseline, ms.ToArray());
+                JetCorruptDataException update = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.UpdateRowsAsync("T", "Id", 4, new Dictionary<string, object?> { ["Name"] = "u4" }, Ct));
+                Assert.Equal(baseline, ms.ToArray());
+                Assert.All(new[] { delete, update }, failure =>
+                {
+                    Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+                    Assert.Equal("T", failure.ErrorInfo.TableName);
+                    Assert.True(failure.ErrorInfo.PageNumber > 0);
+                });
             });
         }
 
-        Assert.Equal(["2|r2", "4|u4"], await ReadRowsAsync(ms, "T"));
+        Assert.Equal(baseline, ms.ToArray());
+        Assert.Equal(["2|r2", "3|r3", "4|r4"], await ReadRowsAsync(ms, "T"));
         if (format == DatabaseFormat.Jet3Mdb)
         {
             return;
@@ -371,8 +383,8 @@ public sealed class TransactionReadVisibilityTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, ReaderOptions, leaveOpen: true, cancellationToken: Ct);
         IndexMetadata primaryKey = Assert.Single(await reader.ListIndexesAsync("T", Ct), ix => ix.Kind == IndexKind.PrimaryKey);
         Assert.Equal(["2|r2"], await SeekAsync(reader, "T", primaryKey.Name, 2));
-        Assert.Empty(await SeekAsync(reader, "T", primaryKey.Name, 3));
-        Assert.Equal(["4|u4"], await SeekAsync(reader, "T", primaryKey.Name, 4));
+        Assert.Equal(["3|r3"], await SeekAsync(reader, "T", primaryKey.Name, 3));
+        Assert.Equal(["4|r4"], await SeekAsync(reader, "T", primaryKey.Name, 4));
     }
 
     private static AccessWriterOptions WriterOptions(WriteMode mode) => WriteModes.WriterOptions(mode);
@@ -388,8 +400,7 @@ public sealed class TransactionReadVisibilityTests
 
     /// <summary>
     /// Returns a database that has an <c>MSysRelationships</c> table: a
-    /// writer-created full-catalog ACCDB, or a copy of an Access-authored Jet4
-    /// <c>.mdb</c> (writer-created <c>.mdb</c> files have none).
+    /// writer-created ACCDB, or a copy of an Access-authored Jet4 <c>.mdb</c>.
     /// </summary>
     /// <param name="format">The database format.</param>
     private static async Task<MemoryStream> CreateRelationshipCapableDatabaseAsync(DatabaseFormat format)
