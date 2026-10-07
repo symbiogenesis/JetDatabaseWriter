@@ -33,12 +33,17 @@ public sealed class EntityEmitterIdentifierTests
             Column("Identity", typeof(Guid), isNullable: false),
             Column("Website", typeof(Hyperlink)),
         ];
-        var tables = names.Select(name => (name, (IReadOnlyList<ColumnMetadata>)columns)).ToArray();
+        (string, IReadOnlyList<ColumnMetadata>)[] tables = names.Select(name => (name, (IReadOnlyList<ColumnMetadata>)columns)).ToArray();
         Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables);
         Assert.Equal(names, names.Select(name => classNames[name]));
-        List<string> sources = [.. names.Select(name => EntityEmitter.Emit(name, name + " Table", columns,
+        List<string> sources = [.. names.Select(name => EntityEmitter.Emit(
+            name,
+            name + " Table",
+            columns,
             [new(IsCollection: true, TargetClassName: "Guid", PreferredName: "Children"), new(IsCollection: false, TargetClassName: "DateTime", PreferredName: "Parent")],
-            ns, useRecords, nullable: true))];
+            ns,
+            useRecords,
+            nullable: true))];
         Assembly assembly = ScaffoldCompilation.CompileCleanly(sources);
         Type entity = assembly.GetType(ns + ".Hyperlink", throwOnError: true)!;
         Assert.Equal(typeof(DateTime), entity.GetProperty("CreatedOn")!.PropertyType);
