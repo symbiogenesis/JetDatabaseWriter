@@ -23,15 +23,16 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 /// </summary>
 internal static class CalculatedExpressionNormalizer
 {
-    internal static string Normalize(string expression, out Dictionary<string, string> placeholderToColumn)
+    internal static string Normalize(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable)
     {
-        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn);
+        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn, out placeholderToTable);
         return AccessExpressionNormalizer.Normalize(prepared, expression);
     }
 
-    private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn)
+    private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable)
     {
         placeholderToColumn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        placeholderToTable = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string trimmed = expression.Trim();
         if (trimmed.StartsWith('='))
         {
@@ -77,21 +78,47 @@ internal static class CalculatedExpressionNormalizer
                     i++;
                 }
             }
-            else if (ch == '[')
+            else if (ch == '[' || char.IsLetter(ch) || ch == '_')
             {
-                int end = trimmed.IndexOf(']', i + 1);
-                if (end < 0)
+                int end = i;
+                string first = ReadReferenceSegment(trimmed, ref end, out bool bracketed);
+                string column = first;
+                string? table = null;
+                if (end < trimmed.Length && (trimmed[end] is '.' or '!'))
                 {
-                    builder.Append(ch);
-                    continue;
+                    table = first;
+                    end++;
+                    column = ReadReferenceSegment(trimmed, ref end, out _);
+                    if (end < trimmed.Length && (trimmed[end] is '.' or '!'))
+                    {
+                        throw new ArgumentException("Access object references with more than two segments cannot be evaluated in a row context.", nameof(expression));
+                    }
                 }
 
-                string columnName = trimmed.Substring(i + 1, end - i - 1);
-                string placeholder = PlaceholderPrefix + placeholderIndex.ToString(CultureInfo.InvariantCulture);
-                placeholderIndex++;
-                placeholderToColumn[placeholder] = columnName;
-                builder.Append(placeholder);
-                i = end;
+                if (table is null && !bracketed)
+                {
+                    builder.Append(first);
+                }
+                else
+                {
+                    string placeholder;
+                    do
+                    {
+                        placeholder = PlaceholderPrefix + placeholderIndex.ToString(CultureInfo.InvariantCulture);
+                        placeholderIndex++;
+                    }
+                    while (trimmed.IndexOf(placeholder, StringComparison.OrdinalIgnoreCase) >= 0);
+
+                    placeholderToColumn.Add(placeholder, column);
+                    if (table is not null)
+                    {
+                        placeholderToTable.Add(placeholder, table);
+                    }
+
+                    builder.Append(placeholder);
+                }
+
+                i = end - 1;
             }
             else if (ch == '#')
             {
@@ -115,6 +142,36 @@ internal static class CalculatedExpressionNormalizer
         }
 
         return builder.ToString();
+    }
+
+    private static string ReadReferenceSegment(string expression, ref int index, out bool bracketed)
+    {
+        bracketed = index < expression.Length && expression[index] == '[';
+        if (bracketed)
+        {
+            int start = ++index;
+            int end = expression.IndexOf(']', start);
+            if (end < 0 || end == start)
+            {
+                throw new ArgumentException("An expression contains an empty or unterminated field reference.", nameof(expression));
+            }
+
+            index = end + 1;
+            return expression.Substring(start, end - start);
+        }
+
+        if (index >= expression.Length || !(char.IsLetter(expression[index]) || expression[index] == '_'))
+        {
+            throw new ArgumentException("A qualified expression reference has no valid name after its separator.", nameof(expression));
+        }
+
+        int nameStart = index++;
+        while (index < expression.Length && (char.IsLetterOrDigit(expression[index]) || expression[index] == '_'))
+        {
+            index++;
+        }
+
+        return expression.Substring(nameStart, index - nameStart);
     }
 
     /// <summary>

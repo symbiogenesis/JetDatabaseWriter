@@ -385,7 +385,7 @@ internal sealed class ColumnValidationRule
                 expression = operand + " = (" + text + ")";
             }
 
-            return new TermNode(CalculatedExpressionPlan.Parse(expression));
+            return new TermNode(CalculatedExpressionPlan.Parse(expression, allowQualifiedReferences: false));
         }
 
         private int FindClose(int open)

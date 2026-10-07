@@ -514,6 +514,81 @@ public sealed class ScaffoldRunnerTests : IDisposable
         Assert.Empty(Directory.GetFiles(this.outputDir));
     }
 
+    [Theory]
+    [InlineData("System", "DateTime", typeof(DateTime), "DateTimeEntity")]
+    [InlineData("System", "Guid", typeof(Guid), "GuidEntity")]
+    [InlineData("System", "ComponentModel", typeof(int), "ComponentModelEntity")]
+    [InlineData("JetDatabaseWriter.Models", "Hyperlink", typeof(Hyperlink), "HyperlinkEntity")]
+    [InlineData("System.ComponentModel.DataAnnotations.Schema", "ColumnAttribute", typeof(int), "ColumnAttributeEntity")]
+    [InlineData("System.ComponentModel.DataAnnotations.Schema", "TableAttribute", typeof(int), "TableAttributeEntity")]
+    public async Task RunAsync_ExactFrameworkTypeIdentity_AllocatesSafeEntityName(string ns, string table, Type columnType, string expectedName)
+    {
+        ArgumentNullException.ThrowIfNull(columnType);
+        await using var reader = new FakeAccessReader(
+            tables: [table], columnsByTable: new() { [table] = [Col("Value", columnType)] });
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+        Assert.Equal(1, await runner.RunAsync(this.outputDir, ns, useRecords: false, nullable: true, TestContext.Current.CancellationToken));
+        Assert.Empty(stderr.ToString());
+        string source = await File.ReadAllTextAsync(Path.Combine(this.outputDir, expectedName + ".cs"), TestContext.Current.CancellationToken);
+        Type entity = ScaffoldCompilation.CompileCleanly(source).GetType(ns + "." + expectedName, throwOnError: true)!;
+        Assert.Equal(table, entity.GetCustomAttribute<TableAttribute>()!.Name);
+        Assert.Equal(columnType.IsValueType ? typeof(Nullable<>).MakeGenericType(columnType) : columnType, entity.GetProperty("Value")!.PropertyType);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_ExactTypeCollisionAndExistingSuffix_NavigationsUseAllocatedNames(bool useRecords)
+    {
+        await using var reader = new FakeAccessReader(
+            tables: ["DateTime", "DateTimeEntity", "Guid"],
+            columnsByTable: new()
+            {
+                ["DateTime"] = [Col("Id", typeof(int)), Col("Created", typeof(DateTime))],
+                ["DateTimeEntity"] = [Col("Id", typeof(int))],
+                ["Guid"] = [Col("Id", typeof(int)), Col("DateTimeId", typeof(int)), Col("Identity", typeof(Guid))],
+            },
+            relationships: [new RelationshipMetadata { Name = "DatesGuid", PrimaryTable = "DateTime", PrimaryColumns = ["Id"], ForeignTable = "Guid", ForeignColumns = ["DateTimeId"] }]);
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+        Assert.Equal(3, await runner.RunAsync(this.outputDir, "System", useRecords, nullable: true, TestContext.Current.CancellationToken));
+        List<string> sources = [];
+        foreach (string file in Directory.GetFiles(this.outputDir, "*.cs"))
+        {
+            sources.Add(await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken));
+        }
+
+        Assembly assembly = ScaffoldCompilation.CompileCleanly(sources);
+        Type parent = assembly.GetType("System.DateTimeEntity2", throwOnError: true)!;
+        Type child = assembly.GetType("System.GuidEntity", throwOnError: true)!;
+        Assert.Equal(typeof(DateTime?), parent.GetProperty("Created")!.PropertyType);
+        Assert.Contains(child.GetProperties(), property => property.PropertyType == parent);
+        Assert.Contains(parent.GetProperties(), property => property.PropertyType == typeof(ICollection<>).MakeGenericType(child));
+        Assert.NotNull(assembly.GetType("System.DateTimeEntity", throwOnError: true));
+    }
+
+    [Theory]
+    [InlineData("System.DateTime", typeof(DateTime))]
+    [InlineData("System.Guid.Models", typeof(Guid))]
+    [InlineData("JetDatabaseWriter.Models.Hyperlink", typeof(Hyperlink))]
+    [InlineData("System.ComponentModel.DataAnnotations.Schema.ColumnAttribute.Models", typeof(int))]
+    public async Task RunAsync_NamespaceHidesExactRequiredType_RefusesBeforeCreatingOutput(string ns, Type columnType)
+    {
+        ArgumentNullException.ThrowIfNull(columnType);
+        string nested = Path.Combine(this.outputDir, "Refused");
+        await using var reader = new FakeAccessReader(
+            tables: ["Orders"], columnsByTable: new() { ["Orders"] = [Col("Value", columnType)] });
+        await using var stdout = new StringWriter();
+        await using var stderr = new StringWriter();
+        var runner = new ScaffoldRunner(reader, stdout, stderr);
+        Assert.Equal(-1, await runner.RunAsync(nested, ns, useRecords: false, nullable: true, TestContext.Current.CancellationToken));
+        Assert.Contains("conflicts with required type", stderr.ToString(), StringComparison.Ordinal);
+        Assert.False(Directory.Exists(nested));
+    }
+
     /// <summary>Framework-shaped namespace segments compile through global type references.</summary>
     /// <param name="ns">The namespace.</param>
     /// <param name="columnType">The type of the table's one column besides the key.</param>

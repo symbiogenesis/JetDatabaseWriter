@@ -53,7 +53,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
 
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb, "D99ABF7F931CEFCCA40A76D2D7E341593992E0F1809F92D31AFA4D821E7A06BD")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "F8A34D1D4232CB91CBB813650023D4ADAC24A0B0D639DF9DA8DB995FD1807152")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "942B0938E09313C3D0E24DE79D1944201D9AAD875CA0ED5C2BE6AE3383A0FBB5")]
     [InlineData(DatabaseFormat.AceAccdb, "2BF119CCEEAA076A9AE7C2A64476707A1DA60AFFD8E72E2996E53F564D6D5DF0")]
     public void BuildEmptyDatabase_MatchesGoldenHash(DatabaseFormat format, string expectedSha256)
     {

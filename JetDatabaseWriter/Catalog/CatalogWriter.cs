@@ -284,7 +284,7 @@ internal sealed class CatalogWriter(
     /// <exception cref="JetCorruptDataException">The native database security owner is missing or malformed.</exception>
     private ValueTask<byte[]> ReadDatabaseOwnerAsync(CancellationToken cancellationToken) => this.ReadCatalogSecurityObjectAsync("MSysDb", Constants.SystemObjects.DatabaseObjectId, 2, cancellationToken);
 
-    /// <summary>Validates one uniquely named native catalog security object.</summary>
+    /// <summary>Validates a native catalog security object unique by name and identifier.</summary>
     /// <param name="objectName">The required object name.</param>
     /// <param name="objectId">The required object identifier.</param>
     /// <param name="objectType">The required catalog type.</param>
@@ -311,8 +311,14 @@ internal sealed class CatalogWriter(
             {
                 RowLocation location = row.Location;
                 string name = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, nameColumn);
+                bool validId = CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, idColumn), out int id);
                 if (!string.Equals(name, objectName, StringComparison.OrdinalIgnoreCase))
                 {
+                    if (validId && id == objectId)
+                    {
+                        throw new JetCorruptDataException($"MSysObjects contains another object sharing the {objectName} security identifier.");
+                    }
+
                     return new ValueTask<bool>(true);
                 }
 
@@ -321,8 +327,7 @@ internal sealed class CatalogWriter(
                     throw new JetCorruptDataException($"MSysObjects contains duplicate {objectName} security objects.");
                 }
 
-                if (!CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, idColumn), out int id)
-                    || id != objectId
+                if (!validId || id != objectId
                     || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, typeColumn), out int type) || type != objectType)
                 {
                     throw new JetCorruptDataException($"{objectName} has an invalid security object identity.");

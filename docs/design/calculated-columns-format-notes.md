@@ -12,6 +12,21 @@ files we translate from:
 - The whole `com.healthmarketscience.jackcess.impl.expr` package — the
   expression lexer/parser/evaluator (Phase 2/3).
 
+## Qualified expression references
+
+Native DAO120 accepts `[T].[Price]`, `T.Price` and `[T]![Price]` in an ACE
+calculated field. A DAO-created field using each spelling evaluates Price 4
+to 8 for multiplication by 2. The same engine rejects these spellings when
+assigned to table validation rules, field validation rules or defaults.
+
+Calculated plans retain the table qualifier separately from the column name
+and resolve it only against an explicit, matching current-table context.
+Cross-table and multi-segment object references are refused; no embedded code
+is executed. Defaults and validation rules reject qualified references before
+mutation, including setting a rule on an empty table. Column renames preserve
+the qualifier and rewrite the matching field dependency. Table renames and
+whitespace around qualification separators still need separate native evidence.
+
 ## On-disk format
 
 Calculated columns are an ACCDB-only (ACE) feature. The Jet3 MDB

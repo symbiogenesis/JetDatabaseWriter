@@ -77,7 +77,7 @@ public sealed class ScaffoldNamesTests
             new() { Name = "Build", ClrType = typeof(Version), IsNullable = true, TypeName = "Text", Size = ColumnSize.FromBytes(4) },
         ];
 
-        Dictionary<string, string> names = ScaffoldNames.AllocateClassNames([("Releases", columns), ("Version", [])]);
+        Dictionary<string, string> names = ScaffoldNames.AllocateClassNames([("Releases", columns), ("Version", [])], "NS");
 
         Assert.Equal("Version", names["Version"]);
         Assert.Equal("Releases", names["Releases"]);
@@ -114,5 +114,5 @@ public sealed class ScaffoldNamesTests
         Assert.False(ScaffoldNames.IsValidNamespace(ns));
 
     private static Dictionary<string, string> Allocate(params string[] tables) =>
-        ScaffoldNames.AllocateClassNames([.. tables.Select(table => (table, (IReadOnlyList<ColumnMetadata>)[]))]);
+        ScaffoldNames.AllocateClassNames([.. tables.Select(table => (table, (IReadOnlyList<ColumnMetadata>)[]))], "NS");
 }

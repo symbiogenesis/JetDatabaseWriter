@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -172,6 +173,68 @@ public sealed class NativeJet4CatalogSecurityTests
             else
             {
                 await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync(
+                    "Rejected", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken));
+            }
+        }
+
+        Assert.Equal(before, stream.ToArray());
+    }
+
+    [Theory]
+    [InlineData(268435456, false)]
+    [InlineData(251658241, false)]
+    [InlineData(3, false)]
+    [InlineData(251658243, true)]
+    public async Task AliasedSecurityObjectId_DirectDdl_LeavesOriginalImage(int reservedId, bool relationship)
+    {
+        await using var stream = new MemoryStream(await File.ReadAllBytesAsync(
+            Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"),
+            TestContext.Current.CancellationToken));
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(
+            stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(2, "MSysObjects", TestContext.Current.CancellationToken);
+            ColumnInfo nameColumn = Assert.IsType<ColumnInfo>(definition.FindColumn("Name"));
+            ColumnInfo idColumn = Assert.IsType<ColumnInfo>(definition.FindColumn("Id"));
+            var changed = new Dictionary<long, byte[]>();
+            await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
+                2,
+                (row, _) =>
+                {
+                    RowLocation location = row.Location;
+                    if (ScalarColumnReader.DecodeSimpleColumnValue(harness.Database.Format, row.Page, location.RowStart, location.RowSize, nameColumn) != "Added")
+                    {
+                        return new ValueTask<bool>(true);
+                    }
+
+                    Assert.True(RowDecodePlan.TryParseRowLayout(harness.Database.Format.RowFields, row.Page, location.RowStart, location.RowSize, hasVarColumns: true, out RowLayout layout));
+                    JetDatabaseWriter.ValueDecoding.Models.ColumnSlice idSlice = RowDecodePlan.ResolveColumnSlice(harness.Database.Format.RowFields, row.Page, location.RowStart, location.RowSize, layout, idColumn);
+                    Assert.Equal(4, idSlice.DataLen);
+                    byte[] bytes = row.Page.AsSpan(0, harness.Database.Format.PageSize).ToArray();
+                    BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(location.RowStart + idSlice.DataStart, idSlice.DataLen), reservedId);
+                    changed.Add(location.PageNumber, bytes);
+                    return new ValueTask<bool>(false);
+                },
+                TestContext.Current.CancellationToken);
+            KeyValuePair<long, byte[]> mutation = Assert.Single(changed);
+            await harness.Pager.WritePageAsync(mutation.Key, mutation.Value, TestContext.Current.CancellationToken);
+        }
+
+        byte[] before = stream.ToArray();
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions("Native123") { UseLockFile = false, UseTransactionalWrites = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken))
+        {
+            if (relationship)
+            {
+                await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.CreateRelationshipAsync(
+                    new RelationshipDefinition("Rejected", "T", "Id", "Added", "Id"), TestContext.Current.CancellationToken));
+            }
+            else
+            {
+                await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.CreateTableAsync(
                     "Rejected", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken));
             }
         }

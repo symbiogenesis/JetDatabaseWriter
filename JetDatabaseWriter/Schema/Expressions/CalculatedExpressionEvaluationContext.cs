@@ -99,6 +99,12 @@ internal sealed class CalculatedExpressionEvaluationContext
 
     public object GetNameValue(string name, CalculatedExpressionPlan plan)
     {
+        if (plan.PlaceholderToTable.TryGetValue(name, out string? qualifier)
+            && (this.tableName is null || !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new NotSupportedException($"Expression reference to table '{qualifier}' cannot be evaluated in the current row context.");
+        }
+
         if (plan.PlaceholderToColumn.TryGetValue(name, out string? columnName))
         {
             name = columnName;

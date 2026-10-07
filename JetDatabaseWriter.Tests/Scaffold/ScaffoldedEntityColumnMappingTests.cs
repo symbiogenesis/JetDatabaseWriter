@@ -144,7 +144,7 @@ public sealed class ScaffoldedEntityColumnMappingTests
             }
         }
 
-        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables);
+        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables, "Generated");
         Assert.Equal("ColumnAttribute", classNames["Column Attribute"]);
         Assert.Equal("DateTime", classNames["DateTime"]);
 

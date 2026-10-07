@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Scaffold;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Interfaces;
@@ -31,7 +32,7 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
     /// The number of models generated, or -1 when <paramref name="ns"/> is not a valid C#
-    /// namespace.
+    /// namespace or replaces a required type with a namespace.
     /// </returns>
     public async Task<int> RunAsync(
         string outputDir,
@@ -79,8 +80,16 @@ internal sealed class ScaffoldRunner(IAccessReader reader, TextWriter output, Te
             }
         }
 
+        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(scaffolded, ns);
+        bool includeCollections = NavigationResolver.Resolve(classNames, relationships).Values.Any(navigations => navigations.Any(navigation => navigation.IsCollection));
+        if (ScaffoldNames.FindNamespaceTypeIdentityCollision(ns, scaffolded, includeCollections) is { } requiredType)
+        {
+            await error.WriteLineAsync($"Error: namespace '{ns}' conflicts with required type '{requiredType}'. Choose a namespace with a different fully qualified identity.");
+            return -1;
+        }
+
         Directory.CreateDirectory(outputDir);
-        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(scaffolded);
+        classNames = ScaffoldNames.AllocateClassNames(scaffolded, ns, includeCollections);
         Dictionary<string, List<ScaffoldNavigation>> navigationsByTable = NavigationResolver.Resolve(classNames, relationships);
 
         int generated = 0;

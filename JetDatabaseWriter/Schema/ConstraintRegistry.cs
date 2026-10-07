@@ -790,7 +790,12 @@ internal sealed class ConstraintRegistry(
     {
         try
         {
-            rule.Plan ??= CalculatedExpressionPlan.Parse(rule.Expression);
+            rule.Plan ??= CalculatedExpressionPlan.Parse(rule.Expression, allowQualifiedReferences: false);
+            if (rule.Plan.PlaceholderToTable.Count != 0)
+            {
+                throw new NotSupportedException("Access table rules do not accept table-qualified field references.");
+            }
+
             var context = new CalculatedExpressionEvaluationContext(tableDef, columns, values, force: false, tableName, textCollation);
             object result = rule.Plan.Root.Evaluate(context, rule.Plan);
             if (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result))

@@ -25,7 +25,7 @@ internal static class NavigationResolver
         IReadOnlyList<string> tables,
         IReadOnlyList<RelationshipMetadata> relationships)
         => Resolve(
-            ScaffoldNames.AllocateClassNames([.. tables.Select(table => (table, (IReadOnlyList<ColumnMetadata>)[]))]),
+            ScaffoldNames.AllocateClassNames([.. tables.Select(table => (table, (IReadOnlyList<ColumnMetadata>)[]))], string.Empty),
             relationships);
 
     /// <summary>

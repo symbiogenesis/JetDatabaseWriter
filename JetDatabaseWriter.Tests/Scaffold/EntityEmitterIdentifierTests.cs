@@ -34,7 +34,7 @@ public sealed class EntityEmitterIdentifierTests
             Column("Website", typeof(Hyperlink)),
         ];
         (string, IReadOnlyList<ColumnMetadata>)[] tables = names.Select(name => (name, (IReadOnlyList<ColumnMetadata>)columns)).ToArray();
-        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables);
+        Dictionary<string, string> classNames = ScaffoldNames.AllocateClassNames(tables, ns);
         Assert.Equal(names, names.Select(name => classNames[name]));
         List<string> sources = [.. names.Select(name => EntityEmitter.Emit(
             name,
