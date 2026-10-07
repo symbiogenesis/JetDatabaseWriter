@@ -570,10 +570,10 @@ public sealed class ConstraintRegistryTests
         var builder = new ColumnPropertyBlockBuilder();
         foreach ((string column, string name, string value) in properties)
         {
-            builder.GetOrAddTarget(column).AddText(name, value, DatabaseFormat.AceAccdb);
+            builder.GetOrAddTarget(column).AddText(name, value, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         }
 
-        return ColumnPropertyBlock.Parse(builder.ToBytes(DatabaseFormat.AceAccdb), DatabaseFormat.AceAccdb)!;
+        return ColumnPropertyBlock.Parse(builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb)), JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb))!;
     }
 
     private static ColumnPropertyBlock BuildCalculatedColumnProperties(
@@ -583,9 +583,9 @@ public sealed class ConstraintRegistryTests
     {
         var builder = new ColumnPropertyBlockBuilder();
         ColumnPropertyTargetBuilder target = builder.GetOrAddTarget(columnName);
-        target.AddMemoText(Constants.ColumnPropertyNames.Expression, expression, DatabaseFormat.AceAccdb);
+        target.AddMemoText(Constants.ColumnPropertyNames.Expression, expression, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         target.AddByte(Constants.ColumnPropertyNames.ResultType, (byte)resultType);
 
-        return ColumnPropertyBlock.Parse(builder.ToBytes(DatabaseFormat.AceAccdb), DatabaseFormat.AceAccdb)!;
+        return ColumnPropertyBlock.Parse(builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb)), JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb))!;
     }
 }

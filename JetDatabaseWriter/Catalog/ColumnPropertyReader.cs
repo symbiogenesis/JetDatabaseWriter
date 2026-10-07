@@ -73,7 +73,7 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
         {
             if (row[idxId] is int id && id == tdefPage)
             {
-                return ColumnPropertyBlock.Parse(row[idxLvProp] as byte[], format.Kind);
+                return ColumnPropertyBlock.Parse(row[idxLvProp] as byte[], format);
             }
         }
 

@@ -61,7 +61,7 @@ public sealed class TableSchemaResolutionTests
         Assert.Equal(default, TableSchema.CreateDefinition(image, null).Columns[0].CalculatedResultType);
         var builder = new ColumnPropertyBlockBuilder();
         builder.GetOrAddTarget("C").AddByte(Constants.ColumnPropertyNames.ResultType, (byte)resultType);
-        var properties = ColumnPropertyBlock.Parse(builder.ToBytes(DatabaseFormat.AceAccdb), DatabaseFormat.AceAccdb);
+        var properties = ColumnPropertyBlock.Parse(builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb)), JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         TableDef definition = TableSchema.CreateDefinition(image, properties);
         Assert.Equal(resultType, definition.Columns[0].CalculatedResultType);
         Assert.Equal(JetTypeInfo.ResolveClrType(definition.Columns[0]), definition.ClrTypes[0]);

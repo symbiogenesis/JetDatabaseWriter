@@ -9,23 +9,23 @@ using Xunit;
 public class ColumnPropertyBlockTests
 {
     [Fact]
-    public void Parse_NullBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse(null, DatabaseFormat.Jet4Mdb));
+    public void Parse_NullBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse(null, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
 
     [Fact]
-    public void Parse_EmptyBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse([], DatabaseFormat.Jet4Mdb));
+    public void Parse_EmptyBlob_Returns_Null() => Assert.Null(ColumnPropertyBlock.Parse([], JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
 
     [Fact]
     public void Parse_UnknownMagic_Returns_Null()
     {
         byte[] blob = [(byte)'X', (byte)'X', (byte)'X', 0x00];
-        Assert.Null(ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb));
+        Assert.Null(ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     [Fact]
     public void Parse_MagicOnly_Returns_Empty()
     {
         byte[] blob = [(byte)'M', (byte)'R', (byte)'2', 0x00];
-        var block = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
+        var block = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
 
         Assert.NotNull(block);
         Assert.Empty(block.Targets);
@@ -41,7 +41,7 @@ public class ColumnPropertyBlockTests
 
         byte[] blob = BuildBlob(true, names, blocks);
 
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
+        var parsed = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
 
         Assert.NotNull(parsed);
 
@@ -51,7 +51,7 @@ public class ColumnPropertyBlockTests
         ColumnPropertyEntry entry = Assert.Single(target.Entries);
         Assert.Equal(Constants.ColumnPropertyNames.DefaultValue, entry.Name);
         Assert.Equal(ColumnType.TextType, entry.DataType);
-        Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
+        Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     [Fact]
@@ -69,15 +69,15 @@ public class ColumnPropertyBlockTests
 
         byte[] blob = BuildBlob(true, names, blocks);
 
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
+        var parsed = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
 
         Assert.NotNull(parsed);
         ColumnPropertyTarget? target = parsed.FindTarget("Score");
         Assert.NotNull(target);
-        Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, DatabaseFormat.Jet4Mdb));
-        Assert.Equal(">=0 And <=100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, DatabaseFormat.Jet4Mdb));
-        Assert.Equal("Score must be 0-100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, DatabaseFormat.Jet4Mdb));
-        Assert.Equal("Test score (0-100)", target.GetTextValue(Constants.ColumnPropertyNames.Description, DatabaseFormat.Jet4Mdb));
+        Assert.Equal("0", target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal(">=0 And <=100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal("Score must be 0-100", target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal("Test score (0-100)", target.GetTextValue(Constants.ColumnPropertyNames.Description, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     [Fact]
@@ -94,12 +94,12 @@ public class ColumnPropertyBlockTests
 
         byte[] blob = BuildBlob(true, names, blocks);
 
-        var parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb);
+        var parsed = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
 
         Assert.NotNull(parsed);
         Assert.Equal(2, parsed!.Targets.Count);
-        Assert.Equal("Customer orders", parsed.FindTarget("Orders")!.GetTextValue("Description", DatabaseFormat.Jet4Mdb));
-        Assert.Equal("Primary key", parsed.FindTarget("OrderId")!.GetTextValue("Description", DatabaseFormat.Jet4Mdb));
+        Assert.Equal("Customer orders", parsed.FindTarget("Orders")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal("Primary key", parsed.FindTarget("OrderId")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class ColumnPropertyBlockTests
 
         byte[] blob = BuildBlob(true, names, blocks);
 
-        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb))!;
         Assert.NotNull(parsed.FindTarget("foo"));
         Assert.NotNull(parsed.FindTarget("FOO"));
         Assert.Null(parsed.FindTarget("bar"));
@@ -132,14 +132,14 @@ public class ColumnPropertyBlockTests
         SyntheticEntry[] entries = [new SyntheticEntry(0, ColumnType.TextType, 0x00, Encoding.Unicode.GetBytes("ok"))];
         WriteChunk(ms, 0x0000, BuildPropertyBlockPayload("X", entries));
 
-        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(ms.ToArray(), DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(ms.ToArray(), JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb))!;
 
         ColumnPropertyUnknownChunk chunk = Assert.Single(parsed.UnknownChunks);
         Assert.Equal((ushort)0xABCD, chunk.ChunkType);
         Assert.Equal(unknownPayload, chunk.Payload);
 
         Assert.Single(parsed.Targets);
-        Assert.Equal("ok", parsed.FindTarget("X")!.GetTextValue("Description", DatabaseFormat.Jet4Mdb));
+        Assert.Equal("ok", parsed.FindTarget("X")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     [Fact]
@@ -151,7 +151,7 @@ public class ColumnPropertyBlockTests
         WriteUInt32(ms, 0xFFFFFFFFu);
         WriteUInt16(ms, 0x0080);
 
-        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(ms.ToArray(), DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(ms.ToArray(), JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb))!;
 
         Assert.Empty(parsed.Targets);
         Assert.Empty(parsed.UnknownChunks);
@@ -166,7 +166,7 @@ public class ColumnPropertyBlockTests
 
         byte[] blob = BuildBlob(true, names, blocks);
 
-        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb))!;
         ColumnPropertyTarget target = parsed.FindTarget("X")!;
         Assert.Empty(target.Entries);
     }
@@ -187,11 +187,11 @@ public class ColumnPropertyBlockTests
 
         byte[] blob = BuildBlob(true, names, blocks);
 
-        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, DatabaseFormat.Jet4Mdb)!;
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(blob, JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb))!;
         Assert.Equal(3, parsed.Targets.Count);
-        Assert.Equal("a", parsed.FindTarget("A")!.GetTextValue("Description", DatabaseFormat.Jet4Mdb));
-        Assert.Equal("b", parsed.FindTarget("B")!.GetTextValue("Description", DatabaseFormat.Jet4Mdb));
-        Assert.Equal("c", parsed.FindTarget("C")!.GetTextValue("Description", DatabaseFormat.Jet4Mdb));
+        Assert.Equal("a", parsed.FindTarget("A")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal("b", parsed.FindTarget("B")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+        Assert.Equal("c", parsed.FindTarget("C")!.GetTextValue("Description", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
     }
 
     private static byte[] BuildBlob(bool magicMr2, string[] namePool, SyntheticBlock[] propertyBlocks)

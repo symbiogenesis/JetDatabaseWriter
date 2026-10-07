@@ -12,8 +12,12 @@ using System.Collections.Generic;
 /// <param name="Name">The name.</param>
 /// <param name="KeyColumns">The key columns.</param>
 /// <param name="RootPage">The root index B-tree page.</param>
+/// <param name="IsUnique">Whether non-Null keys must be unique.</param>
+/// <param name="IsRequired">Whether all key columns require values.</param>
 internal readonly record struct UniqueIndexDescriptor(
     int RealIdxNum,
     string Name,
     IReadOnlyList<KeyColumnInfo> KeyColumns,
-    long RootPage);
+    long RootPage,
+    bool IsUnique,
+    bool IsRequired);

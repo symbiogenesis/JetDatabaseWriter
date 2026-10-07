@@ -33,6 +33,8 @@ internal sealed class ProbeDatabase : IAsyncDisposable
         this.services = services;
     }
 
+    internal JetFormat Format => this.db.Format;
+
     public DatabaseFormat DatabaseFormat => this.db.Format.Kind;
 
     public int PageSize => this.db.Format.PageSize;

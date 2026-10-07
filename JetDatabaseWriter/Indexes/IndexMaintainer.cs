@@ -653,8 +653,16 @@ internal sealed class IndexMaintainer(
 
                 List<IndexEntry> entries = new(rows.Count);
                 object?[] cells = new object?[keyColInfos.Count];
+                byte[]? allowedNullKey = !rie.IsRequired && !catalog.Catalog.PkRealIdxNums.Contains(rieKey)
+                    ? this.EncodeCompositeKey(keyColInfos, cells)
+                    : null;
                 foreach ((RowLocation location, object[] values) in rows)
                 {
+                    if (rie.IgnoreNulls && IndexHelpers.CountNullKeyColumns(keyColInfos, values) == keyColInfos.Count)
+                    {
+                        continue;
+                    }
+
                     for (int k = 0; k < keyColInfos.Count; k++)
                     {
                         object cell = values[keyColInfos[k].SnapIdx];
@@ -675,7 +683,8 @@ internal sealed class IndexMaintainer(
                 {
                     for (int e = 1; e < entries.Count; e++)
                     {
-                        if (IndexHelpers.CompareKeyBytes(entries[e - 1].Key, entries[e].Key) == 0)
+                        if (IndexHelpers.CompareKeyBytes(entries[e - 1].Key, entries[e].Key) == 0
+                            && (allowedNullKey is null || IndexHelpers.CompareKeyBytes(entries[e].Key, allowedNullKey) != 0))
                         {
                             throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key detected after row mutation. The duplicate row has been written but the index B-tree was not rebuilt; remove one of the offending rows and retry the operation.", errorInfo: new JetErrorInfo { TableName = tableName, IndexName = catalog.Catalog.GetNameOrFallback(rieKey) });
                         }
@@ -1390,11 +1399,11 @@ internal sealed class IndexMaintainer(
 
             // Encode the change-set keys for this index. Used by both the
             // single-leaf splice and the multi-level rebuild path below.
-            List<IndexEntry> addEntries = this.EncodeHintEntries(insertedRows, keyColInfos);
-            if (addCount > 0 && addEntries.Count != addCount)
+            List<IndexEntry>? addEntries = this.EncodeHintEntries(insertedRows, keyColInfos, rie.IgnoreNulls);
+            if (addEntries is null)
             {
                 // Encoder rejected at least one row; bail to bulk.
-                this.LastIncrementalBail = $"C4 addEntries.Count={addEntries.Count} addCount={addCount}";
+                this.LastIncrementalBail = "C4 key encoding failed";
                 return false;
             }
 
@@ -1403,8 +1412,8 @@ internal sealed class IndexMaintainer(
             // key from the live leaf entry); the surgical multi-level path
             // needs the keys to perform a path-capturing descent that
             // confirms every change targets the same leaf.
-            List<IndexEntry> removeEntries = this.EncodeHintEntries(deletedRows, keyColInfos);
-            if (delCount > 0 && removeEntries.Count != delCount)
+            List<IndexEntry>? removeEntries = this.EncodeHintEntries(deletedRows, keyColInfos, rie.IgnoreNulls);
+            if (removeEntries is null)
             {
                 this.LastIncrementalBail = "C5";
                 return false;
@@ -1716,15 +1725,16 @@ internal sealed class IndexMaintainer(
     /// <summary>
     /// Encodes the (composite-key, page, row) tuples for the rows in
     /// <paramref name="rows"/> against the supplied key column descriptors.
-    /// Returns a partially-filled list when an encoder throws — the caller
-    /// detects this by comparing <c>Count</c> to the input count and bailing
-    /// to the bulk-rebuild path.
+    /// Returns null when an encoder refuses a row so the caller can rebuild.
+    /// All-Null keys are omitted when the index ignores them.
     /// </summary>
     /// <param name="rows">The row collection.</param>
     /// <param name="keyColInfos">The key col infos.</param>
-    private List<IndexEntry> EncodeHintEntries(
+    /// <param name="ignoreNulls">Whether all-Null keys are omitted.</param>
+    private List<IndexEntry>? EncodeHintEntries(
         List<(RowLocation Loc, object[] Row)>? rows,
-        List<KeyColumnInfo> keyColInfos)
+        List<KeyColumnInfo> keyColInfos,
+        bool ignoreNulls)
     {
         var results = new List<IndexEntry>(rows?.Count ?? 0);
         if (rows == null || rows.Count == 0)
@@ -1734,10 +1744,15 @@ internal sealed class IndexMaintainer(
 
         foreach ((RowLocation loc, object[] row) in rows)
         {
+            if (ignoreNulls && IndexHelpers.CountNullKeyColumns(keyColInfos, row) == keyColInfos.Count)
+            {
+                continue;
+            }
+
             byte[]? composite = this.TryEncodeCompositeKey(keyColInfos, row);
             if (composite is null)
             {
-                return results;
+                return null;
             }
 
             results.Add(new IndexEntry(composite, loc.PageNumber, (byte)loc.RowIndex));
@@ -1848,6 +1863,11 @@ internal sealed class IndexMaintainer(
             {
                 this.LastIncrementalBail = $"S3 ri={ri} resolveFailed";
                 return false;
+            }
+
+            if (rie.IgnoreNulls && IndexHelpers.CountNullKeyColumns(keyColInfos, newRowValues) == keyColInfos.Count)
+            {
+                continue;
             }
 
             // Encode the composite key for the new row.

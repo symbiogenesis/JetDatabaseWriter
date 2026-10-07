@@ -435,7 +435,7 @@ internal static class LinkedTableManager
             LinkedOdbcLvPropBuilder.ValidateSourceColumns(sourceColumns, nameof(sourceColumns));
         }
 
-        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, format.Kind);
+        byte[] lvProp = cachedSchemaLvProp ?? LinkedOdbcLvPropBuilder.Build(foreignTableName, sourceColumns, format);
 
         await catalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan(
@@ -504,7 +504,7 @@ internal static class LinkedTableManager
     /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
     /// <returns>A private copy of the validated payload.</returns>
     /// <exception cref="ArgumentException">Thrown when the payload is empty, the default placeholder, or not a property block for <paramref name="format"/>.</exception>
-    internal static byte[] CopyValidatedCachedSchemaLvProp(DatabaseFormat format, ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
+    internal static byte[] CopyValidatedCachedSchemaLvProp(JetFormat format, ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
     {
         if (cachedSchemaLvProp.IsEmpty)
         {
@@ -517,7 +517,7 @@ internal static class LinkedTableManager
             throw new ArgumentException("Cached schema LvProp cannot be the default placeholder.", paramName);
         }
 
-        uint expectedMagic = JetFormat.PropertyBlockMagicOf(format);
+        uint expectedMagic = JetFormat.PropertyBlockMagicOf(format.Kind);
         if (copy.Length < sizeof(uint) || JetTypeInfo.Ru32(copy, 0) != expectedMagic)
         {
             throw new ArgumentException("Cached schema LvProp must use the property-block magic for this database format.", paramName);

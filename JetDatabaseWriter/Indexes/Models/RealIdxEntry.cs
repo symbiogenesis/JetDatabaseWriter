@@ -13,7 +13,11 @@ using System.Collections.Generic;
 /// <param name="IndexKeyColumns">Decoded key-column map for this real index.</param>
 /// <param name="FirstDpOffset">Byte offset of the <c>first_dp</c> field in the logical TDEF buffer (the whole page chain stitched together; on a wide table it lies past the first page, so write it back through <see cref="Schema.TDefWriter.WriteChainInPlaceAsync"/> or <see cref="Schema.TDefWriter.WriteInt32Async"/>).</param>
 /// <param name="IsUnique">Whether the real index enforces uniqueness.</param>
+/// <param name="IgnoreNulls">Whether all-Null keys are omitted.</param>
+/// <param name="IsRequired">Whether every key column requires a value.</param>
 internal readonly record struct RealIdxEntry(
     IReadOnlyList<KeyColumn> IndexKeyColumns,
     int FirstDpOffset,
-    bool IsUnique);
+    bool IsUnique,
+    bool IgnoreNulls,
+    bool IsRequired);

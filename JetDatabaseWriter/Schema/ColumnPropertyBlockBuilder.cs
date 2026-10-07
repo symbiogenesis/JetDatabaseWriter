@@ -14,14 +14,14 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Mirrors the on-disk layout consumed by <see cref="ColumnPropertyBlock.Parse(byte[], DatabaseFormat)"/>;
+/// Mirrors the on-disk layout consumed by <see cref="ColumnPropertyBlock.Parse(byte[], JetFormat)"/>;
 /// see <see href="docs/design/persisted-column-properties-format-notes.md" /> §2 for the
 /// authoritative byte layout.
 /// </para>
 /// <para>
 /// Round-trip guarantee: an unmodified blob parsed via
-/// <see cref="ColumnPropertyBlock.Parse(byte[], DatabaseFormat)"/> and re-serialized via
-/// <see cref="FromBlock(ColumnPropertyBlock)"/> + <see cref="ToBytes(DatabaseFormat)"/>
+/// <see cref="ColumnPropertyBlock.Parse(byte[], JetFormat)"/> and re-serialized via
+/// <see cref="FromBlock(ColumnPropertyBlock)"/> + <see cref="ToBytes(JetFormat)"/>
 /// reproduces a byte stream that the parser interprets identically (entries, targets,
 /// and unknown chunks all preserved). Byte-identity with the original is *not*
 /// guaranteed because the inner property-block header carries opaque bytes that the
@@ -188,14 +188,14 @@ internal sealed class ColumnPropertyBlockBuilder
     /// </summary>
     /// <param name="format">Database format. Selects Jet3 codepage vs Jet4 UTF-16LE string encoding.</param>
     /// <exception cref="InvalidOperationException">If a chunk would exceed the on-disk uint16 / uint32 length limits.</exception>
-    public byte[]? ToBytes(DatabaseFormat format)
+    public byte[]? ToBytes(JetFormat format)
     {
         if (this.IsEmpty)
         {
             return null;
         }
 
-        Encoding stringEncoding = JetFormat.PropertyTextEncodingOf(format);
+        Encoding stringEncoding = format.PropertyTextEncoding;
 
         // Build the name pool from every distinct entry name encountered, in stable
         // first-seen order. The parser indexes by uint16 so we cap at 65,535 names entries.
@@ -237,7 +237,7 @@ internal sealed class ColumnPropertyBlockBuilder
 
         byte[] blob = new byte[totalLength];
         int offset = 0;
-        WriteUInt32(blob, ref offset, JetFormat.PropertyBlockMagicOf(format));
+        WriteUInt32(blob, ref offset, JetFormat.PropertyBlockMagicOf(format.Kind));
 
         // Name-pool chunk (always first; mdbtools requires it before property blocks).
         WriteChunk(blob, ref offset, ColumnPropertyChunkType.NamePool, namePoolPayload);

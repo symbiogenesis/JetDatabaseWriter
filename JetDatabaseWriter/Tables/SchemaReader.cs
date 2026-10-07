@@ -188,7 +188,7 @@ internal sealed class SchemaReader(
             ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
             bool isCalc = col.IsCalculated;
             string? calcExpr = isCalc
-                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format.Kind)
+                ? target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format)
                 : null;
             ColumnType calcResultType = isCalc ? CatalogReader.ResolveCalculatedResultType(target) : default;
 
@@ -207,10 +207,10 @@ internal sealed class SchemaReader(
                 IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = GetColumnSize(ResolveValueType(col), GetMetadataDeclaredSize(col)),
-                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format.Kind),
-                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format.Kind),
-                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format.Kind),
-                Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, format.Kind),
+                DefaultValueExpression = target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format),
+                ValidationRuleExpression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format),
+                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format),
+                Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, format),
                 NumericPrecision = col.NumericPrecision,
                 NumericScale = col.NumericScale,
                 IsCurrency = ResolveValueType(col) == MoneyType,

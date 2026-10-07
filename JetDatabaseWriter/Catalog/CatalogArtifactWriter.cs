@@ -363,8 +363,8 @@ internal sealed class CatalogArtifactWriter(
         if (tableArtifact.EmitLvProp)
         {
             lvProp = tableArtifact.PersistedProperties is { } persisted
-                ? persisted.ToBytes(format.Kind)
-                : JetExpressionConverter.BuildLvPropBlob(tableArtifact.Columns, format.Kind);
+                ? persisted.ToBytes(format)
+                : JetExpressionConverter.BuildLvPropBlob(tableArtifact.Columns, format);
         }
 
         await catalogWriter.InsertCatalogEntryAsync(

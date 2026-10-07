@@ -38,7 +38,7 @@ internal sealed record ColumnPropertyTarget(
     /// </summary>
     /// <param name="propertyName">Property name (case-insensitive).</param>
     /// <param name="format">Database format (selects Jet3 vs Jet4 decoding).</param>
-    public string? GetTextValue(string propertyName, DatabaseFormat format)
+    public string? GetTextValue(string propertyName, JetFormat format)
     {
         ColumnPropertyEntry? entry = this.Find(propertyName);
         if (entry is null)
@@ -52,7 +52,7 @@ internal sealed record ColumnPropertyTarget(
             return null;
         }
 
-        return JetFormat.PropertyTextEncodingOf(format).GetString(entry.Value);
+        return format.PropertyTextEncoding.GetString(entry.Value);
     }
 
     /// <summary>

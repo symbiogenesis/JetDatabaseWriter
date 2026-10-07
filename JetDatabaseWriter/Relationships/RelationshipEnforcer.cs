@@ -339,7 +339,7 @@ internal sealed class RelationshipEnforcer(
         List<ReferencedKeyChange> keyChanges = await this.ResolveReferencedKeyChangesAsync(primaryTable, primaryDef, assignedColumns, rows, ctx, cancellationToken).ConfigureAwait(false);
 
         HashSet<(long PageNumber, int RowIndex)> ownRows = [];
-        if (keyChanges.Exists(change => IsSelfRelationship(change.Relationship)))
+        if (rows.Count > 0)
         {
             foreach ((RowLocation location, _, _) in rows)
             {
@@ -351,105 +351,145 @@ internal sealed class RelationshipEnforcer(
         var plannedTables = new Dictionary<long, (CascadeUpdate Cascade, Dictionary<(long PageNumber, int RowIndex), int> Positions)>();
         var ownRowChanges = new List<(object[] NewRow, int[] ForeignColumnIndexes, object[] NewPkSubset)>();
         var keyAssignments = new Dictionary<object[], (string TableName, TableDef Definition, HashSet<int> Columns)>();
-        foreach (ReferencedKeyChange change in keyChanges)
+        var originalRows = new Dictionary<(long PageNumber, int RowIndex), object[]>();
+        int depth = 0;
+        while (true)
         {
-            FkRelationship rel = change.Relationship;
-            int[] fkIdx = change.ForeignColumnIndexes;
-
-            // Through a self-relationship the update's own rows are dependent
-            // rows by their new foreign key, which the update may assign, and
-            // not by the stored rows the child table holds for them; their
-            // cascaded key goes into the caller's rewrite: a second rewrite of
-            // the stale row would leave two live rows.
-            bool self = IsSelfRelationship(rel);
-            var ownDependents = new List<(object[] NewRow, object[] NewPkSubset)>();
-            if (self)
+            cancellationToken.ThrowIfCancellationRequested();
+            RelationshipCascadePolicy.ThrowIfDepthExceeded(depth++);
+            bool changed = false;
+            ownRowChanges.Clear();
+            foreach (ReferencedKeyChange change in keyChanges)
             {
-                foreach ((_, _, object[] newRow) in rows)
+                FkRelationship rel = change.Relationship;
+                int[] fkIdx = change.ForeignColumnIndexes;
+
+                // Through a self-relationship the update's own rows are dependent
+                // rows by their new foreign key, which the update may assign, and
+                // not by the stored rows the child table holds for them; their
+                // cascaded key goes into the caller's rewrite: a second rewrite of
+                // the stale row would leave two live rows.
+                bool self = string.Equals(rel.ForeignTable, primaryTable, StringComparison.OrdinalIgnoreCase);
+                var ownDependents = new List<(object[] NewRow, object[] NewPkSubset)>();
+                if (self)
                 {
-                    string? newKey = RelationshipKeyBuilder.Build(newRow, fkIdx);
-                    if (newKey != null && change.Changes.TryGetValue(newKey, out (object?[] OldPkSubset, object[] NewPkSubset) moved))
+                    foreach ((_, _, object[] newRow) in rows)
                     {
-                        ownDependents.Add((newRow, moved.NewPkSubset));
+                        string? newKey = RelationshipKeyBuilder.Build(newRow, fkIdx);
+                        if (newKey != null && change.Changes.TryGetValue(newKey, out (object?[] OldPkSubset, object[] NewPkSubset) moved))
+                        {
+                            ownDependents.Add((newRow, moved.NewPkSubset));
+                        }
+                    }
+                }
+
+                if (!rel.CascadeUpdates)
+                {
+                    // A refusal needs only the number of dependent rows, which the
+                    // child index seek gives without reading them.
+                    int dependentCount = ownDependents.Count
+                        + await this.CountDependentRowsOfKeyChangeAsync(change, self ? ownRows : null, ctx, cancellationToken).ConfigureAwait(false);
+                    if (dependentCount > 0)
+                    {
+                        throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
+                    }
+
+                    continue;
+                }
+
+                List<(LocatedRow Row, object[] NewPkSubset)> dependents = await this.FindDependentRowsOfKeyChangeAsync(change, ctx, cancellationToken).ConfigureAwait(false);
+                if (self)
+                {
+                    _ = dependents.RemoveAll(dependent => ownRows.Contains((dependent.Row.Location.PageNumber, dependent.Row.Location.RowIndex)));
+                }
+
+                foreach ((object[] newRow, object[] newPkSubset) in ownDependents)
+                {
+                    ownRowChanges.Add((newRow, fkIdx, newPkSubset));
+                    RecordKeyAssignments(newRow, fkIdx, primaryTable, primaryDef);
+                }
+
+                if (dependents.Count == 0)
+                {
+                    continue;
+                }
+
+                long childTdefPage = change.ChildTable.Entry.TDefPage;
+                if (!plannedTables.TryGetValue(childTdefPage, out (CascadeUpdate Cascade, Dictionary<(long PageNumber, int RowIndex), int> Positions) planned))
+                {
+                    planned = (new CascadeUpdate(rel.ForeignTable, change.ChildTable, []), []);
+                    plannedTables[childTdefPage] = planned;
+                    cascades.Add(planned.Cascade);
+                }
+
+                List<(RowLocation Location, object[] NewRow)> rewrites = planned.Cascade.Rows;
+                foreach ((LocatedRow row, object[] newPkSubset) in dependents)
+                {
+                    // A row an earlier relationship already rewrites takes this
+                    // relationship's key change in the same rewrite.
+                    (long PageNumber, int RowIndex) slot = (row.Location.PageNumber, row.Location.RowIndex);
+                    object[] newRow;
+                    if (planned.Positions.TryGetValue(slot, out int position))
+                    {
+                        newRow = rewrites[position].NewRow;
+                    }
+                    else
+                    {
+                        originalRows[slot] = row.Values;
+                        newRow = (object[])row.Values.Clone();
+                        planned.Positions[slot] = rewrites.Count;
+                        rewrites.Add((row.Location, newRow));
+                    }
+
+                    for (int column = 0; column < fkIdx.Length; column++)
+                    {
+                        object replacement = newPkSubset[column] ?? DBNull.Value;
+                        if (!Equals(newRow[fkIdx[column]], replacement))
+                        {
+                            newRow[fkIdx[column]] = replacement;
+                            changed = true;
+                        }
+                    }
+
+                    RecordKeyAssignments(newRow, fkIdx, rel.ForeignTable, change.ChildTable.Definition);
+                    UnreadableLongValue.ThrowIfAny(newRow, rel.ForeignTable);
+                }
+            }
+
+            // Every relationship has passed, so the update's own rows take their
+            // cascaded keys; each decision above read the rows as the caller
+            // built them.
+            foreach ((object[] newRow, int[] fkIdx, object[] newPkSubset) in ownRowChanges)
+            {
+                for (int column = 0; column < fkIdx.Length; column++)
+                {
+                    object replacement = newPkSubset[column] ?? DBNull.Value;
+                    if (!Equals(newRow[fkIdx[column]], replacement))
+                    {
+                        newRow[fkIdx[column]] = replacement;
+                        changed = true;
                     }
                 }
             }
 
-            if (!rel.CascadeUpdates)
+            if (!changed)
             {
-                // A refusal needs only the number of dependent rows, which the
-                // child index seek gives without reading them.
-                int dependentCount = ownDependents.Count
-                    + await this.CountDependentRowsOfKeyChangeAsync(change, self ? ownRows : null, ctx, cancellationToken).ConfigureAwait(false);
-                if (dependentCount > 0)
+                break;
+            }
+
+            // Resolve each generation against the stored rows and the composed
+            // final values. Re-visiting a table merges diamond paths; stable
+            // cycles stop when they no longer assign a different value.
+            keyChanges = await this.ResolveReferencedKeyChangesAsync(primaryTable, primaryDef, CreateOrdinals(primaryDef.Columns.Count), rows, ctx, cancellationToken).ConfigureAwait(false);
+            foreach (CascadeUpdate cascade in cascades)
+            {
+                var pending = new List<(RowLocation Location, object[] OldRow, object[] NewRow)>();
+                foreach ((RowLocation location, object[] newRow) in cascade.Rows)
                 {
-                    throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
+                    pending.Add((location, originalRows[(location.PageNumber, location.RowIndex)], newRow));
                 }
 
-                continue;
-            }
-
-            List<(LocatedRow Row, object[] NewPkSubset)> dependents = await this.FindDependentRowsOfKeyChangeAsync(change, ctx, cancellationToken).ConfigureAwait(false);
-            if (self)
-            {
-                _ = dependents.RemoveAll(dependent => ownRows.Contains((dependent.Row.Location.PageNumber, dependent.Row.Location.RowIndex)));
-            }
-
-            foreach ((object[] newRow, object[] newPkSubset) in ownDependents)
-            {
-                ownRowChanges.Add((newRow, fkIdx, newPkSubset));
-                RecordKeyAssignments(newRow, fkIdx, primaryTable, primaryDef);
-            }
-
-            if (dependents.Count == 0)
-            {
-                continue;
-            }
-
-            long childTdefPage = change.ChildTable.Entry.TDefPage;
-            if (!plannedTables.TryGetValue(childTdefPage, out (CascadeUpdate Cascade, Dictionary<(long PageNumber, int RowIndex), int> Positions) planned))
-            {
-                planned = (new CascadeUpdate(rel.ForeignTable, change.ChildTable, []), []);
-                plannedTables[childTdefPage] = planned;
-                cascades.Add(planned.Cascade);
-            }
-
-            List<(RowLocation Location, object[] NewRow)> rewrites = planned.Cascade.Rows;
-            foreach ((LocatedRow row, object[] newPkSubset) in dependents)
-            {
-                // A row an earlier relationship already rewrites takes this
-                // relationship's key change in the same rewrite.
-                (long PageNumber, int RowIndex) slot = (row.Location.PageNumber, row.Location.RowIndex);
-                object[] newRow;
-                if (planned.Positions.TryGetValue(slot, out int position))
-                {
-                    newRow = rewrites[position].NewRow;
-                }
-                else
-                {
-                    newRow = (object[])row.Values.Clone();
-                    planned.Positions[slot] = rewrites.Count;
-                    rewrites.Add((row.Location, newRow));
-                }
-
-                for (int column = 0; column < fkIdx.Length; column++)
-                {
-                    newRow[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
-                }
-
-                RecordKeyAssignments(newRow, fkIdx, rel.ForeignTable, change.ChildTable.Definition);
-                UnreadableLongValue.ThrowIfAny(newRow, rel.ForeignTable);
-            }
-        }
-
-        // Every relationship has passed, so the update's own rows take their
-        // cascaded keys; each decision above read the rows as the caller
-        // built them.
-        foreach ((object[] newRow, int[] fkIdx, object[] newPkSubset) in ownRowChanges)
-        {
-            for (int column = 0; column < fkIdx.Length; column++)
-            {
-                newRow[fkIdx[column]] = newPkSubset[column] ?? DBNull.Value;
+                keyChanges.AddRange(await this.ResolveReferencedKeyChangesAsync(cascade.TableName, cascade.Table.Definition, CreateOrdinals(cascade.Table.Definition.Columns.Count), pending, ctx, cancellationToken).ConfigureAwait(false));
             }
         }
 
@@ -576,11 +616,19 @@ internal sealed class RelationshipEnforcer(
     private static JetOperationException RelationshipCannotBeEnforced(FkRelationship rel, string problem)
         => new(JetErrorCode.RelationshipTargetNotFound, $"Foreign-key constraint '{rel.Name}' cannot be enforced: {problem}. DropRelationshipAsync removes the relationship.", errorInfo: new JetErrorInfo { TableName = rel.ForeignTable, RelationshipName = rel.Name, Reason = problem });
 
-    /// <summary>Returns whether <paramref name="rel"/> relates a table to itself.</summary>
-    /// <param name="rel">The relationship.</param>
-    /// <returns><see langword="true"/> when the primary and foreign tables are the same table.</returns>
-    private static bool IsSelfRelationship(FkRelationship rel)
-        => string.Equals(rel.PrimaryTable, rel.ForeignTable, StringComparison.OrdinalIgnoreCase);
+    /// <summary>Builds column ordinals for an already projected key.</summary>
+    /// <param name="count">The key width.</param>
+    /// <returns>The projected key's ordinals.</returns>
+    private static int[] CreateOrdinals(int count)
+    {
+        int[] ordinals = new int[count];
+        for (int index = 0; index < count; index++)
+        {
+            ordinals[index] = index;
+        }
+
+        return ordinals;
+    }
 
     /// <summary>Maps column names to their ordinals in <paramref name="definition"/>.</summary>
     /// <param name="names">The column names.</param>
@@ -786,6 +834,27 @@ internal sealed class RelationshipEnforcer(
             ResolvedTable childTable = await this.ResolveRelationshipTableAsync(rel, "foreign table", rel.ForeignTable, cancellationToken).ConfigureAwait(false);
             int[] fkIdx = RequireColumns(rel, rel.ForeignTable, rel.ForeignColumns, childTable.Definition);
 
+            if (!rel.CascadeDeletes)
+            {
+                var deletedKeys = new Dictionary<string, (object?[] OldPkSubset, object[] NewPkSubset)>(StringComparer.Ordinal);
+                foreach (object?[] key in parentPkRows)
+                {
+                    string? encoded = RelationshipKeyBuilder.Build(key, CreateOrdinals(key.Length));
+                    if (encoded != null)
+                    {
+                        deletedKeys[encoded] = (key, []);
+                    }
+                }
+
+                var change = new ReferencedKeyChange(rel, childTable, fkIdx, deletedKeys);
+                int dependentCount = await this.CountDependentRowsOfKeyChangeAsync(change, cascaded, ctx, cancellationToken).ConfigureAwait(false);
+                if (dependentCount > 0)
+                {
+                    throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictDelete, $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
+                }
+
+                continue;
+            }
             List<LocatedRow> dependents = await this.FindDependentRowsAsync(rel, childTable, fkIdx, parentPkRows, ctx, cancellationToken).ConfigureAwait(false);
             _ = dependents.RemoveAll(row => cascaded.Contains((row.Location.PageNumber, row.Location.RowIndex)));
             if (dependents.Count == 0)
@@ -793,10 +862,6 @@ internal sealed class RelationshipEnforcer(
                 continue;
             }
 
-            if (!rel.CascadeDeletes)
-            {
-                throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictDelete, $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependents.Count} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
-            }
 
             _ = dependents.RemoveAll(row => ownRows.Contains((row.Location.PageNumber, row.Location.RowIndex)));
             if (dependents.Count == 0)

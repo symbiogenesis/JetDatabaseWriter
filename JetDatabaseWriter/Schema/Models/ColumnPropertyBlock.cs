@@ -8,7 +8,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Parsed representation of an <c>MSysObjects.LvProp</c> blob (<c>KKD\0</c> / <c>MR2\0</c>).
-/// Read-only model produced by <see cref="Parse(byte[], DatabaseFormat)"/>; round-trip
+/// Read-only model produced by <see cref="Parse(byte[], JetFormat)"/>; round-trip
 /// (re-emit unknown chunks unchanged) is supported via <see cref="UnknownChunks"/>.
 /// </summary>
 /// <remarks>
@@ -29,7 +29,7 @@ internal sealed class ColumnPropertyBlock
     internal const uint MagicKkd = 0x00444B4B;
 
     /// <summary>Gets the database format the blob was parsed against.</summary>
-    public DatabaseFormat Format { get; private init; }
+    public JetFormat Format { get; private init; } = null!;
 
     /// <summary>
     /// Gets the parsed property targets, in source order: one per column that has
@@ -46,7 +46,7 @@ internal sealed class ColumnPropertyBlock
     /// no <c>LvProp</c> value at all.
     /// </summary>
     /// <param name="format">The database format the block belongs to.</param>
-    public static ColumnPropertyBlock Empty(DatabaseFormat format) => new() { Format = format };
+    public static ColumnPropertyBlock Empty(JetFormat format) => new() { Format = format };
 
     /// <summary>
     /// Parses an <c>LvProp</c> blob. Returns <see langword="null"/> for null or
@@ -57,7 +57,7 @@ internal sealed class ColumnPropertyBlock
     /// <param name="blob">Raw blob bytes (entire <c>LvProp</c> cell payload, magic included).</param>
     /// <param name="format">Database format — selects Jet3 vs Jet4 string encoding.</param>
     /// <returns>Parsed block, or <see langword="null"/> if the blob is empty or has an unknown magic.</returns>
-    public static ColumnPropertyBlock? Parse(byte[]? blob, DatabaseFormat format)
+    public static ColumnPropertyBlock? Parse(byte[]? blob, JetFormat format)
     {
         if (blob is null || blob.Length < 4)
         {
@@ -72,7 +72,7 @@ internal sealed class ColumnPropertyBlock
 
         bool isJet3 = magic == MagicKkd;
         Encoding stringEncoding = isJet3
-            ? Encoding.GetEncoding(1252) // Jet3 fallback until per-database codepages flow into LvProp parsing.
+            ? format.AnsiEncoding
             : Encoding.Unicode;
 
         var nameTable = new List<string>();
@@ -177,7 +177,7 @@ internal sealed class ColumnPropertyBlock
     /// when the block has no targets and no unknown chunks.
     /// </summary>
     /// <param name="format">The database format the bytes are written for.</param>
-    public byte[]? ToBytes(DatabaseFormat format) => ColumnPropertyBlockBuilder.FromBlock(this).ToBytes(format);
+    public byte[]? ToBytes(JetFormat format) => ColumnPropertyBlockBuilder.FromBlock(this).ToBytes(format);
 
     private static void ReadNamePool(
         byte[] blob, int start, int length, Encoding stringEncoding, bool isJet3, List<string> dest)

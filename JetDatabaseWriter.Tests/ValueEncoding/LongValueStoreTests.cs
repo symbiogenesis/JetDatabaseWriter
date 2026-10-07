@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.ValueEncoding;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -141,7 +142,7 @@ public sealed class LongValueStoreTests
     }
 
     [Fact]
-    public async Task ReadChainedPayloadAsync_StopsAtCycleAndReturnsBytesRead()
+    public async Task ReadChainedPayloadAsync_RejectsCycleBeforeDeclaredLength()
     {
         const int pageSize = 64;
         uint firstDp = LongValueStore.MakeRowPointer(4, rowIndex: 0);
@@ -159,10 +160,38 @@ public sealed class LongValueStoreTests
             (lvalDp, _) => new ValueTask<LvalRowLocation>(rows[lvalDp]),
             CancellationToken.None);
 
-        Assert.NotNull(result.Data);
-        Assert.Equal([0x41, 0x42, 0x43, 0x44, 0x45, 0x46], result.Data);
+        Assert.Null(result.Data);
+        Assert.NotNull(result.Error);
     }
 
+    [Fact]
+    public async Task ReadChainedPayloadAsync_RejectsTruncatedChain()
+    {
+        LvalChainResult result = await LongValueStore.ReadChainedPayloadAsync(
+            256,
+            maxLength: 10,
+            pageSize: 64,
+            (_, _) => new ValueTask<LvalRowLocation>(CreateChainedRow(0, [1, 2, 3], 64)),
+            TestContext.Current.CancellationToken);
+
+        Assert.Null(result.Data);
+        Assert.NotNull(result.Error);
+    }
+
+    [Fact]
+    public async Task ReadChainedPayloadAsync_PropagatesIoFailure()
+    {
+        var failure = new IOException("read failure");
+        IOException actual = await Assert.ThrowsAsync<IOException>(async () =>
+            await LongValueStore.ReadChainedPayloadAsync(
+                256,
+                maxLength: 10,
+                pageSize: 64,
+                (_, _) => ValueTask.FromException<LvalRowLocation>(failure),
+                TestContext.Current.CancellationToken));
+
+        Assert.Same(failure, actual);
+    }
     [Fact]
     public void LocateRow_UsesProvidedLiveRowBounds()
     {

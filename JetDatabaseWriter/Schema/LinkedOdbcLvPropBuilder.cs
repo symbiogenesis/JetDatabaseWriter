@@ -34,7 +34,7 @@ internal static class LinkedOdbcLvPropBuilder
     private const string TotalsRow = "TotalsRow";
     private const string UnicodeCompression = "UnicodeCompression";
 
-    internal static byte[] Build(string foreignTableName, IReadOnlyList<ColumnDefinition>? sourceColumns, DatabaseFormat format)
+    internal static byte[] Build(string foreignTableName, IReadOnlyList<ColumnDefinition>? sourceColumns, JetFormat format)
     {
         Guard.NotNullOrEmpty(foreignTableName, nameof(foreignTableName));
         string sourceTableName = GetUnqualifiedSourceName(foreignTableName);
@@ -148,9 +148,9 @@ internal static class LinkedOdbcLvPropBuilder
         string sourceTableName,
         Guid tableGuid,
         List<ColumnIdentity> columns,
-        DatabaseFormat format)
+        JetFormat format)
     {
-        Encoding encoding = JetFormat.PropertyTextEncodingOf(format);
+        Encoding encoding = format.PropertyTextEncoding;
         using var stream = new MemoryStream();
 
         WriteUInt32(stream, 0x550E_CC0A);

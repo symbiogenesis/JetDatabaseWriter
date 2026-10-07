@@ -102,6 +102,77 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         return data;
     }
 
+    /// <summary>Primary-key changes reach grandchildren before any row is rewritten.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_RecursiveCascade_RewritesEveryGeneration(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            foreach (string name in new[] { "A", "B", "C" })
+            {
+                await writer.CreateTableAsync(name, [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+                Assert.Equal(1, await writer.InsertRowsAsync(name, [[1]], Ct));
+            }
+
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_B_A", "A", "Id", "B", "Id") { CascadeUpdates = true }, Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_B", "B", "Id", "C", "Id") { CascadeUpdates = true }, Ct);
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                Assert.Equal(1, await writer.UpdateRowsAsync("A", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct)));
+        }
+
+        foreach (string name in new[] { "A", "B", "C" })
+        {
+            Assert.Equal(["5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, name));
+        }
+
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C");
+    }
+    /// <summary>Primary-key changes reach grandchildren before any row is rewritten.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Update_RecursiveCascadeWithGrandchildRule_ChangesNothing(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            foreach (string name in new[] { "A", "B", "C" })
+            {
+                await writer.CreateTableAsync(name, [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true, ValidationRuleExpression = name == "C" ? "< 5" : null }], Ct);
+                Assert.Equal(1, await writer.InsertRowsAsync(name, [[1]], Ct));
+            }
+
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_B_A", "A", "Id", "B", "Id") { CascadeUpdates = true }, Ct);
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_C_B", "B", "Id", "C", "Id") { CascadeUpdates = true }, Ct);
+        }
+
+        byte[] before = ms.ToArray();
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.UpdateRowsAsync("A", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5 }, Ct)));
+        }
+
+        Assert.Equal(before, ms.ToArray());
+        foreach (string name in new[] { "A", "B", "C" })
+        {
+            Assert.Equal(["1"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, name));
+        }
+
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C");
+    }
     /// <summary>A non-null cascading key refreshes the child's stored calculated result.</summary>
     /// <param name="mode">The write mode.</param>
     /// <returns>The asynchronous test.</returns>
@@ -327,6 +398,64 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
                 pagesRead = counting.PagesRead(4096);
                 Assert.Equal(
                     "UPDATE on 'P' violates foreign-key constraint 'FK_M_P': 1 dependent row(s) in 'M' reference the old key(s) and cascade-update is not enabled.",
+                    ex.Message);
+            });
+        }
+
+        Assert.Single(pagesRead.Intersect(childPages));
+        Assert.Equal(["1|one", "2|deux"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
+    }
+
+    /// <summary>
+    /// A relationship without cascading updates refuses a key update from the
+    /// row locations its child index seek finds, without reading the
+    /// dependent rows: of <c>M</c>'s data pages, the update reads only the one
+    /// that holds the dependent row, which the seek checks, although a MEMO
+    /// column stops the single-row reader from decoding <c>M</c>'s rows.
+    /// </summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">How the writer runs the update.</param>
+    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(SeekFormatsAndModes))]
+    public async Task Delete_RefusedBySeekableRelationshipWithoutCascade_ReadsNoOtherChildPage(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateAsync(db, format, [[1, "one"], [2, "two"]], []);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync(
+                "M",
+                [
+                    new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
+                    new ColumnDefinition("ParentId", typeof(int)),
+                    new ColumnDefinition("Notes", typeof(string)),
+                ],
+                Ct);
+            object[][] rows = [.. Enumerable.Range(1, 200).Select(id => new object[] { id, id == 1 ? 1 : 2, new string('n', 100) })];
+            Assert.Equal(200, await writer.InsertRowsAsync("M", rows, Ct));
+            await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_M_P", "P", "Id", "M", "ParentId"), Ct);
+        }
+
+        HashSet<long> childPages = await ReadDataPagesAsync(ms, "M");
+        Assert.True(childPages.Count >= 4, $"M fills {childPages.Count} data pages; the test needs at least 4.");
+
+        var counting = new CountingStream(ms);
+        HashSet<long> pagesRead = [];
+        ms.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, UseTransactionalWrites = mode == WriteMode.AutoCommit, PageCacheSize = 0 }, leaveOpen: true, Ct))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                // The writer's first load of the relationships can read every
+                // page of the file (the owned-page index); an update that
+                // moves no key loads them first.
+                Assert.Equal(1, await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 2), new RowValues { ["Name"] = "deux" }, Ct));
+                counting.Reset();
+                JetConstraintException ex = await Assert.ThrowsAsync<JetConstraintException>(async () =>
+                    await writer.DeleteRowsAsync("P", RowCriteria.Where("Id", 1), Ct));
+                pagesRead = counting.PagesRead(4096);
+                Assert.Equal(
+                    "DELETE on 'P' violates foreign-key constraint 'FK_M_P': 1 dependent row(s) in 'M' reference the deleted key(s) and cascade-delete is not enabled.",
                     ex.Message);
             });
         }

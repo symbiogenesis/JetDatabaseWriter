@@ -15,8 +15,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Encodes / decodes the Access 2007+ Attachment <c>FileData</c> wrapper per
 /// <see href="docs/design/complex-columns-format-notes.md" /> §3. The encoder
 /// writes what Access writes (checked against every Access-authored attachment
-/// in the test fixtures); the decoder reads that, and the raw-deflate form
-/// earlier builds of this library wrote. The decoder also serves the typed
+/// in the test fixtures). The decoder also serves the typed
 /// <see cref="IAccessReader.GetAttachmentsAsync(string, string, System.Threading.CancellationToken)"/>
 /// surface and the row reads.
 /// </summary>
@@ -77,16 +76,6 @@ internal static class AttachmentWrapper
     /// Returns the decoded extension and raw payload, or the input bytes
     /// unchanged when the wrapper signature is not recognised.
     /// </summary>
-    /// <remarks>
-    /// A compressed body (typeFlag <c>1</c>) is read as a zlib stream whose
-    /// content is <c>dataLen</c> bytes, as Access, Jackcess and <see cref="Encode"/>
-    /// write it. When it is not one, the body is read as raw deflate running
-    /// to the end of the value, the form earlier builds of this library wrote
-    /// (with <c>dataLen</c> the compressed length). The extension is read from
-    /// the rest of the content header up to its NUL; the length field before it
-    /// is ignored, as Jackcess ignores it, because Access counts characters
-    /// and earlier builds of this library counted bytes.
-    /// </remarks>
     /// <param name="wrapped">The wrapped.</param>
     /// <param name="fileExtension">The file extension.</param>
     /// <param name="payload">The payload.</param>
@@ -113,18 +102,20 @@ internal static class AttachmentWrapper
                 && TryParseContent(wrapped.AsSpan(WrapperHeaderSize, (int)dataLen).ToArray(), ref fileExtension, ref payload);
         }
 
-        // A zlib stream starts with CMF = 0x?8 (deflate) and a CMF/FLG pair
-        // divisible by 31; the deflate blocks after it end before the Adler-32.
-        bool zlibHeader = (wrapped[WrapperHeaderSize] & 0x0F) == 8
-            && ((wrapped[WrapperHeaderSize] << 8) | wrapped[WrapperHeaderSize + 1]) % 31 == 0;
-        return (zlibHeader
-                && TryRawInflate(wrapped, WrapperHeaderSize + 2, bodyLength - 2, out byte[] zlibContent)
-                && zlibContent.Length == dataLen
-                && TryParseContent(zlibContent, ref fileExtension, ref payload))
-            || (TryRawInflate(wrapped, WrapperHeaderSize, bodyLength, out byte[] rawContent)
-                && TryParseContent(rawContent, ref fileExtension, ref payload));
-    }
+        // Native Access compressed attachments use zlib without a dictionary.
+        if (bodyLength < 6 || dataLen > int.MaxValue
+            || (wrapped[WrapperHeaderSize] & 0x0F) != 8
+            || (wrapped[WrapperHeaderSize] >> 4) > 7
+            || (wrapped[WrapperHeaderSize + 1] & 0x20) != 0
+            || ((wrapped[WrapperHeaderSize] << 8) | wrapped[WrapperHeaderSize + 1]) % 31 != 0)
+        {
+            return false;
+        }
 
+        return TryRawInflate(wrapped, WrapperHeaderSize + 2, bodyLength - 6, (int)dataLen, out byte[] content)
+            && Adler32.Compute(content) == BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4))
+            && TryParseContent(content, ref fileExtension, ref payload);
+    }
     /// <summary>
     /// Returns <see langword="true"/> when Access deflates files with this
     /// extension, i.e. it is not one Access stores raw. Case-insensitive; an
@@ -219,11 +210,11 @@ internal static class AttachmentWrapper
         return true;
     }
 
-    private static bool TryRawInflate(byte[] data, int offset, int length, out byte[] content)
+    private static bool TryRawInflate(byte[] data, int offset, int length, int expectedLength, out byte[] content)
     {
         try
         {
-            content = RawInflate(data, offset, length);
+            content = RawInflate(data, offset, length, expectedLength);
             return true;
         }
         catch (InvalidDataException)
@@ -233,12 +224,28 @@ internal static class AttachmentWrapper
         }
     }
 
-    private static byte[] RawInflate(byte[] data, int offset, int length)
+    private static byte[] RawInflate(byte[] data, int offset, int length, int expectedLength)
     {
         using var input = new MemoryStream(data, offset, length);
         using var deflate = new DeflateStream(input, CompressionMode.Decompress);
         using var output = new MemoryStream();
-        deflate.CopyTo(output);
+        byte[] buffer = new byte[8192];
+        while (output.Length < expectedLength)
+        {
+            int wanted = Math.Min(buffer.Length, expectedLength - checked((int)output.Length));
+            int read = deflate.Read(buffer, 0, wanted);
+            if (read == 0)
+            {
+                throw new InvalidDataException("The attachment content is shorter than its declared length.");
+            }
+
+            output.Write(buffer, 0, read);
+        }
+
+        if (deflate.ReadByte() != -1)
+        {
+            throw new InvalidDataException("The attachment content exceeds its declared length.");
+        }
         return output.ToArray();
     }
 }

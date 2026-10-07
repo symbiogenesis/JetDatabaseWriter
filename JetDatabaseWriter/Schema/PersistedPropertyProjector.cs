@@ -42,7 +42,7 @@ internal static class PersistedPropertyProjector
         IReadOnlyList<ColumnDefinition> existingDefs,
         IReadOnlyList<ColumnDefinition> newDefs,
         Func<string, string?> mapColumnName,
-        DatabaseFormat format)
+        JetFormat format)
     {
         Guard.NotNull(existingDefs, nameof(existingDefs));
         Guard.NotNull(newDefs, nameof(newDefs));
@@ -145,7 +145,7 @@ internal static class PersistedPropertyProjector
         ColumnPropertyBlockBuilder builder,
         ColumnDefinition existing,
         ColumnDefinition projected,
-        DatabaseFormat format)
+        JetFormat format)
     {
         List<ColumnPropertyEntryBuilder> before = ModelledEntries(existing, format);
         List<ColumnPropertyEntryBuilder> after = ModelledEntries(projected, format);
@@ -187,7 +187,7 @@ internal static class PersistedPropertyProjector
     /// <summary>Returns the entries <see cref="JetExpressionConverter.ApplyColumn"/> emits for <paramref name="column"/>.</summary>
     /// <param name="column">The column definition.</param>
     /// <param name="format">The database format.</param>
-    private static List<ColumnPropertyEntryBuilder> ModelledEntries(ColumnDefinition column, DatabaseFormat format)
+    private static List<ColumnPropertyEntryBuilder> ModelledEntries(ColumnDefinition column, JetFormat format)
     {
         var scratch = new ColumnPropertyBlockBuilder();
         JetExpressionConverter.ApplyColumn(scratch, column, format);

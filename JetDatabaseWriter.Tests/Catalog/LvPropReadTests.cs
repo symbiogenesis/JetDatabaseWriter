@@ -278,7 +278,7 @@ public sealed class LvPropReadTests
 
         Assert.Contains(rows, r => r.Id != entry.TDefPage && (r.Id & LowIdBits) == entry.TDefPage);
         RawCatalogRow own = Assert.Single(rows, r => r.Id == entry.TDefPage);
-        ColumnPropertyBlock oracle = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(await own.ReadLvPropAsync(harness.Database), harness.Database.Format.Kind));
+        ColumnPropertyBlock oracle = Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(await own.ReadLvPropAsync(harness.Database), harness.Database.Format));
 
         ColumnPropertyBlock? read = await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct);
         Assert.Equal(Describe(oracle), Describe(read));
@@ -287,7 +287,7 @@ public sealed class LvPropReadTests
         foreach (ColumnMetadata column in await reader.GetColumnMetadataAsync(table, Ct))
         {
             Assert.Equal(
-                oracle.FindTarget(column.Name)?.GetTextValue(Constants.ColumnPropertyNames.Description, harness.Database.Format.Kind),
+                oracle.FindTarget(column.Name)?.GetTextValue(Constants.ColumnPropertyNames.Description, harness.Database.Format),
                 column.Description);
         }
     }
@@ -364,7 +364,7 @@ public sealed class LvPropReadTests
         Assert.Equal(16_175, blob.Length);
         ColumnPropertyBlock? read = await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct);
         Assert.Equal(90, read?.Targets.Count);
-        Assert.Equal(Describe(ColumnPropertyBlock.Parse(blob, harness.Database.Format.Kind)), Describe(read));
+        Assert.Equal(Describe(ColumnPropertyBlock.Parse(blob, harness.Database.Format)), Describe(read));
     }
 
     /// <summary>
@@ -454,13 +454,13 @@ public sealed class LvPropReadTests
         {
             ColumnPropertyBlock? read = await harness.Services.Catalog.ReadLvPropForTableAsync(table.Id, Ct);
             byte[]? ownBlob = await table.ReadLvPropAsync(db);
-            Assert.Equal(Describe(ColumnPropertyBlock.Parse(ownBlob, db.Format.Kind)), Describe(read));
+            Assert.Equal(Describe(ColumnPropertyBlock.Parse(ownBlob, db.Format)), Describe(read));
 
             // The earlier read scanned the rows in page and slot order, as
             // ReadRawCatalogRowsAsync lists them, and took the first whose Id's
             // low 24 bits equal the TDEF page.
             RawCatalogRow legacyRow = rows.First(r => (r.Id & LowIdBits) == table.Id);
-            var legacyBlock = ColumnPropertyBlock.Parse(await ReadLegacyLvPropAsync(db, legacyRow), db.Format.Kind);
+            var legacyBlock = ColumnPropertyBlock.Parse(await ReadLegacyLvPropAsync(db, legacyRow), db.Format);
             if (Describe(legacyBlock).SequenceEqual(Describe(read)))
             {
                 continue;

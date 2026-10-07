@@ -39,7 +39,7 @@ internal sealed class JetFormat
     /// the code-page encodings .NET does not load by default. Without them every
     /// Jet3 code page, Windows-1252 included, would fall back to UTF-8 without
     /// an error. The registration also serves Jet3 <c>LvProp</c> text, which
-    /// <see cref="PropertyTextEncodingOf"/> encodes in Windows-1252, and the
+    /// <see cref="PropertyTextEncoding"/> uses the database code page, and the
     /// <c>LvProp</c> parser, which only runs once a database file has built its
     /// profile.
     /// </summary>
@@ -54,23 +54,19 @@ internal sealed class JetFormat
         this.IsJet3 = jet3;
         this.PageSize = PageSizeOf(kind);
 
-        // An unknown code page falls back to UTF-8: Jet3 files that earlier
-        // builds of this library created left the header unmasked, so its raw
-        // zeros decode as code page 17019, and they hold UTF-8 text.
+        // Never reinterpret an unsupported database code page as another encoding.
         Encoding ansiEncoding;
         try
         {
             ansiEncoding = Encoding.GetEncoding(codePage);
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            ansiEncoding = Encoding.UTF8;
-            codePage = 65001;
+            throw new NotSupportedException($"Database code page {codePage} is not supported.", ex);
         }
-        catch (NotSupportedException)
+        catch (NotSupportedException ex)
         {
-            ansiEncoding = Encoding.UTF8;
-            codePage = 65001;
+            throw new NotSupportedException($"Database code page {codePage} is not supported.", ex);
         }
 
         this.CodePage = codePage;
@@ -129,7 +125,7 @@ internal sealed class JetFormat
 
     /// <summary>
     /// Gets the decoded database code page: the header's, 1252 when the header
-    /// holds none, or 65001 (UTF-8) when .NET has no encoding for it.
+    /// holds none. An unsupported code page is refused instead of reinterpreted.
     /// </summary>
     internal int CodePage { get; }
 
@@ -322,15 +318,8 @@ internal sealed class JetFormat
     /// <returns>The page size in bytes.</returns>
     internal static int PageSizeOf(DatabaseFormat format) => format != DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet4 : Constants.PageSizes.Jet3;
 
-    /// <summary>
-    /// Returns the encoding of the text in an <c>LvProp</c> property block of
-    /// <paramref name="format"/>: UTF-16LE on Jet4 and ACE, and Windows-1252 on
-    /// Jet3, whatever the database's code page.
-    /// </summary>
-    /// <param name="format">The format.</param>
-    /// <returns>The encoding.</returns>
-    internal static Encoding PropertyTextEncodingOf(DatabaseFormat format)
-        => format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+    /// <summary>Gets the database-specific property text encoding, refusing unrepresentable Jet3 text.</summary>
+    internal Encoding PropertyTextEncoding => this.IsJet3 ? this.ansiTextEncoder : Encoding.Unicode;
 
     /// <summary>
     /// Returns the magic an <c>LvProp</c> property block of

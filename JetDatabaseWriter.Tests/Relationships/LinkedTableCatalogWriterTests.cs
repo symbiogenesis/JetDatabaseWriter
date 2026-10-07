@@ -161,7 +161,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.True(catalogObject.LvPropLength > 0, "Expected ODBC-linked MSysObjects.LvProp to be non-null.");
         Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
-        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
         ColumnPropertyTarget tableTarget = Assert.Single(block.Targets);
         Assert.Equal(string.Empty, tableTarget.Name);
@@ -198,7 +198,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
 
-        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
         Assert.Equal(sourceColumns.Length + 1, block.Targets.Count);
 
@@ -267,7 +267,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.True(fixture.LvProp.SequenceEqual(catalogObject.LvProp ?? []));
         Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, catalogObject.LvProp);
 
-        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
         Assert.True(block.Targets.Count > 0, "Expected cached ODBC LvProp to contain property targets.");
     }
@@ -330,7 +330,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             "DAO CompactDatabase cached-schema ODBC linked table");
 
         CatalogObjectSnapshot compactedObject = await GetCatalogObjectAsync(compactedPath, "LinkedOrders", ct);
-        var block = ColumnPropertyBlock.Parse(compactedObject.LvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(compactedObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
         Assert.True(block.Targets.Count > 0, "Expected compacted ODBC LvProp to retain property targets.");
         Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, compactedObject.LvProp);
@@ -742,7 +742,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             Convert.ToInt32(r["Type"], CultureInfo.InvariantCulture) == Constants.SystemObjects.LinkedOdbcType);
 
         byte[] lvProp = Assert.IsType<byte[]>(row["LvProp"]);
-        var block = ColumnPropertyBlock.Parse(lvProp, DatabaseFormat.AceAccdb);
+        var block = ColumnPropertyBlock.Parse(lvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
         Assert.True(block.Targets.Count > 0, "Expected fixture ODBC LvProp to contain property targets.");
 

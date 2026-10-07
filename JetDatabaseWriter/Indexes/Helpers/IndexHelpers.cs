@@ -21,6 +21,24 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class IndexHelpers
 {
+    /// <summary>Counts Null values in the indexed columns of a decoded row.</summary>
+    /// <param name="columns">The resolved key columns.</param>
+    /// <param name="row">The decoded row.</param>
+    /// <returns>The number of Null key columns.</returns>
+    public static int CountNullKeyColumns(IReadOnlyList<KeyColumnInfo> columns, object[] row)
+    {
+        int count = 0;
+        foreach (KeyColumnInfo column in columns)
+        {
+            if (column.SnapIdx >= row.Length || row[column.SnapIdx] is null or DBNull)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
     /// <summary>
     /// Returns <paramref name="baseName"/> if no entry in <paramref name="existing"/>
     /// already uses it (case-insensitive); otherwise appends "_1", "_2", … until

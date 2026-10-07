@@ -252,7 +252,7 @@ public sealed class ObjectNameValidationTests
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            byte[] cachedSchema = LinkedOdbcLvPropBuilder.Build("dbo.Orders", null, format);
+            byte[] cachedSchema = LinkedOdbcLvPropBuilder.Build("dbo.Orders", null, JetFormat.ForNewDatabase(format));
             Func<ValueTask>[] creates =
             [
                 () => writer.CreateLinkedTableAsync(name, @"C:\Data\Backend.accdb", "Orders", Ct),

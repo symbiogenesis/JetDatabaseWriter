@@ -141,64 +141,41 @@ internal static class LongValueStore
             return LvalChainResult.Failure("no chunks read");
         }
 
-        byte[]? buffer = null;
-        int totalLength = 0;
+        using var output = new MemoryStream();
         uint currentDp = firstLvalDp;
         SmallLvalDpSet seen = default;
-
-        try
+        while (output.Length < maxLength)
         {
-            while (currentDp != 0 && totalLength < maxLength && seen.Add(currentDp))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (currentDp == 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                LvalRowLocation location = await locateRowAsync(currentDp, cancellationToken).ConfigureAwait(false);
-                if (location.Failed)
-                {
-                    return LvalChainResult.Failure(location.Error!);
-                }
-
-                if (location.Size < 4)
-                {
-                    return LvalChainResult.Failure($"rowSize {location.Size} < 4");
-                }
-
-                currentDp = Ru32(location.Page, location.Start);
-                int availableData = location.Size - 4;
-                int wantedData = Math.Min(availableData, maxLength - totalLength);
-
-                if (wantedData > 0 && location.Start + 4 + wantedData <= pageSize)
-                {
-                    buffer ??= new byte[maxLength];
-                    Buffer.BlockCopy(location.Page, location.Start + 4, buffer, totalLength, wantedData);
-                    totalLength += wantedData;
-                }
+                return LvalChainResult.Failure($"the chain ended after {output.Length} of {maxLength} byte(s)");
             }
 
-            if (totalLength == 0)
+            if (!seen.Add(currentDp))
             {
-                return LvalChainResult.Failure("no chunks read");
+                return LvalChainResult.Failure("the chain contains a cycle");
             }
 
-            if (totalLength == buffer!.Length)
+            LvalRowLocation location = await locateRowAsync(currentDp, cancellationToken).ConfigureAwait(false);
+            if (location.Failed)
             {
-                return LvalChainResult.Success(buffer);
+                return LvalChainResult.Failure(location.Error!);
             }
 
-            byte[] result = new byte[totalLength];
-            Buffer.BlockCopy(buffer, 0, result, 0, totalLength);
-            return LvalChainResult.Success(result);
+            int validPageLength = Math.Min(pageSize, location.Page.Length);
+            if (location.Start < 0 || location.Size <= 4 || location.Start > validPageLength - location.Size)
+            {
+                return LvalChainResult.Failure($"invalid chained row bounds: start {location.Start}, size {location.Size}");
+            }
+
+            currentDp = Ru32(location.Page, location.Start);
+            int wantedData = Math.Min(location.Size - 4, maxLength - checked((int)output.Length));
+            output.Write(location.Page, location.Start + 4, wantedData);
         }
-        catch (IOException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
-        catch (OverflowException ex)
-        {
-            return LvalChainResult.Failure(ex.Message);
-        }
+
+        return LvalChainResult.Success(output.ToArray());
     }
-
     /// <summary>
     /// Releases every LVAL row of an external long value: the one row of a
     /// single-page value, or each row of a chain in order, stopping at a null

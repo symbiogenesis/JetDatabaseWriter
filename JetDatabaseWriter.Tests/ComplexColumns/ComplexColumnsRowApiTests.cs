@@ -136,7 +136,7 @@ public sealed class ComplexColumnsRowApiTests
     }
 
     [Fact]
-    public void AttachmentWrapper_TryDecode_LegacyWriterRawDeflate_StillDecodes()
+    public void AttachmentWrapper_TryDecode_RejectsLegacyWriterRawDeflate()
     {
         // Earlier builds of this library wrote raw deflate with dataLen set to
         // the compressed length and the extension length counted in bytes.
@@ -156,9 +156,9 @@ public sealed class ComplexColumnsRowApiTests
 
         bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
 
-        Assert.True(ok);
-        Assert.Equal("txt", ext);
-        Assert.Equal(Encoding.UTF8.GetBytes("raw deflate payload"), decoded);
+        Assert.False(ok);
+        Assert.Empty(ext);
+        Assert.Same(wrapped, decoded);
     }
 
     [Fact]

@@ -403,7 +403,7 @@ public sealed class SchemaRewritePropertyPreservationTests
     private static void AddTableTarget(ColumnPropertyBlockBuilder builder)
     {
         var target = new ColumnPropertyTargetBuilder { Name = string.Empty, ChunkType = ColumnPropertyChunkType.PropertyBlock };
-        target.AddText(Constants.ColumnPropertyNames.Description, "the table", DatabaseFormat.Jet4Mdb);
+        target.AddText(Constants.ColumnPropertyNames.Description, "the table", JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb));
         target.Entries.Add(new ColumnPropertyEntryBuilder { Name = "GUID", DataType = ColumnType.BinaryType, DdlFlag = 1, Value = Guid.Parse("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0").ToByteArray() });
         target.Entries.Add(new ColumnPropertyEntryBuilder { Name = NameMap, DataType = ColumnType.OleType, DdlFlag = 0, Value = [1, 2, 3, 4] });
         builder.Targets.Insert(0, target);
@@ -434,7 +434,7 @@ public sealed class SchemaRewritePropertyPreservationTests
         await harness.Services.CatalogArtifacts.ExecutePlanAsync(
             new CatalogArtifactPlan([], [])
             {
-                CatalogReplacements = [new UserTableCatalogReplacementArtifact(table, table, entry.TDefPage, builder.ToBytes(harness.Database.Format.Kind))],
+                CatalogReplacements = [new UserTableCatalogReplacementArtifact(table, table, entry.TDefPage, builder.ToBytes(harness.Database.Format))],
             },
             Ct);
     }

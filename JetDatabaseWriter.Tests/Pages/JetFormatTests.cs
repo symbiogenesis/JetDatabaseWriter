@@ -116,7 +116,7 @@ public sealed class JetFormatTests
         Assert.Equal(Encoding.ASCII.GetBytes(headerSignature + "\0"), format.HeaderSignature.ToArray());
         Assert.Equal(newDatabaseVersion, format.NewDatabaseVersion);
         Assert.Equal(kind, JetFormat.DetectFormat(TDefPageBuilder.BuildEmptyDatabase(kind, fullCatalogSchema: true)));
-        Assert.Equal(propertyTextCodePage, JetFormat.PropertyTextEncodingOf(kind).CodePage);
+        Assert.Equal(propertyTextCodePage, JetFormat.ForNewDatabase(kind).PropertyTextEncoding.CodePage);
         Assert.Equal(propertyBlockMagic, JetFormat.PropertyBlockMagicOf(kind));
     }
 
@@ -165,22 +165,14 @@ public sealed class JetFormatTests
         Assert.Equal(1252, format.AnsiEncoding.CodePage);
     }
 
-    /// <summary>
-    /// Jet3 files from builds before the header mask was written hold zeros
-    /// there, which unmask to code page 17019; .NET has no such encoding, so
-    /// the profile reads them as UTF-8, the encoding those builds wrote.
-    /// </summary>
+    /// <summary>An invalid code page must not silently reinterpret stored text as UTF-8.</summary>
     [Fact]
-    public void FromHeader_UnmaskedJet3Header_FallsBackToUtf8()
+    public void FromHeader_UnmaskedJet3Header_RefusesUnknownCodePage()
     {
         byte[] header = new byte[Constants.DatabaseHeader.Length];
         header[0x01] = 0x01;
-
-        var format = JetFormat.FromHeader(header);
-
-        Assert.Equal(DatabaseFormat.Jet3Mdb, format.Kind);
-        Assert.Equal(65001, format.CodePage);
-        _ = Assert.IsType<UTF8Encoding>(format.AnsiEncoding, exactMatch: false);
+        NotSupportedException ex = Assert.Throws<NotSupportedException>(() => JetFormat.FromHeader(header));
+        Assert.Contains("code page 17019", ex.Message, StringComparison.Ordinal);
     }
 
     [Theory]

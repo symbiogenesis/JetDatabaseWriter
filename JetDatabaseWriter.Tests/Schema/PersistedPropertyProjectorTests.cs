@@ -22,7 +22,7 @@ using Xunit;
 /// </summary>
 public sealed class PersistedPropertyProjectorTests
 {
-    private const DatabaseFormat Format = DatabaseFormat.Jet4Mdb;
+    private static readonly JetFormat Format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
 
     private static readonly ColumnDefinition IdColumn = new("Id", typeof(int));
 

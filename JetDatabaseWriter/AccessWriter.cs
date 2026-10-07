@@ -622,7 +622,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         ReadOnlyMemory<byte> cachedSchemaLvProp,
         CancellationToken cancellationToken = default)
     {
-        byte[] validatedLvProp = LinkedTableManager.CopyValidatedCachedSchemaLvProp(this.Database.Format.Kind, cachedSchemaLvProp, nameof(cachedSchemaLvProp));
+        byte[] validatedLvProp = LinkedTableManager.CopyValidatedCachedSchemaLvProp(this.Database.Format, cachedSchemaLvProp, nameof(cachedSchemaLvProp));
         return this.CreateLinkedOdbcTableCoreAsync(linkedTableName, connectionString, foreignTableName, validatedLvProp, sourceColumns: null, cancellationToken);
     }
 

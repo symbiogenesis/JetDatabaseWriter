@@ -746,8 +746,8 @@ internal sealed class ConstraintRegistry(
 
             ColumnType calculatedResultType = ResolveCalculatedResultType(col, propertyTarget);
             ColumnType constraintType = calculatedResultType != default ? calculatedResultType : col.Type;
-            DatabaseFormat propertyFormat = properties?.Format ?? default;
-            string? calculationExpression = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat);
+            JetFormat? propertyFormat = properties?.Format;
+            string? calculationExpression = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat!);
 
             // Access gives AutoNumber, calculated and complex columns no default; a stray
             // DefaultValue property on one must not stop the column generating its value.
@@ -760,12 +760,12 @@ internal sealed class ConstraintRegistry(
                 IsNullable = isNullable,
                 IsAutoIncrement = isAutoIncrement,
                 DefaultValueExpression = takesDefault
-                    ? NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat))
+                    ? NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat!))
                     : null,
                 ValidationRuleExpression = isComplex
                     ? null
-                    : NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, propertyFormat)),
-                ValidationText = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, propertyFormat),
+                    : NullIfBlank(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, propertyFormat!)),
+                ValidationText = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, propertyFormat!),
                 IsCalculated = col.IsCalculated,
                 CalculationExpression = calculationExpression,
                 CalculatedResultType = calculatedResultType,

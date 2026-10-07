@@ -21,11 +21,11 @@ internal sealed class ColumnPropertyTargetBuilder
     /// <param name="propertyName">The property name.</param>
     /// <param name="value">The value.</param>
     /// <param name="format">The format.</param>
-    public void AddText(string propertyName, string value, DatabaseFormat format)
+    public void AddText(string propertyName, string value, JetFormat format)
     {
         Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
         Guard.NotNull(value, nameof(value));
-        Encoding enc = JetFormat.PropertyTextEncodingOf(format);
+        Encoding enc = format.PropertyTextEncoding;
         this.Entries.Add(new ColumnPropertyEntryBuilder
         {
             Name = propertyName,
@@ -39,11 +39,11 @@ internal sealed class ColumnPropertyTargetBuilder
     /// <param name="propertyName">The property name.</param>
     /// <param name="value">The value.</param>
     /// <param name="format">The format.</param>
-    public void AddMemoText(string propertyName, string value, DatabaseFormat format)
+    public void AddMemoText(string propertyName, string value, JetFormat format)
     {
         Guard.NotNullOrEmpty(propertyName, nameof(propertyName));
         Guard.NotNull(value, nameof(value));
-        Encoding enc = JetFormat.PropertyTextEncodingOf(format);
+        Encoding enc = format.PropertyTextEncoding;
         this.Entries.Add(new ColumnPropertyEntryBuilder
         {
             Name = propertyName,

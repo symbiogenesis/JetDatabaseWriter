@@ -181,11 +181,8 @@ public sealed class CreateDatabaseTests
     }
 
     [Fact]
-    public async Task OpenAsync_LegacyUnmaskedJet3Header_StillRoundTripsUtf8Text()
+    public async Task OpenAsync_InvalidJet3CodePage_RefusesReaderAndWriter()
     {
-        // Jet3 files created before the header was masked have raw zeros in
-        // 0x18..0x95. Their code page decodes as an unknown one, so they keep
-        // reading and writing text as UTF-8, as they always did.
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.Jet3Mdb, leaveOpen: true, cancellationToken: ct))
@@ -195,19 +192,12 @@ public sealed class CreateDatabaseTests
 
         ms.Position = 0x18;
         ms.Write(new byte[0x96 - 0x18]);
-
+        byte[] before = ms.ToArray();
         ms.Position = 0;
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
-        {
-            Assert.Equal(65001, writer.CodePage);
-            await writer.InsertRowAsync("T", ["Café"], ct);
-        }
-
-        Assert.True(IndexOf(ms.ToArray(), [0x43, 0x61, 0x66, 0xC3, 0xA9]) >= 0, "The legacy file's text is no longer UTF-8.");
+        await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessWriter.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct));
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: ct);
-        Assert.Equal("Café", table.Rows[0]["Name"]);
+        await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct));
+        Assert.Equal(before, ms.ToArray());
     }
 
     // ── Round-trip: create → create table → verify columns ────────────

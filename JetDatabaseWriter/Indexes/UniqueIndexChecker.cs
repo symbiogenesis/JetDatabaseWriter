@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
@@ -76,7 +77,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
         foreach ((int realIdxNum, RealIdxEntry slot) in catalog.RealIdxByNum)
         {
-            if (!catalog.Catalog.IsUniqueOrPk(realIdxNum))
+            if (!catalog.Catalog.IsUniqueOrPk(realIdxNum) && !slot.IsRequired)
             {
                 continue;
             }
@@ -89,7 +90,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             }
 
             long rootPage = (uint)Ri32(tdefBuffer, slot.FirstDpOffset);
-            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.Catalog.GetNameOrFallback(realIdxNum), keyColInfos, rootPage));
+            result.Add(new UniqueIndexDescriptor(realIdxNum, catalog.Catalog.GetNameOrFallback(realIdxNum), keyColInfos, rootPage, catalog.Catalog.IsUniqueOrPk(realIdxNum), slot.IsRequired || catalog.Catalog.PkRealIdxNums.Contains(realIdxNum)));
         }
 
         return result;
@@ -228,6 +229,11 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             for (int d = 0; d < descriptors.Count; d++)
             {
                 UniqueIndexDescriptor descriptor = descriptors[d];
+                if (!ShouldCheckKey(tableName, descriptor, pendingRows[p]))
+                {
+                    continue;
+                }
+
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericScales[d]);
 
                 if (!seenSets[d].Add(key)
@@ -287,6 +293,19 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         }
 
         this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingInsertRows: [], replaceAtRowIndex: replaceAt);
+    }
+
+    private static bool ShouldCheckKey(string tableName, UniqueIndexDescriptor descriptor, object[] row)
+    {
+        int nullCount = IndexHelpers.CountNullKeyColumns(descriptor.KeyColumns, row);
+        if (descriptor.IsRequired && nullCount != 0)
+        {
+            throw JetErrors.Constraint(JetErrorCode.NotNullViolation,
+                $"Index '{descriptor.Name}' on table '{tableName}' requires a value for every key column. The table is unchanged.",
+                new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
+        }
+
+        return descriptor.IsUnique && nullCount != descriptor.KeyColumns.Count;
     }
 
     private static bool RequiresSnapshotForPreInsert(IReadOnlyList<UniqueIndexDescriptor> descriptors)
@@ -369,6 +388,11 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
                     ? rep
                     : existingRows[r].Values;
 
+                if (!ShouldCheckKey(tableName, descriptor, effectiveRow))
+                {
+                    continue;
+                }
+
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
 
                 if (!seen.Add(key))
@@ -379,6 +403,11 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
             for (int p = 0; p < pendingCount; p++)
             {
+                if (!ShouldCheckKey(tableName, descriptor, pendingInsertRows[p]))
+                {
+                    continue;
+                }
+
                 byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
 
                 if (!seen.Add(key))

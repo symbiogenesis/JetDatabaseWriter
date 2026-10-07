@@ -86,6 +86,8 @@ internal static class LinkedOdbcLvPropProbe
             new AccessReaderOptions { UseLockFile = false },
             CancellationToken.None);
 
+        await using ProbeDatabase probe = await ProbeDatabase.OpenAsync(path);
+
         DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: CancellationToken.None);
         List<LinkedCatalogRow> rows = ReadLinkedRows(catalog);
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Format: `{reader.DatabaseFormat}`");
@@ -102,7 +104,7 @@ internal static class LinkedOdbcLvPropProbe
         AppendCatalogSummary(sb, rows);
         foreach (LinkedCatalogRow row in rows)
         {
-            AppendRowAnalysis(sb, row, reader.DatabaseFormat);
+            AppendRowAnalysis(sb, row, probe.Format);
         }
 
         return 0;
@@ -173,7 +175,7 @@ internal static class LinkedOdbcLvPropProbe
         _ = sb.AppendLine();
     }
 
-    private static void AppendRowAnalysis(StringBuilder sb, LinkedCatalogRow row, DatabaseFormat format)
+    private static void AppendRowAnalysis(StringBuilder sb, LinkedCatalogRow row, JetFormat format)
     {
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"### `{EscapeMarkdown(row.Name)}` LvProp analysis");
         _ = sb.AppendLine();
@@ -272,7 +274,7 @@ internal static class LinkedOdbcLvPropProbe
         return true;
     }
 
-    private static void AppendNameMapEntries(StringBuilder sb, ColumnPropertyBlock block, DatabaseFormat format)
+    private static void AppendNameMapEntries(StringBuilder sb, ColumnPropertyBlock block, JetFormat format)
     {
         List<(string Target, ColumnPropertyEntry Entry)> entries = block.Targets
             .SelectMany(static target => target.Entries
@@ -345,7 +347,7 @@ internal static class LinkedOdbcLvPropProbe
         _ = sb.AppendLine();
     }
 
-    private static void AppendEntryDetails(StringBuilder sb, ColumnPropertyBlock block, DatabaseFormat format)
+    private static void AppendEntryDetails(StringBuilder sb, ColumnPropertyBlock block, JetFormat format)
     {
         _ = sb.AppendLine("#### Entry details");
         _ = sb.AppendLine();
@@ -363,7 +365,7 @@ internal static class LinkedOdbcLvPropProbe
         _ = sb.AppendLine();
     }
 
-    private static string FormatValuePreview(ColumnPropertyEntry entry, DatabaseFormat format)
+    private static string FormatValuePreview(ColumnPropertyEntry entry, JetFormat format)
     {
         ReadOnlySpan<byte> value = entry.Value;
         return entry.DataType switch
@@ -397,13 +399,13 @@ internal static class LinkedOdbcLvPropProbe
         }
     }
 
-    private static string DecodePropertyText(byte[] value, DatabaseFormat format)
+    private static string DecodePropertyText(byte[] value, JetFormat format)
     {
-        Encoding encoding = format == DatabaseFormat.Jet3Mdb ? Encoding.GetEncoding(1252) : Encoding.Unicode;
+        Encoding encoding = format.PropertyTextEncoding;
         return SanitizeText(encoding.GetString(value));
     }
 
-    private static string BuildStringRunSummary(byte[] value, DatabaseFormat format)
+    private static string BuildStringRunSummary(byte[] value, JetFormat format)
     {
         List<string> runs = ExtractUtf16Runs(value);
         runs.AddRange(ExtractAsciiRuns(value));

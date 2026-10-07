@@ -27,5 +27,7 @@ internal readonly record struct RealIdxSlot(int PhysStart, int FirstDpOffset, by
     /// <param name="keyColumns">The key columns.</param>
     /// <param name="overrideUnique">The override unique.</param>
     public RealIdxEntry ToEntry(IReadOnlyList<KeyColumn> keyColumns, bool? overrideUnique = null)
-        => new(keyColumns, this.FirstDpOffset, overrideUnique ?? this.IsUnique);
+        => new(keyColumns, this.FirstDpOffset, overrideUnique ?? this.IsUnique,
+            (this.Flags & Constants.TableDefinition.IgnoreNullsIndexFlag) != 0,
+            (this.Flags & Constants.TableDefinition.RequiredIndexFlag) != 0);
 }

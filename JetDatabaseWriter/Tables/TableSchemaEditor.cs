@@ -124,6 +124,8 @@ internal sealed class TableSchemaEditor(
             ValidateDeclaredDefault(columns[i], nameof(columns));
         }
 
+        _ = JetExpressionConverter.BuildLvPropBlob(columns, format);
+
         return this.CreateTableAsync(tableName, columns, indexes, cancellationToken);
     }
 
@@ -270,6 +272,7 @@ internal sealed class TableSchemaEditor(
         ValidateDeclaredAutoIncrement(column, nameof(column));
         ValidateDeclaredCalculatedExpression(column, nameof(column));
         ValidateDeclaredDefault(column, nameof(column));
+        _ = JetExpressionConverter.BuildLvPropBlob([column], format);
 
         return this.RewriteTableAsync(
             tableName,
@@ -824,13 +827,13 @@ internal sealed class TableSchemaEditor(
             {
                 baseDef = baseDef with
                 {
-                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format.Kind)
+                    DefaultValueExpression = target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format)
                         ?? baseDef.DefaultValueExpression,
-                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format.Kind)
+                    ValidationRuleExpression = target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format)
                         ?? baseDef.ValidationRuleExpression,
-                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format.Kind)
+                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format)
                         ?? baseDef.ValidationText,
-                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, format.Kind)
+                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, format)
                         ?? baseDef.Description,
                 };
             }
@@ -854,8 +857,8 @@ internal sealed class TableSchemaEditor(
         // Project the stored properties onto the new columns, and serialize them,
         // before anything is written: the rebuilt table's catalog row carries them.
         ColumnPropertyBlock persistedProperties =
-            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format.Kind);
-        byte[]? persistedLvProp = persistedProperties.ToBytes(format.Kind);
+            PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format);
+        byte[]? persistedLvProp = persistedProperties.ToBytes(format);
 
         // Capture the table's relationship state, and refuse to drop a
         // relationship key column, before anything is written.
@@ -1350,7 +1353,7 @@ internal sealed class TableSchemaEditor(
             def = def with
             {
                 IsCalculated = true,
-                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format.Kind),
+                CalculationExpression = target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format),
                 CalculatedResultType = resultType,
                 IsCompressedUnicode = false,
             };

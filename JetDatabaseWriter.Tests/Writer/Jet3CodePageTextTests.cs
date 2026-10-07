@@ -221,28 +221,17 @@ public sealed class Jet3CodePageTextTests
         Assert.Contains(await reader.ListIndexesAsync(tableName, Ct), i => i.Name == "Ix ‰");
     }
 
-    /// <summary>
-    /// A Jet3 file from an earlier build, whose unmasked header reads as an
-    /// unknown code page, keeps storing UTF-8, which holds every string.
-    /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
+    /// <summary>A corrupt code-page header is refused without changing the file.</summary>
+    /// <returns>A task representing the asynchronous check.</returns>
     [Fact]
-    public async Task LegacyUtf8Jet3File_StillStoresTextOutsideCp1252()
+    public async Task InvalidJet3CodePage_IsRefusedWithoutWriting()
     {
         await using MemoryStream ms = await CreateJet3TableAsync();
         ms.Position = 0x18;
         ms.Write(new byte[0x96 - 0x18]);
-
-        await using (AccessWriter writer = await OpenWriterAsync(ms))
-        {
-            Assert.Equal(65001, writer.CodePage);
-            await writer.CreateTableAsync("顧客", [new("Id", typeof(int)), new("氏名", typeof(string), maxLength: 50)], Ct);
-            await writer.InsertRowAsync("顧客", [1, "Łódź 中文"], Ct);
-        }
-
-        await using AccessReader reader = await OpenReaderAsync(ms);
-        Assert.Contains("顧客", await reader.ListTablesAsync(Ct));
-        Assert.Equal("Łódź 中文", Assert.Single((await reader.ReadDataTableAsync("顧客", cancellationToken: Ct)).AsEnumerable())["氏名"]);
+        byte[] before = ms.ToArray();
+        await Assert.ThrowsAsync<NotSupportedException>(async () => await OpenWriterAsync(ms));
+        Assert.Equal(before, ms.ToArray());
     }
 
     private static int ColumnIndex(string column) => column switch

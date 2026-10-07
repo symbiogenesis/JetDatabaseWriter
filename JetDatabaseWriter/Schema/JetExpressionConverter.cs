@@ -62,7 +62,7 @@ internal static class JetExpressionConverter
     /// </summary>
     /// <param name="columns">Column definitions. May be <see langword="null"/>.</param>
     /// <param name="format">Target database format (selects Jet3 codepage vs Jet4 UTF-16LE).</param>
-    public static byte[]? BuildLvPropBlob(IReadOnlyList<ColumnDefinition>? columns, DatabaseFormat format)
+    public static byte[]? BuildLvPropBlob(IReadOnlyList<ColumnDefinition>? columns, JetFormat format)
     {
         if (columns is null || columns.Count == 0)
         {
@@ -86,7 +86,7 @@ internal static class JetExpressionConverter
     /// <param name="builder">The builder.</param>
     /// <param name="col">The column descriptor.</param>
     /// <param name="format">The format.</param>
-    public static void ApplyColumn(ColumnPropertyBlockBuilder builder, ColumnDefinition col, DatabaseFormat format)
+    public static void ApplyColumn(ColumnPropertyBlockBuilder builder, ColumnDefinition col, JetFormat format)
     {
         Guard.NotNull(builder, nameof(builder));
         Guard.NotNull(col, nameof(col));
