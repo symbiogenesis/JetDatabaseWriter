@@ -80,6 +80,7 @@ public sealed class CatalogCorruptionTests
     [InlineData(false, "NullName")]
     public async Task PublicListTables_RejectsMalformedRowWithoutCachingPartialCatalog(bool strict, string damage)
     {
+        ArgumentNullException.ThrowIfNull(damage);
         await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
@@ -119,7 +120,12 @@ public sealed class CatalogCorruptionTests
                 {
                     BinaryPrimitives.WriteInt32LittleEndian(
                         page.AsSpan(location.RowStart + harness.Database.Format.RowFields.NumCols + id.FixedOff, 4),
-                        damage == "Duplicate" ? checked((int)otherPage) : damage == "Id" ? 0 : 1);
+                        damage switch
+                        {
+                            "Duplicate" => checked((int)otherPage),
+                            "Id" => 0,
+                            _ => 1,
+                        });
                 }
 
                 await harness.Pager.WritePageAsync(location.PageNumber, page, TestContext.Current.CancellationToken);

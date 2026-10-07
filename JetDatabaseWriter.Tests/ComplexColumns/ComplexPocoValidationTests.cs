@@ -14,28 +14,39 @@ using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
 /// <summary>Invalid POCO complex references are refused before any insert is applied.</summary>
 public sealed class ComplexPocoValidationTests
 {
-    /// <summary>Gets unsupported complex property payloads.</summary>
-    public static TheoryData<object> InvalidValues =>
-    [
-        "discarded",
-        1.5,
-        1.5m,
-        true,
-        uint.MaxValue,
-        0,
-        -1L,
-        (long)int.MaxValue + 1,
-        new AttachmentInput("file.txt", []),
-        new AttachmentInput?[] { null },
-        new MultiValueItem?[] { null },
-        ComplexCellValue.EncodeAttachments(1, []),
-        ComplexCellValue.EncodeMultiValueItems(1, []),
-    ];
-
     [Theory]
-    [MemberData(nameof(InvalidValues))]
-    public async Task Insert_InvalidComplexProperty_RefusesNamedArgumentWithoutMutation(object value)
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(10)]
+    [InlineData(11)]
+    [InlineData(12)]
+    public async Task Insert_InvalidComplexProperty_RefusesNamedArgumentWithoutMutation(int invalidValueIndex)
     {
+        object value = invalidValueIndex switch
+        {
+            0 => "discarded",
+            1 => 1.5,
+            2 => 1.5m,
+            3 => true,
+            4 => uint.MaxValue,
+            5 => 0,
+            6 => -1L,
+            7 => (long)int.MaxValue + 1,
+            8 => new AttachmentInput("file.txt", []),
+            9 => new AttachmentInput?[] { null },
+            10 => new MultiValueItem?[] { null },
+            11 => ComplexCellValue.EncodeAttachments(1, []),
+            12 => ComplexCellValue.EncodeMultiValueItems(1, []),
+            _ => throw new ArgumentOutOfRangeException(nameof(invalidValueIndex)),
+        };
         await using var stream = new MemoryStream();
         await using AccessWriter writer = await CreateWriterAsync(stream);
         await CreateTableAsync(writer);
@@ -69,11 +80,13 @@ public sealed class ComplexPocoValidationTests
             await RunAsync(writer, mode, async () =>
             {
                 ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(async () =>
-                    await writer.InsertRowsAsync("Docs", new[]
-                    {
-                        new ComplexPoco(),
-                        new ComplexPoco { Files = new object() },
-                    }, Ct));
+                    await writer.InsertRowsAsync<ComplexPoco>(
+                        "Docs",
+                        [
+                            new ComplexPoco(),
+                            new ComplexPoco { Files = new object() },
+                        ],
+                        Ct));
                 Assert.Equal("item", error.ParamName);
             });
             Assert.Equal(before, stream.ToArray());
@@ -81,8 +94,8 @@ public sealed class ComplexPocoValidationTests
         }
 
         RawTable table = await ReadRawTableAsync(stream, "Docs");
-        Assert.Single(table.Rows);
-        Assert.Equal(1, table.Rows[0][0]);
+        object[] row = Assert.Single(table.Rows);
+        Assert.Equal(1, row[0]);
         Assert.Equal(1, table.ComplexAutoNumber);
     }
 
@@ -98,11 +111,13 @@ public sealed class ComplexPocoValidationTests
             await RunAsync(writer, mode, async () =>
             {
                 ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(async () =>
-                    await writer.InsertRowsAsync("Docs", new[]
-                    {
-                        new ComplexPoco(),
-                        new ComplexPoco { Files = 1, Tags = 2 },
-                    }, Ct));
+                    await writer.InsertRowsAsync<ComplexPoco>(
+                        "Docs",
+                        [
+                            new ComplexPoco(),
+                            new ComplexPoco { Files = 1, Tags = 2 },
+                        ],
+                        Ct));
                 Assert.Equal("item", error.ParamName);
                 Assert.Contains("Files", error.Message, StringComparison.Ordinal);
                 Assert.Contains("Tags", error.Message, StringComparison.Ordinal);
@@ -112,8 +127,8 @@ public sealed class ComplexPocoValidationTests
         }
 
         RawTable table = await ReadRawTableAsync(stream, "Docs");
-        Assert.Single(table.Rows);
-        Assert.Equal(1, table.Rows[0][0]);
+        object[] row = Assert.Single(table.Rows);
+        Assert.Equal(1, row[0]);
         Assert.Equal(1, table.ComplexAutoNumber);
     }
 
@@ -128,19 +143,21 @@ public sealed class ComplexPocoValidationTests
         }
 
         RawTable table = await ReadRawTableAsync(stream, "Docs");
-        Assert.Single(table.Rows);
+        object[] row = Assert.Single(table.Rows);
         Assert.Equal(9, table.ComplexAutoNumber);
-        Assert.Equal(new ComplexIdRef(9), table.Rows[0][1]);
-        Assert.Equal(new ComplexIdRef(9), table.Rows[0][2]);
+        Assert.Equal(new ComplexIdRef(9), row[1]);
+        Assert.Equal(new ComplexIdRef(9), row[2]);
     }
 
     private static async Task CreateTableAsync(AccessWriter writer)
-        => await writer.CreateTableAsync("Docs", new[]
-        {
-            new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true },
-            new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-            new ColumnDefinition("Tags", typeof(string)) { IsMultiValue = true },
-        }, Ct);
+        => await writer.CreateTableAsync(
+            "Docs",
+            [
+                new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true },
+                new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                new ColumnDefinition("Tags", typeof(string)) { IsMultiValue = true },
+            ],
+            Ct);
 
     private sealed class ComplexPoco
     {

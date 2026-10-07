@@ -61,7 +61,7 @@ public sealed class ReplacementCancellationTests
             ArgumentOutOfRangeException.ThrowIfNegative(elementIndex);
             ArgumentOutOfRangeException.ThrowIfGreaterThan(elementIndex, this.bytes.Length);
             this.OnConsuming();
-            GCHandle handle = GCHandle.Alloc(this.bytes, GCHandleType.Pinned);
+            var handle = GCHandle.Alloc(this.bytes, GCHandleType.Pinned);
             return new MemoryHandle((byte*)handle.AddrOfPinnedObject() + elementIndex, handle);
         }
 

@@ -23,7 +23,7 @@ public sealed class CrossProcessLockTests
         await File.WriteAllBytesAsync(path, new byte[8192], TestContext.Current.CancellationToken);
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
             var helper = JetByteRangeLock.Create(stream, enabled: true, lockTimeoutMilliseconds: 1000);
             if (OperatingSystem.IsMacOS())
             {
