@@ -130,7 +130,7 @@ internal static class DaoPowerShellHostResolver
         }
     }
 
-    private static string BuildPowerShellPath(string windowsDirectory, string systemDirectoryName) => Path.Combine(windowsDirectory, systemDirectoryName, PowerShellRelativePath);
+    private static string BuildPowerShellPath(string windowsDirectory, string systemDirectoryName) => windowsDirectory.Replace('/', '\').TrimEnd('\') + "\\" + systemDirectoryName + "\\" + PowerShellRelativePath;
 
     internal sealed record DaoPowerShellHostProbeResult(string? HostPath, string? FailureReason);
 }

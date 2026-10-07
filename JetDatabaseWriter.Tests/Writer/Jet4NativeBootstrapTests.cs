@@ -136,8 +136,8 @@ public sealed class Jet4NativeBootstrapTests
         Assert.Equal(2, await reader.GetRealRowCountAsync("Child", TestContext.Current.CancellationToken));
         using DataTable parents = await reader.ReadTableAsync("Added", cancellationToken: TestContext.Current.CancellationToken);
         using DataTable children = await reader.ReadTableAsync("Child", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal(new[] { 1, 2 }, parents.AsEnumerable().Select(row => (int)row["Id"]).OrderBy(id => id));
-        Assert.Equal(new[] { (10, 1), (20, 2) }, children.AsEnumerable().Select(row => ((int)row["Id"], (int)row["ParentId"])).OrderBy(row => row.Item1));
+        Assert.Equal([1, 2], parents.AsEnumerable().Select(row => (int)row["Id"]).OrderBy(id => id));
+        Assert.Equal([(10, 1), (20, 2)], children.AsEnumerable().Select(row => ((int)row["Id"], (int)row["ParentId"])).OrderBy(row => row.Item1));
         RelationshipMetadata relationship = Assert.Single(await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken));
         Assert.Equal("AddedChild", relationship.Name);
         Assert.Equal("Added", relationship.PrimaryTable);

@@ -687,6 +687,8 @@ internal static class LinkedTableManager
         }
 
         string rawPath = link.SourcePath.Trim();
+        ThrowIfUnsafeWindowsPath(rawPath, $"linked table '{link.Name}'");
+        rawPath = rawPath.Replace('\', Path.DirectorySeparatorChar);
         bool hasHostDatabasePath = !string.IsNullOrWhiteSpace(hostDatabasePath);
         string baseDirectory = hasHostDatabasePath
             ? Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory()
@@ -750,8 +752,11 @@ internal static class LinkedTableManager
                 link.SourceObjectName);
         }
 
+        string rawFilePath = link.SourceObjectName.Trim();
+        ThrowIfUnsafeWindowsPath(rawFilePath, $"linked text table '{link.Name}'");
+        rawFilePath = rawFilePath.Replace('\', Path.DirectorySeparatorChar);
         string resolvedFilePath = ResolvePath(
-            link.SourceObjectName.Trim(),
+            rawFilePath,
             resolvedDirectory,
             $"linked text table '{link.Name}'");
         if (!IsPathWithinDirectory(resolvedFilePath, resolvedDirectory))

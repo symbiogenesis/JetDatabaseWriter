@@ -25,8 +25,22 @@ public sealed class QualifiedExpressionReferenceTests
     public void SameTableReference_EvaluatesForCalculation(string reference)
     {
         CalculatedExpressionEvaluationContext context = Context("T");
-        CalculatedExpressionPlan plan = CalculatedExpressionPlan.Parse(reference + " * 2");
+        var plan = CalculatedExpressionPlan.Parse(reference + " * 2");
         Assert.Equal(8d, plan.Root.Evaluate(context, plan));
+    }
+
+    [Theory]
+    [InlineData("[T].[Price] + 1e-3", 4.001d)]
+    [InlineData("T.Price + 1E+3", 1004d)]
+    [InlineData("[T]![Price] + .5E1", 9d)]
+    [InlineData("[T].[Price] + &HFFFF", 3d)]
+    [InlineData("T.Price + &HFFFF&", 65539d)]
+    [InlineData("[T]![Price] + &O17", 19d)]
+    [InlineData("T.Price + &17", 19d)]
+    public void QualifiedReference_WithScientificOrRadixLiteralRetainsNumericToken(string expression, double expected)
+    {
+        var plan = CalculatedExpressionPlan.Parse(expression);
+        Assert.Equal(expected, Assert.IsType<double>(plan.Root.Evaluate(Context("T"), plan)), 12);
     }
 
     [Theory]
@@ -37,7 +51,7 @@ public sealed class QualifiedExpressionReferenceTests
     [InlineData("T.Price", null)]
     public void CrossTableOrMissingContext_RefusesInsteadOfUsingCurrentRow(string expression, string? tableName)
     {
-        CalculatedExpressionPlan plan = CalculatedExpressionPlan.Parse(expression);
+        var plan = CalculatedExpressionPlan.Parse(expression);
         CalculatedExpressionEvaluationContext context = Context(tableName);
         Assert.Throws<NotSupportedException>(() => plan.Root.Evaluate(context, plan));
         Assert.False(ColumnDefaultValue.Compile(expression).TryEvaluate(typeof(double), () => context, out _));
@@ -54,21 +68,21 @@ public sealed class QualifiedExpressionReferenceTests
         Assert.Equal(expected, renamed);
         Assert.False(ExpressionFieldReferences.References(renamed, "Price", "T"));
         Assert.True(ExpressionFieldReferences.References(renamed, "Cost", "T"));
-        CalculatedExpressionPlan plan = CalculatedExpressionPlan.Parse(renamed);
+        var plan = CalculatedExpressionPlan.Parse(renamed);
         Assert.Equal(4, plan.Root.Evaluate(Context("T", "Cost"), plan));
     }
 
     [Fact]
     public void QualifiedNamesInsideLiterals_RemainText()
     {
-        CalculatedExpressionPlan plan = CalculatedExpressionPlan.Parse("'[Other]![Price]' & \"T.Price\"");
+        var plan = CalculatedExpressionPlan.Parse("'[Other]![Price]' & \"T.Price\"");
         Assert.Equal("[Other]![Price]T.Price", plan.Root.Evaluate(Context("T"), plan));
     }
 
     [Fact]
     public void GeneratedPlaceholder_CannotAliasBareField()
     {
-        CalculatedExpressionPlan plan = CalculatedExpressionPlan.Parse("[Price] + __JdwCalcCol0");
+        var plan = CalculatedExpressionPlan.Parse("[Price] + __JdwCalcCol0");
         Assert.Throws<InvalidOperationException>(() => plan.Root.Evaluate(Context("T"), plan));
     }
 

@@ -107,7 +107,7 @@ internal static class CalculatedExpressionNormalizer
                         placeholder = PlaceholderPrefix + placeholderIndex.ToString(CultureInfo.InvariantCulture);
                         placeholderIndex++;
                     }
-                    while (trimmed.IndexOf(placeholder, StringComparison.OrdinalIgnoreCase) >= 0);
+                    while (trimmed.Contains(placeholder, StringComparison.OrdinalIgnoreCase));
 
                     placeholderToColumn.Add(placeholder, column);
                     if (table is not null)
@@ -157,7 +157,7 @@ internal static class CalculatedExpressionNormalizer
             }
 
             index = end + 1;
-            return expression.Substring(start, end - start);
+            return expression[start..end];
         }
 
         if (index >= expression.Length || !(char.IsLetter(expression[index]) || expression[index] == '_'))
@@ -171,7 +171,7 @@ internal static class CalculatedExpressionNormalizer
             index++;
         }
 
-        return expression.Substring(nameStart, index - nameStart);
+        return expression[nameStart..index];
     }
 
     /// <summary>

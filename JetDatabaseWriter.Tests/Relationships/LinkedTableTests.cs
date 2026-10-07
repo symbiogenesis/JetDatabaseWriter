@@ -442,8 +442,11 @@ public sealed class LinkedTableTests : IDisposable
         await Assert.ThrowsAsync<FileNotFoundException>(async () => await reader.ReadTableAsync("LinkedMissing", cancellationToken: TestContext.Current.CancellationToken));
     }
 
-    [Fact]
-    public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_IsBlockedByDefault()
+    [Theory]
+    [InlineData(@"..\..\sensitive.accdb")]
+    [InlineData("../../sensitive.accdb")]
+    [InlineData(@"../..\sensitive.accdb")]
+    public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_IsBlockedByDefault(string sourcePath)
     {
         // A malicious relative path that escapes the host DB directory should be blocked.
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkTraversal");
@@ -451,7 +454,7 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(
             frontEndPath,
             "LinkedTraversal",
-            @"..\..\sensitive.accdb",
+            sourcePath,
             "SensitiveData",
             TestContext.Current.CancellationToken);
 
@@ -471,7 +474,7 @@ public sealed class LinkedTableTests : IDisposable
             await writer.InsertRowAsync("TrustedData", [1], ct);
         }
 
-        string hostDirectory = Path.Combine(Path.GetTempPath(), $"LinkAbsHost_{Guid.NewGuid():N}");
+        string hostDirectory = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"LinkAbsHost_{Guid.NewGuid():N}");
         Directory.CreateDirectory(hostDirectory);
         this.tempDirectories.Add(hostDirectory);
 
@@ -526,8 +529,10 @@ public sealed class LinkedTableTests : IDisposable
             await reader.ReadTableAsync("LinkedStreamData", cancellationToken: ct));
     }
 
-    [Fact]
-    public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_CanBeAllowedByCallback()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_CanBeAllowedByCallback(bool windowsSeparators)
     {
         // Trusted callers can explicitly allow an escaped relative path via callback.
         string sourcePath = await this.CreateTempAccdbDatabaseAsync("LinkPolicySrc");
@@ -544,12 +549,12 @@ public sealed class LinkedTableTests : IDisposable
             await writer.InsertRowAsync("TrustedData", [7, "Allowed by callback"], TestContext.Current.CancellationToken);
         }
 
-        string nestedDir = Path.Combine(Path.GetTempPath(), $"LinkPolicy_{Guid.NewGuid():N}");
+        string nestedDir = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"LinkPolicy_{Guid.NewGuid():N}");
         Directory.CreateDirectory(nestedDir);
         this.tempDirectories.Add(nestedDir);
 
         string frontEndPath = await this.CreateTempAccdbDatabaseInDirectoryAsync("LinkPolicyFE", nestedDir);
-        string relativePath = Path.Combine("..", Path.GetFileName(sourcePath));
+        string relativePath = (windowsSeparators ? @"..\" : "../") + Path.GetFileName(sourcePath);
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedTrusted", relativePath, "TrustedData", TestContext.Current.CancellationToken);
 
@@ -588,7 +593,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedBlocked", sourcePath, "Data", TestContext.Current.CancellationToken);
 
-        string allowlistedDir = Path.Combine(Path.GetTempPath(), $"AllowOnly_{Guid.NewGuid():N}");
+        string allowlistedDir = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"AllowOnly_{Guid.NewGuid():N}");
         Directory.CreateDirectory(allowlistedDir);
         this.tempDirectories.Add(allowlistedDir);
 
@@ -606,7 +611,7 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_ReadLinkedTable_AllowlistRejectsSiblingDirectoryWithSharedPrefix()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string parentDirectory = Path.Combine(Path.GetTempPath(), $"LinkAllowPrefix_{Guid.NewGuid():N}");
+        string parentDirectory = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"LinkAllowPrefix_{Guid.NewGuid():N}");
         string allowlistedDirectory = Path.Combine(parentDirectory, "Allowed");
         string siblingDirectory = Path.Combine(parentDirectory, "AllowedSibling");
         string hostDirectory = Path.Combine(parentDirectory, "Host");
@@ -738,7 +743,7 @@ public sealed class LinkedTableTests : IDisposable
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         const string sourcePassword = "Native123";
-        string sourcePath = Path.Combine(Path.GetTempPath(), $"PasswordSource_{Guid.NewGuid():N}.mdb");
+        string sourcePath = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"PasswordSource_{Guid.NewGuid():N}.mdb");
         this.tempFiles.Add(sourcePath);
         File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), sourcePath);
         string hostPath = await this.CreateTempAccdbDatabaseAsync("PasswordHost");
@@ -814,7 +819,7 @@ public sealed class LinkedTableTests : IDisposable
     /// <param name="prefix">The prefix.</param>
     private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
     {
-        string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
+        string temp = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
         await using (await AccessWriter.CreateDatabaseAsync(
             temp,
             DatabaseFormat.AceAccdb,

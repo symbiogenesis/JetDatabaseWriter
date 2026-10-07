@@ -15,7 +15,7 @@ public sealed class LinkedSourceSecurityTests
     public void LinkedOptions_DoNotForwardHostPassword()
     {
         var options = new AccessReaderOptions("host secret") { UseLockFile = false };
-        AccessReaderOptions linked = LinkedTableManager.CreateLinkedSourceOpenOptions(options, Path.Combine(Path.GetTempPath(), "host.accdb"));
+        AccessReaderOptions linked = LinkedTableManager.CreateLinkedSourceOpenOptions(options, Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
         Assert.True(linked.Password.IsEmpty);
     }
 
@@ -35,7 +35,7 @@ public sealed class LinkedSourceSecurityTests
                 return true;
             },
         };
-        var policy = new LinkedSourcePolicy(options, Path.Combine(Path.GetTempPath(), "host.accdb"));
+        var policy = new LinkedSourcePolicy(options, Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
         var link = new LinkedTableInfo { Name = "Hostile", Kind = LinkedTableKind.Access, SourcePath = sourcePath, SourceObjectName = "Data" };
         _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
         Assert.Equal(0, calls);
@@ -54,8 +54,8 @@ public sealed class LinkedSourceSecurityTests
                 return "source secret".AsMemory();
             },
         };
-        var policy = new LinkedSourcePolicy(options, Path.Combine(Path.GetTempPath(), "host.accdb"));
-        var link = new LinkedTableInfo { Name = "Denied", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(Path.GetTempPath(), "denied.accdb"), SourceObjectName = "Data" };
+        var policy = new LinkedSourcePolicy(options, Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
+        var link = new LinkedTableInfo { Name = "Denied", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "denied.accdb"), SourceObjectName = "Data" };
         _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
         Assert.Equal(0, passwordRequests);
     }
@@ -66,8 +66,8 @@ public sealed class LinkedSourceSecurityTests
     [InlineData("COM³.accdb")]
     public async Task LinkedSource_SuperscriptDeviceNames_RespectWindowsNamespaces(string fileName)
     {
-        var policy = new LinkedSourcePolicy(new AccessReaderOptions(), Path.Combine(Path.GetTempPath(), "host.accdb"));
-        var link = new LinkedTableInfo { Name = "Device", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(Path.GetTempPath(), fileName), SourceObjectName = "Data" };
+        var policy = new LinkedSourcePolicy(new AccessReaderOptions(), Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), "host.accdb"));
+        var link = new LinkedTableInfo { Name = "Device", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), fileName), SourceObjectName = "Data" };
         Type expected = Path.DirectorySeparatorChar == '\\' ? typeof(UnauthorizedAccessException) : typeof(FileNotFoundException);
         _ = await Assert.ThrowsAsync(expected, async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
     }
@@ -75,7 +75,7 @@ public sealed class LinkedSourceSecurityTests
     [Fact]
     public async Task LinkedSource_AllowlistNestedUnderSymlink_IsRefused()
     {
-        string directory = Path.Combine(Path.GetTempPath(), $"linked-security-{Guid.NewGuid():N}");
+        string directory = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"linked-security-{Guid.NewGuid():N}");
         string target = Path.Combine(directory, "target");
         string alias = Path.Combine(directory, "alias");
         string nested = Path.Combine(target, "nested");
@@ -88,7 +88,8 @@ public sealed class LinkedSourceSecurityTests
             var options = new AccessReaderOptions { UseLockFile = false, LinkedSourcePathAllowlist = [Path.Combine(alias, "nested")] };
             var policy = new LinkedSourcePolicy(options, Path.Combine(directory, "host.accdb"));
             var link = new LinkedTableInfo { Name = "Alias", Kind = LinkedTableKind.Access, SourcePath = sourcePath, SourceObjectName = "Data" };
-            _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
+            UnauthorizedAccessException exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
+            Assert.Contains(alias, exception.Message, StringComparison.Ordinal);
         }
         finally
         {

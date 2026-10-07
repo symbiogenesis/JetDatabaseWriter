@@ -945,7 +945,39 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTextTable_CsvFile_RelativeForeignNameTraversal_IsBlockedByDefault()
+    public async Task LinkedTextTable_CsvFile_WindowsSubfolderName_ReadsFileWithinApprovedDirectory()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string sourceDirectory = this.CreateTempDirectory("TextLinkSubfolder");
+        string frontEndPath = await this.CreateTempAccdbDatabaseInDirectoryAsync("TextLinkSubfolderFE", sourceDirectory);
+        string subfolder = Path.Combine(sourceDirectory, "subfolder");
+        Directory.CreateDirectory(subfolder);
+        string csvPath = Path.Combine(subfolder, "data.csv");
+        this.tempFiles.Add(csvPath);
+        await File.WriteAllTextAsync(csvPath, "Id,Name\r\n1,Ada\r\n", ct);
+
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync(
+                "LinkedSubfolderCsv",
+                sourceDirectory,
+                @"subfolder\data.csv",
+                "Text;HDR=YES;FMT=Delimited",
+                ct);
+        }
+
+        var options = new AccessReaderOptions { LinkedSourcePathAllowlist = [sourceDirectory] };
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
+        DataTable table = await reader.ReadTableAsync("LinkedSubfolderCsv", cancellationToken: ct);
+        DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
+        Assert.Equal("1", row["Id"]);
+        Assert.Equal("Ada", row["Name"]);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LinkedTextTable_CsvFile_RelativeForeignNameTraversal_IsBlockedByDefault(bool windowsSeparators)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string hostDirectory = this.CreateTempDirectory("TextLinkTraversalHost");
@@ -957,12 +989,13 @@ public sealed class LinkedTextTableTests : IDisposable
             await writer.CreateLinkedTextTableAsync(
                 "LinkedEscapedCsv",
                 hostDirectory,
-                Path.Combine("..", outsideFileName),
+                (windowsSeparators ? @"..\" : "../") + outsideFileName,
                 "Text;HDR=YES;FMT=Delimited",
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        var options = new AccessReaderOptions { LinkedSourcePathAllowlist = [hostDirectory] };
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await reader.ReadTableAsync("LinkedEscapedCsv", cancellationToken: ct));
@@ -1145,7 +1178,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
     private string CreateTempDirectory(string prefix)
     {
-        string directory = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}");
+        string directory = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"{prefix}_{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         this.tempDirectories.Add(directory);
         return directory;
@@ -1167,7 +1200,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
     private async ValueTask<string> CreateTempAccdbDatabaseAsync(string prefix)
     {
-        string temp = Path.Combine(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
+        string temp = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"{prefix}_{Guid.NewGuid():N}.accdb");
         await using (await AccessWriter.CreateDatabaseAsync(
             temp,
             DatabaseFormat.AceAccdb,

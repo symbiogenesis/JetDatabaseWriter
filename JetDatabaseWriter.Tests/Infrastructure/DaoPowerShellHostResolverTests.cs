@@ -6,6 +6,20 @@ using Xunit;
 
 public sealed class DaoPowerShellHostResolverTests
 {
+    [Theory]
+    [InlineData(@"C:\Windows\")]
+    [InlineData("C:/Windows/")]
+    public void GetCandidateHostPaths_NormalizesWindowsDirectorySeparators(string windowsDirectory)
+    {
+        IReadOnlyList<string> candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
+            windowsDirectory,
+            is64BitOperatingSystem: false,
+            is64BitProcess: false,
+            preferWow64Host: false);
+
+        Assert.Equal([@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"], candidates);
+    }
+
     [Fact]
     public void GetCandidateHostPaths_Wow64ProcessPrefersSysnativeForNativeHost()
     {

@@ -39,7 +39,7 @@ internal static class ScaffoldNames
             if (ns.Length > 0 && fullName.StartsWith(ns + ".", StringComparison.Ordinal))
             {
                 string relative = fullName[(ns.Length + 1)..];
-                int separator = relative.IndexOf('.');
+                int separator = relative.IndexOf('.', StringComparison.Ordinal);
                 reserved.Add(separator < 0 ? relative : relative[..separator]);
             }
         }
