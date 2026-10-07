@@ -146,7 +146,7 @@ internal sealed class RelationshipManager(
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
-            throw new JetNotSupportedException(JetErrorCode.SystemTableMissing, "The database does not contain a 'MSysRelationships' table. Full-catalog ACCDB databases created by AccessWriter.CreateDatabaseAsync include it, but Jet/MDB outputs and slim catalog databases may require an Access-authored source before calling CreateRelationshipAsync.", new JetErrorInfo { ObjectName = "MSysRelationships" });
+            throw new JetNotSupportedException(JetErrorCode.SystemTableMissing, "The database does not contain the 'MSysRelationships' table required to create a relationship.", new JetErrorInfo { ObjectName = "MSysRelationships" });
         }
 
         TableDef msysRelDef = await this.tableDefs.ReadRequiredTableDefAsync(msysRelTdefPage, Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);

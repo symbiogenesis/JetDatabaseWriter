@@ -44,11 +44,10 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// handed out again. Optional; when not supplied the session starts from 1.
 /// </param>
 /// <param name="readComplexReferenceHighWater">
-/// Delegate that returns the largest per-row complex reference a table (by
-/// name, with its definition) has used: its TDEF complex AutoNumber and the
-/// references its rows and flat tables hold. The first reference a writer
-/// session assigns to the table follows it. Optional; when not supplied the
-/// session starts from 1.
+/// Delegate that returns a table's persisted TDEF complex AutoNumber after
+/// validating its parent references and flat-table foreign keys against it.
+/// The first reference a writer session assigns follows that counter.
+/// Optional; when not supplied the session starts from 1.
 /// </param>
 /// <param name="textCollation">The database text comparison collation.</param>
 internal sealed class ConstraintRegistry(
@@ -475,11 +474,10 @@ internal sealed class ConstraintRegistry(
     /// Allocates <paramref name="count"/> consecutive per-row complex
     /// references for <paramref name="tableName"/> and returns the first. They
     /// come from the same session counter inserts use, seeded from the table's
-    /// TDEF complex AutoNumber and the references it holds, so a reference
-    /// handed out here is never assigned to an inserted row too. The caller
-    /// raises the TDEF counter when it stores them. Used for a row whose slot
-    /// is still null when an item is added to it, and by schema rewrites for
-    /// rows that need a reference in a new or null complex column; the table
+    /// validated TDEF complex AutoNumber, so a reference handed out here is
+    /// never assigned to an inserted row too. The caller raises the TDEF counter
+    /// when it stores them. Schema rewrites use this for newly added complex
+    /// columns when no surviving column supplies the row's reference; the table
     /// may have no complex column yet.
     /// </summary>
     /// <param name="tableName">The table name.</param>

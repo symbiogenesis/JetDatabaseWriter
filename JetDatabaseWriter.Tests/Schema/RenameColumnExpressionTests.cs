@@ -252,13 +252,13 @@ public sealed class RenameColumnExpressionTests
     {
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
 
-        // Only an earlier version of this library could have stored '%'; plant it
-        // through the internal schema service, which skips the definition check.
+        // Plant an unsupported stored expression through the internal schema
+        // service, which skips the definition check.
         ms.Position = 0;
         await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
         {
             await harness.Services.Schema.CreateTableAsync(
-                "CalcLegacyPercent",
+                "CalcUnsupportedPercent",
                 [
                     new("Id", typeof(int)),
                     new("R", typeof(int)),
@@ -270,11 +270,11 @@ public sealed class RenameColumnExpressionTests
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            await writer.RenameColumnAsync("CalcLegacyPercent", "R", "Rate", Ct);
+            await writer.RenameColumnAsync("CalcUnsupportedPercent", "R", "Rate", Ct);
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms);
-        Assert.Equal("[Rate]%", Expression(await reader.GetColumnMetadataAsync("CalcLegacyPercent", Ct), "C"));
+        Assert.Equal("[Rate]%", Expression(await reader.GetColumnMetadataAsync("CalcUnsupportedPercent", Ct), "C"));
     }
 
     /// <summary>

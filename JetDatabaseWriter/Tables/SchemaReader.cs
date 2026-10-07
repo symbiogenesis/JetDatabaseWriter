@@ -250,8 +250,8 @@ internal sealed class SchemaReader(
         cancellationToken.ThrowIfCancellationRequested();
 
         // MSysRelationships is a system table; ReadTableAsync resolves it through
-        // the catalog fallback and returns an empty table when it is absent, as in
-        // writer-created Jet3, Jet4 and slim-catalog ACCDB files. The gate is reentrant, so the nested
+        // the catalog fallback and returns an empty table when it is absent.
+        // The gate is reentrant, so the nested
         // ReadTableAsync call joins this root operation rather than blocking.
         DataTable table = await tables.ReadTableAsync(Constants.SystemTableNames.Relationships, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
         try

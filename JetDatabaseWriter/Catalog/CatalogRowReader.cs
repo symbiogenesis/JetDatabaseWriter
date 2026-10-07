@@ -87,8 +87,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// Locates a system or user table's TDEF page number by name (case-insensitive)
     /// through <see cref="FindTableTdefPageAsync"/>. <c>MSysObjects</c> itself is
     /// always TDEF page 2 (Jackcess <c>PAGE_SYSTEM_CATALOG</c>), so it resolves there
-    /// when no catalog row names it, as in the Jet3, Jet4 and slim-catalog ACCDB files
-    /// the writer creates. Returns <c>0</c> when not found.
+    /// when no catalog row names it. Returns <c>0</c> when not found.
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="includeLinkedOdbc">

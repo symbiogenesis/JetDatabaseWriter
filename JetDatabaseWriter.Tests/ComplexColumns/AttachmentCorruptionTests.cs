@@ -120,13 +120,13 @@ public sealed class AttachmentCorruptionTests
     }
 
     [Fact]
-    public void CompressedAttachment_RejectsRawDeflateLegacyWrapper()
+    public void CompressedAttachment_RejectsMissingZlibFraming()
     {
         byte[] wrapped = AttachmentWrapper.Encode("txt", [1, 2, 3]);
-        byte[] legacy = new byte[wrapped.Length - 6];
-        wrapped.AsSpan(0, 8).CopyTo(legacy);
-        wrapped.AsSpan(10, wrapped.Length - 14).CopyTo(legacy.AsSpan(8));
+        byte[] malformed = new byte[wrapped.Length - 6];
+        wrapped.AsSpan(0, 8).CopyTo(malformed);
+        wrapped.AsSpan(10, wrapped.Length - 14).CopyTo(malformed.AsSpan(8));
 
-        Assert.False(AttachmentWrapper.TryDecode(legacy, out _, out _));
+        Assert.False(AttachmentWrapper.TryDecode(malformed, out _, out _));
     }
 }

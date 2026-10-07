@@ -36,7 +36,7 @@ using JetDatabaseWriter.Interfaces;
 ///   <item><description>Every name in <see cref="PrimaryColumns"/> / <see cref="ForeignColumns"/> must match a column on its table, case-insensitively.</description></item>
 ///   <item><description><see cref="PrimaryColumns"/> and <see cref="ForeignColumns"/> must have the same length and at least one entry.</description></item>
 ///   <item><description><see cref="Name"/> must be unique across existing relationships in this database (case-insensitive), and must follow the Access naming rules (1 to 64 characters, not only white space, no leading space, none of <c>. ! ` [ ]</c> or a control character).</description></item>
-///   <item><description>The database must already contain a <c>MSysRelationships</c> table. Full-catalog ACCDB databases created by <c>AccessWriter.CreateDatabaseAsync</c> include this table; Jet/MDB outputs and slim-catalog databases may require an Access-authored source before calling <c>CreateRelationshipAsync</c>.</description></item>
+///   <item><description>The database must contain a <c>MSysRelationships</c> table. ACCDB databases created by <c>AccessWriter.CreateDatabaseAsync</c> include this table.</description></item>
 /// </list>
 /// </remarks>
 public sealed record RelationshipDefinition

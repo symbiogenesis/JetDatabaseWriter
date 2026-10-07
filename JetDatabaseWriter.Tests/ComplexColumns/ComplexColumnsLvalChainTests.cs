@@ -10,7 +10,7 @@ using JetDatabaseWriter.Models;
 using Xunit;
 
 /// <summary>
-/// Round-trip tests: attachment payloads larger than the legacy
+/// Round-trip tests: attachment payloads larger than the native
 /// 64-byte inline-OLE cap are pushed onto freshly-allocated LVAL data pages
 /// (single-page <c>0x40</c> form for sub-page payloads, chained <c>0x00</c>
 /// form for multi-page payloads) and re-read by

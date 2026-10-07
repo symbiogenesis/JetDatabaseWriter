@@ -973,13 +973,13 @@ public sealed class CalculatedColumnWriteTests
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
-        // Only an earlier version of this library could have stored '%'; plant it
-        // through the internal schema service, which skips the definition check.
+        // Plant an unsupported stored expression through the internal schema
+        // service, which skips the definition check.
         stream.Position = 0;
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             await harness.Services.Schema.CreateTableAsync(
-                "CalcLegacyPercent",
+                "CalcUnsupportedPercent",
                 [
                     new("Id", typeof(int)),
                     new("R", typeof(int)),
@@ -991,26 +991,26 @@ public sealed class CalculatedColumnWriteTests
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            await writer.InsertRowAsync("CalcLegacyPercent", [1, 50, 0.5d], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcUnsupportedPercent", [1, 50, 0.5d], TestContext.Current.CancellationToken);
 
             ArgumentException insert = await Assert.ThrowsAsync<ArgumentException>(async () =>
-                await writer.InsertRowAsync("CalcLegacyPercent", [2, 60, DBNull.Value], TestContext.Current.CancellationToken));
+                await writer.InsertRowAsync("CalcUnsupportedPercent", [2, 60, DBNull.Value], TestContext.Current.CancellationToken));
             Assert.Contains("[R]%", insert.Message, StringComparison.Ordinal);
 
             ArgumentException update = await Assert.ThrowsAsync<ArgumentException>(async () =>
                 await writer.UpdateRowsAsync(
-                    "CalcLegacyPercent",
+                    "CalcUnsupportedPercent",
                     "Id",
                     1,
                     new Dictionary<string, object?> { ["R"] = 70 },
                     TestContext.Current.CancellationToken));
             Assert.Contains("[R]%", update.Message, StringComparison.Ordinal);
 
-            await writer.AddColumnAsync("CalcLegacyPercent", new("Note", typeof(string), maxLength: 10), TestContext.Current.CancellationToken);
+            await writer.AddColumnAsync("CalcUnsupportedPercent", new("Note", typeof(string), maxLength: 10), TestContext.Current.CancellationToken);
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcLegacyPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcUnsupportedPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal(50, Convert.ToInt32(row["R"], CultureInfo.InvariantCulture));
         Assert.Equal(0.5d, Convert.ToDouble(row["C"], CultureInfo.InvariantCulture));
     }

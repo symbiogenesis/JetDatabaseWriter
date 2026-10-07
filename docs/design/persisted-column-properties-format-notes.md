@@ -61,7 +61,6 @@ Payload layout (`chunkLen − 6` bytes total):
 0       4       innerHeader   uint32   opaque to the reader. DAO programmatic table creation
                                        has been observed writing 4 + 2 + targetNameLen here
                                        (header through target name), not the full payload length.
-                                       Earlier writer versions wrote chunkLen - 6; mdbtools ignores it.
 4       2       targetNameLen uint16   bytes of UTF-16LE target name
 6       ...     targetName    UTF-16LE bytes (Jet4) / codepage bytes (Jet3)
 N       ...     entries       sequence of property entries until payload exhausted

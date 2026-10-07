@@ -272,9 +272,7 @@ public interface IAccessSchema : IAccessBase
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="NotSupportedException">
     /// Thrown when the database does not contain a <c>MSysRelationships</c> table.
-    /// Full-catalog ACCDB databases created by <c>AccessWriter.CreateDatabaseAsync</c>
-    /// include this table; Jet/MDB outputs and slim-catalog databases may require
-    /// an Access-authored source before declaring relationships.
+    /// ACCDB databases created by <c>AccessWriter.CreateDatabaseAsync</c> include this table.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when a referenced table does not exist or when a relationship with the
