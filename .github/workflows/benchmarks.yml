@@ -1,7 +1,7 @@
 name: Benchmarks
 
 # Runs BenchmarkDotNet on a GitHub-hosted runner, so benchmarks never load a shared
-# development machine. Start it with scripts/ci-gate.ps1 -Workflow benchmarks.yml, or
+# development machine. Start it with gh workflow run benchmarks.yml --ref main, or
 # from the Actions tab. With a baseline, the baseline commit and the dispatched commit
 # run back to back on the same runner, and the run summary compares the two.
 on:
@@ -16,6 +16,14 @@ on:
         required: false
         default: ''
         type: string
+      mode:
+        description: Paired comparison, or repeated swapped-order comparison plus an identical-head control on one runner
+        required: false
+        default: paired
+        type: choice
+        options:
+          - paired
+          - controlled
       job:
         description: BenchmarkDotNet job; default is the adaptive job for release-quality numbers
         required: false
@@ -84,47 +92,25 @@ jobs:
           dotnet restore JetDatabaseWriter.Benchmarks --locked-mode
           dotnet build JetDatabaseWriter.Benchmarks -c Release --no-restore
 
-      # The baseline runs first, then the dispatched commit, on the same runner.
-      - name: Run the baseline benchmarks
-        if: inputs.baseline != ''
-        shell: pwsh
-        working-directory: ${{ runner.temp }}/baseline
-        env:
-          FILTER: ${{ inputs.filter }}
-          JOB: ${{ inputs.job }}
-        run: |
-          $filters = @($env:FILTER -split '\s+' | Where-Object { $_ })
-          $jobArgs = if ($env:JOB -ne 'default') { @('--job', $env:JOB) } else { @() }
-          dotnet run --project JetDatabaseWriter.Benchmarks -c Release --no-build -- --filter @filters @jobArgs --exporters json github --artifacts "$env:RUNNER_TEMP/results/baseline"
-          if ($LASTEXITCODE -ne 0) { throw "The baseline benchmarks failed." }
-
-      - name: Run the benchmarks
+      - name: Run the measurements
         shell: pwsh
         env:
           FILTER: ${{ inputs.filter }}
           JOB: ${{ inputs.job }}
+          MODE: ${{ inputs.mode }}
+          HAS_BASELINE: ${{ inputs.baseline != '' }}
         run: |
-          $filters = @($env:FILTER -split '\s+' | Where-Object { $_ })
-          $jobArgs = if ($env:JOB -ne 'default') { @('--job', $env:JOB) } else { @() }
-          dotnet run --project JetDatabaseWriter.Benchmarks -c Release --no-build -- --filter @filters @jobArgs --exporters json github --artifacts "$env:RUNNER_TEMP/results/head"
-          if ($LASTEXITCODE -ne 0) { throw "The benchmarks failed." }
+          $baseline = if ($env:HAS_BASELINE -eq 'true') { "$env:RUNNER_TEMP/baseline" } else { '' }
+          ./scripts/run-benchmark-comparison.ps1 -Head $env:GITHUB_WORKSPACE -Baseline $baseline -Results "$env:RUNNER_TEMP/results" -Filter $env:FILTER -Job $env:JOB -Mode $env:MODE
 
       - name: Summarize
         if: always()
         shell: pwsh
-        env:
-          HAS_BASELINE: ${{ inputs.baseline != '' }}
         run: |
           $results = "$env:RUNNER_TEMP/results"
-          $summary = if ($env:HAS_BASELINE -eq 'true') {
-              ./scripts/compare-benchmarks.ps1 -Baseline "$results/baseline" -Head "$results/head"
-          }
-          else {
-              Get-ChildItem "$results/head/results" -Filter '*-report-github.md' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content -Raw $_.FullName }
-          }
-          if (-not $summary) { $summary = 'No benchmark results were produced.' }
+          $summary = ./scripts/run-benchmark-comparison.ps1 -Results $results -SummaryOnly
           New-Item -ItemType Directory -Force $results | Out-Null
-          $summary | Set-Content -Encoding utf8NoBOM "$results/summary.md"
+          [IO.File]::WriteAllText("$results/summary.md", ($summary -join "`n"))
           $summary | Add-Content -Encoding utf8NoBOM $env:GITHUB_STEP_SUMMARY
 
       - name: Upload results
