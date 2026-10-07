@@ -48,9 +48,26 @@ library-mutated files must be recorded separately from library readback.
 
 ## Evidence limits
 
-The fixtures do not establish JET3 encryption, RC4 CryptoAPI or Standard ACE
+The DAO fixtures do not establish native JET3 producer interoperability, RC4 CryptoAPI or Standard ACE
 providers, every Agile algorithm combination, workgroup security, native
 password maintenance, encrypted creation, crash recovery or complete hostile
-input resistance. Required work remains in `docs/todo.md` (E1, E2, F3-F6,
+input resistance. Required work remains in `docs/todo.md` (E1, E2, F3, F4, F6,
 S1-S2 and I4). The older library-generated encryption files are not native
 interoperability oracles.
+
+## Upstream JET3 oracle
+
+`UpstreamJet3Rc4.mdb` is an unmodified 90112-byte fixture pinned to
+jackcessencrypt commit `77a1d54db8fc71606f391d94adacae7e34b108ca`.
+SHA-256: `8939D5F541A69B5A195AAB512D65C88A4A2CA1FBA43D19C78CD3E2F673503AF9`.
+The adjacent attribution records its source URL and Apache 2.0 license.
+Upstream classifies it as Access 97 and verifies Table1 rows
+`(1, hello, 0)` and `(2, world, 42)` without a password.
+The original producing Microsoft host is undocumented; it is an independent
+format oracle, not a locally DAO-authored fixture.
+
+Its unmasked encoding key is `A7E0C0FE`; its password region is empty.
+The native per-page RC4 rule decodes it. Raw header byte 0x62 is 0x34,
+and its unmasked value is zero; it is not an encryption flag. Library
+read/write regressions use this fixture, while a native Access 97 mutation
+and compact check still requires a compatible engine.

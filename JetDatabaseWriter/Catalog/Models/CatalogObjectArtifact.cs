@@ -45,12 +45,6 @@ internal sealed record CatalogObjectArtifact(
         byte[]? cachedSchemaLvProp = null)
     {
         bool isTextLinkedTable = objectType == Constants.SystemObjects.LinkedTableType && !string.IsNullOrEmpty(connectString);
-        byte[]? lvProp = cachedSchemaLvProp;
-        if (lvProp is null && objectType == Constants.SystemObjects.LinkedOdbcType)
-        {
-            lvProp = Constants.SystemObjects.DefaultLvPropPlaceholder;
-        }
-
         return new(
             0,
             Constants.SystemObjects.TablesParentId,
@@ -58,7 +52,7 @@ internal sealed record CatalogObjectArtifact(
             objectType,
             GetLinkedTableFlags(objectType, connectString),
             Owner: Constants.SystemObjects.DefaultOwnerBlob,
-            LvProp: lvProp)
+            LvProp: cachedSchemaLvProp)
         {
             ObjectIdPolicy = CatalogObjectIdPolicy.AllocateNonTable,
             Database = sourceDatabasePath,

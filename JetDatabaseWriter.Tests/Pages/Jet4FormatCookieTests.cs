@@ -493,13 +493,6 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     }
 
     [Fact]
-    public void DefaultLvPropPlaceholder_IsTwelveZeroBytes()
-    {
-        Assert.Equal(12, Constants.SystemObjects.DefaultLvPropPlaceholder.Length);
-        Assert.All(Constants.SystemObjects.DefaultLvPropPlaceholder, b => Assert.Equal(0, b));
-    }
-
-    [Fact]
     public void DefaultAcm_HasExpectedValue() => Assert.Equal(0x000FFEFF, Constants.Aces.DefaultAcm);
 
     [Fact]

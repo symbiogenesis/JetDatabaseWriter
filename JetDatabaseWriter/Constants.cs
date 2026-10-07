@@ -273,31 +273,6 @@ internal static class Constants
         /// C&amp;R aborts with "could not find the object 'MSysDb'".
         /// </summary>
         public static readonly byte[] DefaultOwnerBlob = [0x71, 0x10];
-
-        /// <summary>
-        /// Placeholder bytes stamped into the <c>MSysObjects.LvProp</c>
-        /// variable column for user-table catalog rows when the writer has no
-        /// per-column persisted properties to emit. DAO Compact &amp; Repair's
-        /// catalog walk requires <c>LvProp</c> to be NOT NULL on every
-        /// user-authored Type=1 row -- the bytes themselves appear to be
-        /// opaque (DAO writes 12 bytes that do not begin with the
-        /// <c>MR2\0</c> property-block magic and that vary across runs,
-        /// suggesting uninitialized memory). We stamp 12 zero bytes so the
-        /// null-mask bit is set and the row's variable-offset table mirrors
-        /// the layout DAO produces. See
-        /// docs/design/round-trip-openrecordset-hypothesis.md.
-        /// <para>
-        /// <b>Disconfirmed hypothesis (2026-05-10):</b> setting the inline
-        /// bitmask byte (index 3) to <c>0x80</c> -- which makes the 12 bytes
-        /// parse as a well-formed empty inline long-value rather than a
-        /// dangling chained-LVAL pointer to page 0 -- did NOT fix the
-        /// <c>OpenRecordset "Unrecognized database format ''."</c> error.
-        /// All 5 DAO recordset/compact tests still failed with the same COM
-        /// exception. That historical failure was later fixed outside the
-        /// catalog row's <c>LvProp</c> payload.
-        /// </para>
-        /// </summary>
-        public static readonly byte[] DefaultLvPropPlaceholder = new byte[12];
     }
 
     /// <summary>

@@ -417,7 +417,7 @@ yielded before prefetch begins to avoid adding speculative I/O to first-row
 latency.
 
 The two page reads in flight can complete, and decrypt, on two threads at once.
-Jet3 XOR and Jet4 RC4 decryption keep no state between pages; the cached
+Native Jet3/Jet4 RC4 decryption keep no state between pages; the cached
 AES-ECB transforms in `PageDecryptionKeys` are built and used under a private
 lock (see `concurrency-and-lock-ordering.md`). When a path-opened reader's scan
 runs on a thread-pool thread, its prefetch completes inline instead; see

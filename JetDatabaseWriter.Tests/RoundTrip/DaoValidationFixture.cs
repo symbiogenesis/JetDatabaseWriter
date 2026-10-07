@@ -9,7 +9,6 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit.Sdk;
@@ -56,7 +55,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
     private const string MemoFidelityTable = "MemoFidelity";
     private const string MemoNulsTable = "MemoNuls";
     private const string ParentTable = "DaoFkParent";
-    private const string Password = "Te$tP@ss!23";
+    private const string Password = "Native123";
     private const string SeekTable = "DaoSeek";
     private const string StressParentTable = "Stress_Parent";
     private const string TempDirectoryName = "JetDatabaseWriter.Tests.DaoValidation";
@@ -490,9 +489,10 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
     private static async Task PrepareEncryptedDatabaseAsync(string dbPath, CancellationToken cancellationToken)
     {
+        File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), dbPath, overwrite: true);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(
             dbPath,
-            new AccessWriterOptions { UseLockFile = false },
+            new AccessWriterOptions { UseLockFile = false, Password = Password.AsMemory() },
             cancellationToken).ConfigureAwait(false))
         {
             await writer.CreateTableAsync(
@@ -511,13 +511,6 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
             await writer.InsertRowsAsync(EncryptedCompactTable, rows, cancellationToken).ConfigureAwait(false);
         }
-
-        await AccessWriter.EncryptAsync(
-            dbPath,
-            Password.AsMemory(),
-            AccessEncryptionFormat.AccdbAgile,
-            new AccessWriterOptions { UseLockFile = false },
-            cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task PrepareComplexCompactDatabaseAsync(string dbPath, CancellationToken cancellationToken)

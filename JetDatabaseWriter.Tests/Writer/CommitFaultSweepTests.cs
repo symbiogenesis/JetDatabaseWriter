@@ -27,15 +27,17 @@ public class CommitFaultSweepTests
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.None, true)]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, false)]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, true)]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, false)]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, true)]
     public async Task CommitFaults_RestoreOriginalImage(DatabaseFormat format, AccessEncryptionFormat encryption, bool automatic)
     {
         string? password = encryption == AccessEncryptionFormat.None ? null : "Native123";
         byte[] baseline;
         await using (var initial = new MemoryStream())
         {
-            if (encryption == AccessEncryptionFormat.Jet4Rc4)
+            if (encryption != AccessEncryptionFormat.None)
             {
-                byte[] native = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), TestContext.Current.CancellationToken);
+                byte[] native = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, encryption == AccessEncryptionFormat.Jet4Rc4 ? "NativeJet4Rc4.mdb" : "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
                 await initial.WriteAsync(native, TestContext.Current.CancellationToken);
                 initial.Position = 0;
                 await using AccessWriter creator = await AccessWriter.OpenAsync(initial, Options(false, password), leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);

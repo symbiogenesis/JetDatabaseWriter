@@ -192,14 +192,14 @@ public sealed class PagerFrameCacheTests
     /// <param name="scheme">The page-encryption scheme.</param>
     [Theory]
     [InlineData("rc4")]
-    [InlineData("xor")]
+    [InlineData("jet3")]
     public async Task EncryptedFrame_DecodesOnce_AndWriteUsesScratch(string scheme)
     {
 #pragma warning disable CA2000 // Cipher ownership flows through CountingCodec into the awaited pager; the pager also owns the store.
         IPageCodec cipher = scheme switch
         {
             "rc4" => new Jet4Rc4PageCodec(0x12345678),
-            _ => new Jet3XorPageCodec([1, 2, 3]),
+            _ => new Jet4Rc4PageCodec(0xA7E0C0FE),
         };
         var codec = new CountingCodec(cipher);
         var store = new ControlledStore(32);

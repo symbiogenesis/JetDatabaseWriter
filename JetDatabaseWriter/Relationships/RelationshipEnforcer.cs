@@ -113,6 +113,7 @@ internal sealed class RelationshipEnforcer(
         FkContext ctx,
         CancellationToken cancellationToken)
     {
+        ValidateKeyDescriptors(foreignTable, foreignDef, ctx);
         foreach (FkRelationship rel in ctx.All)
         {
             if (!string.Equals(rel.ForeignTable, foreignTable, StringComparison.OrdinalIgnoreCase))
@@ -156,6 +157,7 @@ internal sealed class RelationshipEnforcer(
         FkContext ctx,
         CancellationToken cancellationToken)
     {
+        ValidateKeyDescriptors(foreignTable, foreignDef, ctx);
         foreach (FkRelationship rel in ctx.All)
         {
             // An update cannot assign a foreign-key column the table does not
@@ -224,6 +226,7 @@ internal sealed class RelationshipEnforcer(
         ComplexChildDeletes complexChildren,
         CancellationToken cancellationToken)
     {
+        ValidateKeyDescriptors(primaryTable, primaryDef, ctx);
         var cascades = new List<CascadeDelete>();
         HashSet<(long PageNumber, int RowIndex)> cascaded = [];
         HashSet<(long PageNumber, int RowIndex)> ownRows = [];
@@ -579,6 +582,34 @@ internal sealed class RelationshipEnforcer(
         }
     }
 
+    /// <summary>Checks all key descriptors of a table once per mutation call.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="definition">Its native descriptor.</param>
+    /// <param name="ctx">The mutation context.</param>
+    /// <exception cref="JetOperationException">A persisted relationship key is calculated.</exception>
+    internal static void ValidateKeyDescriptors(string tableName, TableDef definition, FkContext ctx)
+    {
+        if (ctx.ValidatedKeyTables.Contains(tableName))
+        {
+            return;
+        }
+
+        foreach (FkRelationship relationship in ctx.All)
+        {
+            if (string.Equals(relationship.PrimaryTable, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                RelationshipColumnPolicy.ThrowIfCalculated(definition, relationship.PrimaryColumns, tableName, relationship.Name);
+            }
+
+            if (string.Equals(relationship.ForeignTable, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                RelationshipColumnPolicy.ThrowIfCalculated(definition, relationship.ForeignColumns, tableName, relationship.Name);
+            }
+        }
+
+        _ = ctx.ValidatedKeyTables.Add(tableName);
+    }
+
     /// <summary>
     /// Maps a relationship's key columns to their ordinals in
     /// <paramref name="definition"/>, or throws when one is not in the table.
@@ -591,6 +622,7 @@ internal sealed class RelationshipEnforcer(
     /// <exception cref="JetOperationException">A key column is not in the table.</exception>
     private static int[] RequireColumns(FkRelationship rel, string table, IReadOnlyList<string> names, TableDef definition)
     {
+        RelationshipColumnPolicy.ThrowIfCalculated(definition, names, table, rel.Name);
         int[] ordinals = new int[names.Count];
         for (int index = 0; index < names.Count; index++)
         {
@@ -678,6 +710,7 @@ internal sealed class RelationshipEnforcer(
     /// <param name="kind">Whether an insert or an update supplied the key.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="JetConstraintException">No parent row has the key.</exception>
+    /// <exception cref="JetOperationException">The referenced key descriptor is unsupported.</exception>
     private async ValueTask RequireParentKeyAsync(
         FkRelationship rel,
         string foreignTable,
@@ -687,6 +720,12 @@ internal sealed class RelationshipEnforcer(
         FkCheckKind kind,
         CancellationToken cancellationToken)
     {
+        if (!ctx.ValidatedKeyTables.Contains(rel.PrimaryTable))
+        {
+            ResolvedTable parent = await this.ResolveRelationshipTableAsync(rel, "primary table", rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            ValidateKeyDescriptors(rel.PrimaryTable, parent.Definition, ctx);
+        }
+
         if (ctx.InsertedParentKeys.TryGetValue(rel.Name, out HashSet<string>? inserted) && inserted.Contains(key))
         {
             return;
@@ -1026,6 +1065,7 @@ internal sealed class RelationshipEnforcer(
         FkContext ctx,
         CancellationToken cancellationToken)
     {
+        ValidateKeyDescriptors(primaryTable, primaryDef, ctx);
         var keyChanges = new List<ReferencedKeyChange>();
         foreach (FkRelationship rel in ctx.All)
         {

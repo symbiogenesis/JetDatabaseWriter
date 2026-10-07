@@ -14,6 +14,9 @@
         <PackageReference Include="BenchmarkDotNet" />
     </ItemGroup>
     <ItemGroup>
+        <None Include="..\JetDatabaseWriter.Tests\Databases\Encrypted\NativeAceAgile.accdb" Link="NativeAceAgile.accdb">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
         <None Include="..\JetDatabaseWriter.Tests\Databases\NorthwindTraders.accdb" Link="NorthwindTraders.accdb">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>

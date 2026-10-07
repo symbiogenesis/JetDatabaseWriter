@@ -14,8 +14,8 @@ using Xunit;
 
 /// <summary>
 /// Tests for database encryption across all Jet/ACE versions:
-///   1. Jet3 XOR mask  — fixed XOR pattern applied to all pages after page 0
-///   2. Jet4 RC4 flag  — password verified against the XOR-encoded header hash (0x42)
+///   1. Native Jet RC4 page encryption and independent header passwords
+///   2. Jet4 date-masked UTF-16 header passwords
 ///   3. Jet4 RC4 pages — RC4 page decryption.
 /// </summary>
 /// <param name="db">The database input.</param>
@@ -23,37 +23,11 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 {
     private readonly List<string> tempFiles = [];
 
-    // ═══════════════════════════════════════════════════════════════════
-    // 1. JET3 XOR MASK
-    // ═══════════════════════════════════════════════════════════════════
-    //
-    // Jet3 encryption uses a fixed 128-byte XOR mask applied cyclically
-    // to every page after page 0. The reader detects the flag and removes
-    // the mask transparently on open.
-
-    [Fact]
-    public async Task Encryption_Jet3Xor_DatabaseIsReadable()
-    {
-        // Jet3 encryption uses a simple XOR mask applied to every page.
-        // Verify the reader detects and transparently decrypts XOR-masked databases.
-        byte[] data = await this.CloneFileAsync(TestDatabases.Jet3Test);
-        ApplyXorMask(data, EncryptionManager.Jet3PageXorMask);
-        SetJet3EncryptionFlag(data);
-
-        await using MemoryStream ms = ToStream(data);
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
-
-        Assert.NotEmpty(tables);
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
     // 2. JET4 RC4 PASSWORD FLAG
     // ═══════════════════════════════════════════════════════════════════
     //
-    // The password is verified against the stored XOR-encoded hash in the
-    // header at offset 0x42. Flag 0x01 at offset 0x62 means password-only;
-    // flag 0x02 means full RC4 page encryption (covered in section 3).
+    // Passwords use the date-masked UTF-16 header field at offset 0x42.
+    // The encoding key independently enables page encryption.
 
     [Fact]
     public async Task Encryption_Jet4Rc4_WithCorrectPassword_DatabaseIsReadable()
@@ -204,44 +178,6 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         Assert.Equal("encrypted-write", row["Label"]);
     }
 
-    [Fact]
-    public async Task Encryption_Jet3Xor_WriterRoundTrip_InsertedRowReadsBackThroughXor()
-    {
-        // The Jet3 XOR mask is symmetric — write-back must re-mask each page
-        // so a fresh reader can decrypt it.
-        byte[] data = await this.CloneFileAsync(TestDatabases.Jet3Test);
-        ApplyXorMask(data, EncryptionManager.Jet3PageXorMask);
-        SetJet3EncryptionFlag(data);
-        string temp = this.WriteTempBytes(data, ".mdb");
-
-        var writerOptions = new AccessWriterOptions { UseLockFile = false };
-
-        const string tableName = "Jet3WriteEncTest";
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(temp, writerOptions, TestContext.Current.CancellationToken))
-        {
-            await writer.CreateTableAsync(
-                tableName,
-                [
-                    new ColumnDefinition("Id", typeof(int)),
-                    new ColumnDefinition("Label", typeof(string), maxLength: 64),
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowAsync(
-                tableName,
-                [7, "jet3-xor-write"],
-                TestContext.Current.CancellationToken);
-        }
-
-        await using AccessReader reader = await AccessReader.OpenAsync(temp, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
-
-        Assert.NotNull(dt);
-        DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
-        Assert.Equal(7, row["Id"]);
-        Assert.Equal("jet3-xor-write", row["Label"]);
-    }
-
     // ═══════════════════════════════════════════════════════════════════
     // 3. JET4 RC4 PAGE DECRYPTION
     // ═══════════════════════════════════════════════════════════════════
@@ -359,22 +295,6 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             }
         }
     }
-
-    /// <summary>XOR-masks a database byte array starting at page 1 (page 0 is the header).</summary>
-    /// <param name="data">The data bytes or values.</param>
-    /// <param name="mask">The encryption mask or page bitmask.</param>
-    internal static void ApplyXorMask(byte[] data, byte[] mask)
-    {
-        // Apply mask starting from page 1 (offset 2048) through the data
-        for (int offset = Constants.PageSizes.Jet3; offset < data.Length; offset++)
-        {
-            data[offset] ^= mask[(offset - Constants.PageSizes.Jet3) % mask.Length];
-        }
-    }
-
-    /// <summary>Sets the Office97 password flag (0x01) in a Jet3 database header.</summary>
-    /// <param name="data">The data bytes or values.</param>
-    internal static void SetJet3EncryptionFlag(byte[] data) => data[0x62] = 0x01; // Office97 password flag
 
     /// <summary>
     /// Encodes the native date-masked password <c>"test"</c>

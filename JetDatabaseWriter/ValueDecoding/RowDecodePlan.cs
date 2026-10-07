@@ -59,8 +59,9 @@ internal sealed class RowDecodePlan
     /// </summary>
     /// <param name="tableDef">The table definition.</param>
     /// <param name="strictParsing">Whether malformed values throw instead of decoding to a fallback.</param>
-    internal static RowDecodePlan CreateTypedForWriteBack(TableDef tableDef, bool strictParsing)
-        => new(tableDef, wantedColumns: null, columnOrdinals: null, strictParsing, preserveLongValueBytes: true);
+    /// <param name="wantedColumns">The selected columns, or all columns when null.</param>
+    internal static RowDecodePlan CreateTypedForWriteBack(TableDef tableDef, bool strictParsing, bool[]? wantedColumns = null)
+        => new(tableDef, wantedColumns, columnOrdinals: null, strictParsing, preserveLongValueBytes: true);
 
     /// <summary>
     /// Creates a plan that decodes rows as strings. With

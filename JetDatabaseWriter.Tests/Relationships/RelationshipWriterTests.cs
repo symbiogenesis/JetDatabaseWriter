@@ -192,6 +192,32 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
                 TestContext.Current.CancellationToken));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateRelationshipAsync_CalculatedKey_RefusesWithoutChangingBytes(bool calculatedParent)
+    {
+        MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        string parent = MakeTableName("CalcParent");
+        string child = MakeTableName("CalcChild");
+        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
+        ColumnDefinition[] columns =
+        [
+            new("Id", typeof(int)),
+            new("Computed", typeof(int)) { IsCalculated = true, CalculationExpression = "[Id] * 2" },
+        ];
+        await writer.CreateTableAsync(parent, columns, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync(child, columns, TestContext.Current.CancellationToken);
+        byte[] baseline = temp.ToArray();
+        await Assert.ThrowsAsync<JetOperationException>(async () =>
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_Calculated", parent, calculatedParent ? "Computed" : "Id", child, calculatedParent ? "Id" : "Computed"),
+                TestContext.Current.CancellationToken));
+        Assert.Equal(baseline, temp.ToArray());
+        await writer.CreateRelationshipAsync(
+            new RelationshipDefinition("FK_Normal", parent, "Id", child, "Id"), TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task CreateRelationshipAsync_FreshDatabaseWithScaffoldedMSysRelationships_Succeeds()
     {

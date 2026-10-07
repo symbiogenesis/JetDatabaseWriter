@@ -51,6 +51,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="constraints">Applies flat-table column constraints on row-level inserts.</param>
 /// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, a parent table's complex AutoNumber after a reference is allocated, and <c>MSysComplexColumns</c>' ComplexID counter.</param>
 /// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
+/// <param name="snapshots">Streams strict typed projected parent rows.</param>
 internal sealed class ComplexColumnManager(
     JetFormat format,
     TableDefReader tableDefs,
@@ -63,7 +64,8 @@ internal sealed class ComplexColumnManager(
     CatalogRowReader catalogRows,
     ConstraintRegistry constraints,
     AutoNumberMaintainer autoNumbers,
-    ComplexReferenceSeedReader seeds)
+    ComplexReferenceSeedReader seeds,
+    TableSnapshotReader snapshots)
 {
     private const int ComplexTypeTemplateTextLength = 255;
 
@@ -863,9 +865,9 @@ internal sealed class ComplexColumnManager(
             }
         }
 
-        // Resolve predicate column ordinals + decode parent key (string-form for comparison).
+        // Normalize each predicate once using its actual native column semantics.
         int[] predIndexes = new int[parentRowKey.Count];
-        string[] predValues = new string[parentRowKey.Count];
+        byte[][] predValues = new byte[parentRowKey.Count][];
         int pi = 0;
         foreach (KeyValuePair<string, object?> kvp in parentRowKey)
         {
@@ -876,9 +878,15 @@ internal sealed class ComplexColumnManager(
             }
 
             predIndexes[pi] = idx;
-            predValues[pi] = kvp.Value is null or DBNull
-                ? string.Empty
-                : Convert.ToString(kvp.Value, CultureInfo.InvariantCulture) ?? string.Empty;
+            try
+            {
+                predValues[pi] = ComplexParentKeyComparer.Encode(this.format, parentDef.Columns[idx], kvp.Value);
+            }
+            catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException or InvalidCastException)
+            {
+                throw new ArgumentException($"Parent row key for column '{tableName}.{kvp.Key}' has an incompatible value.", nameof(parentRowKey), exception);
+            }
+
             pi++;
         }
 
@@ -970,32 +978,33 @@ internal sealed class ComplexColumnManager(
         long parentTdefPage,
         TableDef parentDef,
         int[] predIndexes,
-        string[] predValues,
+        byte[][] predValues,
         string tableName,
         CancellationToken cancellationToken)
     {
         RowLocation match = default;
         bool found = false;
 
-        await this.ownedPages.ForEachLiveTableRowAsync(
-            parentTdefPage,
-            (row, _) =>
-            {
-                bool ok = true;
-                for (int p = 0; p < predIndexes.Length; p++)
-                {
-                    ColumnInfo c = parentDef.Columns[predIndexes[p]];
-                    string actual = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, c);
-                    if (!string.Equals(actual, predValues[p], StringComparison.OrdinalIgnoreCase))
-                    {
-                        ok = false;
-                        break;
-                    }
-                }
+        bool[] wantedColumns = new bool[parentDef.Columns.Count];
+        foreach (int index in predIndexes)
+        {
+            wantedColumns[index] = true;
+        }
 
-                if (!ok)
+        await snapshots.ForEachTypedRowAsync(
+            parentTdefPage,
+            parentDef,
+            wantedColumns,
+            (location, values, _) =>
+            {
+                for (int predicate = 0; predicate < predIndexes.Length; predicate++)
                 {
-                    return new ValueTask<bool>(true);
+                    int index = predIndexes[predicate];
+                    byte[] actual = ComplexParentKeyComparer.Encode(this.format, parentDef.Columns[index], values[index]);
+                    if (!actual.AsSpan().SequenceEqual(predValues[predicate]))
+                    {
+                        return new ValueTask<bool>(true);
+                    }
                 }
 
                 if (found)
@@ -1003,7 +1012,7 @@ internal sealed class ComplexColumnManager(
                     throw new JetOperationException(JetErrorCode.RowNotUnique, $"Parent row key matches more than one row in '{tableName}'.", errorInfo: new JetErrorInfo { TableName = tableName });
                 }
 
-                match = row.Location;
+                match = location;
                 found = true;
                 return new ValueTask<bool>(true);
             },

@@ -87,7 +87,10 @@ internal sealed class CatalogWriter(
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
         msys.SetValueByName(values, "Owner", Constants.SystemObjects.DefaultOwnerBlob);
-        msys.SetValueByName(values, "LvProp", lvProp ?? Constants.SystemObjects.DefaultLvPropPlaceholder);
+        if (lvProp is not null)
+        {
+            msys.SetValueByName(values, "LvProp", lvProp);
+        }
 
         RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
         await this.RequireCatalogIndexSpliceAsync(msys, loc, values, tableName, cancellationToken).ConfigureAwait(false);

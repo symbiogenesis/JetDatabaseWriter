@@ -69,7 +69,7 @@ internal static class SyntheticDatabases
     public const int SmallLongValueLength = 100;
 
     /// <summary>Password of <see cref="AesNumericDbPath"/>.</summary>
-    public const string AesPassword = "JetBench";
+    public const string AesPassword = "Native123";
 
     /// <summary>Relational parent table (CustomerId primary key, Name).</summary>
     public const string CustomersTable = "Customers";
@@ -169,8 +169,8 @@ internal static class SyntheticDatabases
 
     public static string LargeLongValueDbPath => Path.Combine(TempRoot, "LargeLongValue_v1.accdb");
 
-    /// <summary>Gets the path of an <c>AccdbAgileCfb</c>-encrypted copy of <see cref="NumericDbPath"/>.</summary>
-    public static string AesNumericDbPath => Path.Combine(TempRoot, $"Numeric_{NumericRows}_agile_cfb_v1.accdb");
+    /// <summary>Gets the path of an <c>AccdbAgile</c>-encrypted copy of <see cref="NumericDbPath"/>.</summary>
+    public static string AesNumericDbPath => Path.Combine(TempRoot, $"Numeric_{NumericRows}_native_agile_v1.accdb");
 
     public static string RelationalDbPath => Path.Combine(TempRoot, $"Relational_{RelationalCustomers}_{RelationalOrders}_v1.accdb");
 
@@ -259,23 +259,14 @@ internal static class SyntheticDatabases
 
     /// <summary>
     /// Ensures <see cref="AesNumericDbPath"/> exists: a copy of the numeric
-    /// database encrypted as <see cref="AccessEncryptionFormat.AccdbAgileCfb"/>
+    /// database encrypted as <see cref="AccessEncryptionFormat.AccdbAgile"/>
     /// with <see cref="AesPassword"/>.
     /// </summary>
     /// <returns>A task that completes when the file exists.</returns>
     public static async Task EnsureAesNumericAsync()
     {
         Directory.CreateDirectory(TempRoot);
-        await EnsureNumericAsync().ConfigureAwait(false);
-        if (File.Exists(AesNumericDbPath))
-        {
-            return;
-        }
-
-        string building = Path.ChangeExtension(AesNumericDbPath, ".building.accdb");
-        File.Copy(NumericDbPath, building, overwrite: true);
-        await AccessWriter.EncryptAsync(building, AesPassword.AsMemory(), AccessEncryptionFormat.AccdbAgileCfb).ConfigureAwait(false);
-        File.Move(building, AesNumericDbPath);
+        await EnsureNumericAsync(encrypted: true).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -459,14 +450,22 @@ internal static class SyntheticDatabases
         return total;
     }
 
-    private static async Task EnsureNumericAsync()
+    private static async Task EnsureNumericAsync(bool encrypted = false)
     {
-        if (File.Exists(NumericDbPath))
+        string path = encrypted ? AesNumericDbPath : NumericDbPath;
+        if (File.Exists(path))
         {
             return;
         }
 
-        await using AccessWriter w = await AccessWriter.CreateDatabaseAsync(NumericDbPath, DatabaseFormat.AceAccdb).ConfigureAwait(false);
+        if (encrypted)
+        {
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "NativeAceAgile.accdb"), path);
+        }
+
+        await using AccessWriter w = encrypted
+            ? await AccessWriter.OpenAsync(path, new AccessWriterOptions(AesPassword) { UseLockFile = false }).ConfigureAwait(false)
+            : await AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.AceAccdb).ConfigureAwait(false);
         await w.CreateTableAsync(
             NumericTable,
             [

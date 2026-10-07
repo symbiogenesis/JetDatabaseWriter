@@ -85,4 +85,32 @@ public sealed class NativeAceEncryptionTests
         Assert.Equal(Constants.PageSizes.Jet4, counting.BytesRead);
         Assert.Equal(0, counting.BytesWritten);
     }
+
+    /// <summary>Unimplemented native password conversions leave every encrypted byte untouched.</summary>
+    /// <param name="operation">The requested password operation.</param>
+    [Theory]
+    [InlineData("decrypt")]
+    [InlineData("change")]
+    [InlineData("encrypt")]
+    public async Task NativeAgile_PasswordConversionLeavesSourceUntouched(string operation)
+    {
+        byte[] fixture = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(fixture, TestContext.Current.CancellationToken);
+        stream.Position = 0;
+        if (operation == "encrypt")
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () => await AccessWriter.EncryptAsync(stream, "Changed123".AsMemory(), AccessEncryptionFormat.AccdbAgile, TestContext.Current.CancellationToken));
+        }
+        else if (operation == "decrypt")
+        {
+            await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessWriter.DecryptAsync(stream, "Native123".AsMemory(), TestContext.Current.CancellationToken));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessWriter.ChangePasswordAsync(stream, "Native123".AsMemory(), "Changed123".AsMemory(), TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(fixture, stream.ToArray());
+    }
 }

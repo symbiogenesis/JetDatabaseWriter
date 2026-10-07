@@ -284,15 +284,19 @@ public sealed class TransactionReadVisibilityTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbStandard)]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile)]
     public async Task EncryptedDatabase_TransactionReadsSeeTheirOwnWrites(DatabaseFormat format, AccessEncryptionFormat encryption)
     {
-        const string password = "visibility";
+        const string password = "Native123";
 
         await using var ms = new MemoryStream();
-        await using (AccessWriter writer = await CreateWriterAsync(ms, format, WriteMode.Direct))
+        await ms.WriteAsync(await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), Ct), Ct);
+        ms.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(ms, new AccessWriterOptions(password) { UseLockFile = false, UseByteRangeLocks = false }, leaveOpen: true, Ct))
         {
+            Assert.Equal(AccessEncryptionFormat.AccdbAgile, encryption);
+            Assert.Equal(DatabaseFormat.AceAccdb, format);
+            await writer.DropTableAsync("T", Ct);
             await writer.CreateTableAsync("T", [new("Id", typeof(int)), new("Name", typeof(string), maxLength: 50)], Ct);
             for (int id = 1; id <= 3; id++)
             {
@@ -301,7 +305,6 @@ public sealed class TransactionReadVisibilityTests
         }
 
         ms.Position = 0;
-        await AccessWriter.EncryptAsync(ms, password.AsMemory(), encryption, Ct);
 
         ms.Position = 0;
         var writerOptions = new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, Password = password.AsMemory() };

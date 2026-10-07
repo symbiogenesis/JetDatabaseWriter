@@ -24,7 +24,7 @@ using Xunit;
 /// <param name="db">The database input.</param>
 public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
 {
-    private const string Password = "Probe1!Pa$";
+    private const string Password = "Native123";
 
     /// <summary>Source of a writer-created Jet3 .mdb.</summary>
     private const string Jet3 = "Jet3";
@@ -61,8 +61,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         var data = new TheoryData<AccessEncryptionFormat, bool>();
         foreach (AccessEncryptionFormat format in new[]
         {
-            AccessEncryptionFormat.AccdbAgileCfb,
-            AccessEncryptionFormat.AccdbStandard,
+            AccessEncryptionFormat.AccdbAgile,
         })
         {
             data.Add(format, true);
@@ -267,8 +266,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Jet3, AccessEncryptionFormat.None)]
     [InlineData(Jet4, AccessEncryptionFormat.None)]
     [InlineData(Ace, AccessEncryptionFormat.None)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbAgileCfb)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbStandard)]
+    [InlineData(Ace, AccessEncryptionFormat.AccdbAgile)]
     public async Task WriterOpen_PathOverload_OpensDatabaseFileOnce(string source, AccessEncryptionFormat encryption)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -288,7 +286,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     }
 
     [Theory]
-    [InlineData(AccessEncryptionFormat.AccdbAgileCfb)]
+    [InlineData(AccessEncryptionFormat.AccdbAgile)]
     public async Task WriterOpen_PathOverload_WrongPassword_LeavesFileAndLockUnchanged(AccessEncryptionFormat encryption)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -391,8 +389,22 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         CancellationToken ct)
     {
         var backing = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(backing, format, NoLockOptions, leaveOpen: true, ct))
+        if (encryption != AccessEncryptionFormat.None)
         {
+            byte[] fixture = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), ct);
+            await backing.WriteAsync(fixture, ct);
+            backing.Position = 0;
+        }
+
+        await using (AccessWriter writer = encryption == AccessEncryptionFormat.None
+            ? await AccessWriter.CreateDatabaseAsync(backing, format, NoLockOptions, leaveOpen: true, ct)
+            : await AccessWriter.OpenAsync(backing, WriterOptions(encryption), leaveOpen: true, ct))
+        {
+            if (encryption != AccessEncryptionFormat.None)
+            {
+                await writer.DropTableAsync("T", ct);
+            }
+
             await writer.CreateTableAsync(
                 "T",
                 [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Body", typeof(string))],
@@ -410,7 +422,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         if (encryption != AccessEncryptionFormat.None)
         {
             backing.Position = 0;
-            await AccessWriter.EncryptAsync(backing, Password.AsMemory(), encryption, ct);
+            Assert.Equal(AccessEncryptionFormat.AccdbAgile, encryption);
             Assert.Equal(encryption, await AccessWriter.DetectEncryptionFormatAsync(backing, ct));
         }
 

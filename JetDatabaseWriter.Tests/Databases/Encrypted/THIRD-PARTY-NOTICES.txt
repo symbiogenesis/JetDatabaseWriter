@@ -1,0 +1,19 @@
+UpstreamJet3Rc4.mdb is an unmodified copy of db97-enc.mdb from Jackcess Encrypt.
+Source repository: https://github.com/jahlborn/jackcessencrypt
+Pinned revision: 77a1d54db8fc71606f391d94adacae7e34b108ca
+Source URL:
+https://raw.githubusercontent.com/jahlborn/jackcessencrypt/77a1d54db8fc71606f391d94adacae7e34b108ca/src/test/data/db97-enc.mdb
+SHA-256: 8939D5F541A69B5A195AAB512D65C88A4A2CA1FBA43D19C78CD3E2F673503AF9
+Length: 90112 bytes
+
+Copyright James Ahlborn and contributors.
+Licensed under the Apache License, Version 2.0; see JACKCESS-ENCRYPT-LICENSE.txt.
+
+The upstream CryptCodecProviderTest.testReadJet identifies this fixture as
+Access 97 (V1997), opens it without a password, and verifies Table1 rows:
+  ID=1, col1="hello", col2=0
+  ID=2, col1="world", col2=42
+The header's decoded encryption key is 0xA7E0C0FE; its password area is blank.
+The original database producer and authoring host are not documented upstream.
+This fixture is an upstream format oracle, not a claim of independently
+verified Microsoft authorship.

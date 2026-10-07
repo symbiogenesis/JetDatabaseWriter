@@ -156,10 +156,8 @@ public sealed class JetFormatTests
     [Theory]
     [InlineData(0)]
     [InlineData(20)]
-    public void DetectFormat_TruncatedHeader_RefusesMissingVersion(int length)
-    {
+    public void DetectFormat_TruncatedHeader_RefusesMissingVersion(int length) =>
         Assert.Throws<ArgumentException>(() => JetFormat.DetectFormat(new byte[length]));
-    }
 
     /// <summary>
     /// A value outside the enum gets no profile, so <c>CreateDatabaseAsync</c>

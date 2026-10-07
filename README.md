@@ -1014,7 +1014,7 @@ Native JET4 encrypted and password-only files are covered by Microsoft DAO-creat
 
 Pass passwords through `AccessReaderOptions.Password` or `AccessWriterOptions.Password`. Linked databases receive credentials only from the explicit `LinkedSourcePasswordResolver`; the host database's password is not forwarded.
 
-ACE encryption remains incomplete. The Office Standard and Agile cryptographic implementations and CFB container tests do not establish compatibility with every Access encryption provider or generation. Library-generated fixtures are not Microsoft interoperability evidence. Native flat ACE and Office compound-container behavior, including write and durable-commit limitations, remain tracked under F3–F6 in [the TODO](docs/todo.md#f--real-formats-and-encryption).
+ACE encryption remains incomplete. The Office Standard and Agile cryptographic implementations and CFB container tests do not establish compatibility with every Access encryption provider or generation. Library-generated fixtures are not Microsoft interoperability evidence. Native provider coverage and security-metadata maintenance remain tracked under F3, F4 and F6 in [the TODO](docs/todo.md#f--real-formats-and-encryption).
 
 Untrusted encrypted descriptors and compound streams are bounded before allocation or expensive key derivation. `MaxEncryptionSpinCount`, `MaxEncryptionInfoBytes` and `MaxEncryptionContainerBytes` configure resource ceilings; a limit refusal does not mean the file is corrupt. Malformed descriptors and sector chains fail deliberately.
 
@@ -1030,9 +1030,9 @@ The items below are either **not yet implemented** or are important behavioral c
 ### Transaction durability
 
 - **There is no crash recovery.** Undo is private to the open writer; its temporary files are not recoverable journals. A process crash or power loss during an early spill or final write-back can leave a partial database; a second I/O failure while restoring a failed write-back faults the writer. See [Transactions](#transactions) for the recovery and disposal contract.
-- **Statement page buffers are bounded; undo for memory and container stores grows with the call.** File-backed stores that support in-place page writes spill larger undo logs to temporary files. `MaxTransactionPageBudget` limits explicit transactions only.
+- **Statement page buffers are bounded; undo for memory stores grows with the call.** File-backed stores that support in-place page writes spill larger undo logs to temporary files. `MaxTransactionPageBudget` limits explicit transactions only.
 - **Cancellation is honoured between spill batches and before final write-back.** Each started physical batch and any recovery finish without cancellation. A cancelled row or schema call restores earlier spills; inside an explicit transaction, it rolls back to its internal savepoint and leaves the transaction usable.
-- **Physical shrinking, initial database creation and encrypted-container rewrapping use separate lifecycles.** The statement rollback contract above does not make those operations crash-safe or make container replacement atomic.
+- **Physical shrinking and initial database creation use separate lifecycles.** The statement rollback contract above does not make those operations crash-safe or provide crash recovery.
 
 ### Encryption
 - **Native flat Agile pages use the normal reader/writer pager.** Microsoft-produced AES256-CBC/SHA512 fixture coverage does not establish every provider, generation or maintenance operation. See [Encryption Support](#encryption-support).

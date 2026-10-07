@@ -255,7 +255,6 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
 
             byte[] lvProp = Assert.IsType<byte[]>(row["LvProp"]);
             Assert.True(lvProp.Length > 0, $"Access-authored linked row '{table.Name}' has empty LvProp.");
-            Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, lvProp);
             Assert.Contains(lvProp, b => b != 0);
         }
     }

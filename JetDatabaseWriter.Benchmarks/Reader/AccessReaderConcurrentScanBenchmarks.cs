@@ -11,7 +11,7 @@ public enum ConcurrentScanBenchmarkShape
     /// <summary>The unencrypted 25,000-row numeric database.</summary>
     Plain = 0,
 
-    /// <summary>The same database encrypted as <c>AccdbAgileCfb</c>, so every page read also decrypts.</summary>
+    /// <summary>The same database encrypted as <c>native ACE Agile</c>, so every page read also decrypts.</summary>
     AesEncrypted = 1,
 }
 

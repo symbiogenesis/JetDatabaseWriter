@@ -27,7 +27,7 @@ public sealed class TableScanReadAheadTests : IDisposable
 {
     private const string PlainTable = "Plain";
     private const string LongValueTable = "LongValues";
-    private const string Password = "read-ahead";
+    private const string Password = "Native123";
     private const string LargeMemoTable = "LargeMemo";
     private const int PlainRowCount = 400;
     private const int LongValueRowCount = 120;
@@ -509,8 +509,15 @@ public sealed class TableScanReadAheadTests : IDisposable
         this.paths.Add(path);
         this.paths.Add(Path.ChangeExtension(path, format == DatabaseFormat.AceAccdb ? ".laccdb" : ".ldb"));
 
-        var options = new AccessWriterOptions { UseLockFile = false };
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(path, format, options, TestContext.Current.CancellationToken))
+        var options = new AccessWriterOptions { UseLockFile = false, Password = encrypt ? Password.AsMemory() : default };
+        if (encrypt)
+        {
+            File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), path);
+        }
+
+        await using (AccessWriter writer = encrypt
+            ? await AccessWriter.OpenAsync(path, options, TestContext.Current.CancellationToken)
+            : await AccessWriter.CreateDatabaseAsync(path, format, options, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 PlainTable,
@@ -540,11 +547,6 @@ public sealed class TableScanReadAheadTests : IDisposable
                     Enumerable.Range(1, LongValueRowCount).Select(id => new object?[] { id, Pad(id), Notes(id), Blob(id) }),
                     TestContext.Current.CancellationToken);
             }
-        }
-
-        if (encrypt)
-        {
-            await AccessWriter.EncryptAsync(path, Password.AsMemory(), AccessEncryptionFormat.AccdbAgileCfb, options, TestContext.Current.CancellationToken);
         }
 
         return path;

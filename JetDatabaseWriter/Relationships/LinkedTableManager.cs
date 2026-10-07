@@ -526,7 +526,7 @@ internal static class LinkedTableManager
     /// <param name="cachedSchemaLvProp">The caller-supplied payload.</param>
     /// <param name="paramName">The public parameter name, for <see cref="ArgumentException"/>.</param>
     /// <returns>A private copy of the validated payload.</returns>
-    /// <exception cref="ArgumentException">Thrown when the payload is empty, the default placeholder, or not a property block for <paramref name="format"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when the payload is empty or not a property block for <paramref name="format"/>.</exception>
     internal static byte[] CopyValidatedCachedSchemaLvProp(JetFormat format, ReadOnlyMemory<byte> cachedSchemaLvProp, string paramName)
     {
         if (cachedSchemaLvProp.IsEmpty)
@@ -535,11 +535,6 @@ internal static class LinkedTableManager
         }
 
         byte[] copy = cachedSchemaLvProp.ToArray();
-        if (copy.AsSpan().SequenceEqual(Constants.SystemObjects.DefaultLvPropPlaceholder))
-        {
-            throw new ArgumentException("Cached schema LvProp cannot be the default placeholder.", paramName);
-        }
-
         uint expectedMagic = JetFormat.PropertyBlockMagicOf(format.Kind);
         if (copy.Length < sizeof(uint) || JetTypeInfo.Ru32(copy, 0) != expectedMagic)
         {

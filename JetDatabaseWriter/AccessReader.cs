@@ -184,6 +184,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// completion port even when the page is already in the OS cache. The path
     /// overload opens its file that way.
     /// </remarks>
+    /// <exception cref="NotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
     public static async ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         Guard.RequireReadableSeekableStream(stream, nameof(stream));
@@ -194,28 +195,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
             byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
-
-            // Office Crypto API ("Agile") encryption: the file is a real OLE
-            // compound document with EncryptionInfo + EncryptedPackage streams.
-            // EncryptionManager handles detection, password verification, and
-            // package decryption; on success we re-enter on the inner ACCDB
-            // bytes.
-            byte[]? decryptedAgile = EncryptionManager.IsCompoundFileEncrypted(header)
-                ? await EncryptionManager.TryDecryptAgileCompoundFileAsync(stream, header, options.Password, EncryptionManager.ReaderPasswordOption, cancellationToken, options).ConfigureAwait(false)
-                : null;
-            if (decryptedAgile != null)
-            {
-                // We no longer need the source stream: dispose it unless the
-                // caller retains ownership via leaveOpen.
-                if (!leaveOpen)
-                {
-                    await stream.DisposeAsync().ConfigureAwait(false);
-                }
-
-                var inner = new MemoryStream(decryptedAgile, writable: false);
-                byte[] innerHeader = await PageFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
-                return new AccessReader(string.Empty, options, inner, innerHeader);
-            }
 
             return new AccessReader(path, options, stream, header, leaveOpen);
         }

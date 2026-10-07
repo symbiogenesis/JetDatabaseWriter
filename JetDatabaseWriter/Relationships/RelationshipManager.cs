@@ -129,6 +129,9 @@ internal sealed class RelationshipManager(
             }
         }
 
+        RelationshipColumnPolicy.ThrowIfCalculated(primaryDef, relationship.PrimaryColumns, relationship.PrimaryTable, relationship.Name);
+        RelationshipColumnPolicy.ThrowIfCalculated(foreignDef, relationship.ForeignColumns, relationship.ForeignTable, relationship.Name);
+
         foreach (string columnName in relationship.PrimaryColumns)
         {
             IndexMaintainer.ThrowIfTextCollationUnsupported(primaryDef.Columns[primaryDef.FindColumnIndex(columnName)], relationship.PrimaryTable);

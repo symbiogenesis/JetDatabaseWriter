@@ -47,6 +47,7 @@ public sealed class DaoCalculatedColumnRenameTests
                 $field = $null
 
                 $db.Execute('CREATE TABLE [WriterCalc] ([Id] LONG, [Score] LONG)')
+                $db.TableDefs.Refresh()
                 $writerTdf = $db.TableDefs('WriterCalc')
                 $writerField = $writerTdf.CreateField('Doubled', 4)
                 $writerField.Expression = '[Score]*2'

@@ -29,6 +29,9 @@ internal sealed class FkContext(IReadOnlyList<FkRelationship> all)
     public Dictionary<string, HashSet<string>> InsertedParentKeys { get; }
         = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Gets the tables whose relationship key descriptors passed native policy.</summary>
+    public HashSet<string> ValidatedKeyTables { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public Dictionary<string, ParentSeekIndex?> SeekIndexes { get; }
         = new(StringComparer.OrdinalIgnoreCase);
 

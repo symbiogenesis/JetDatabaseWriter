@@ -160,7 +160,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.True(catalogObject.Id < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.True(catalogObject.LvPropLength > 0, "Expected ODBC-linked MSysObjects.LvProp to be non-null.");
-        Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
+        Assert.Contains(catalogObject.LvProp ?? [], value => value != 0);
         var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
         ColumnPropertyTarget tableTarget = Assert.Single(block.Targets);
@@ -196,7 +196,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
         CatalogObjectSnapshot catalogObject = await GetCatalogObjectAsync(frontEndPath, "LinkedOrders", ct);
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
-        Assert.False(Constants.SystemObjects.DefaultLvPropPlaceholder.SequenceEqual(catalogObject.LvProp ?? []));
+        Assert.Contains(catalogObject.LvProp ?? [], value => value != 0);
 
         var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
@@ -265,7 +265,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         Assert.True(catalogObject.Id < 0, $"Expected ODBC-linked MSysObjects.Id to be a non-table catalog object id, got {catalogObject.Id}.");
         Assert.Equal(Constants.SystemObjects.LinkedOdbcFlags, catalogObject.Flags);
         Assert.True(fixture.LvProp.SequenceEqual(catalogObject.LvProp ?? []));
-        Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, catalogObject.LvProp);
+        Assert.Contains(catalogObject.LvProp ?? [], value => value != 0);
 
         var block = ColumnPropertyBlock.Parse(catalogObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
@@ -273,7 +273,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateLinkedOdbcTableAsync_CachedSchemaLvPropRejectsPlaceholder()
+    public async Task CreateLinkedOdbcTableAsync_CachedSchemaLvPropRejectsZeroFilledBlob()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcCachedSchemaReject");
@@ -284,10 +284,10 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                 "LinkedOrders",
                 "ODBC;DSN=Sales",
                 "dbo.Orders",
-                Constants.SystemObjects.DefaultLvPropPlaceholder,
+                new byte[12],
                 ct).AsTask());
 
-        Assert.Contains("placeholder", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("magic", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact(
@@ -333,7 +333,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         var block = ColumnPropertyBlock.Parse(compactedObject.LvProp, JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         Assert.NotNull(block);
         Assert.True(block.Targets.Count > 0, "Expected compacted ODBC LvProp to retain property targets.");
-        Assert.NotEqual(Constants.SystemObjects.DefaultLvPropPlaceholder, compactedObject.LvProp);
+        Assert.Contains(compactedObject.LvProp ?? [], value => value != 0);
     }
 
     [Fact]
@@ -694,7 +694,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
                     Constants.SystemObjects.LinkedTableType,
                     Constants.SystemObjects.LinkedTableFlags,
                     Constants.SystemObjects.DefaultOwnerBlob,
-                    Constants.SystemObjects.DefaultLvPropPlaceholder)]),
+                    null)]),
             cancellationToken);
 
     private static string GetLockFilePath(string databasePath) =>

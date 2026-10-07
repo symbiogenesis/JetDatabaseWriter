@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
@@ -16,6 +17,7 @@ using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -186,6 +188,45 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     {
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
         return catalog.ReadLvPropForTableAsync(tdefPage, cancellationToken);
+    }
+
+    /// <summary>Visits strict typed projected rows without retaining the table in memory.</summary>
+    /// <param name="tdefPage">The table's TDEF page.</param>
+    /// <param name="tableDef">The hydrated table definition.</param>
+    /// <param name="wantedColumns">The selected columns.</param>
+    /// <param name="visit">The row callback; false stops the walk.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">A live row cannot be decoded.</exception>
+    internal async ValueTask ForEachTypedRowAsync(
+        long tdefPage,
+        TableDef tableDef,
+        bool[] wantedColumns,
+        Func<RowLocation, object?[], CancellationToken, ValueTask<bool>> visit,
+        CancellationToken cancellationToken)
+    {
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
+        RowDecodePlan plan = RowDecodePlan.CreateTypedForWriteBack(tableDef, strictParsing: true, wantedColumns);
+        await ownedPages.ForEachLiveTableRowAsync(
+            tdefPage,
+            async (row, token) =>
+            {
+                object?[]? values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, plan, token).ConfigureAwait(false);
+                if (values is null)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptRow, "A complex-parent predicate row cannot be decoded.", new JetErrorInfo { PageNumber = row.Location.PageNumber });
+                }
+
+                for (int index = 0; index < values.Length; index++)
+                {
+                    if (values[index] is UnreadableLongValue)
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptRow, "A selected complex-parent long value cannot be read.", new JetErrorInfo { PageNumber = row.Location.PageNumber, ColumnName = tableDef.Columns[index].Name });
+                    }
+                }
+
+                return await visit(row.Location, values, token).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

@@ -34,8 +34,7 @@ using Xunit;
 /// </summary>
 public sealed class HeaderPasswordDetectionTests : IDisposable
 {
-    private const string FirstPassword = "First1!Pa$";
-    private const string SecondPassword = "Second2!Pa$";
+    private const string FirstPassword = "Native123";
     private const string TableName = "T";
 
     private static readonly AccessWriterOptions NoLockOptions = new() { UseLockFile = false };
@@ -77,13 +76,39 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
             var data = new TheoryData<DatabaseFormat, AccessEncryptionFormat, WriteMode>();
             foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
-                data.Add(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb, mode);
+                data.Add(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, mode);
             }
 
             return data;
         }
     }
 
+    [Theory]
+    [MemberData(nameof(HeaderPasswordFormatsAndModes))]
+    public async Task NativeEncryptedDatabase_InsertRow_RoundTrips(DatabaseFormat format, AccessEncryptionFormat encryption, WriteMode mode)
+    {
+        Assert.Equal(DatabaseFormat.AceAccdb, format);
+        byte[] fixture = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), Ct);
+        string path = this.WriteTemp(fixture, ".accdb");
+        var options = new AccessWriterOptions(FirstPassword) { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit };
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(path, options, Ct))
+        {
+            if (mode == WriteMode.ExplicitCommit)
+            {
+                await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
+                await writer.InsertRowAsync(TableName, [8, "two"], Ct);
+                await transaction.CommitAsync(Ct);
+            }
+            else
+            {
+                await writer.InsertRowAsync(TableName, [8, "two"], Ct);
+            }
+        }
+
+        Assert.Equal(encryption, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
+        await AssertRefusedAsync(path, password: null);
+        Assert.Equal(["7|Native encrypted row", "8|two"], await ReadRowsAsync(path, FirstPassword));
+    }
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     public void Dispose()
@@ -115,63 +140,6 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
 
         await using var stream = new MemoryStream(await File.ReadAllBytesAsync(path, Ct));
         Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(stream, Ct));
-    }
-
-    [Theory]
-    [InlineData(DatabaseFormat.AceAccdb, null, AccessEncryptionFormat.AccdbAgile)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb, AccessEncryptionFormat.AccdbAgileCfb)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, AccessEncryptionFormat.AccdbAgile)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbStandard, AccessEncryptionFormat.AccdbStandard)]
-    public async Task EncryptAsync_WriterCreatedDatabase_RoundTrips(DatabaseFormat format, AccessEncryptionFormat? target, AccessEncryptionFormat expected)
-    {
-        string path = await this.CreateDatabaseWithRowAsync(format);
-
-        await AccessWriter.EncryptAsync(path, FirstPassword.AsMemory(), target, NoLockOptions, Ct);
-        Assert.Equal(expected, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
-        await AssertRefusedAsync(path, password: null);
-        await AssertRefusedAsync(path, "wrong");
-        Assert.Equal(["1|one"], await ReadRowsAsync(path, FirstPassword));
-
-        await AccessWriter.ChangePasswordAsync(path, FirstPassword.AsMemory(), SecondPassword.AsMemory(), NoLockOptions, Ct);
-        Assert.Equal(expected, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
-        await AssertRefusedAsync(path, FirstPassword);
-        Assert.Equal(["1|one"], await ReadRowsAsync(path, SecondPassword));
-
-        await AccessWriter.DecryptAsync(path, SecondPassword.AsMemory(), NoLockOptions, Ct);
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
-        Assert.Equal(["1|one"], await ReadRowsAsync(path, password: null));
-    }
-
-    [Theory]
-    [MemberData(nameof(HeaderPasswordFormatsAndModes))]
-    public async Task WriterCreatedEncryptedDatabase_InsertRow_RoundTrips(DatabaseFormat format, AccessEncryptionFormat encryption, WriteMode mode)
-    {
-        string path = await this.CreateDatabaseWithRowAsync(format);
-        await AccessWriter.EncryptAsync(path, FirstPassword.AsMemory(), encryption, NoLockOptions, Ct);
-
-        var options = new AccessWriterOptions
-        {
-            UseLockFile = false,
-            Password = FirstPassword.AsMemory(),
-            UseTransactionalWrites = mode == WriteMode.AutoCommit,
-        };
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(path, options, Ct))
-        {
-            if (mode == WriteMode.ExplicitCommit)
-            {
-                await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
-                await writer.InsertRowAsync(TableName, [2, "two"], Ct);
-                await transaction.CommitAsync(Ct);
-            }
-            else
-            {
-                await writer.InsertRowAsync(TableName, [2, "two"], Ct);
-            }
-        }
-
-        Assert.Equal(encryption, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
-        await AssertRefusedAsync(path, password: null);
-        Assert.Equal(["1|one", "2|two"], await ReadRowsAsync(path, FirstPassword));
     }
 
     [Theory]

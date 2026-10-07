@@ -81,6 +81,7 @@ public sealed class DaoTextCollationTests
                 for ($i = 0; $i -lt $values.Count; $i++) {
                     $table = "TextRules$i"
                     $db.Execute("CREATE TABLE [$table] ([Id] LONG, [Value] TEXT(100))")
+                    $db.TableDefs.Refresh()
                     $tdf = $db.TableDefs($table)
                     $tdf.Fields('Value').ValidationRule = '< "' + [string]$bounds[$i] + '"'
                     $tdf = $null

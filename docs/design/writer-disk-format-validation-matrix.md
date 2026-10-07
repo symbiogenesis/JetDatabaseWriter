@@ -28,7 +28,7 @@ revision and is not a passing acceptance result.
 | JET3 / Access97 | Microsoft-authored reader fixtures and library mutation tests | A working Access97-compatible engine; DAO open/write/compact parity |
 | JET4 / Access2000–2003 | Microsoft-authored fixtures and guarded DAO tests | Complete feature, code-page, collation, security and malformed-file coverage |
 | ACE / Access2007 and later | Microsoft-authored fixtures; 25 successful DAO cases in the run above | Resolve failing cases; cover later descriptor variants and real encrypted files |
-| Encryption variants | Primarily library-produced synthetic fixtures | Microsoft-produced encrypted files, exact algorithm/detection evidence and DAO password/compact checks |
+| Encryption variants | DAO-produced JET4 RC4/password-only and ACE Agile fixtures; [hashes and producer details](native-encryption-evidence.md) | Additional real providers, native maintenance and matching-revision DAO mutation/compact checks |
 
 The feature rows below describe available test mechanisms. A conditional DAO
 test is evidence only when it actually ran successfully on the revision and

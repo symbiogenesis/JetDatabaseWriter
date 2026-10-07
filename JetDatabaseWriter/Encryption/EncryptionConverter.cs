@@ -1,13 +1,10 @@
 namespace JetDatabaseWriter.Encryption;
 
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.CompoundFile;
-using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -49,9 +46,7 @@ internal static class EncryptionConverter
         {
             DatabaseFormat.Jet4Mdb => AccessEncryptionFormat.Jet4Rc4,
             DatabaseFormat.AceAccdb => AccessEncryptionFormat.AccdbAgile,
-            DatabaseFormat.Jet3Mdb => throw new NotSupportedException(
-                "Jet3 (.mdb) databases do not have a supported password encryption target. " +
-                "Use a Jet4 .mdb or ACE .accdb database for password encryption."),
+            DatabaseFormat.Jet3Mdb => AccessEncryptionFormat.Jet3Rc4,
             _ => throw new InvalidDataException("The database format is unknown."),
         };
     }
@@ -61,9 +56,7 @@ internal static class EncryptionConverter
     /// returns a fully-plaintext copy of the database (encoding key 0, the
     /// empty-password pattern Access writes in the password area, header
     /// magic restored). The returned byte
-    /// array has the same length as the inner Jet/ACE database (which may
-    /// differ from <paramref name="source"/>.Length when the source was an
-    /// Agile CFB container).
+    /// array has the same length as the native Jet/ACE database.
     /// </summary>
     /// <param name="source">The source.</param>
     /// <param name="password">The password.</param>
@@ -80,25 +73,6 @@ internal static class EncryptionConverter
         _ = source.Seek(0, SeekOrigin.Begin);
         byte[] header = new byte[HeaderLength];
         await source.ReadExactlyAsync(header.AsMemory(), cancellationToken).ConfigureAwait(false);
-
-        // Agile / Standard is the outermost container — when present, decrypt its
-        // EncryptedPackage and recurse on the inner ACCDB bytes.
-        if (EncryptionManager.IsCompoundFileEncrypted(header))
-        {
-            _ = source.Seek(0, SeekOrigin.Begin);
-            (byte[]? cfbInner, AccessEncryptionFormat cfbFormat) = await EncryptionManager
-                .TryDecryptCompoundFileWithFormatAsync(source, header, password, EncryptionManager.OldPasswordArgument, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (cfbInner != null)
-            {
-                await using var innerStream = new MemoryStream(cfbInner, writable: false);
-                (byte[] inner, _) = await ReadDecryptedAsync(innerStream, password: default, cancellationToken).ConfigureAwait(false);
-                return (inner, cfbFormat);
-            }
-
-            throw new InvalidDataException("Compound file does not contain a supported encrypted package.");
-        }
 
         _ = source.Seek(0, SeekOrigin.Begin);
         byte[] rawFile = new byte[source.Length];
@@ -151,28 +125,26 @@ internal static class EncryptionConverter
         return targetFormat switch
         {
             AccessEncryptionFormat.None => (byte[])plaintext.Clone(),
+            AccessEncryptionFormat.Jet3Rc4 when fmt != DatabaseFormat.Jet3Mdb
+                => throw new NotSupportedException($"Target format {targetFormat} is only valid for Jet3 (.mdb) databases."),
             AccessEncryptionFormat.Jet4Rc4 when fmt != DatabaseFormat.Jet4Mdb
                 => throw new NotSupportedException($"Target format {targetFormat} is only valid for Jet4 (.mdb) databases."),
-            AccessEncryptionFormat.AccdbAgile or
-            AccessEncryptionFormat.AccdbStandard or
-            AccessEncryptionFormat.AccdbAgileCfb when fmt != DatabaseFormat.AceAccdb
+            AccessEncryptionFormat.AccdbAgile when fmt != DatabaseFormat.AceAccdb
                 => throw new NotSupportedException($"Target format {targetFormat} is only valid for ACE (.accdb) databases."),
+            AccessEncryptionFormat.Jet3Rc4 or
             AccessEncryptionFormat.Jet4Rc4 or
-            AccessEncryptionFormat.AccdbAgile or
-            AccessEncryptionFormat.AccdbStandard or
-            AccessEncryptionFormat.AccdbAgileCfb when targetPassword.IsEmpty
+            AccessEncryptionFormat.AccdbAgile when targetPassword.IsEmpty
                 => throw new ArgumentException("A non-empty password is required to apply encryption.", nameof(targetPassword)),
+            AccessEncryptionFormat.Jet3Rc4 => throw new NotSupportedException("Creating or changing a Jet3 database password requires native security metadata that is not supported. Existing native encrypted databases can be read and updated with their original password."),
             AccessEncryptionFormat.Jet4Rc4 => throw new NotSupportedException("Creating or changing a Jet4 database password requires native system security metadata that is not supported. Existing native encrypted databases can be read and updated with their original password."),
-            AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword.Span),
-            AccessEncryptionFormat.AccdbStandard => BuildAccdbStandard(plaintext, targetPassword.Span),
-            AccessEncryptionFormat.AccdbAgileCfb => BuildAccdbAgileCfb(plaintext, targetPassword.Span),
+            AccessEncryptionFormat.AccdbAgile => throw new NotSupportedException("Creating native ACE encryption requires native system security metadata that is not supported. Existing native encrypted databases can be read and updated with their original password."),
             _ => throw new NotSupportedException($"Unhandled target encryption format: {targetFormat}."),
         };
     }
 
     /// <summary>Detects the on-disk encryption format of <paramref name="rawFile"/> without modifying it.</summary>
     /// <param name="rawFile">The raw file.</param>
-    /// <exception cref="InvalidDataException">The compound-file header is malformed.</exception>
+    /// <exception cref="NotSupportedException">Office compound packages are not native database inputs.</exception>
     public static AccessEncryptionFormat Detect(byte[] rawFile)
     {
         if (rawFile == null || rawFile.Length < HeaderLength)
@@ -182,25 +154,11 @@ internal static class EncryptionConverter
 
         if (EncryptionManager.IsCompoundFileEncrypted(rawFile))
         {
-            return IsValidCompoundFileHeader(rawFile)
-                ? AccessEncryptionFormat.AccdbAgileCfb
-                : throw new InvalidDataException("Invalid compound-file header.");
+            throw new NotSupportedException("Office compound packages are not native Microsoft Access databases.");
         }
 
         DatabaseFormat fmt = JetFormat.DetectFormat(rawFile);
         return DetectFlatFormat(rawFile, fmt);
-    }
-
-    internal static byte[] BuildOfficeCryptoCompoundFile(OfficeEncryptedPackage package)
-    {
-        Guard.NotNull(package.EncryptionInfo, nameof(package.EncryptionInfo));
-        Guard.NotNull(package.EncryptedPackage, nameof(package.EncryptedPackage));
-
-        return CompoundFileWriter.BuildOfficeCrypto(
-        [
-            new KeyValuePair<string, byte[]>("EncryptionInfo", PadEncryptionInfoForRegularFat(package.EncryptionInfo)),
-            new KeyValuePair<string, byte[]>("EncryptedPackage", package.EncryptedPackage),
-        ]);
     }
 
     /// <summary>
@@ -262,38 +220,6 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildAccdbAgile(byte[] plaintext, ReadOnlySpan<char> password) => OfficeCryptoAgile.EncryptFlatDatabase(plaintext, password);
-
-    private static byte[] BuildAccdbAgileCfb(byte[] plaintext, ReadOnlySpan<char> password)
-    {
-        OfficeEncryptedPackage package = OfficeCryptoAgile.Encrypt(plaintext, password);
-
-        return BuildOfficeCryptoCompoundFile(package);
-    }
-
-    private static byte[] BuildAccdbStandard(byte[] plaintext, ReadOnlySpan<char> password)
-    {
-        // Standard wraps a clean (unencrypted) inner ACCDB. The plaintext bytes
-        // we have are already in that shape — pass them through
-        // OfficeCryptoStandard.Encrypt and emit the resulting CFB document.
-        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, password);
-
-        return BuildOfficeCryptoCompoundFile(package);
-    }
-
-    private static byte[] PadEncryptionInfoForRegularFat(byte[] encryptionInfo)
-    {
-        if (encryptionInfo.Length >= Constants.CompoundFile.StandardMiniStreamCutoff)
-        {
-            return encryptionInfo;
-        }
-
-        byte[] padded = new byte[Constants.CompoundFile.StandardMiniStreamCutoff];
-        Buffer.BlockCopy(encryptionInfo, 0, padded, 0, encryptionInfo.Length);
-        Array.Fill(padded, (byte)' ', encryptionInfo.Length, padded.Length - encryptionInfo.Length);
-        return padded;
-    }
-
     /// <summary>
     /// Removes any encryption residue from a freshly-read header so the page
     /// becomes the header Access writes for an unencrypted database. In
@@ -334,29 +260,16 @@ internal static class EncryptionConverter
             return AccessEncryptionFormat.None;
         }
 
-        if (fmt == DatabaseFormat.Jet4Mdb)
+        if (fmt is DatabaseFormat.Jet3Mdb or DatabaseFormat.Jet4Mdb)
         {
             byte[] unmasked = (byte[])header.Clone();
-            EncryptionManager.TransformHeaderMask(unmasked);
+            EncryptionManager.TransformHeaderMask(unmasked, fmt);
             uint encodingKey = Ru32(unmasked, Constants.DatabaseHeader.EncodingKey);
             CryptographicOperations.ZeroMemory(unmasked);
-            return encodingKey != 0 ? AccessEncryptionFormat.Jet4Rc4 : AccessEncryptionFormat.None;
+            return encodingKey == 0 ? AccessEncryptionFormat.None : fmt == DatabaseFormat.Jet3Mdb ? AccessEncryptionFormat.Jet3Rc4 : AccessEncryptionFormat.Jet4Rc4;
         }
 
         return AccessEncryptionFormat.None;
     }
 
-    private static bool IsValidCompoundFileHeader(byte[] header)
-    {
-        if (header.Length < 0x20)
-        {
-            return false;
-        }
-
-        ushort majorVersion = Ru16(header, Constants.CompoundFile.HeaderOffsets.MajorVersion);
-        ushort sectorShift = Ru16(header, Constants.CompoundFile.HeaderOffsets.SectorShift);
-
-        return (majorVersion == Constants.CompoundFile.V3.MajorVersion && sectorShift == Constants.CompoundFile.V3.SectorShift) ||
-            (majorVersion == Constants.CompoundFile.V4.MajorVersion && sectorShift == Constants.CompoundFile.V4.SectorShift);
-    }
 }

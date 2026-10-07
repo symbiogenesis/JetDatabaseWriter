@@ -19,27 +19,12 @@ public enum AccessEncryptionFormat
     /// Access-native ECMA-376 "Agile" encryption used by Access 2010 SP1+
     /// and Microsoft 365 (<c>.accdb</c>). The <c>EncryptionInfo</c> descriptor
     /// is embedded in page 0 and data pages are encrypted in place. This is the
-    /// default <c>EncryptAsync</c> target for new encrypted ACCDB output.
-    /// <c>AccessWriter.OpenAsync</c> rejects files in this format with
-    /// <see cref="System.NotSupportedException"/>; use <see cref="AccdbAgileCfb"/>
-    /// for encrypted files the writer must open.
+    /// native provider used by Microsoft Access.
+    /// Existing native encrypted databases support reads and page updates with their original password.
     /// </summary>
     AccdbAgile = 2,
 
-    /// <summary>
-    /// Office ECMA-376 "Standard" encryption wrapping an inner ACCDB image.
-    /// Native Access interoperability of this wrapper is unverified. The OLE compound file contains
-    /// <c>EncryptionInfo</c> (binary descriptor: SHA-1 PBKDF, AES-128-CBC)
-    /// and <c>EncryptedPackage</c> (AES-128-CBC with zero IV of the inner
-    /// ACCDB).
-    /// </summary>
-    AccdbStandard = 3,
+    /// <summary>Native Jet3 RC4 page encryption using its unmasked encoding key. Its single-byte header password is independent of page encryption.</summary>
+    Jet3Rc4 = 3,
 
-    /// <summary>
-    /// Office Crypto API ECMA-376 "Agile" encryption in a CFB v4 compound
-    /// document. The outer OLE container stores <c>EncryptionInfo</c> and
-    /// <c>EncryptedPackage</c> streams; the encrypted package contains the
-    /// inner clean ACCDB image.
-    /// </summary>
-    AccdbAgileCfb = 4,
 }

@@ -27,36 +27,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private readonly AccessWriterOptions options;
     private readonly WriterServices services;
 
-    /// <summary>
-    /// Office Crypto re-encryption context. When non-null, the underlying _stream is an
-    /// in-memory MemoryStream containing the *decrypted* inner ACCDB; on
-    /// DisposeAsync the bytes are re-encrypted with the original Office Crypto format
-    /// and written back to _outerEncryptedStream (which holds the original CFB).
-    /// </summary>
-    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed via RewrapAndCloseOuterEncryptedStreamAsync, invoked by LockFileCoordinator.DisposeAfterAsync.")]
-    private readonly Stream? outerEncryptedStream;
-    private readonly bool outerEncryptedLeaveOpen;
-    private readonly AccessEncryptionFormat outerEncryptedFormat;
-    private readonly bool isAgileEncryptedRewrap;
-
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "AccessBase takes ownership of the database file; DisposeAsync disposes it as the last LockFileCoordinator.DisposeAfterAsync step.")]
     private AccessWriter(
         string path,
         Stream stream,
         byte[] header,
         AccessWriterOptions options,
-        Stream? outerEncryptedStream = null,
-        bool outerEncryptedLeaveOpen = false,
-        AccessEncryptionFormat outerEncryptedFormat = AccessEncryptionFormat.None,
         bool leaveOpen = false)
         : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options))
     {
         this.options = options;
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
-        this.outerEncryptedStream = outerEncryptedStream;
-        this.outerEncryptedLeaveOpen = outerEncryptedLeaveOpen;
-        this.outerEncryptedFormat = outerEncryptedFormat;
-        this.isAgileEncryptedRewrap = outerEncryptedFormat != AccessEncryptionFormat.None;
 
         this.lockFileCoordinator.Acquire();
         try
@@ -111,6 +92,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. Nothing is written to the stream.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The stream is not read, written or disposed.</exception>
+    /// <exception cref="NotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
     {
         Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
@@ -126,36 +108,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
             byte[] header = headerPage.AsSpan(0, Constants.DatabaseHeader.Length).ToArray();
 
-            // Office Crypto API ("Agile") encrypted .accdb files are real OLE
-            // compound documents (CFB) wrapping an EncryptedPackage stream.
-            // We can't edit them in place: writes are buffered into an
-            // in-memory MemoryStream containing the *decrypted* inner ACCDB,
-            // and the whole CFB is re-emitted on DisposeAsync.
             if (EncryptionManager.IsCompoundFileEncrypted(header))
             {
-                _ = stream.Seek(0, SeekOrigin.Begin);
-                (byte[]? decryptedPackage, AccessEncryptionFormat outerFormat) = await EncryptionManager
-                    .TryDecryptCompoundFileWithFormatAsync(stream, header, options.Password, EncryptionManager.WriterPasswordOption, cancellationToken, options)
-                    .ConfigureAwait(false);
-
-                if (decryptedPackage != null)
-                {
-                    var inner = new MemoryStream();
-                    await inner.WriteAsync(decryptedPackage.AsMemory(), cancellationToken).ConfigureAwait(false);
-                    inner.Position = 0;
-                    byte[] innerHeader = await PageFile.ReadHeaderAsync(inner, cancellationToken).ConfigureAwait(false);
-
-                    return new AccessWriter(
-                        path,
-                        inner,
-                        innerHeader,
-                        options,
-                        outerEncryptedStream: stream,
-                        outerEncryptedLeaveOpen: leaveOpen,
-                        outerEncryptedFormat: outerFormat);
-                }
-
-                throw new InvalidDataException("Compound file does not contain a supported encrypted package.");
+                throw new NotSupportedException("Office compound packages are not native Microsoft Access databases.");
             }
 
             return new AccessWriter(
@@ -348,7 +303,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="path">Path to an existing unencrypted .mdb or .accdb file.</param>
     /// <param name="newPassword">The password to apply (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>, which <c>OpenAsync</c> cannot open for writing; choose <see cref="AccessEncryptionFormat.AccdbAgileCfb"/> when the file must stay writable.</param>
+    /// <param name="targetFormat">The requested native encryption format. Creating or changing native database passwords is not supported.</param>
     /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
@@ -430,7 +385,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the unencrypted database bytes.</param>
     /// <param name="newPassword">The password to apply. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The encryption format to use. When <see langword="null"/>, Jet4 <c>.mdb</c> files use <see cref="AccessEncryptionFormat.Jet4Rc4"/> and ACE <c>.accdb</c> files use <see cref="AccessEncryptionFormat.AccdbAgile"/>, which <c>OpenAsync</c> cannot open for writing; choose <see cref="AccessEncryptionFormat.AccdbAgileCfb"/> when the file must stay writable.</param>
+    /// <param name="targetFormat">The requested native encryption format. Creating or changing native database passwords is not supported.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public static ValueTask EncryptAsync(
@@ -750,8 +705,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         // The coordinator drains every step in order, aggregates failures,
         // and unconditionally releases the .ldb / .laccdb slot last.
-        // Lock-file release runs after the agile re-wrap so the lock-file
-        // accurately reflects "database still in use" while we re-encrypt.
         await this.services.Transactions.RunDisposalAsync(this.DisposeCoreAsync).ConfigureAwait(false);
         this.lockFileCoordinator.Dispose();
     }
@@ -762,12 +715,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     private ValueTask DisposeCoreAsync()
         => this.services.Transactions.IsFaulted
             ? this.lockFileCoordinator.DisposeAfterAsync(
-                this.CloseOuterEncryptedStreamAsync,
                 this.Database.DisposeAsync)
             : this.lockFileCoordinator.DisposeAfterAsync(
                 this.services.Transactions.DisposeActiveTransactionAsync,
                 this.services.Transactions.FlushPendingWritesAsync,
-                this.RewrapAndCloseOuterEncryptedStreamAsync,
                 this.Database.DisposeAsync);
 
     /// <summary>
@@ -825,39 +776,4 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 sourceColumns,
                 cancellationToken),
             cancellationToken);
-
-    private async ValueTask CloseOuterEncryptedStreamAsync()
-    {
-        if (this.outerEncryptedStream is not null && !this.outerEncryptedLeaveOpen)
-        {
-            await this.outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
-        }
-    }
-
-    private async ValueTask RewrapAndCloseOuterEncryptedStreamAsync()
-    {
-        // For Agile-encrypted databases the underlying _stream is an in-memory
-        // copy of the *decrypted* ACCDB. Re-encrypt it before tearing down so
-        // the user's outer encrypted stream/file ends up with all writes.
-        if (!this.isAgileEncryptedRewrap || this.outerEncryptedStream is null || this.options.Password.IsEmpty)
-        {
-            return;
-        }
-
-        try
-        {
-            await EncryptionManager.RewrapDecryptedCompoundFileAsync(
-                this.Database.Pages.Stream,
-                this.outerEncryptedStream,
-                this.outerEncryptedFormat,
-                this.options.Password).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (!this.outerEncryptedLeaveOpen)
-            {
-                await this.outerEncryptedStream.DisposeAsync().ConfigureAwait(false);
-            }
-        }
-    }
 }
