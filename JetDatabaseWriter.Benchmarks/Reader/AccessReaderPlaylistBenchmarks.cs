@@ -65,7 +65,7 @@ public class AccessReaderPlaylistBenchmarks
     /// <returns>Every playlist in stored order, with exact definition bytes.</returns>
     /// <exception cref="InvalidOperationException">Setup has not opened the reader.</exception>
     [Benchmark]
-    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."), hybrid: false);
+    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."), hybrid: true);
 
     private static async Task<List<SnapshotPlaylistRow>> ScanAsync(AccessReader source, bool hybrid)
     {
