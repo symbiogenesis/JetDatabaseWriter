@@ -154,7 +154,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new JetIOException(JetErrorCode.DatabaseFileExists, $"Database file already exists: {path}");
         }
 
-        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options.WriteFullCatalogSchema);
+        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format);
 
         await using (FileStream fs = FileStreamFactory.Open(
             path,
@@ -171,7 +171,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            await writer.InitializeFreshDatabaseAsync(options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
+            await writer.InitializeFreshDatabaseAsync(cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -212,7 +212,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         options ??= new AccessWriterOptions();
         options.Validate();
 
-        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format, options.WriteFullCatalogSchema);
+        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format);
         await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Position = 0;
@@ -220,7 +220,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         AccessWriter writer = await OpenAsync(stream, options, leaveOpen, cancellationToken).ConfigureAwait(false);
         try
         {
-            await writer.InitializeFreshDatabaseAsync(options.WriteFullCatalogSchema, cancellationToken).ConfigureAwait(false);
+            await writer.InitializeFreshDatabaseAsync(cancellationToken).ConfigureAwait(false);
             return writer;
         }
         catch
@@ -745,13 +745,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// system-table TDEF slots, bootstraps the <c>MSysObjects</c> indexes, and
     /// scaffolds the remaining full-catalog system tables.
     /// </summary>
-    /// <param name="fullCatalogSchema">Whether the full 17-column catalog schema is in use.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask InitializeFreshDatabaseAsync(bool fullCatalogSchema, CancellationToken cancellationToken)
+    private async ValueTask InitializeFreshDatabaseAsync(CancellationToken cancellationToken)
     {
         await using WriteScope scope = this.services.Transactions.BeginWriteScope();
-        long coreSystemTableStartPage = await this.services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(fullCatalogSchema, cancellationToken).ConfigureAwait(false);
-        await this.services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(fullCatalogSchema, cancellationToken).ConfigureAwait(false);
+        long coreSystemTableStartPage = await this.services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(cancellationToken).ConfigureAwait(false);
+        await this.services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(cancellationToken).ConfigureAwait(false);
         await this.services.ComplexColumns.ScaffoldSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
     }
 

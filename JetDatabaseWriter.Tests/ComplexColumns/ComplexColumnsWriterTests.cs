@@ -42,7 +42,7 @@ public sealed class ComplexColumnsWriterTests
     // ── MSysComplexColumns scaffold ────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateDatabaseAsync_AceAccdb_FullCatalog_EmitsMSysComplexColumns()
+    public async Task CreateDatabaseAsync_AceAccdb_EmitsMSysComplexColumns()
     {
         var ms = new MemoryStream();
         await using (await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
@@ -95,22 +95,6 @@ public sealed class ComplexColumnsWriterTests
 
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         Assert.Empty(meta);
-    }
-
-    [Fact]
-    public async Task CreateDatabaseAsync_AceAccdb_SlimCatalog_EmitsMSysComplexColumns()
-    {
-        var ms = new MemoryStream();
-        var options = new AccessWriterOptions { WriteFullCatalogSchema = false };
-        await using (await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, options, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-
-        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
-        Assert.NotEmpty(meta);
     }
 
     // ── ColumnDefinition declaration surface ───────────────────────────────────

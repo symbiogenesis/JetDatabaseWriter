@@ -115,7 +115,7 @@ public sealed class JetFormatTests
         Assert.Equal(commitLockOffset, format.CommitLockOffset);
         Assert.Equal(Encoding.ASCII.GetBytes(headerSignature + "\0"), format.HeaderSignature.ToArray());
         Assert.Equal(newDatabaseVersion, format.NewDatabaseVersion);
-        Assert.Equal(kind, JetFormat.DetectFormat(TDefPageBuilder.BuildEmptyDatabase(kind, fullCatalogSchema: true)));
+        Assert.Equal(kind, JetFormat.DetectFormat(TDefPageBuilder.BuildEmptyDatabase(kind)));
         Assert.Equal(propertyTextCodePage, JetFormat.ForNewDatabase(kind).PropertyTextEncoding.CodePage);
         Assert.Equal(propertyBlockMagic, JetFormat.PropertyBlockMagicOf(kind));
     }

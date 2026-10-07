@@ -89,16 +89,13 @@ public sealed class DeclaredDefaultConversionTests
         Assert.Equal(reopenedBefore, stream.ToArray());
     }
 
-    /// <summary>Schema rewrites retain converted defaults even when the catalog cannot persist them.</summary>
-    /// <param name="fullCatalog">Whether persisted column properties are available.</param>
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Defaults_SurviveSchemaRewriteAndHyperlinkProjection(bool fullCatalog)
+    /// <summary>Schema rewrites and reopened writers retain converted defaults.</summary>
+    [Fact]
+    public async Task Defaults_SurviveSchemaRewriteAndHyperlinkProjection()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using var stream = new MemoryStream();
-        var options = new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = fullCatalog };
+        var options = new AccessWriterOptions { UseLockFile = false };
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, options, leaveOpen: true, ct))
         {
             await writer.CreateTableAsync(
@@ -113,17 +110,16 @@ public sealed class DeclaredDefaultConversionTests
             await writer.InsertRowAsync("Defaults", [DbDefault.Value, DbDefault.Value, 1], ct);
         }
 
-        if (fullCatalog)
+        stream.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, ct))
         {
-            stream.Position = 0;
-            await using AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, ct);
             await writer.InsertRowAsync("Defaults", [DbDefault.Value, DbDefault.Value, 2], ct);
         }
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
         DataTable rows = await reader.ReadDataTableAsync("Defaults", cancellationToken: ct);
-        Assert.Equal(fullCatalog ? 3 : 2, rows.Rows.Count);
+        Assert.Equal(3, rows.Rows.Count);
         foreach (DataRow row in rows.Rows)
         {
             Assert.Equal(-1, row["Flag"]);

@@ -305,7 +305,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
     /// <param name="format">The database format.</param>
     private static byte[] UnmaskedEmptyHeader(DatabaseFormat format)
     {
-        byte[] header = TDefPageBuilder.BuildEmptyDatabase(format, fullCatalogSchema: true).AsSpan(0, Constants.PageSizes.Jet3).ToArray();
+        byte[] header = TDefPageBuilder.BuildEmptyDatabase(format).AsSpan(0, Constants.PageSizes.Jet3).ToArray();
         EncryptionManager.TransformHeaderMask(header);
         return header;
     }

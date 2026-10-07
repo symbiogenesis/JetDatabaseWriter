@@ -74,7 +74,7 @@ public sealed class Jet3PropertyCodePageTests
 
     private static JetFormat CreateFormat(ushort codePage)
     {
-        byte[] header = TDefPageBuilder.BuildEmptyDatabase(DatabaseFormat.Jet3Mdb, fullCatalogSchema: false);
+        byte[] header = TDefPageBuilder.BuildEmptyDatabase(DatabaseFormat.Jet3Mdb);
         JetDatabaseWriter.Encryption.EncryptionManager.TransformHeaderMask(header, DatabaseFormat.Jet3Mdb);
         BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(Constants.DatabaseHeader.CodePage), codePage);
         JetDatabaseWriter.Encryption.EncryptionManager.TransformHeaderMask(header, DatabaseFormat.Jet3Mdb);

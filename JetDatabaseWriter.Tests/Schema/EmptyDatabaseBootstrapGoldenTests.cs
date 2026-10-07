@@ -22,7 +22,7 @@ using Xunit;
 /// <remarks>
 /// <para>
 /// The bootstrap hashes cover <see cref="TDefPageBuilder.BuildEmptyDatabase"/>
-/// for each format and catalog schema: the masked page 0, the global usage map
+/// for each format: the masked page 0, the global usage map
 /// and the <c>MSysObjects</c> TDEF.
 /// </para>
 /// <para>
@@ -51,17 +51,14 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, true, "D99ABF7F931CEFCCA40A76D2D7E341593992E0F1809F92D31AFA4D821E7A06BD")]
-    [InlineData(DatabaseFormat.Jet3Mdb, false, "4F3DC4F579E518F807B5D53A9E3E934EBE7B8D18AF25C9A2477AA45001707358")]
-    [InlineData(DatabaseFormat.Jet4Mdb, true, "F8A34D1D4232CB91CBB813650023D4ADAC24A0B0D639DF9DA8DB995FD1807152")]
-    [InlineData(DatabaseFormat.Jet4Mdb, false, "74280E912941AA1DC2F8D8DC3635B68243AE7A834C03F4F2BEE7021CF39282D5")]
-    [InlineData(DatabaseFormat.AceAccdb, true, "2BF119CCEEAA076A9AE7C2A64476707A1DA60AFFD8E72E2996E53F564D6D5DF0")]
-    [InlineData(DatabaseFormat.AceAccdb, false, "70B7DF1BE440BBCFCB0DD3036506683095F5B1E9C91CE285E2A54789AC439A0B")]
-    public void BuildEmptyDatabase_MatchesGoldenHash(DatabaseFormat format, bool fullCatalogSchema, string expectedSha256)
+    [InlineData(DatabaseFormat.Jet3Mdb, "D99ABF7F931CEFCCA40A76D2D7E341593992E0F1809F92D31AFA4D821E7A06BD")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "F8A34D1D4232CB91CBB813650023D4ADAC24A0B0D639DF9DA8DB995FD1807152")]
+    [InlineData(DatabaseFormat.AceAccdb, "2BF119CCEEAA076A9AE7C2A64476707A1DA60AFFD8E72E2996E53F564D6D5DF0")]
+    public void BuildEmptyDatabase_MatchesGoldenHash(DatabaseFormat format, string expectedSha256)
     {
-        byte[] image = TDefPageBuilder.BuildEmptyDatabase(format, fullCatalogSchema);
+        byte[] image = TDefPageBuilder.BuildEmptyDatabase(format);
 
-        AssertGolden(expectedSha256, image, $"{format} bootstrap, full catalog: {fullCatalogSchema}");
+        AssertGolden(expectedSha256, image, $"{format} bootstrap");
     }
 
     [Theory]

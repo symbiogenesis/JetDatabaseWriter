@@ -7,9 +7,12 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -19,8 +22,7 @@ using Xunit;
 /// <c>CatalogRowReader.FindSystemTableTdefPageAsync</c>, which the reader's
 /// <c>CatalogReader</c> and the writer share. <c>MSysObjects</c> itself is
 /// always TDEF page 2 (Jackcess <c>PAGE_SYSTEM_CATALOG</c>), so it resolves
-/// even in a file whose catalog has no row naming it, as in every Jet3, Jet4
-/// and slim-catalog ACCDB file the writer creates.
+/// even in a file whose catalog has no row naming it.
 /// </summary>
 public sealed class SystemTableLookupTests
 {
@@ -28,35 +30,19 @@ public sealed class SystemTableLookupTests
 
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
-    /// <summary>Gets every format the writer creates, with the full and the slim catalog schema.</summary>
-    public static TheoryData<DatabaseFormat, bool> CreatedDatabases
-    {
-        get
-        {
-            var data = new TheoryData<DatabaseFormat, bool>();
-            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
-            {
-                data.Add(format, true);
-                data.Add(format, false);
-            }
-
-            return data;
-        }
-    }
-
     /// <summary>
     /// Every read API returns <c>MSysObjects</c> with its columns and rows on a
-    /// database the writer created; on Jet3, Jet4 and slim ACCDB files they used to
-    /// return a table with no columns, because no catalog row names
-    /// <c>MSysObjects</c> there.
+    /// database the writer created, including Jet3 and Jet4 files whose catalogs
+    /// have no row naming <c>MSysObjects</c>.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="fullCatalog">Whether the database has the full catalog schema.</param>
     [Theory]
-    [MemberData(nameof(CreatedDatabases))]
-    public async Task ReadApis_MSysObjects_OnCreatedDatabase_ReturnCatalogRows(DatabaseFormat format, bool fullCatalog)
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ReadApis_MSysObjects_OnCreatedDatabase_ReturnCatalogRows(DatabaseFormat format)
     {
-        byte[] bytes = await CreateDatabaseAsync(format, fullCatalog, this.ct);
+        byte[] bytes = await CreateDatabaseAsync(format, this.ct);
         (TableDef catalog, long rowCount) = await ReadCatalogTableDefAsync(bytes, this.ct);
         Assert.NotEmpty(catalog.Columns);
 
@@ -75,16 +61,17 @@ public sealed class SystemTableLookupTests
 
     /// <summary>
     /// The reader's and the writer's system-table lookups resolve <c>MSysObjects</c>
-    /// to TDEF page 2 in files whose catalog has no row naming it.
+    /// to TDEF page 2 when its catalog row is missing or undecodable.
     /// </summary>
     /// <param name="format">The database format.</param>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task FindSystemTable_MSysObjects_WithoutCatalogRow_ResolvesPage2(DatabaseFormat format)
+    public async Task FindSystemTable_MSysObjects_WithMissingOrUndecodableCatalogRow_ResolvesPage2(DatabaseFormat format)
     {
-        byte[] bytes = await CreateDatabaseAsync(format, fullCatalog: false, this.ct);
+        byte[] bytes = await CreateDatabaseAsync(format, this.ct);
+        await CorruptCatalogSelfRowAsync(bytes, this.ct);
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
         await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
@@ -173,13 +160,33 @@ public sealed class SystemTableLookupTests
         }
     }
 
-    private static async ValueTask<byte[]> CreateDatabaseAsync(DatabaseFormat format, bool fullCatalog, CancellationToken cancellationToken)
+    private static async ValueTask CorruptCatalogSelfRowAsync(byte[] bytes, CancellationToken cancellationToken)
+    {
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: cancellationToken);
+        DatabaseFile database = harness.Database;
+        TableDef? catalog = await harness.ReadTableDefAsync(2, cancellationToken);
+        Assert.NotNull(catalog);
+        List<CatalogRow> rows = await new CatalogRowReader(database.Format, database.TableDefs, database.OwnedPages).GetCatalogRowsAsync(catalog, cancellationToken);
+        CatalogRow? selfRow = rows.FirstOrDefault(row => row.IsDecoded && string.Equals(row.Name, CatalogTable, StringComparison.OrdinalIgnoreCase));
+        if (selfRow is null)
+        {
+            return;
+        }
+
+        byte[] page = await harness.ReadPageCopyAsync(selfRow.PageNumber, cancellationToken);
+        RowBound bound = DataPageRows.EnumerateLiveRowBounds(database.Format, page).Single(row => row.RowIndex == selfRow.RowIndex);
+        int rowOffset = checked((int)(selfRow.PageNumber * database.Format.PageSize)) + bound.RowStart;
+        bytes.AsSpan(rowOffset, database.Format.RowFields.NumCols).Clear();
+    }
+
+    private static async ValueTask<byte[]> CreateDatabaseAsync(DatabaseFormat format, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
-            new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = fullCatalog },
+            new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken))
         {

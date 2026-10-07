@@ -85,28 +85,26 @@ internal sealed class CatalogArtifactWriter(
     /// <summary>
     /// Reserves the contiguous TDEF slots for the core ACCDB system tables
     /// (<c>MSysACEs</c>, <c>MSysQueries</c>, <c>MSysRelationships</c>) of a
-    /// freshly created full-catalog database. Returns 0 when no slots are needed:
+    /// freshly created database. Returns 0 when no slots are needed:
     /// the writer scaffolds these tables only on ACCDB, with the complex-column
     /// catalog (<see cref="JetFormat.SupportsComplexColumns"/>).
     /// </summary>
-    /// <param name="fullCatalogSchema">Whether the full 17-column catalog schema is in use.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(bool fullCatalogSchema, CancellationToken cancellationToken)
-        => format.SupportsComplexColumns && fullCatalogSchema
+    internal ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(CancellationToken cancellationToken)
+        => format.SupportsComplexColumns
             ? pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken)
             : new ValueTask<long>(0L);
 
     /// <summary>
     /// Rewrites the freshly created <c>MSysObjects</c> TDEF (page 2) with its
     /// <c>Id</c> primary key and <c>ParentIdName</c> unique index, empty leaf
-    /// pages, and a writer-owned usage map. No-op for Jet3 and the slim catalog.
+    /// pages, and a writer-owned usage map. No-op for Jet3.
     /// </summary>
-    /// <param name="fullCatalogSchema">Whether the full 17-column catalog schema is in use.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when the bootstrap TDEF unexpectedly spans multiple pages.</exception>
-    internal async ValueTask InitializeFreshCatalogIndexesAsync(bool fullCatalogSchema, CancellationToken cancellationToken)
+    internal async ValueTask InitializeFreshCatalogIndexesAsync(CancellationToken cancellationToken)
     {
-        if (format.IsJet3 || !fullCatalogSchema)
+        if (format.IsJet3)
         {
             return;
         }

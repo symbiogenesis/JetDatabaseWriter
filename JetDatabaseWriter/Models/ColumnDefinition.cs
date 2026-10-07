@@ -69,8 +69,7 @@ public sealed record ColumnDefinition
     /// integer, floating-point, <see cref="decimal"/>, <see cref="DateTime"/> and
     /// <see cref="Guid"/> values can be written this way; any other type, such as
     /// <c>byte[]</c>, makes table creation or adding a column throw <see cref="NotSupportedException"/> before anything is written. The
-    /// literal is persisted only when the catalog has an <c>LvProp</c> column
-    /// (<see cref="AccessWriterOptions.WriteFullCatalogSchema"/>, the default).
+    /// literal is persisted only when the catalog has an <c>LvProp</c> column.
     /// <see cref="DBNull.Value"/> means no default.
     /// </para>
     /// <para>

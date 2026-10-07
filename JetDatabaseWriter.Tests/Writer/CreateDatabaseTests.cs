@@ -33,12 +33,6 @@ public sealed class CreateDatabaseTests
         "RmtInfoLong", "Lv", "LvProp", "LvModule", "LvExtra",
     ];
 
-    private static readonly string[] SlimCatalogColumnNames =
-    [
-        "Id", "ParentId", "Name", "Type", "DateCreate", "DateUpdate", "Flags",
-        "ForeignName", "Database",
-    ];
-
     // ── CreateDatabaseAsync (Stream, Jet4Mdb) ─────────────────────────────────
 
     [Fact]
@@ -469,19 +463,18 @@ public sealed class CreateDatabaseTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    // ──  WriteFullCatalogSchema ───────────────────────────────
+    // ── Microsoft Access catalog schema ───────────────────────────────
 
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_FullCatalogSchema_DefaultEmits17ColumnMSysObjects(DatabaseFormat format)
+    public async Task CreateDatabaseAsync_Emits17ColumnMSysObjects(DatabaseFormat format)
     {
         await using var ms = new MemoryStream();
 
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
-            // Default: WriteFullCatalogSchema = true
         }
 
         ms.Position = 0;
@@ -490,28 +483,6 @@ public sealed class CreateDatabaseTests
 
         Assert.NotNull(msys);
         Assert.Equal(FullCatalogColumnNames, msys.Columns.Select(c => c.Name).ToArray());
-    }
-
-    [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb)]
-    [InlineData(DatabaseFormat.Jet4Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task CreateDatabaseAsync_FullCatalogSchema_OptedOutEmitsLegacy9ColumnMSysObjects(DatabaseFormat format)
-    {
-        await using var ms = new MemoryStream();
-        var opts = new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = false };
-
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, opts, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
-        {
-            // Opt-out: WriteFullCatalogSchema = false retains the historical layout.
-        }
-
-        ms.Position = 0;
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
-        TableDef? msys = await reader.ReadTableDefAsync(2, TestContext.Current.CancellationToken);
-
-        Assert.NotNull(msys);
-        Assert.Equal(SlimCatalogColumnNames, msys.Columns.Select(c => c.Name).ToArray());
     }
 
     [Theory]

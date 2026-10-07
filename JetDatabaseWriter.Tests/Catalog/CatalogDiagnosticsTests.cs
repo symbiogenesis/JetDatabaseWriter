@@ -147,27 +147,22 @@ public sealed partial class CatalogDiagnosticsTests
 
     /// <summary>
     /// "Total rows scanned" matches the <c>MSysObjects</c> row count on databases the
-    /// writer creates, where no catalog row names <c>MSysObjects</c> except in the
-    /// full-catalog ACCDB schema; the table read used to find no <c>MSysObjects</c>
-    /// there and return no rows.
+    /// writer creates, including Jet3 and Jet4 files whose catalogs have no row
+    /// naming <c>MSysObjects</c>.
     /// </summary>
     /// <param name="format">The database format.</param>
-    /// <param name="fullCatalog">Whether the database has the full catalog schema.</param>
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, true)]
-    [InlineData(DatabaseFormat.Jet3Mdb, false)]
-    [InlineData(DatabaseFormat.Jet4Mdb, true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false)]
-    public async Task ListTables_Diagnostics_RowsScannedMatchesMSysObjectsRowCount_OnCreatedDatabase(DatabaseFormat format, bool fullCatalog)
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ListTables_Diagnostics_RowsScannedMatchesMSysObjectsRowCount_OnCreatedDatabase(DatabaseFormat format)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             ms,
             format,
-            new AccessWriterOptions { UseLockFile = false, WriteFullCatalogSchema = fullCatalog },
+            new AccessWriterOptions { UseLockFile = false },
             leaveOpen: true,
             ct))
         {

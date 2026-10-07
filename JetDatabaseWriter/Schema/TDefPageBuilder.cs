@@ -678,17 +678,11 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     /// The bootstrap image contains three pages (page size varies by format):
     /// page 0 (header), page 1 (global usage map), and page 2 (MSysObjects TDEF).
     /// The <see cref="AccessWriter.CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/> overloads add
-    /// full-catalog ACCDB system tables after opening this minimal image.
+    /// ACCDB system tables after opening this minimal image.
     /// </summary>
     /// <param name="format">Target on-disk format.</param>
-    /// <param name="fullCatalogSchema">
-    /// When <see langword="true"/>, page 2 is bootstrapped with the real Access
-    /// 17-column <c>MSysObjects</c> schema (matches files written by Microsoft
-    /// Access across all Jet/ACE versions). When <see langword="false"/>, the
-    /// historical 9-column slim schema is written instead.
-    /// </param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="format"/> is not a defined format.</exception>
-    internal static byte[] BuildEmptyDatabase(DatabaseFormat format, bool fullCatalogSchema)
+    internal static byte[] BuildEmptyDatabase(DatabaseFormat format)
     {
         var profile = JetFormat.ForNewDatabase(format);
         int pgSz = profile.PageSize;
@@ -703,7 +697,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         db[0x14] = profile.NewDatabaseVersion;
 
         BuildGlobalUsageMapPage(db, pgSz, profile);
-        BuildMSysObjectsTDef(db, pgSz * 2, profile, fullCatalogSchema);
+        BuildMSysObjectsTDef(db, pgSz * 2, profile);
 
         if (profile.IsJet3)
         {
@@ -847,14 +841,14 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             : (byte)0;
     }
 
-    private static void BuildMSysObjectsTDef(byte[] db, int offset, JetFormat format, bool fullCatalogSchema)
+    private static void BuildMSysObjectsTDef(byte[] db, int offset, JetFormat format)
     {
         bool isJet3 = format.IsJet3;
         TDefHeaderLayout tdef = format.TDef;
         ColumnDescriptorLayout descriptor = format.ColumnDescriptor;
         int textColSize = isJet3 ? 255 : 510;
 
-        BootstrapColumnDescriptor[] columns = fullCatalogSchema ? BuildFullCatalogColumns(textColSize) : BuildSlimCatalogColumns(textColSize);
+        BootstrapColumnDescriptor[] columns = BuildFullCatalogColumns(textColSize);
 
         int numCols = columns.Length;
         int numVarCols = 0;
@@ -937,19 +931,6 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             Wu16(db, offset + 2, Math.Max(0, format.PageSize - tdefLen - 8));
         }
     }
-
-    private static BootstrapColumnDescriptor[] BuildSlimCatalogColumns(int textColSize) =>
-    [
-        new("Id",          LongIntegerType, 0, 0, 0,  4,           0x03),
-        new("ParentId",    LongIntegerType, 1, 0, 4,  4,           0x03),
-        new("Name",        TextType,        2, 0, 0,  textColSize, 0x02),
-        new("Type",        IntegerType,     3, 0, 8,  2,           0x03),
-        new("DateCreate",  DateTimeType,    4, 0, 10, 8,           0x03),
-        new("DateUpdate",  DateTimeType,    5, 0, 18, 8,           0x03),
-        new("Flags",       LongIntegerType, 6, 0, 26, 4,           0x03),
-        new("ForeignName", TextType,        7, 1, 0,  textColSize, 0x02),
-        new("Database",    TextType,        8, 2, 0,  textColSize, 0x02),
-    ];
 
     private static BootstrapColumnDescriptor[] BuildFullCatalogColumns(int textColSize) =>
     [

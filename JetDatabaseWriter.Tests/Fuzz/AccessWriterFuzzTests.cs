@@ -275,7 +275,6 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         {
             Password = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)).ToCharArray() : ReadOnlyMemory<char>.Empty,
             UseLockFile = random.NextDouble() < 0.5,
-            WriteFullCatalogSchema = random.NextDouble() < 0.5,
             RespectExistingLockFile = random.NextDouble() < 0.5,
             LockFileUserName = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)) : null,
             LockFileMachineName = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)) : null,
