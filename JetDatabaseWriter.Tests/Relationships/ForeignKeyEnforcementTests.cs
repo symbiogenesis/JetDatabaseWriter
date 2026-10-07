@@ -859,7 +859,9 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         Assert.Equal(42, values[0]);
         Assert.Equal(true, values[1]);
         Assert.Equal("Alpha", values[2]);
-        Assert.Equal(payload, Assert.IsType<byte[]>(values[3]));
+        byte[] expectedPayload = new byte[16];
+        payload.CopyTo(expectedPayload, 0);
+        Assert.Equal(expectedPayload, Assert.IsType<byte[]>(values[3]));
         Assert.Equal(12.345m, values[4]);
         Assert.Equal(stamp, values[5]);
         Assert.Equal(rowGuid, values[6]);

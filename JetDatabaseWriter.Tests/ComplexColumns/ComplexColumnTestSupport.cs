@@ -101,8 +101,8 @@ internal static class ComplexColumnTestSupport
     }
 
     /// <summary>
-    /// Rewrites a table the way builds before per-row reference allocation
-    /// left it: every complex slot of the selected rows null and, unless
+    /// Injects missing references by clearing every complex slot of the
+    /// selected rows and, unless
     /// <paramref name="clearCounter"/> is false, the TDEF complex AutoNumber 0.
     /// Flat rows and indexes are left alone.
     /// </summary>
@@ -115,7 +115,7 @@ internal static class ComplexColumnTestSupport
 
     /// <summary>
     /// Overwrites the complex slots of the selected rows on their data pages,
-    /// the way earlier builds or other tools may have left them. Flat rows,
+    /// to exercise malformed-reference preservation and refusal. Flat rows,
     /// indexes and (unless <paramref name="clearCounter"/>) the TDEF complex
     /// AutoNumber are left alone.
     /// </summary>

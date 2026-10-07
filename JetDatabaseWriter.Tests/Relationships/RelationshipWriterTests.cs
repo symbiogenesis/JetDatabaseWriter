@@ -140,6 +140,26 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
+    public async Task CreateRelationshipAsync_WithoutIntegrity_EmitsNoPhysicalForeignKeyIndexes()
+    {
+        MemoryStream stream = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await OpenWriterAsync(stream, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("NoRiParent", [new("Id", typeof(int)) { IsPrimaryKey = true }], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync("NoRiChild", [new("Id", typeof(int)) { IsPrimaryKey = true }, new("ParentId", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateRelationshipAsync(
+                new RelationshipDefinition("FK_NoRi", "NoRiParent", "Id", "NoRiChild", "ParentId") { EnforceReferentialIntegrity = false }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("NoRiChild", [1, 99], TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(await reader.ListIndexesAsync("NoRiParent", TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
+        Assert.DoesNotContain(await reader.ListIndexesAsync("NoRiChild", TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
+        Assert.Equal(1, await reader.GetRealRowCountAsync("NoRiChild", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task CreateRelationshipAsync_DuplicateName_Throws()
     {
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);

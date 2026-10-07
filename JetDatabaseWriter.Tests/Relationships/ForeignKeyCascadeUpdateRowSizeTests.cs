@@ -105,7 +105,7 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
                 new("Id", typeof(int)) { IsPrimaryKey = true },
                 new("PCode", typeof(string), maxLength: 200),
             };
-            childColumns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255)));
+            childColumns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 2 }));
             if (childHasMemo)
             {
                 childColumns.Add(new ColumnDefinition("Notes", typeof(string)));
@@ -240,7 +240,7 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
                 new("A", typeof(string), maxLength: 200),
                 new("B", typeof(string), maxLength: 200),
             };
-            childColumns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255)));
+            childColumns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 2 }));
             if (childHasMemo)
             {
                 childColumns.Add(new ColumnDefinition("Notes", typeof(string)));
@@ -311,7 +311,7 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
                 new("Code", typeof(string), maxLength: 200) { IsPrimaryKey = true },
                 new("ParentCode", typeof(string), maxLength: 200),
             };
-            columns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255)));
+            columns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 2 }));
             await writer.CreateTableAsync("Tree", columns, Ct);
             await writer.InsertRowAsync("Tree", ["k", "k", .. padLengths.Select(length => (object)new byte[length])], Ct);
             await writer.CreateRelationshipAsync(
@@ -371,7 +371,7 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
                 new("Code", typeof(string), maxLength: 200) { IsPrimaryKey = true },
                 new("ParentCode", typeof(string), maxLength: 200),
             };
-            columns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255)));
+            columns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 2 }));
             columns.Add(new ColumnDefinition("Extra", typeof(string), maxLength: 200));
             await writer.CreateTableAsync("Tree", columns, Ct);
             await writer.InsertRowAsync("Tree", [oldCode, oldCode, .. padLengths.Select(length => (object)new byte[length]), null], Ct);
@@ -428,7 +428,7 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
         {
             var parentColumns = new List<ColumnDefinition> { new("Code", typeof(string), maxLength: 200) { IsPrimaryKey = true } };
-            parentColumns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255)));
+            parentColumns.AddRange(padLengths.Select((_, i) => new ColumnDefinition($"Pad{i}", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 2 }));
             await writer.CreateTableAsync("P", parentColumns, Ct);
 
             var childColumns = new List<ColumnDefinition>

@@ -95,6 +95,8 @@ internal sealed class TableSchemaEditor(
         ConstraintRegistry.ValidatePersistedConstraintProperties(tableName, properties);
         ColumnPropertyBlockBuilder builder = properties is null ? new ColumnPropertyBlockBuilder() : ColumnPropertyBlockBuilder.FromBlock(properties);
         ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
+        ColumnPropertyEntryBuilder? originalRule = target.Entries.Find(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase));
+        ColumnPropertyEntryBuilder? originalText = target.Entries.Find(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase));
         target.Entries.RemoveAll(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
             || string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase));
         if (rule != null)
@@ -106,10 +108,14 @@ internal sealed class TableSchemaEditor(
                 await constraints.ValidateTableRuleAsync(tableName, table.Definition, row.Values, candidate, cancellationToken).ConfigureAwait(false);
             }
 
-            target.AddText(Constants.ColumnPropertyNames.ValidationRule, rule.Expression, format);
+            target.AddMemoText(Constants.ColumnPropertyNames.ValidationRule, rule.Expression, format);
+            target.Entries[^1].DataType = originalRule?.DataType ?? MemoType;
+            target.Entries[^1].DdlFlag = originalRule?.DdlFlag ?? 0x01;
             if (rule.ValidationText != null)
             {
                 target.AddText(Constants.ColumnPropertyNames.ValidationText, rule.ValidationText, format);
+                target.Entries[^1].DataType = originalText?.DataType ?? TextType;
+                target.Entries[^1].DdlFlag = originalText?.DdlFlag ?? 0x01;
             }
         }
 
@@ -1022,7 +1028,7 @@ internal sealed class TableSchemaEditor(
             projectedRows.Add(projected);
         }
 
-        await this.AssignMissingComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
+        await this.InitializeNewComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
 
         // Identify complex columns being dropped or renamed by this rewrite
         // BEFORE the cascade-skipping drop runs. Surviving complex columns (matched by
@@ -1175,25 +1181,17 @@ internal sealed class TableSchemaEditor(
     }
 
     /// <summary>
-    /// Gives every projected row a per-row complex reference in each complex
-    /// column, as an insert does. A complex column the rewrite adds has a new,
-    /// empty flat table, so it takes the reference the row already holds when
-    /// every other complex column of the row holds that one and no other row
-    /// does, which keeps Access's one reference per row. Any other row with a
-    /// null complex slot gets a fresh reference, shared by its null slots: a
-    /// row whose complex columns are null, differ or repeat another row's
-    /// reference was written by an earlier build, and an existing column's
-    /// flat table may already hold rows for any reference the row's other
-    /// columns use. Fresh references come from the table's complex counter,
-    /// and the TDEF complex AutoNumber the rewrite carries to the rebuilt
-    /// table covers them.
+    /// Initializes newly added complex columns with per-row references. Reuse
+    /// a surviving shared reference when it uniquely identifies the row;
+    /// otherwise allocate a fresh reference for the new columns. Existing
+    /// complex slots retain their original values, including Null.
     /// </summary>
     /// <param name="tableName">The table being rewritten.</param>
     /// <param name="tableDef">Its current definition.</param>
     /// <param name="newDefs">The projected column list.</param>
     /// <param name="rows">The projected rows, aligned with <paramref name="newDefs"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask AssignMissingComplexReferencesAsync(
+    private async ValueTask InitializeNewComplexReferencesAsync(
         string tableName,
         TableDef tableDef,
         List<ColumnDefinition> newDefs,
@@ -1201,15 +1199,20 @@ internal sealed class TableSchemaEditor(
         CancellationToken cancellationToken)
     {
         List<int> complexColumns = [];
+        List<int> addedColumns = [];
         for (int i = 0; i < newDefs.Count; i++)
         {
             if (newDefs[i].IsAttachment || newDefs[i].IsMultiValue)
             {
                 complexColumns.Add(i);
+                if (newDefs[i].ComplexId == 0 && newDefs[i].SourceColumn is null)
+                {
+                    addedColumns.Add(i);
+                }
             }
         }
 
-        if (complexColumns.Count == 0)
+        if (addedColumns.Count == 0)
         {
             return;
         }
@@ -1231,15 +1234,15 @@ internal sealed class TableSchemaEditor(
         for (int r = 0; r < rows.Count; r++)
         {
             object[] row = rows[r];
-            if (!complexColumns.Exists(i => row[i] is null or DBNull))
+            if (!addedColumns.Exists(i => row[i] is null or DBNull))
             {
                 continue;
             }
 
-            // A shared reference leaves only the added columns null.
+            // Initialize only added columns; surviving slots are preserved.
             if (shared[r] is int reference && holders[reference] == 1)
             {
-                FillNullComplexSlots(row, complexColumns, reference);
+                FillNullComplexSlots(row, addedColumns, reference);
             }
             else
             {
@@ -1255,7 +1258,7 @@ internal sealed class TableSchemaEditor(
         int first = await constraints.AllocateComplexReferencesAsync(tableName, tableDef, needing.Count, cancellationToken).ConfigureAwait(false);
         for (int k = 0; k < needing.Count; k++)
         {
-            FillNullComplexSlots(needing[k], complexColumns, first + k);
+            FillNullComplexSlots(needing[k], addedColumns, first + k);
         }
     }
 

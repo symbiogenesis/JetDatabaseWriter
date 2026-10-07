@@ -205,22 +205,19 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         CancellationToken cancellationToken)
     {
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
-        RowDecodePlan plan = RowDecodePlan.CreateTypedForWriteBack(tableDef, strictParsing: true, wantedColumns);
+        var plan = RowDecodePlan.CreateTypedForWriteBack(tableDef, strictParsing: true, wantedColumns);
         await ownedPages.ForEachLiveTableRowAsync(
             tdefPage,
             async (row, token) =>
             {
-                object?[]? values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, plan, token).ConfigureAwait(false);
-                if (values is null)
-                {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptRow, "A complex-parent predicate row cannot be decoded.", new JetErrorInfo { PageNumber = row.Location.PageNumber });
-                }
+                object?[] values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, plan, token).ConfigureAwait(false)
+                    ?? throw new JetCorruptDataException(JetErrorCode.MalformedValue, "A complex-parent predicate row cannot be decoded.", new JetErrorInfo { PageNumber = row.Location.PageNumber });
 
                 for (int index = 0; index < values.Length; index++)
                 {
                     if (values[index] is UnreadableLongValue)
                     {
-                        throw new JetCorruptDataException(JetErrorCode.CorruptRow, "A selected complex-parent long value cannot be read.", new JetErrorInfo { PageNumber = row.Location.PageNumber, ColumnName = tableDef.Columns[index].Name });
+                        throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "A selected complex-parent long value cannot be read.", new JetErrorInfo { PageNumber = row.Location.PageNumber, ColumnName = tableDef.Columns[index].Name });
                     }
                 }
 

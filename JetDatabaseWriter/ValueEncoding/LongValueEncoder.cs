@@ -147,7 +147,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             }
 
             data = col.IsCalculated ? CalculatedColumnUtil.Wrap(bytes) : bytes;
-            inlineCap = Constants.LongValue.MaxInlineOleBytes;
+            inlineCap = Constants.LongValue.MaxInlineBytes;
             return true;
         }
 
@@ -163,7 +163,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             data = CalculatedColumnUtil.Wrap(data);
         }
 
-        inlineCap = Constants.LongValue.MaxInlineMemoBytes;
+        inlineCap = Constants.LongValue.MaxInlineBytes;
         return true;
     }
 

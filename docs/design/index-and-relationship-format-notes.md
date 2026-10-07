@@ -14,6 +14,11 @@ Non-primary unique indexes allow multiple all-Null keys; partly Null composite k
 
 Cascade updates plan the transitive relationship graph against stored old rows and merged new rows before mutation, with cancellation and a depth limit. Restricted deletes count seek locations without loading child MEMO/OLE payloads; unsupported seeks retain the snapshot fallback. Broader graph/DAO characterization remains explicit in the TODO.
 
+Unenforced relationships persist catalog metadata without physical foreign-key
+indexes. Native DAO emits only the existing primary indexes for a relationship
+with dbRelationDontEnforce, permits orphans and allows related table deletion.
+Enforced relationships emit physical foreign-key indexes and block that deletion.
+
 ## 1. Background
 
 Row enumeration does **not** consume index information today; it remains a linear data-page scan via the per-table page-usage bitmap. Index *schema* metadata is observable via `IAccessReader.ListIndexesAsync` (R1), and exact equality seeks are exposed via `IAccessReader.SeekRowsAsync` (R3). Microsoft Access / DAO CompactDatabase remains the decisive compatibility validator for writer-emitted index bytes because it exercises the engine's own index and catalog walkers.

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.Tests.Relationships;
 using Xunit;
@@ -34,6 +35,24 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
             await writer.CreateTableAsync("Rules", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Other", typeof(int))], Ct);
             Assert.Equal(1, await writer.InsertRowsAsync("Rules", [[1, 0]], Ct));
             await writer.SetTableValidationRuleAsync("Rules", new TableValidationRule("[Id] > 0", "positive identifier"), Ct);
+        }
+
+        stream.Position = 0;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        {
+            long tablePage = (await harness.Services.Catalog.ResolveRequiredTableAsync("Rules", Ct)).Entry.TDefPage;
+            ColumnPropertyBlock? properties = await harness.Services.Snapshots.ReadLvPropBlockAsync(tablePage, Ct);
+            Assert.NotNull(properties);
+            ColumnPropertyTarget? target = properties.FindTableTarget();
+            Assert.NotNull(target);
+            ColumnPropertyEntry? rule = target.Find(Constants.ColumnPropertyNames.ValidationRule);
+            ColumnPropertyEntry? validationText = target.Find(Constants.ColumnPropertyNames.ValidationText);
+            Assert.NotNull(rule);
+            Assert.NotNull(validationText);
+            Assert.Equal(ColumnType.MemoType, rule.DataType);
+            Assert.Equal(1, rule.DdlFlag);
+            Assert.Equal(ColumnType.TextType, validationText.DataType);
+            Assert.Equal(1, validationText.DdlFlag);
         }
 
         stream.Position = 0;

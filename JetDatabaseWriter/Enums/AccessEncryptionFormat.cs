@@ -26,5 +26,4 @@ public enum AccessEncryptionFormat
 
     /// <summary>Native Jet3 RC4 page encryption using its unmasked encoding key. Its single-byte header password is independent of page encryption.</summary>
     Jet3Rc4 = 3,
-
 }

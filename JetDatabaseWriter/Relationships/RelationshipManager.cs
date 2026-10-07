@@ -168,6 +168,13 @@ internal sealed class RelationshipManager(
                 [CatalogObjectArtifact.Relationship(relationship.Name)]),
             cancellationToken).ConfigureAwait(false);
 
+        // Native Access stores unenforced relationships only in the catalog.
+        // Reciprocal FK entries activate engine enforcement even when grbit has no RI.
+        if (!relationship.EnforceReferentialIntegrity)
+        {
+            return;
+        }
+
         // Per-TDEF FK logical-idx entries: add index_type=0x02 logical-idx
         // entries on both PK-side and FK-side TDEFs with cross-referenced
         // rel_idx_num / rel_tbl_page so the JET engine can locate the partner

@@ -335,8 +335,7 @@ internal static class EncryptionManager
         {
             byte[] sniff = await ReadHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
 
-            AccessEncryptionFormat headerFormat = EncryptionConverter.Detect(sniff);
-            return headerFormat;
+            return EncryptionConverter.Detect(sniff);
         }
         finally
         {
@@ -980,7 +979,7 @@ internal static class EncryptionManager
         try
         {
             TransformHeaderMask(unmasked, DatabaseFormat.Jet3Mdb);
-            Encoding encoding = (Encoding)JetFormat.FromHeader(header).AnsiEncoding.Clone();
+            var encoding = (Encoding)JetFormat.FromHeader(header).AnsiEncoding.Clone();
             encoding.EncoderFallback = EncoderFallback.ExceptionFallback;
             supplied = encoding.GetBytes(passwordCharacters);
             if (supplied.Length > Constants.DatabaseHeader.Jet3PasswordLength)

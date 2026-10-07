@@ -24,7 +24,6 @@ using JetDatabaseWriter.Transactions;
 public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 {
     private readonly LockFileCoordinator lockFileCoordinator;
-    private readonly AccessWriterOptions options;
     private readonly WriterServices services;
 
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "AccessBase takes ownership of the database file; DisposeAsync disposes it as the last LockFileCoordinator.DisposeAfterAsync step.")]
@@ -36,7 +35,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool leaveOpen = false)
         : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options))
     {
-        this.options = options;
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
 
         this.lockFileCoordinator.Acquire();

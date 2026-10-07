@@ -327,7 +327,7 @@ C10 caveats:
 General DAO validation rules live in [dao-validation-strategy.md](dao-validation-strategy.md), and cross-feature coverage lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md). Same as the index doc, with one addition specific to attachments:
 
 - Round-trip through this library: read fixtures (`ComplexFields.accdb`) → re-emit → re-read → byte-compare attachment payloads (post-decode).
-- Cross-validate compression: a `.jpg` payload must be stored with `typeFlag=0x00` (raw); a `.txt` payload must be stored with `typeFlag=0x01` (a zlib stream, §3.1). Open in Access and **save the attachment back to disk via the GUI** (or DAO `Field2.SaveToFile`) — verify the saved file is byte-identical to the input. Not yet done: Access is not installed where the tests run, so whether Access reads the writer's deflate blocks is unchecked; any valid zlib stream should inflate.
+- Cross-validate compression: a `.jpg` payload must be stored with `typeFlag=0x00` (raw); a `.txt` payload must be stored with `typeFlag=0x01` (a zlib stream, §3.1). Open in Access and **save the attachment back to disk via the GUI** (or DAO `Field2.SaveToFile`) — verify the saved file is byte-identical to the input. Native DAO extraction and compaction now exercise compressed attachment payloads; the validation matrix records the tested revisions. A passing compression case does not establish every wrapper variant.
 - Test fixture: `JetDatabaseWriter.Tests/Databases/ComplexFields.accdb`. This is the existing read-side fixture; the writer tests should round-trip it.
 
 ## 6. References
@@ -346,6 +346,12 @@ including short single-page values and the last chunk of a chain. The row
 directory stores the actual start; free space excludes the header and row
 slot. DAO characterization of a 372-byte compressed attachment wrapper on
 an ACE page established start 3724 and free space 3708. With identical
-payload bytes and token, placing that row at offset20 caused extraction to
-fail and compacting to lose its content; end packing preserved all6144
+payload bytes and token, placing that row at offset 20 caused extraction to
+fail and compacting to lose its content; end packing preserved all 6144
 payload bytes before and after compacting. Compression framing was unchanged.
+Complex-item parent predicates now use strict projected typed rows and native
+comparison semantics. Null and empty values remain distinct, fixed Binary
+values use their declared zero padding, and complete Memo comparison keys
+avoid truncation to index widths. Schema edits initialize references only
+for newly added complex columns; existing slots are preserved rather than
+repaired as output from an older library build.

@@ -43,6 +43,7 @@ public sealed class IndexReadStreamingTests
         // Resolve catalog and schema before measuring the index walk itself.
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Items", ct);
         _ = await reader.GetColumnMetadataAsync("Items", ct);
+        _ = await reader.ListLinkedTablesAsync(ct);
         counting.Reset();
         List<Item> first = await reader.Query<Item>("Items").OrderBy(item => item.Id).Take(10).ToListAsync(ct);
         Assert.Equal(Enumerable.Range(0, 10), first.Select(static item => item.Id));

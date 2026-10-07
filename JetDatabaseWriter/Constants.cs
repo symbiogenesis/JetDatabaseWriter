@@ -997,21 +997,10 @@ internal static class Constants
         public const int HeaderSize = 12;
 
         /// <summary>
-        /// Maximum MEMO payload size stored inline in the owning data row, on
-        /// every format. Access 97 keeps only values of 32 bytes or less inline
-        /// and moves larger ones to LVAL pages (measured on nwind.mdb and
-        /// queryTestV1997.mdb). The writer keeps the larger cap because it
-        /// writes one value per LVAL page, so a lower cap would spend a whole
-        /// page on every 33-byte value.
+        /// Maximum inline MEMO/OLE payload size on JET/ACE, including any
+        /// calculated-value envelope. Larger payloads use external LVAL rows.
         /// </summary>
-        public const int MaxInlineMemoBytes = 1024;
-
-        /// <summary>
-        /// Maximum OLE payload size stored inline in the owning data row, on
-        /// every format. See <see cref="MaxInlineMemoBytes"/> for the smaller
-        /// threshold Access 97 uses.
-        /// </summary>
-        public const int MaxInlineOleBytes = 256;
+        public const int MaxInlineBytes = 64;
 
         /// <summary>
         /// Maximum payload size for a MEMO / OLE / Attachment value. The on-disk

@@ -31,7 +31,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <see cref="PageFile"/> and whose errors name <see cref="AccessReader"/>.
     /// </param>
     /// <param name="cacheSize">The writer frame-cache capacity.</param>
-    /// <param name="options">The configured encryption resource budgets.</param>
+    /// <param name="maxEncryptionSpinCount">The password hashing budget.</param>
+    /// <param name="maxEncryptionInfoBytes">The descriptor byte budget.</param>
     private DatabaseFile(
         Stream stream,
         byte[] header,
@@ -40,7 +41,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
         bool leaveOpen,
         bool writable,
         int cacheSize = 0,
-        AccessOptions? options = null)
+        int maxEncryptionSpinCount = 1_000_000,
+        int maxEncryptionInfoBytes = 1024 * 1024)
     {
         this.DatabasePath = path ?? string.Empty;
 
@@ -53,7 +55,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         string passwordOptionName = writable
             ? EncryptionManager.WriterPasswordOption
             : EncryptionManager.ReaderPasswordOption;
-        IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, password, passwordOptionName, options);
+        IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, password, passwordOptionName, maxEncryptionSpinCount, maxEncryptionInfoBytes);
         this.Pages = writable
             ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize)
             : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType);
@@ -96,7 +98,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="options">The configured encryption resource budgets.</param>
     /// <returns>The read-only file.</returns>
     internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, AccessOptions? options = null)
-        => new(stream, header, password, path, leaveOpen, writable: false, options: options);
+        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024));
 
     /// <summary>
     /// Opens the writer's file over a <see cref="Pager"/>, which writes and
@@ -116,7 +118,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <returns>The writer's file.</returns>
     internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager, int cacheSize = 256, AccessOptions? options = null)
     {
-        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options);
+        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024));
         pager = (Pager)file.Pages;
         return file;
     }

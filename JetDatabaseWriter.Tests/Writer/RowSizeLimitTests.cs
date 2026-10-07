@@ -593,7 +593,8 @@ public sealed class RowSizeLimitTests
         var columns = new List<ColumnDefinition> { new("Id", typeof(int)) };
         for (int i = 0; i < binaryColumns; i++)
         {
-            columns.Add(new ColumnDefinition($"Bin{i}", typeof(byte[]), maxLength: 255));
+            // Growth tests require native variable BINARY storage; ordinary BINARY is fixed-width.
+            columns.Add(new ColumnDefinition($"Bin{i}", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x02 });
         }
 
         for (int i = 0; i < oleColumns; i++)

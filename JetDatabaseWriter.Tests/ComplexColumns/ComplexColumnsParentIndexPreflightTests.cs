@@ -12,7 +12,7 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
 
-/// <summary>Legacy null complex references must remain unchanged when parent indexes cannot be maintained.</summary>
+/// <summary>Complex item mutations preserve rows and counters when parent indexes cannot be maintained.</summary>
 public sealed class ComplexColumnsParentIndexPreflightTests
 {
     /// <summary>Gets both complex item kinds in every write mode.</summary>
@@ -28,10 +28,13 @@ public sealed class ComplexColumnsParentIndexPreflightTests
 
     [Theory]
     [MemberData(nameof(ItemKindsAndModes))]
-    public async Task AddItem_LegacyNullReferenceWithDamagedParentIndex_RefusesBeforeMutation(bool attachment, WriteMode mode)
+    public async Task AddItem_ValidReferenceWithDamagedParentIndex_RefusesBeforeMutation(bool attachment, WriteMode mode)
     {
         await using MemoryStream stream = await CopyFixtureAsync(TestDatabases.ComplexDataTestV2007);
-        await ClearComplexReferencesAsync(stream, "Table1", r => (string)r[0] == "row4", clearCounter: false);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync("Table1", new RowValues { ["id"] = "preflight-row" }, Ct);
+        }
         string columnName = attachment ? "attach-data" : "multi-value-data";
         int realIndexNumber;
         await using (AccessReader reader = await OpenReaderAsync(stream))
@@ -54,7 +57,7 @@ public sealed class ComplexColumnsParentIndexPreflightTests
         {
             await RunAsync(writer, mode, async () =>
             {
-                var key = new Dictionary<string, object?> { ["id"] = "row4" };
+                var key = new Dictionary<string, object?> { ["id"] = "preflight-row" };
                 JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(async () =>
                 {
                     if (attachment)
@@ -73,8 +76,10 @@ public sealed class ComplexColumnsParentIndexPreflightTests
         Assert.Equal(before, stream.ToArray());
         RawTable afterTable = await ReadRawTableAsync(stream, "Table1");
         Assert.Equal(beforeTable.ComplexAutoNumber, afterTable.ComplexAutoNumber);
-        object[] parent = Assert.Single(afterTable.Rows, r => (string)r[0] == "row4");
-        Assert.Null(Slot(afterTable, parent, "attach-data"));
-        Assert.Null(Slot(afterTable, parent, "multi-value-data"));
+        object[] parent = Assert.Single(afterTable.Rows, r => (string)r[0] == "preflight-row");
+        object[] beforeParent = Assert.Single(beforeTable.Rows, r => (string)r[0] == "preflight-row");
+        Assert.NotNull(Slot(beforeTable, beforeParent, "attach-data"));
+        Assert.Equal(Slot(beforeTable, beforeParent, "attach-data"), Slot(afterTable, parent, "attach-data"));
+        Assert.Equal(Slot(beforeTable, beforeParent, "multi-value-data"), Slot(afterTable, parent, "multi-value-data"));
     }
 }

@@ -76,7 +76,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
     }
 
     [Fact]
-    public async Task AddItem_EarlierBuildRowWithNullSlots_PatchesEveryNullComplexSlotOfTheRow()
+    public async Task AddItem_ExistingNullSlots_RefusesWithoutChangingReferences()
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms))
@@ -87,17 +87,21 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
         await ClearComplexReferencesAsync(ms, "Docs");
 
+        byte[] baseline = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms))
         {
-            await writer.AddMultiValueItemAsync("Docs", "Tags", Row2, 42, Ct);
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await writer.AddMultiValueItemAsync("Docs", "Tags", Row2, 42, Ct));
+            Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
         }
 
+        Assert.Equal(baseline, ms.ToArray());
         RawTable docs = await ReadRawTableAsync(ms, "Docs");
         Assert.Null(Slot(docs, docs.Rows[0], "Files"));
         Assert.Null(Slot(docs, docs.Rows[0], "Tags"));
-        Assert.Equal(1, Slot(docs, docs.Rows[1], "Files"));
-        Assert.Equal(1, Slot(docs, docs.Rows[1], "Tags"));
-        Assert.Equal(1, docs.ComplexAutoNumber);
+        Assert.Null(Slot(docs, docs.Rows[1], "Files"));
+        Assert.Null(Slot(docs, docs.Rows[1], "Tags"));
+        Assert.Equal(0, docs.ComplexAutoNumber);
     }
 
     [Theory]
@@ -145,7 +149,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AccessFixturesAndModes))]
-    public async Task AddMultiValue_AccessFixtureRowWithNullSlots_RebuildsComplexIndexes(string fixture, int counter, WriteMode mode)
+    public async Task AddMultiValue_AccessFixtureRowWithNullSlots_PreservesIndexesOnRefusal(string fixture, int counter, WriteMode mode)
     {
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
         await using (AccessWriter writer = await OpenWriterAsync(ms))
@@ -153,31 +157,35 @@ public sealed class ComplexColumnsReferenceAllocationTests
             await writer.InsertRowAsync("Table1", new RowValues { ["id"] = "row5" }, Ct);
         }
 
-        // An earlier build left row5's slots null; Access's complex indexes
-        // still hold the reference the insert gave it.
+        // Adversarial metadata: the row slots disagree with the existing index keys.
         await ClearComplexReferencesAsync(ms, "Table1", r => (string)r[0] == "row5", clearCounter: false);
+
+        byte[] baseline = ms.ToArray();
+        var keysBefore = new Dictionary<string, List<string>>();
+        foreach (ComplexDataColumn column in ComplexDataColumns)
+        {
+            keysBefore[column.Name] = [.. (await ReadIndexLeafKeysAsync(ms, "Table1", column.Index)).Select(Convert.ToHexString)];
+        }
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
             await RunAsync(writer, mode, async () =>
-                await writer.AddMultiValueItemAsync("Table1", "multi-value-data", new Dictionary<string, object?> { ["id"] = "row5" }, "writer-value", Ct));
+                _ = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.AddMultiValueItemAsync("Table1", "multi-value-data", new Dictionary<string, object?> { ["id"] = "row5" }, "writer-value", Ct)));
         }
 
+        Assert.Equal(baseline, ms.ToArray());
         RawTable table = await ReadRawTableAsync(ms, "Table1");
         object[] row5 = Assert.Single(table.Rows, r => (string)r[0] == "row5");
-        Assert.Equal(counter + 2, table.ComplexAutoNumber);
+        Assert.Equal(counter + 1, table.ComplexAutoNumber);
         foreach (ComplexDataColumn column in ComplexDataColumns)
         {
-            Assert.Equal(counter + 2, Slot(table, row5, column.Name));
-
-            // The patched slots replaced the old keys in every complex index.
-            IEnumerable<string> expected = table.Rows.Select(r => Convert.ToHexString(IndexKeyEncoder.EncodeEntry(ColumnType.ComplexType, Slot(table, r, column.Name))));
-            IEnumerable<string> onDisk = (await ReadIndexLeafKeysAsync(ms, "Table1", column.Index)).Select(Convert.ToHexString);
-            Assert.Equal(expected.Order(StringComparer.Ordinal), onDisk);
+            Assert.Null(Slot(table, row5, column.Name));
+            Assert.Equal(keysBefore[column.Name], (await ReadIndexLeafKeysAsync(ms, "Table1", column.Index)).Select(Convert.ToHexString));
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms);
-        Assert.Equal(["writer-value"], (await reader.GetMultiValueItemsAsync("Table1", "multi-value-data", Ct)).Where(i => i.ConceptualTableId == counter + 2).Select(i => i.Value));
+        Assert.DoesNotContain(await reader.GetMultiValueItemsAsync("Table1", "multi-value-data", Ct), item => Equals(item.Value, "writer-value"));
     }
 
     [Fact]
@@ -428,7 +436,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
-    public async Task AddColumn_ComplexColumn_RowsWithoutOneUniqueReference_GetFreshReferences(WriteMode mode)
+    public async Task AddColumn_ExistingDuplicateComplexReferences_RefusesWithoutRepair(WriteMode mode)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms))
@@ -437,11 +445,8 @@ public sealed class ComplexColumnsReferenceAllocationTests
             await writer.InsertRowsAsync("Docs", [.. Enumerable.Range(1, 5).Select(id => new object?[] { id, DBNull.Value, DBNull.Value })], Ct);
         }
 
-        // Shapes an earlier build could leave: a null slot (row 1), complex
-        // columns holding different references (row 2) and two rows holding
-        // the same one (rows 3 and 4). An existing column's flat table may
-        // hold rows for any of those references, so only row 5's reference
-        // is safe for the new column to share.
+        // Adversarial existing descriptors: missing, differing and duplicated references.
+        // A schema change must not repair or reassign their existing identities.
         await SetComplexSlotsAsync(
             ms,
             "Docs",
@@ -454,17 +459,18 @@ public sealed class ComplexColumnsReferenceAllocationTests
                 _ => (int)r[0],
             });
 
+        byte[] baseline = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
             await RunAsync(writer, mode, async () =>
-                await writer.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct));
+                _ = await Assert.ThrowsAsync<JetConstraintException>(async () =>
+                    await writer.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct)));
         }
 
+        Assert.Equal(baseline, ms.ToArray());
         RawTable docs = await ReadRawTableAsync(ms, "Docs");
-        Assert.Equal(
-            ["1|1|7|7", "2|2|6|8", "3|3|3|9", "4|3|3|10", "5|5|5|5"],
-            docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}|{Slot(docs, r, "Labels")}"));
-        Assert.Equal(10, docs.ComplexAutoNumber);
+        Assert.Equal(["1|1|", "2|2|6", "3|3|3", "4|3|3", "5|5|5"],
+            docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
     }
 
     [Theory]

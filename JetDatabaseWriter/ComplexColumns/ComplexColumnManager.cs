@@ -894,16 +894,13 @@ internal sealed class ComplexColumnManager(
         RowLocation parentLocation = await this.FindUniqueParentRowAsync(parentEntry.TDefPage, parentDef, predIndexes, predValues, tableName, cancellationToken)
             .ConfigureAwait(false);
 
-        // A legacy null slot requires a parent-row rewrite and index maintenance.
-        // Refuse unsupported parent indexes before allocating or patching a reference.
+        // Refuse unsupported parent index metadata before writing an item.
         await indexes.ThrowIfIndexesUnmaintainableAsync(parentEntry.TDefPage, parentDef, tableName, cancellationToken).ConfigureAwait(false);
 
         // Read the parent row's per-row complex reference from its slot;
         // allocate one when the slot is null.
-        int conceptualTableId = await this.ReadOrAllocateComplexReferenceAsync(
+        int conceptualTableId = await this.ReadRequiredComplexReferenceAsync(
             tableName,
-            parentEntry.TDefPage,
-            parentDef,
             parentLocation,
             complexCol,
             cancellationToken).ConfigureAwait(false);
@@ -1026,30 +1023,15 @@ internal sealed class ComplexColumnManager(
         return match;
     }
 
-    /// <summary>
-    /// Returns the per-row complex reference in <paramref name="complexCol"/>'s
-    /// slot of the parent row at <paramref name="parentLocation"/>. Inserts
-    /// give every row a reference, so the slot is null only in rows written by
-    /// earlier builds of this library or by a tool that leaves it null. Then
-    /// the next reference comes from the table's complex AutoNumber through
-    /// <see cref="ConstraintRegistry.AllocateComplexReferencesAsync"/>, the
-    /// counter is raised, and the reference goes into every null complex slot
-    /// of the row in one page write, so the row's complex columns share it as
-    /// Access's do. When the table has an index on a complex column (Access
-    /// gives each one a unique index), the table's indexes are rebuilt to pick
-    /// up the patched slots.
-    /// </summary>
+    /// <summary>Reads a valid existing parent reference without changing any parent slot.</summary>
     /// <param name="tableName">The parent table name.</param>
-    /// <param name="parentTdefPage">The parent TDEF page.</param>
-    /// <param name="parentDef">The parent table definition.</param>
     /// <param name="parentLocation">The parent row.</param>
     /// <param name="complexCol">The complex column an item is being added to.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">The table has used every reference up to <see cref="int.MaxValue"/>.</exception>
-    private async ValueTask<int> ReadOrAllocateComplexReferenceAsync(
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The existing positive complex reference.</returns>
+    /// <exception cref="JetCorruptDataException">The parent row has no valid complex reference.</exception>
+    private async ValueTask<int> ReadRequiredComplexReferenceAsync(
         string tableName,
-        long parentTdefPage,
-        TableDef parentDef,
         RowLocation parentLocation,
         ColumnInfo complexCol,
         CancellationToken cancellationToken)
@@ -1057,76 +1039,21 @@ internal sealed class ComplexColumnManager(
         byte[] page = await this.pager.ReadPageAsync(parentLocation.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
-            if (ComplexReferenceSeedReader.TryReadSlot(this.format, page, parentLocation.RowStart, parentLocation.RowSize, complexCol, out int existing))
+            if (ComplexReferenceSeedReader.TryReadSlot(this.format, page, parentLocation.RowStart, parentLocation.RowSize, complexCol, out int existing)
+                && existing > 0)
             {
                 return existing;
             }
+
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptComplexColumn,
+                $"Parent row of '{tableName}' has no valid complex reference for '{complexCol.Name}'.",
+                new JetErrorInfo { TableName = tableName, ColumnName = complexCol.Name, PageNumber = parentLocation.PageNumber });
         }
         finally
         {
             PageBuffers.Return(page);
         }
-
-        // The registry's session counter is the one inserts take references
-        // from, so the two never hand out the same reference.
-        int allocated = await constraints.AllocateComplexReferencesAsync(tableName, parentDef, 1, cancellationToken).ConfigureAwait(false);
-        await autoNumbers.RaiseComplexHighWaterAsync(parentTdefPage, allocated, cancellationToken).ConfigureAwait(false);
-        await this.PatchNullComplexSlotsAsync(parentDef, parentLocation, allocated, cancellationToken).ConfigureAwait(false);
-        if (await this.HasComplexColumnIndexAsync(parentTdefPage, parentDef, cancellationToken).ConfigureAwait(false))
-        {
-            await indexes.MaintainIndexesAsync(parentTdefPage, parentDef, tableName, cancellationToken).ConfigureAwait(false);
-        }
-
-        return allocated;
-    }
-
-    private async ValueTask PatchNullComplexSlotsAsync(
-        TableDef parentDef,
-        RowLocation location,
-        int reference,
-        CancellationToken cancellationToken)
-    {
-        // An overflow row's bytes are on the page its header points at.
-        byte[] page = await this.pager.ReadPageAsync(location.DataPageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            foreach (ColumnInfo column in parentDef.Columns)
-            {
-                if (column.Type is AttachmentType or ComplexType
-                    && !ComplexReferenceSeedReader.TryReadSlot(this.format, page, location.RowStart, location.RowSize, column, out _))
-                {
-                    ComplexReferenceSeedReader.WriteSlot(this.format, page, location.RowStart, location.RowSize, column, reference);
-                }
-            }
-
-            await this.pager.WritePageAsync(location.DataPageNumber, page, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            PageBuffers.Return(page);
-        }
-    }
-
-    private async ValueTask<bool> HasComplexColumnIndexAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
-    {
-        byte[]? tdef = await this.tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (tdef is null || tdef.Length < this.format.TDef.BlockEnd)
-        {
-            return false;
-        }
-
-        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(this.format, tdef, tableDef.Columns))
-        {
-            foreach (IndexColumnReference key in index.Columns)
-            {
-                if (tableDef.FindColumn(key.Name)?.Type is AttachmentType or ComplexType)
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     private static object[] BuildAttachmentFlatRow(TableDef flatDef, int conceptualTableId, AttachmentInput input)

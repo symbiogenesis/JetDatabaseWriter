@@ -444,3 +444,9 @@ miscellaneous fields and unknown bytes. Only column numbers, variable-slot
 indexes and fixed offsets change with the rebuilt row layout. Calculated
 result types remain separate from their physical descriptor type; a native
 variable Numeric field must not become fixed during a rename.
+Native calculated Memo values use the same 64-byte inline long-value limit as
+ordinary Memo and OLE, including the calculated envelope. DAO-authored cached
+values with 20 UTF-16 characters occupy 63 bytes and stay inline; 21 characters
+occupy 65 bytes and spill. Replacing only the oversized inline AllNames slots
+with native external LVAL slots made the rewritten calculated table readable
+through DAO without changing its rewritten descriptors or other row fields.

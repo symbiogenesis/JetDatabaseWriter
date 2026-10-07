@@ -266,10 +266,14 @@ internal static class EncryptionConverter
             EncryptionManager.TransformHeaderMask(unmasked, fmt);
             uint encodingKey = Ru32(unmasked, Constants.DatabaseHeader.EncodingKey);
             CryptographicOperations.ZeroMemory(unmasked);
-            return encodingKey == 0 ? AccessEncryptionFormat.None : fmt == DatabaseFormat.Jet3Mdb ? AccessEncryptionFormat.Jet3Rc4 : AccessEncryptionFormat.Jet4Rc4;
+            if (encodingKey == 0)
+            {
+                return AccessEncryptionFormat.None;
+            }
+
+            return fmt == DatabaseFormat.Jet3Mdb ? AccessEncryptionFormat.Jet3Rc4 : AccessEncryptionFormat.Jet4Rc4;
         }
 
         return AccessEncryptionFormat.None;
     }
-
 }

@@ -42,9 +42,9 @@ internal sealed class RowEncoder(JetFormat format)
             data = Encoding.UTF8.GetBytes(stringValue);
         }
 
-        if (data.Length > Constants.LongValue.MaxInlineOleBytes)
+        if (data.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineOleBytes} bytes.");
+            throw new JetLimitationException($"OLE value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(data);
@@ -240,9 +240,9 @@ internal sealed class RowEncoder(JetFormat format)
         }
 
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
-        if (wrapped.Length > Constants.LongValue.MaxInlineOleBytes)
+        if (wrapped.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineOleBytes} bytes.");
+            throw new JetLimitationException($"Calculated OLE value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(wrapped);
@@ -681,9 +681,9 @@ internal sealed class RowEncoder(JetFormat format)
 
         byte[] data = format.EncodeText(text, compress: false);
         byte[] wrapped = CalculatedColumnUtil.Wrap(data);
-        if (wrapped.Length > Constants.LongValue.MaxInlineMemoBytes)
+        if (wrapped.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");
+            throw new JetLimitationException($"Calculated MEMO value is {wrapped.Length} bytes after wrapping, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(wrapped);
@@ -736,9 +736,9 @@ internal sealed class RowEncoder(JetFormat format)
         }
 
         byte[] data = format.EncodeText(value, compress);
-        if (data.Length > Constants.LongValue.MaxInlineMemoBytes)
+        if (data.Length > Constants.LongValue.MaxInlineBytes)
         {
-            throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineMemoBytes} bytes.");
+            throw new JetLimitationException($"MEMO value is {data.Length} bytes, which exceeds the inline limit of {Constants.LongValue.MaxInlineBytes} bytes.");
         }
 
         return LongValueStore.WrapInlineLongValue(data);

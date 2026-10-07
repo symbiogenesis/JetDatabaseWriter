@@ -21,10 +21,51 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
+using JetDatabaseWriter.ValueEncoding;
+using JetDatabaseWriter.ValueEncoding.Models;
 using Xunit;
 
 public sealed class CalculatedColumnWriteTests
 {
+    [Theory]
+    [InlineData(20, false)]
+    [InlineData(21, true)]
+    public async Task CalculatedMemo_NativeInlineBoundary_PlansLvalWithoutWriting(int characters, bool spills)
+    {
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        var encoder = new LongValueEncoder(harness.Database.Format, harness.Pager, harness.Services.PageAllocator, new AccessWriterOptions());
+        var definition = new TableDef
+        {
+            Columns =
+            [
+                new ColumnInfo
+                {
+                    Name = "Cached",
+                    Type = ColumnType.TextType,
+                    CalculatedResultType = ColumnType.MemoType,
+                    ExtraFlags = Constants.CalculatedColumn.ExtFlagMask,
+                },
+            ],
+        };
+        object[] values = [new string('A', characters)];
+        byte[] before = stream.ToArray();
+        object[] planned = encoder.PrepareLongValues(definition, values);
+        if (spills)
+        {
+            var pending = Assert.IsType<PreEncodedLongValue>(planned[0]);
+            Assert.Equal(65, pending.PendingPayload!.Length);
+            Assert.NotSame(values, planned);
+        }
+        else
+        {
+            Assert.Same(values, planned);
+        }
+
+        Assert.Equal(before, stream.ToArray());
+        Assert.IsType<string>(values[0]);
+    }
+
     [Fact]
     public async Task CreateTable_CalculatedColumns_RoundTripsMetadataAndCachedValues()
     {
@@ -1334,7 +1375,9 @@ public sealed class CalculatedColumnWriteTests
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Table1", TestContext.Current.CancellationToken));
         TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
-        Assert.Equal(ColumnType.MemoType, tableDef.Columns.Single(c => c.Name == "AllNames").Type);
+        ColumnInfo allNames = tableDef.Columns.Single(c => c.Name == "AllNames");
+        Assert.Equal(ColumnType.TextType, allNames.Type);
+        Assert.True(allNames.IsCalculated);
     }
 
     /// <summary>
