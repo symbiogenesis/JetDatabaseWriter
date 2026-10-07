@@ -188,8 +188,14 @@ public sealed class ComplexColumnsReferenceAllocationTests
         Assert.DoesNotContain(await reader.GetMultiValueItemsAsync("Table1", "multi-value-data", Ct), item => Equals(item.Value, "writer-value"));
     }
 
-    [Fact]
-    public async Task AddAttachment_ZeroCounterFile_SeedsAboveExistingReferences()
+    [Theory]
+    [InlineData(WriteMode.Direct, 0)]
+    [InlineData(WriteMode.AutoCommit, 0)]
+    [InlineData(WriteMode.ExplicitCommit, 0)]
+    [InlineData(WriteMode.Direct, 1)]
+    [InlineData(WriteMode.AutoCommit, 1)]
+    [InlineData(WriteMode.ExplicitCommit, 1)]
+    public async Task InsertRow_StaleComplexCounter_RefusesWithoutRepair(WriteMode mode, int counter)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms))
@@ -200,18 +206,105 @@ public sealed class ComplexColumnsReferenceAllocationTests
             await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", [2]), Ct);
         }
 
-        Assert.Equal([1, 2], (await ReadRawTableAsync(ms, "Docs")).Rows.Select(r => ((ComplexIdRef)r[1]).Id));
-        await ZeroComplexAutoNumberAsync(ms, "Docs");
-
-        await using (AccessWriter writer = await OpenWriterAsync(ms))
+        await SetComplexAutoNumberAsync(ms, "Docs", counter);
+        byte[] baseline = ms.ToArray();
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
-            await writer.InsertRowAsync("Docs", [3, DBNull.Value, DBNull.Value], Ct);
-            await writer.AddAttachmentAsync("Docs", "Files", Row3, new AttachmentInput("three.txt", [3]), Ct);
+            await RunAsync(writer, mode, async () =>
+            {
+                JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.InsertRowAsync("Docs", [3, DBNull.Value, DBNull.Value], Ct));
+                Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
+                Assert.Equal("Files", error.ErrorInfo.ColumnName);
+                Assert.True(error.ErrorInfo.PageNumber > 0);
+                Assert.Contains("counter", error.Message, StringComparison.OrdinalIgnoreCase);
+            });
         }
 
+        Assert.Equal(baseline, ms.ToArray());
         RawTable docs = await ReadRawTableAsync(ms, "Docs");
-        Assert.Equal(3, Slot(docs, docs.Rows[2], "Files"));
-        Assert.Equal(3, docs.ComplexAutoNumber);
+        Assert.Equal([1, 2], docs.Rows.Select(r => Slot(docs, r, "Files")));
+        Assert.Equal(counter, docs.ComplexAutoNumber);
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Equal(["one.txt", "two.txt"], (await reader.GetAttachmentsAsync("Docs", "Files", Ct)).Select(a => a.FileName));
+    }
+
+    [Theory]
+    [InlineData(WriteMode.Direct, 0)]
+    [InlineData(WriteMode.AutoCommit, 0)]
+    [InlineData(WriteMode.ExplicitCommit, 0)]
+    [InlineData(WriteMode.Direct, 1)]
+    [InlineData(WriteMode.AutoCommit, 1)]
+    [InlineData(WriteMode.ExplicitCommit, 1)]
+    public async Task AddItems_ReferenceExceedsComplexCounter_RefusesWithoutRepair(WriteMode mode, int counter)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms))
+        {
+            await CreateDocsAsync(writer);
+            await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, DBNull.Value], [2, DBNull.Value, DBNull.Value]], Ct);
+        }
+
+        await SetComplexAutoNumberAsync(ms, "Docs", counter);
+        byte[] baseline = ms.ToArray();
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                JetCorruptDataException attachmentError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", [2]), Ct));
+                Assert.Equal(JetErrorCode.CorruptComplexColumn, attachmentError.ErrorCode);
+                Assert.Equal("Docs", attachmentError.ErrorInfo.TableName);
+                Assert.Equal("Files", attachmentError.ErrorInfo.ColumnName);
+                Assert.True(attachmentError.ErrorInfo.PageNumber > 0);
+                Assert.Contains("counter", attachmentError.Message, StringComparison.OrdinalIgnoreCase);
+
+                JetCorruptDataException valueError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.AddMultiValueItemAsync("Docs", "Tags", Row2, 42, Ct));
+                Assert.Equal(JetErrorCode.CorruptComplexColumn, valueError.ErrorCode);
+                Assert.Equal("Docs", valueError.ErrorInfo.TableName);
+                Assert.Equal("Tags", valueError.ErrorInfo.ColumnName);
+            });
+        }
+
+        Assert.Equal(baseline, ms.ToArray());
+        Assert.Equal(counter, (await ReadRawTableAsync(ms, "Docs")).ComplexAutoNumber);
+        await using AccessReader reader = await OpenReaderAsync(ms);
+        Assert.Empty(await reader.GetAttachmentsAsync("Docs", "Files", Ct));
+        Assert.Empty(await reader.GetMultiValueItemsAsync("Docs", "Tags", Ct));
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task InsertRow_FlatReferenceExceedsComplexCounter_RefusesWithoutRepair(WriteMode mode)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms))
+        {
+            await CreateDocsAsync(writer);
+            await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, DBNull.Value], [2, DBNull.Value, DBNull.Value]], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", [2]), Ct);
+        }
+
+        // Leave reference 2 in the flat table while every parent slot and the
+        // persisted counter hold 1. Scanning parents alone cannot find it.
+        await SetComplexSlotsAsync(ms, "Docs", _ => true, (_, _) => 1);
+        await SetComplexAutoNumberAsync(ms, "Docs", 1);
+        byte[] baseline = ms.ToArray();
+        await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
+        {
+            await RunAsync(writer, mode, async () =>
+            {
+                JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.InsertRowAsync("Docs", [3, DBNull.Value, DBNull.Value], Ct));
+                Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
+                Assert.Equal("Files", error.ErrorInfo.ColumnName);
+                Assert.True(error.ErrorInfo.PageNumber > 0);
+                Assert.Contains("flat", error.Message, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        Assert.Equal(baseline, ms.ToArray());
     }
 
     [Fact]
@@ -620,13 +713,13 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     private static byte[] IndexKeyEncoderEntry(int reference) => IndexKeyEncoder.EncodeEntry(ColumnType.ComplexType, reference);
 
-    private static async Task ZeroComplexAutoNumberAsync(MemoryStream ms, string tableName)
+    private static async Task SetComplexAutoNumberAsync(MemoryStream ms, string tableName, int counter)
     {
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct)).Entry.TDefPage;
         byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(tdefPage, Ct);
-        tdef.AsSpan(ComplexAutoNumberOffset, 4).Clear();
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(tdef.AsSpan(ComplexAutoNumberOffset, 4), counter);
         await harness.Pager.WritePageAsync(tdefPage, tdef, Ct);
     }
 

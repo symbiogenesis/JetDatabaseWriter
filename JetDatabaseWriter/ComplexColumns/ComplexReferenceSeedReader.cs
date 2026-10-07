@@ -1,12 +1,12 @@
 namespace JetDatabaseWriter.ComplexColumns;
 
 using System;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -15,15 +15,15 @@ using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// Reads the per-row complex references a table already uses, so a new one
-/// can be allocated above all of them. A parent row's complex slot (the
+/// Reads and validates the persisted counter used to allocate per-row
+/// complex references. A parent row's complex slot (the
 /// 4-byte value of an Attachment / multi-value / version-history column)
 /// joins it to its rows in each complex column's hidden flat table. Access
 /// gives every row one reference, shared by all its complex columns, from the
 /// TDEF complex AutoNumber at <see cref="Pages.TDefHeaderLayout.ComplexAutoNumber"/>.
-/// The seed also covers the references a file actually holds, because files
-/// written by earlier builds of this library leave that counter at 0. Every
-/// read uses the writer's page source, so an active transaction's
+/// Existing parent slots and flat-table foreign keys must not exceed that
+/// counter; an inconsistent file is refused without repairing its identities.
+/// Every read uses the writer's page source, so an active transaction's
 /// pending writes are visible.
 /// </summary>
 /// <param name="format">The database's immutable format profile.</param>
@@ -48,53 +48,38 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
     internal static bool TryReadSlot(JetFormat format, byte[] page, int rowStart, int rowSize, ColumnInfo column, out int reference)
     {
         reference = 0;
-        int nullMaskSize = GetNullMaskSizeBytes(format.ReadRowColumnCount(page, rowStart));
-        int slotOffset = rowStart + format.RowFields.NumCols + column.FixedOff;
-        if (nullMaskSize > rowSize
-            || !IsNullMaskBitSet(page.AsSpan(rowStart + rowSize - nullMaskSize, nullMaskSize), column.ColNum)
-            || slotOffset + 4 > rowStart + rowSize)
+        if (rowStart < 0 || rowStart > page.Length
+            || rowSize < format.RowFields.NumCols || rowSize > page.Length - rowStart
+            || column.FixedOff < 0 || column.ColNum < 0)
         {
             return false;
         }
 
+        int columnCount = format.ReadRowColumnCount(page, rowStart);
+        int nullMaskSize = GetNullMaskSizeBytes(columnCount);
+        int fixedAreaSize = rowSize - format.RowFields.NumCols - nullMaskSize;
+        if (column.ColNum >= columnCount
+            || column.FixedOff > fixedAreaSize - 4
+            || !IsNullMaskBitSet(page.AsSpan(rowStart + rowSize - nullMaskSize, nullMaskSize), column.ColNum))
+        {
+            return false;
+        }
+
+        int slotOffset = rowStart + format.RowFields.NumCols + column.FixedOff;
         reference = Ri32(page, slotOffset);
         return reference > 0;
     }
 
     /// <summary>
-    /// Stores <paramref name="reference"/> in <paramref name="column"/>'s slot
-    /// of the row at <paramref name="rowStart"/> and marks the slot non-null.
-    /// The caller writes the page back.
-    /// </summary>
-    /// <param name="format">The database's immutable format profile.</param>
-    /// <param name="page">The data page holding the row.</param>
-    /// <param name="rowStart">The row's offset on the page.</param>
-    /// <param name="rowSize">The row's size.</param>
-    /// <param name="column">The complex column.</param>
-    /// <param name="reference">The reference to store.</param>
-    /// <exception cref="InvalidDataException">The slot lies outside the row.</exception>
-    internal static void WriteSlot(JetFormat format, byte[] page, int rowStart, int rowSize, ColumnInfo column, int reference)
-    {
-        int nullMaskSize = GetNullMaskSizeBytes(format.ReadRowColumnCount(page, rowStart));
-        int slotOffset = rowStart + format.RowFields.NumCols + column.FixedOff;
-        if (slotOffset + 4 > rowStart + rowSize)
-        {
-            throw new InvalidDataException("Complex column slot is out of row bounds.");
-        }
-
-        Wi32(page, slotOffset, reference);
-        SetNullMaskBit(page.AsSpan(rowStart + rowSize - nullMaskSize, nullMaskSize), column.ColNum, true);
-    }
-
-    /// <summary>
-    /// Returns the largest per-row complex reference the table at
-    /// <paramref name="parentTdefPage"/> has used: the larger of its TDEF
-    /// complex AutoNumber, every live row's complex slots, and the foreign keys
-    /// in each complex column's flat table. The next reference is one more.
+    /// Returns the TDEF complex AutoNumber for the table at
+    /// <paramref name="parentTdefPage"/>, after checking that every live
+    /// parent slot and flat-table foreign key is at or below it. The next
+    /// reference is one more; an inconsistent counter is never repaired.
     /// </summary>
     /// <param name="parentTdefPage">The table's TDEF page.</param>
     /// <param name="parentDef">The table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">An existing complex reference is invalid or exceeds the persisted counter, or its flat-table metadata cannot be read.</exception>
     internal async ValueTask<long> ReadSeedAsync(long parentTdefPage, TableDef parentDef, CancellationToken cancellationToken)
     {
         long seed = await autoNumbers.ReadComplexHighWaterAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
@@ -110,9 +95,20 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
             {
                 foreach (ColumnInfo column in complexColumns)
                 {
-                    if (TryReadSlot(format, row.Page, row.Location.RowStart, row.Location.RowSize, column, out int reference))
+                    if (!TryReadSlot(format, row.Page, row.Location.RowStart, row.Location.RowSize, column, out int reference))
                     {
-                        seed = Math.Max(seed, reference);
+                        throw new JetCorruptDataException(
+                            JetErrorCode.CorruptComplexColumn,
+                            $"Parent row has no valid complex reference for '{column.Name}'.",
+                            new JetErrorInfo { ColumnName = column.Name, PageNumber = row.Location.DataPageNumber });
+                    }
+
+                    if (reference > seed)
+                    {
+                        throw new JetCorruptDataException(
+                            JetErrorCode.CorruptComplexColumn,
+                            $"Complex reference {reference} for '{column.Name}' exceeds the parent TDEF complex AutoNumber counter {seed}.",
+                            new JetErrorInfo { ColumnName = column.Name, PageNumber = parentTdefPage });
                     }
                 }
 
@@ -127,10 +123,13 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
                 ? await tableDefs.ReadTableDefAsync(flatTdefPage, cancellationToken).ConfigureAwait(false)
                 : null;
             ColumnInfo? foreignKey = flatDef?.FindColumn("_" + column.Name)
-                ?? flatDef?.Columns.FirstOrDefault(c => c.Type == LongIntegerType && c.Name.StartsWith('_'));
-            if (foreignKey is null)
+                ?? flatDef?.Columns.FirstOrDefault(c => c.Type == LongIntegerType && !c.IsAutoNumber && c.Name.StartsWith('_'));
+            if (foreignKey is null || foreignKey.Type != LongIntegerType || foreignKey.IsAutoNumber)
             {
-                continue;
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptComplexColumn,
+                    $"Complex column '{column.Name}' has no readable flat table with a Long Integer foreign-key column.",
+                    new JetErrorInfo { ColumnName = column.Name, PageNumber = parentTdefPage });
             }
 
             await ownedPages.ForEachLiveTableRowAsync(
@@ -138,9 +137,20 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
                 (row, _) =>
                 {
                     string text = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, row.Location.RowStart, row.Location.RowSize, foreignKey);
-                    if (CatalogValueReader.TryParseInt32(text, out int reference))
+                    if (!CatalogValueReader.TryParseInt32(text, out int reference) || reference <= 0)
                     {
-                        seed = Math.Max(seed, reference);
+                        throw new JetCorruptDataException(
+                            JetErrorCode.CorruptComplexColumn,
+                            $"Flat table for '{column.Name}' contains an invalid complex foreign-key reference.",
+                            new JetErrorInfo { ColumnName = column.Name, PageNumber = row.Location.DataPageNumber });
+                    }
+
+                    if (reference > seed)
+                    {
+                        throw new JetCorruptDataException(
+                            JetErrorCode.CorruptComplexColumn,
+                            $"Flat-table reference {reference} for '{column.Name}' exceeds the parent TDEF complex AutoNumber counter {seed}.",
+                            new JetErrorInfo { ColumnName = column.Name, PageNumber = parentTdefPage });
                     }
 
                     return new ValueTask<bool>(true);

@@ -478,41 +478,56 @@ internal sealed class ComplexColumnManager(
     }
 
     /// <summary>
-    /// Returns the next <c>ComplexID</c>: one greater than the larger of
+    /// Returns the next <c>ComplexID</c>: one greater than
     /// <c>MSysComplexColumns</c>' TDEF AutoNumber counter (the last ID handed
-    /// out; <c>ComplexID</c> carries the AutoNumber flag) and the largest
-    /// <c>ComplexID</c> still stored, so the ID of a dropped complex column is
-    /// never handed out again. The scan covers files whose counter earlier
-    /// builds of this library left at 0.
+    /// out; <c>ComplexID</c> carries the AutoNumber flag), so the ID of a dropped
+    /// complex column is never handed out again. Existing IDs must not exceed
+    /// the counter; an inconsistent file is refused without repairing it.
     /// </summary>
     /// <param name="msysComplexPg">The MSysComplexColumns page number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Every <c>ComplexID</c> up to <see cref="int.MaxValue"/> has been used.</exception>
+    /// <exception cref="JetCorruptDataException">The ComplexID metadata is invalid or an existing ID exceeds the persisted counter.</exception>
     private async ValueTask<int> GetNextComplexIdAsync(long msysComplexPg, CancellationToken cancellationToken)
     {
         TableDef msysComplex = await this.tableDefs.ReadRequiredTableDefAsync(msysComplexPg, Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
         ColumnInfo? idCol = msysComplex.FindColumn("ComplexID");
-
-        long maxId = await autoNumbers.ReadHighWaterAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
-        if (idCol != null)
+        if (idCol is null || idCol.Type != LongIntegerType || !idCol.IsAutoNumber)
         {
-            await this.ownedPages.ForEachLiveTableRowAsync(
-                msysComplexPg,
-                (row, _) =>
-                {
-                    string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, idCol);
-                    if (CatalogValueReader.TryParseInt32(idText, out int v) && v > maxId)
-                    {
-                        maxId = v;
-                    }
-
-                    return new ValueTask<bool>(true);
-                },
-                cancellationToken).ConfigureAwait(false);
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptComplexColumn,
+                $"'{Constants.SystemTableNames.ComplexColumns}' has no valid Long Integer AutoNumber ComplexID column.",
+                new JetErrorInfo { TableName = Constants.SystemTableNames.ComplexColumns, ColumnName = "ComplexID", PageNumber = msysComplexPg });
         }
 
-        return maxId < int.MaxValue
-            ? (int)(maxId + 1)
+        long counter = await autoNumbers.ReadHighWaterAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
+        await this.ownedPages.ForEachLiveTableRowAsync(
+            msysComplexPg,
+            (row, _) =>
+            {
+                string idText = ScalarColumnReader.DecodeSimpleColumnValue(this.format, row.Page, row.Location.RowStart, row.Location.RowSize, idCol);
+                if (!CatalogValueReader.TryParseInt32(idText, out int value) || value <= 0)
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptComplexColumn,
+                        $"'{Constants.SystemTableNames.ComplexColumns}' contains an invalid ComplexID.",
+                        new JetErrorInfo { TableName = Constants.SystemTableNames.ComplexColumns, ColumnName = "ComplexID", PageNumber = row.Location.DataPageNumber });
+                }
+
+                if (value > counter)
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptComplexColumn,
+                        $"ComplexID {value} exceeds the '{Constants.SystemTableNames.ComplexColumns}' TDEF AutoNumber counter {counter}.",
+                        new JetErrorInfo { TableName = Constants.SystemTableNames.ComplexColumns, ColumnName = "ComplexID", PageNumber = msysComplexPg });
+                }
+
+                return new ValueTask<bool>(true);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        return counter < int.MaxValue
+            ? (int)(counter + 1)
             : throw new InvalidOperationException($"'{Constants.SystemTableNames.ComplexColumns}' has used every ComplexID up to {int.MaxValue}.");
     }
 
@@ -894,9 +909,10 @@ internal sealed class ComplexColumnManager(
         // Refuse unsupported parent index metadata before writing an item.
         await indexes.ThrowIfIndexesUnmaintainableAsync(parentEntry.TDefPage, parentDef, tableName, cancellationToken).ConfigureAwait(false);
 
-        // Require an existing valid parent reference before inserting an item.
+        // Require an existing reference consistent with the persisted counter.
         int conceptualTableId = await this.ReadRequiredComplexReferenceAsync(
             tableName,
+            parentEntry.TDefPage,
             parentLocation,
             complexCol,
             cancellationToken).ConfigureAwait(false);
@@ -1019,25 +1035,36 @@ internal sealed class ComplexColumnManager(
         return match;
     }
 
-    /// <summary>Reads a valid existing parent reference without changing any parent slot.</summary>
+    /// <summary>Reads an existing parent reference consistent with its persisted counter without changing any parent slot.</summary>
     /// <param name="tableName">The parent table name.</param>
+    /// <param name="parentTdefPage">The parent table's TDEF page.</param>
     /// <param name="parentLocation">The parent row.</param>
     /// <param name="complexCol">The complex column an item is being added to.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The existing positive complex reference.</returns>
-    /// <exception cref="JetCorruptDataException">The parent row has no valid complex reference.</exception>
+    /// <exception cref="JetCorruptDataException">The parent row has no valid complex reference, or it exceeds the persisted counter.</exception>
     private async ValueTask<int> ReadRequiredComplexReferenceAsync(
         string tableName,
+        long parentTdefPage,
         RowLocation parentLocation,
         ColumnInfo complexCol,
         CancellationToken cancellationToken)
     {
+        long counter = await autoNumbers.ReadComplexHighWaterAsync(parentTdefPage, cancellationToken).ConfigureAwait(false);
         byte[] page = await this.pager.ReadPageAsync(parentLocation.DataPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             if (ComplexReferenceSeedReader.TryReadSlot(this.format, page, parentLocation.RowStart, parentLocation.RowSize, complexCol, out int existing)
                 && existing > 0)
             {
+                if (existing > counter)
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptComplexColumn,
+                        $"Complex reference {existing} for '{tableName}.{complexCol.Name}' exceeds the parent TDEF complex AutoNumber counter {counter}.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = complexCol.Name, PageNumber = parentTdefPage });
+                }
+
                 return existing;
             }
 

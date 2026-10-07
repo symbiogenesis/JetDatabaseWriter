@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -524,6 +525,54 @@ public sealed class ComplexColumnsWriterTests
         int[] ids = await ReadComplexIdsAsync(ms, "Extra");
         Assert.Equal([counter + 1], ids);
         Assert.Equal(counter + 1, await ReadComplexIdCounterAsync(ms));
+    }
+
+    [Theory]
+    [InlineData(WriteMode.Direct, 0)]
+    [InlineData(WriteMode.AutoCommit, 0)]
+    [InlineData(WriteMode.ExplicitCommit, 0)]
+    [InlineData(WriteMode.Direct, 1)]
+    [InlineData(WriteMode.AutoCommit, 1)]
+    [InlineData(WriteMode.ExplicitCommit, 1)]
+    public async Task CreateTableAndAddColumn_StaleComplexIdCounter_RefuseWithoutRepair(WriteMode mode, int counter)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await ComplexColumnTestSupport.CreateWriterAsync(ms))
+        {
+            await writer.CreateTableAsync("Docs", DocsColumns(), TestContext.Current.CancellationToken);
+        }
+
+        ms.Position = 0;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
+            byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(tdef.AsSpan(ComplexColumnTestSupport.AutoNumberOffset, 4), counter);
+            await harness.Pager.WritePageAsync(page, tdef, TestContext.Current.CancellationToken);
+        }
+
+        byte[] baseline = ms.ToArray();
+        await using (AccessWriter writer = await ComplexColumnTestSupport.OpenWriterAsync(ms, mode))
+        {
+            await ComplexColumnTestSupport.RunAsync(writer, mode, async () =>
+            {
+                JetCorruptDataException createError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.CreateTableAsync("Extra", DocsColumns(), TestContext.Current.CancellationToken));
+                Assert.Equal(JetErrorCode.CorruptComplexColumn, createError.ErrorCode);
+                Assert.Equal("MSysComplexColumns", createError.ErrorInfo.TableName);
+                Assert.Equal("ComplexID", createError.ErrorInfo.ColumnName);
+                Assert.True(createError.ErrorInfo.PageNumber > 0);
+                Assert.Contains("counter", createError.Message, StringComparison.OrdinalIgnoreCase);
+
+                JetCorruptDataException addError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await writer.AddColumnAsync("Docs", new ColumnDefinition("More", typeof(byte[])) { IsAttachment = true }, TestContext.Current.CancellationToken));
+                Assert.Equal(JetErrorCode.CorruptComplexColumn, addError.ErrorCode);
+            });
+        }
+
+        Assert.Equal(baseline, ms.ToArray());
+        Assert.Equal([1, 2], await ReadComplexIdsAsync(ms, "Docs"));
+        Assert.Equal(counter, await ReadComplexIdCounterAsync(ms));
     }
 
     [Fact]
