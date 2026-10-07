@@ -787,27 +787,36 @@ internal sealed class TableSchemaEditor(
     }
 
     /// <summary>
-    /// Returns the per-row complex reference every surviving complex column of
-    /// <paramref name="row"/> holds (one with a <see cref="ColumnDefinition.ComplexId"/>,
-    /// which keeps its flat table), or <see langword="null"/> when the row has
-    /// no such column, or one of them is null or holds another reference.
+    /// Returns the per-row reference shared by every surviving complex column,
+    /// or <see langword="null"/> when there are no surviving complex columns.
+    /// Invalid or disagreeing persisted references are corruption.
     /// </summary>
+    /// <param name="tableName">The table being rewritten.</param>
+    /// <param name="tdefPage">The original table-definition page.</param>
     /// <param name="row">The projected row.</param>
-    /// <param name="complexColumns">The indexes of the projected complex columns.</param>
+    /// <param name="survivingColumns">The indexes of existing complex columns in the projected row.</param>
     /// <param name="newDefs">The projected column list.</param>
-    private static int? SharedComplexReference(object[] row, List<int> complexColumns, List<ColumnDefinition> newDefs)
+    /// <exception cref="JetCorruptDataException">A surviving slot is invalid or disagrees with the row's shared reference.</exception>
+    private static int? SharedComplexReference(string tableName, long tdefPage, object[] row, List<int> survivingColumns, List<ColumnDefinition> newDefs)
     {
         int? shared = null;
-        foreach (int i in complexColumns)
+        foreach (int i in survivingColumns)
         {
-            if (newDefs[i].ComplexId == 0)
+            ColumnDefinition column = newDefs[i];
+            if (row[i] is not ComplexIdRef { Id: > 0 } reference)
             {
-                continue;
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptComplexColumn,
+                    $"Parent row of '{tableName}' has no valid complex reference for '{column.Name}'.",
+                    new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = tdefPage });
             }
 
-            if (row[i] is not ComplexIdRef { Id: > 0 } reference || (shared is int previous && previous != reference.Id))
+            if (shared is int previous && previous != reference.Id)
             {
-                return null;
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptComplexColumn,
+                    $"Parent row of '{tableName}' holds complex reference {reference.Id} for '{column.Name}' instead of its shared reference {previous}.",
+                    new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = tdefPage });
             }
 
             shared = reference.Id;
@@ -1181,16 +1190,18 @@ internal sealed class TableSchemaEditor(
     }
 
     /// <summary>
-    /// Initializes newly added complex columns with per-row references. Reuse
-    /// a surviving shared reference when it uniquely identifies the row;
-    /// otherwise allocate a fresh reference for the new columns. Existing
-    /// complex slots retain their original values, including Null.
+    /// Initializes newly added complex columns with per-row references after
+    /// validating surviving slots independently of the allocation cache. Each
+    /// existing column must uniquely identify its rows with positive references
+    /// within the persisted counter, and a row's surviving columns must agree.
+    /// Reuse that shared reference, or allocate one when no complex column survives.
     /// </summary>
     /// <param name="tableName">The table being rewritten.</param>
     /// <param name="tableDef">Its current definition.</param>
     /// <param name="newDefs">The projected column list.</param>
     /// <param name="rows">The projected rows, aligned with <paramref name="newDefs"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">An existing complex column has no valid ID, or its persisted references are invalid, duplicated, above the counter, or disagree within a row.</exception>
     private async ValueTask InitializeNewComplexReferencesAsync(
         string tableName,
         TableDef tableDef,
@@ -1198,16 +1209,19 @@ internal sealed class TableSchemaEditor(
         List<object[]> rows,
         CancellationToken cancellationToken)
     {
-        List<int> complexColumns = [];
+        List<int> survivingColumns = [];
         List<int> addedColumns = [];
         for (int i = 0; i < newDefs.Count; i++)
         {
             if (newDefs[i].IsAttachment || newDefs[i].IsMultiValue)
             {
-                complexColumns.Add(i);
                 if (newDefs[i].ComplexId == 0 && newDefs[i].SourceColumn is null)
                 {
                     addedColumns.Add(i);
+                }
+                else
+                {
+                    survivingColumns.Add(i);
                 }
             }
         }
@@ -1217,24 +1231,56 @@ internal sealed class TableSchemaEditor(
             return;
         }
 
-        // Every surviving parent reference must belong to one row.
-        int?[] shared = new int?[rows.Count];
-        var holders = new HashSet<int>();
-        for (int r = 0; r < rows.Count; r++)
+        ResolvedTable parent = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        long tdefPage = parent.Entry.TDefPage;
+        long counter = await autoNumbers.ReadComplexHighWaterAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+
+        // Check each surviving column before deciding which reference to reuse.
+        // A warm allocation cache must not bypass validation of stored data.
+        foreach (int i in survivingColumns)
         {
-            if (SharedComplexReference(rows[r], complexColumns, newDefs) is int reference)
+            ColumnDefinition column = newDefs[i];
+            if (column.ComplexId <= 0)
             {
-                shared[r] = reference;
-                if (!holders.Add(reference))
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptComplexColumn,
+                    $"Existing complex column '{tableName}.{column.Name}' has no valid ComplexID.",
+                    new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = tdefPage });
+            }
+
+            var holders = new HashSet<int>();
+            foreach (object[] row in rows)
+            {
+                if (row[i] is not ComplexIdRef { Id: > 0 } reference)
                 {
-                    ColumnDefinition column = newDefs.First(definition => definition.ComplexId != 0 && (definition.IsAttachment || definition.IsMultiValue));
-                    ResolvedTable parent = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
                     throw new JetCorruptDataException(
                         JetErrorCode.CorruptComplexColumn,
-                        $"Parent rows of '{tableName}' reuse complex reference {reference} for '{column.Name}'.",
-                        new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = parent.Entry.TDefPage });
+                        $"Parent row of '{tableName}' has no valid complex reference for '{column.Name}'.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = tdefPage });
+                }
+
+                if (reference.Id > counter)
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptComplexColumn,
+                        $"Parent complex reference {reference.Id} for '{tableName}.{column.Name}' exceeds its persisted counter {counter}.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = tdefPage });
+                }
+
+                if (!holders.Add(reference.Id))
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptComplexColumn,
+                        $"Parent rows of '{tableName}' reuse complex reference {reference.Id} for '{column.Name}'.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = tdefPage });
                 }
             }
+        }
+
+        int?[] shared = new int?[rows.Count];
+        for (int r = 0; r < rows.Count; r++)
+        {
+            shared[r] = SharedComplexReference(tableName, tdefPage, rows[r], survivingColumns, newDefs);
         }
 
         List<object[]> needing = [];

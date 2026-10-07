@@ -95,6 +95,7 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
         {
             usedReferences[columnIndex] = [];
         }
+
         await ownedPages.ForEachLiveTableRowAsync(
             parentTdefPage,
             (row, _) =>
