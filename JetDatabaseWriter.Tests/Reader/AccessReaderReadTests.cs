@@ -104,21 +104,6 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
         }
     }
 
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task ReadDataTableAsync_CompatibilityAlias_MatchesReadTableAsync(string path)
-    {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-
-        DataTable canonical = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable alias = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-
-        Assert.Equal(canonical.TableName, alias.TableName);
-        Assert.Equal(canonical.Columns.Count, alias.Columns.Count);
-        Assert.Equal(canonical.Rows.Count, alias.Rows.Count);
-    }
-
     // ── ReadTableAsStringsAsync ────────────────────────────────────
 
     [Theory]
