@@ -411,12 +411,13 @@ public sealed class SchemaRewritePropertyPreservationTests
         List<TargetView> before = await ReadTargetsAsync(ms, "T");
         Assert.Equal(0xCDAB80FFu, Assert.Single(before, target => target.Name.Length == 0).SourceHeader);
         Assert.Equal(0xFEDC1234u, Assert.Single(before, target => target.Name == "Id").SourceHeader);
-        Func<AccessWriter, Task> editRule = async writer =>
+        static async Task EditRuleAsync(AccessWriter writer)
         {
             await writer.SetTableValidationRuleAsync("T", new TableValidationRule("[Id] > 0", "Positive"), Ct);
             await writer.SetTableValidationRuleAsync("T", null, Ct);
-        };
-        await RunRewriteAsync(ms, mode, editRule);
+        }
+
+        await RunRewriteAsync(ms, mode, EditRuleAsync);
 
         AssertSameTargets(before, await ReadTargetsAsync(ms, "T"));
     }

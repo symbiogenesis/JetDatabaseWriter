@@ -53,9 +53,9 @@ the revision and engine being evaluated.
 
 ## Focused correctness regressions
 
-These checks exercise library behavior; they do not add Microsoft interoperability evidence:
+The library regressions below distinguish their round trips from explicit DAO checks:
 
-- `ForeignKeyCascadeUpdateTests` covers contradictory-path refusal without byte changes, composite diamonds, stable cyclic diamonds and independently allocated equal binary keys across formats and write modes.
+- `ForeignKeyCascadeUpdateTests` covers contradictory-path and diamond refusal without byte changes, simple stable cycles and independently allocated equal binary keys across formats and write modes. DAO120 characterization accepts a chain and a simple cycle, refuses the converging diamond with or without a return edge, and compacts every resulting database. The guarded graph test compares native and writer behavior on a DAO-created database; composite and broader graph variants remain separate evidence gaps.
 - `ColumnPropertyBlockTests` and `SchemaRewritePropertyPreservationTests` cover opaque target headers in KKD/MR2 blobs, recognized native name lengths, Access-authored schema rewrites and table-rule edits. `LvPropReadTests` checks malformed-property refusal before a table-rule write.
 - `OwnedDataPagesTests` checks full row-directory removal from INLINE/REFERENCE free-space maps and transaction rollback on Jet4/ACE, while retaining ownership. Native free-space thresholds, Jet3 variants and LVAL maps remain open.
 - `AtomicReplacementTests` and `JetByteRangeLockTests` check pre-cancellation, replacement with open readers, temporary-file cleanup and preservation of unrelated files. The hosted Portability workflow covers Windows, Linux and macOS on both frameworks. Power-loss directory durability and cross-process contention remain unverified.

@@ -185,6 +185,92 @@ internal sealed class RelationshipEnforcer(
         }
     }
 
+    /// <summary>Checks changed foreign keys against the complete planned statement state before any writes.</summary>
+    /// <param name="primaryTable">The caller's table.</param>
+    /// <param name="primaryDef">The caller's table definition.</param>
+    /// <param name="rows">The caller's original and composed rows.</param>
+    /// <param name="cascades">The composed cascade rewrites.</param>
+    /// <param name="ctx">The statement's relationship state.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous validation.</returns>
+    public async ValueTask EnforceFkOnPlannedUpdateAsync(
+        string primaryTable,
+        TableDef primaryDef,
+        IReadOnlyList<(RowLocation Location, object[] OldRow, object[] NewRow)> rows,
+        IReadOnlyList<CascadeUpdate> cascades,
+        FkContext ctx,
+        CancellationToken cancellationToken)
+    {
+        var replacements = new Dictionary<string, Dictionary<(long PageNumber, int RowIndex), object[]>>(StringComparer.OrdinalIgnoreCase);
+        var callerReplacements = new Dictionary<(long PageNumber, int RowIndex), object[]>();
+        replacements[primaryTable] = callerReplacements;
+        foreach ((RowLocation location, _, object[] newRow) in rows)
+        {
+            callerReplacements[(location.PageNumber, location.RowIndex)] = newRow;
+        }
+
+        foreach (CascadeUpdate cascade in cascades)
+        {
+            if (!replacements.TryGetValue(cascade.TableName, out Dictionary<(long PageNumber, int RowIndex), object[]>? tableReplacements))
+            {
+                tableReplacements = [];
+                replacements[cascade.TableName] = tableReplacements;
+            }
+
+            foreach ((RowLocation location, object[] newRow) in cascade.Rows)
+            {
+                tableReplacements[(location.PageNumber, location.RowIndex)] = newRow;
+            }
+        }
+
+        foreach (FkRelationship rel in ctx.All)
+        {
+            if (!replacements.ContainsKey(rel.ForeignTable)
+                || !replacements.TryGetValue(rel.PrimaryTable, out Dictionary<(long PageNumber, int RowIndex), object[]>? tableReplacements))
+            {
+                continue;
+            }
+
+            ResolvedTable parent = await this.ResolveRelationshipTableAsync(rel, "primary table", rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
+            if (!TryMapColumns(rel.PrimaryColumns, parent.Definition, out int[] columns))
+            {
+                // A changed foreign key will still refuse through its normal
+                // parent lookup; unrelated malformed keys remain unexamined.
+                continue;
+            }
+
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (LocatedRow stored in await snapshots.ReadRowsAsync(parent.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                object[] finalRow = tableReplacements.TryGetValue((stored.Location.PageNumber, stored.Location.RowIndex), out object[]? replacement) ? replacement : stored.Values;
+                string? key = RelationshipKeyBuilder.Build(finalRow, columns, parent.Definition);
+                if (key != null)
+                {
+                    _ = keys.Add(key);
+                }
+            }
+
+            ctx.PlannedParentKeys[rel.Name] = keys;
+        }
+
+        await this.EnforceFkOnForeignUpdateAsync(primaryTable, primaryDef, CreateOrdinals(primaryDef.Columns.Count), rows, ctx, cancellationToken).ConfigureAwait(false);
+        foreach (CascadeUpdate cascade in cascades)
+        {
+            var changes = new List<(RowLocation Location, object[] OldRow, object[] NewRow)>();
+            var finalRows = replacements[cascade.TableName];
+            foreach (LocatedRow stored in await snapshots.ReadRowsAsync(cascade.Table.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
+            {
+                if (finalRows.TryGetValue((stored.Location.PageNumber, stored.Location.RowIndex), out object[]? replacement))
+                {
+                    changes.Add((stored.Location, stored.Values, replacement));
+                }
+            }
+
+            await this.EnforceFkOnForeignUpdateAsync(cascade.TableName, cascade.Table.Definition, CreateOrdinals(cascade.Table.Definition.Columns.Count), changes, ctx, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>
     /// Plans, without writing anything, the cascades of a delete of
     /// <paramref name="deletedParentRows"/> from
@@ -355,6 +441,7 @@ internal sealed class RelationshipEnforcer(
         var ownRowChanges = new List<(object[] NewRow, int[] ForeignColumnIndexes, object[] NewPkSubset)>();
         var keyAssignments = new Dictionary<object[], (string TableName, TableDef Definition, HashSet<int> Columns)>();
         var originalRows = new Dictionary<(long PageNumber, int RowIndex), object[]>();
+        var assignmentSources = new Dictionary<(object[] Row, int Column), string>();
         int depth = 0;
         while (true)
         {
@@ -487,6 +574,15 @@ internal sealed class RelationshipEnforcer(
                 {
                     object replacement = values[index] ?? DBNull.Value;
                     (object[] Row, int Column) target = (row, columns[index]);
+                    // DAO refuses a shared child key reached from different
+                    // parent tables even when the final assignments agree.
+                    if (assignmentSources.TryGetValue(target, out string? source)
+                        && !string.Equals(source, relationship.PrimaryTable, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' cannot cascade overlapping foreign keys from distinct parent tables into '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
+                    }
+
+                    assignmentSources[target] = relationship.PrimaryTable;
                     if (generationAssignments.TryGetValue(target, out object? previous) && !SameKeyValue(previous, replacement, columns[index], definition))
                     {
                         throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' has contradictory cascade assignments through relationship '{relationship.Name}' to '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
@@ -754,6 +850,16 @@ internal sealed class RelationshipEnforcer(
         {
             ResolvedTable parent = await this.ResolveRelationshipTableAsync(rel, "primary table", rel.PrimaryTable, cancellationToken).ConfigureAwait(false);
             ValidateKeyDescriptors(rel.PrimaryTable, parent.Definition, ctx);
+        }
+
+        if (ctx.PlannedParentKeys.TryGetValue(rel.Name, out HashSet<string>? planned))
+        {
+            if (!planned.Contains(key))
+            {
+                throw ForeignKeyViolation(rel, foreignTable, kind);
+            }
+
+            return;
         }
 
         if (ctx.InsertedParentKeys.TryGetValue(rel.Name, out HashSet<string>? inserted) && inserted.Contains(key))

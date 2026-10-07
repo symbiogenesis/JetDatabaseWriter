@@ -326,13 +326,15 @@ internal sealed class TableDataWriter(
                 rowChanges.Add((rows[i].Location, oldRow, newRow));
             }
 
-            await enforcer.EnforceFkOnForeignUpdateAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
-
             // PK-side: plan the cascade, or make the refusal, of every
             // relationship whose referenced key this update changes. Nothing
             // is written yet. Through a self-relationship, a matching row's
             // own cascaded key goes into its new row in pendingUpdates.
             cascades = await enforcer.PlanCascadeUpdatesAsync(tableName, tableDef, updateIndexes.Keys, rowChanges, fkCtx, cancellationToken).ConfigureAwait(false);
+
+            // Changed foreign keys see every composed parent replacement, so
+            // stable cycles can establish their parents within this statement.
+            await enforcer.EnforceFkOnPlannedUpdateAsync(tableName, tableDef, rowChanges, cascades, fkCtx, cancellationToken).ConfigureAwait(false);
         }
 
         // Every new version is final now, a self-relationship's cascaded key
