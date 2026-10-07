@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -299,14 +300,28 @@ public sealed class ComplexColumnsReferenceAllocationTests
         await using (AccessWriter writer = await CreateWriterAsync(ms))
         {
             await CreateDocsAsync(writer);
-            await writer.InsertRowsAsync("Docs", [[1, DBNull.Value, DBNull.Value], [2, DBNull.Value, DBNull.Value]], Ct);
-            await writer.AddAttachmentAsync("Docs", "Files", Row2, new AttachmentInput("two.txt", [2]), Ct);
+            await writer.InsertRowAsync("Docs", [1, DBNull.Value, DBNull.Value], Ct);
+            await writer.AddAttachmentAsync("Docs", "Files", Row1, new AttachmentInput("one.txt", [1]), Ct);
         }
 
-        // Leave reference 2 in the flat table while every parent slot and the
-        // persisted counter hold 1. Scanning parents alone cannot find it.
-        await SetComplexSlotsAsync(ms, "Docs", _ => true, (_, _) => 1);
-        await SetComplexAutoNumberAsync(ms, "Docs", 1);
+        long flatPage;
+        await using (AccessReader reader = await OpenReaderAsync(ms))
+        {
+            flatPage = CatalogValueReader.TdefPageFromId(Assert.Single(await reader.GetComplexColumnsAsync("Docs", Ct), column => column.ColumnName == "Files").FlatTableId);
+        }
+
+        // Only the flat FK exceeds the counter: the single parent keeps its
+        // valid reference 1, so parent validation cannot mask the flat defect.
+        ms.Position = 0;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        {
+            TableDef flatDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(flatPage, "<flat>", Ct);
+            ColumnInfo foreignKey = Assert.IsType<ColumnInfo>(flatDef.FindColumn("_Files"));
+            RowLocation row = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(flatPage, Ct));
+            byte[] page = await harness.Pager.ReadPageCopyAsync(row.DataPageNumber, Ct);
+            BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + foreignKey.FixedOff, 4), 2);
+            await harness.Pager.WritePageAsync(row.DataPageNumber, page, Ct);
+        }
         byte[] baseline = ms.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
         {
