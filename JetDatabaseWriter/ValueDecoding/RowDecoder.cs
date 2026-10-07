@@ -28,6 +28,23 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
     /// <summary>Gets a value indicating whether malformed values throw instead of decoding to a fallback.</summary>
     internal bool StrictParsing => strictParsing;
 
+    /// <summary>Resolves a hybrid row's bound OLE slices before yielding its target.</summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="plan">The hybrid plan.</param>
+    /// <param name="page">The source page, retained until this operation completes.</param>
+    /// <param name="rowStart">The source row offset.</param>
+    /// <param name="target">The mapped target.</param>
+    /// <param name="oleSlices">Enumeration-owned slice storage.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask ResolveHybridOleAsync<T>(
+        HybridRowDecodePlan<T> plan,
+        byte[] page,
+        int rowStart,
+        T target,
+        ColumnSlice[] oleSlices,
+        CancellationToken cancellationToken)
+        => plan.ResolveAsync(longValues, strictParsing, page, rowStart, target, oleSlices, cancellationToken);
+
     /// <summary>
     /// Returns the column mask that selects <paramref name="columnNames"/> in
     /// <paramref name="td"/>, or <see langword="null"/> for every column.

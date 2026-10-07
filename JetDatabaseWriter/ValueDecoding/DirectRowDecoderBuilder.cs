@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Mapping;
@@ -88,6 +89,94 @@ internal static class DirectRowDecoderBuilder
     internal static DirectRowDecoder<T>? TryBuild<T>(Catalog.Models.TableDef td)
         where T : class, new() => RowMapper<T>.GetDirect(td.Shape, () => TryBuildUncached<T>(td.Columns.Select(static column => column.Name).ToArray(), td.Columns, td.ClrTypes));
 
+    /// <summary>Builds a scalar/OLE decoder, or refuses unsupported bound properties.</summary>
+    /// <typeparam name="T">The target row type.</typeparam>
+    /// <param name="headers">The column names.</param>
+    /// <param name="columns">The column definitions.</param>
+    /// <param name="clrTypes">The natural column types.</param>
+    internal static HybridRowDecodePlan<T>? TryBuildHybrid<T>(
+        IReadOnlyList<string> headers,
+        IReadOnlyList<ColumnInfo> columns,
+        IReadOnlyList<Type> clrTypes)
+        where T : class, new()
+    {
+        Guard.NotNull(headers, nameof(headers));
+        Guard.NotNull(columns, nameof(columns));
+        Guard.NotNull(clrTypes, nameof(clrTypes));
+        if (columns.Count < headers.Count || clrTypes.Count < headers.Count)
+        {
+            return null;
+        }
+
+        return RowMapper<T>.GetHybrid(new RowShape(headers, clrTypes, columns), () => TryBuildHybridUncached<T>(headers, columns, clrTypes));
+    }
+
+    /// <summary>Gets the hybrid decoder cached against an immutable table shape.</summary>
+    /// <typeparam name="T">The target row type.</typeparam>
+    /// <param name="td">The table definition.</param>
+    internal static HybridRowDecodePlan<T>? TryBuildHybrid<T>(Catalog.Models.TableDef td)
+        where T : class, new() => RowMapper<T>.GetHybrid(td.Shape, () => TryBuildHybridUncached<T>(td.Columns.Select(static column => column.Name).ToArray(), td.Columns, td.ClrTypes));
+
+    private static HybridRowDecodePlan<T>? TryBuildHybridUncached<T>(
+        IReadOnlyList<string> headers,
+        IReadOnlyList<ColumnInfo> columns,
+        IReadOnlyList<Type> clrTypes)
+        where T : class, new()
+    {
+        var bound = new List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)>();
+        var oleColumns = new List<(string Name, Action<T, byte[]> Assign)>();
+        for (int i = 0; i < headers.Count; i++)
+        {
+            RowMapper<T>.Accessor? accessor = RowMapper<T>.TryGetAccessor(headers[i]);
+            if (accessor is null)
+            {
+                continue;
+            }
+
+            ColumnInfo column = columns[i];
+            if (column.IsCalculated || accessor.TargetType == typeof(Hyperlink) || clrTypes[i] == typeof(Hyperlink))
+            {
+                return null;
+            }
+
+            // Scalar assignments precede awaited OLE reads. Custom setters can
+            // observe that ordering or throw exceptions the direct read guard
+            // would suppress, so retain projection decoding for those targets.
+            if (accessor.Property.SetMethod?.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false) != true)
+            {
+                return null;
+            }
+
+            // Numeric's direct reader always uses strict parsing; projection
+            // decoding honors lenient reads. Variable-area primitive slots also
+            // have a distinct strict truncation policy. Keep both on that path.
+            if (column.Type == NumericType
+                || (!column.IsFixed && column.Type is not TextType and not BinaryType and not OleType))
+            {
+                return null;
+            }
+
+            if (column.Type == OleType && accessor.TargetType == typeof(byte[]))
+            {
+                ParameterExpression target = Expression.Parameter(typeof(T), "target");
+                ParameterExpression bytes = Expression.Parameter(typeof(byte[]), "bytes");
+                Action<T, byte[]> assign = Expression.Lambda<Action<T, byte[]>>(
+                    Expression.Assign(Expression.Property(target, accessor.Property), bytes), target, bytes).Compile();
+                oleColumns.Add((column.Name, assign));
+            }
+            else if (!IsDirectlyDecodable(column.Type, accessor.TargetType))
+            {
+                return null;
+            }
+
+            bound.Add((i, accessor, column));
+        }
+
+        return oleColumns.Count == 0
+            ? null
+            : new HybridRowDecodePlan<T>(Emit<T, HybridRowDecoder<T>>(bound, hybrid: true), oleColumns.ToArray());
+    }
+
     private static DirectRowDecoder<T>? TryBuildUncached<T>(IReadOnlyList<string> headers, IReadOnlyList<ColumnInfo> columns, IReadOnlyList<Type> clrTypes)
         where T : class, new()
     {
@@ -138,12 +227,14 @@ internal static class DirectRowDecoderBuilder
             return null;
         }
 
-        return Emit(bound);
+        return Emit<T, DirectRowDecoder<T>>(bound, hybrid: false);
     }
 
-    private static DirectRowDecoder<T> Emit<T>(
-        List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)> bound)
+    private static TDelegate Emit<T, TDelegate>(
+        List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)> bound,
+        bool hybrid)
         where T : class, new()
+        where TDelegate : Delegate
     {
         ParameterExpression formatParam = Expression.Parameter(typeof(JetFormat), "format");
         ParameterExpression decodePlanParam = Expression.Parameter(typeof(RowDecodePlan), "decodePlan");
@@ -151,6 +242,9 @@ internal static class DirectRowDecoderBuilder
         ParameterExpression rowStartParam = Expression.Parameter(typeof(int), "rowStart");
         ParameterExpression rowSizeParam = Expression.Parameter(typeof(int), "rowSize");
         ParameterExpression targetParam = Expression.Parameter(typeof(T), "target");
+
+        ParameterExpression slicesParam = Expression.Parameter(typeof(ColumnSlice[]), "oleSlices");
+        int oleIndex = 0;
 
         ParameterExpression layoutLocal = Expression.Variable(typeof(RowLayout), "layout");
         ParameterExpression sliceLocal = Expression.Variable(typeof(ColumnSlice), "slice");
@@ -189,6 +283,12 @@ internal static class DirectRowDecoderBuilder
                     rowSizeParam,
                     layoutLocal,
                     colExpr)));
+
+            if (col.Type == OleType)
+            {
+                statements.Add(Expression.Assign(Expression.ArrayAccess(slicesParam, Expression.Constant(oleIndex++)), sliceLocal));
+                continue;
+            }
 
             MemberExpression kindExpr = Expression.Property(sliceLocal, ColumnSliceKindProperty);
             MemberExpression dataStartExpr = Expression.Property(sliceLocal, ColumnSliceDataStartProperty);
@@ -252,14 +352,10 @@ internal static class DirectRowDecoderBuilder
             [layoutLocal, sliceLocal],
             statements);
 
-        return Expression.Lambda<DirectRowDecoder<T>>(
-            body,
-            formatParam,
-            decodePlanParam,
-            pageParam,
-            rowStartParam,
-            rowSizeParam,
-            targetParam).Compile();
+        ParameterExpression[] parameters = hybrid
+            ? [formatParam, decodePlanParam, pageParam, rowStartParam, rowSizeParam, targetParam, slicesParam]
+            : [formatParam, decodePlanParam, pageParam, rowStartParam, rowSizeParam, targetParam];
+        return Expression.Lambda<TDelegate>(body, parameters).Compile();
     }
 
     private static BinaryExpression BuildKindGate(

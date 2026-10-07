@@ -38,15 +38,8 @@ public class AccessReaderPlaylistBenchmarks
         List<SnapshotPlaylistRow> snapshot = await this.TypedScan().ConfigureAwait(false);
         this.Verify(snapshot);
 
-        await using FileStream file = File.OpenRead(this.databasePath);
-        await using var trace = new PageTraceStream(file);
-        await using AccessReader measured = await AccessReader.OpenAsync(trace, leaveOpen: true).ConfigureAwait(false);
-        trace.Reset();
-        List<SnapshotPlaylistRow> cold = await ScanAsync(measured).ConfigureAwait(false);
-        this.Verify(cold);
-        long reads = trace.ReadCounts(4096).Values.Sum();
-        long retained = cold.Sum(static row => (long)(row.Filter?.Length ?? 0) + (row.SortOrder?.Length ?? 0));
-        Console.WriteLine($"Playlist IO: shape={this.Shape}; rows={cold.Count}; retainedDefinitionBytes={retained}; pageReads={reads}; bytesRead={trace.BytesRead}; uniquePages={trace.PagesRead(4096).Count}; notesBound=false");
+        await this.ReportIoAsync(hybrid: false).ConfigureAwait(false);
+        await this.ReportIoAsync(hybrid: true).ConfigureAwait(false);
     }
 
     /// <summary>Disposes the primed reader.</summary>
@@ -64,12 +57,12 @@ public class AccessReaderPlaylistBenchmarks
     /// <returns>Every playlist in stored order, with exact definition bytes.</returns>
     /// <exception cref="InvalidOperationException">Setup has not opened the reader.</exception>
     [Benchmark]
-    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."));
+    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."), hybrid: true);
 
-    private static async Task<List<SnapshotPlaylistRow>> ScanAsync(AccessReader source)
+    private static async Task<List<SnapshotPlaylistRow>> ScanAsync(AccessReader source, bool hybrid)
     {
         var rows = new List<SnapshotPlaylistRow>(RowCount);
-        await foreach (SnapshotPlaylistRow row in source.Rows<SnapshotPlaylistRow>(TableName).ConfigureAwait(false))
+        await foreach (SnapshotPlaylistRow row in (hybrid ? source.RowsWithHybridOle<SnapshotPlaylistRow>(TableName) : source.Rows<SnapshotPlaylistRow>(TableName)).ConfigureAwait(false))
         {
             rows.Add(row);
         }
@@ -124,6 +117,19 @@ public class AccessReaderPlaylistBenchmarks
                 throw new InvalidOperationException($"Playlist metadata or exact definition bytes differ at row {id} ({this.Shape}).");
             }
         }
+    }
+
+    private async Task ReportIoAsync(bool hybrid)
+    {
+        await using FileStream file = File.OpenRead(this.databasePath);
+        await using var trace = new PageTraceStream(file);
+        await using AccessReader measured = await AccessReader.OpenAsync(trace, leaveOpen: true).ConfigureAwait(false);
+        trace.Reset();
+        List<SnapshotPlaylistRow> cold = await ScanAsync(measured, hybrid).ConfigureAwait(false);
+        this.Verify(cold);
+        long reads = trace.ReadCounts(4096).Values.Sum();
+        long retained = cold.Sum(static row => (long)(row.Filter?.Length ?? 0) + (row.SortOrder?.Length ?? 0));
+        Console.WriteLine($"Playlist IO: shape={this.Shape}; hybrid={hybrid}; rows={cold.Count}; retainedDefinitionBytes={retained}; pageReads={reads}; bytesRead={trace.BytesRead}; uniquePages={trace.PagesRead(4096).Count}; notesBound=false");
     }
 
     private async Task EnsureDatabaseAsync()

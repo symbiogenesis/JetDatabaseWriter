@@ -250,6 +250,32 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
         => this.services.Tables.Rows<T>(tableName, progress, cancellationToken);
 
+    /// <summary>Streams rows using the candidate scalar/OLE decoder.</summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="progress">The progress sink.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The rows, with bound OLE bytes resolved before each yield.</returns>
+    internal IAsyncEnumerable<T> RowsWithHybridOle<T>(
+        string tableName,
+        IProgress<long>? progress = null,
+        CancellationToken cancellationToken = default)
+        where T : class, new()
+        => this.services.Tables.RowsWithDecoder<T>(tableName, enableHybridOle: true, forceProjection: false, progress, cancellationToken);
+
+    /// <summary>Streams rows with projection decoding for internal comparisons.</summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="progress">The progress sink.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The mapped rows.</returns>
+    internal IAsyncEnumerable<T> RowsWithProjectionFallback<T>(
+        string tableName,
+        IProgress<long>? progress = null,
+        CancellationToken cancellationToken = default)
+        where T : class, new()
+        => this.services.Tables.RowsWithDecoder<T>(tableName, enableHybridOle: false, forceProjection: true, progress, cancellationToken);
+
     /// <inheritdoc/>
     public IAsyncEnumerable<T> Rows<T>(
         string tableName,

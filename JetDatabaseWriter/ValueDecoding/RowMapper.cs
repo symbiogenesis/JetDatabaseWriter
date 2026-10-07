@@ -124,6 +124,24 @@ internal static class RowMapper<T>
         }
     }
 
+    /// <summary>Gets the hybrid decoder, including cached refusals.</summary>
+    /// <param name="shape">The immutable row shape.</param>
+    /// <param name="create">The decoder factory.</param>
+    internal static HybridRowDecodePlan<T>? GetHybrid(RowShape shape, Func<HybridRowDecodePlan<T>?> create)
+    {
+        Materializers entry = Cache.Get(shape, static () => new Materializers());
+        lock (entry)
+        {
+            if (!entry.HybridInitialized)
+            {
+                entry.Hybrid = create();
+                entry.HybridInitialized = true;
+            }
+
+            return entry.Hybrid;
+        }
+    }
+
     private static Func<object?[], T> GetRead(RowShape shape, IReadOnlyList<string> headers, IReadOnlyList<Type>? types)
     {
         Materializers entry = Cache.Get(shape, static () => new Materializers());
@@ -416,6 +434,10 @@ internal static class RowMapper<T>
         internal object? Direct { get; set; }
 
         internal bool DirectInitialized { get; set; }
+
+        internal HybridRowDecodePlan<T>? Hybrid { get; set; }
+
+        internal bool HybridInitialized { get; set; }
     }
 
     /// <summary>
