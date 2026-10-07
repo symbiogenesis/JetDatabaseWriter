@@ -62,13 +62,14 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// <summary>
     /// Decodes every live row of the table rooted at <paramref name="tdefPage"/>,
     /// each paired with the location it was decoded from, in the page and row
-    /// order of <see cref="OwnedDataPages.ForEachLiveTableRowAsync"/>. Rows too
-    /// short or malformed to decode are left out, so a caller that mutates
-    /// <see cref="LocatedRow.Location"/> changes exactly the row it read.
+    /// order of <see cref="OwnedDataPages.ForEachLiveTableRowAsync"/>. A live
+    /// row that cannot be decoded refuses the snapshot before mutation, so
+    /// a rewrite cannot omit stored content it could not read.
     /// Returns an empty list when the page holds no table definition.
     /// </summary>
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
     internal async ValueTask<List<LocatedRow>> ReadRowsAsync(long tdefPage, CancellationToken cancellationToken)
     {
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
@@ -76,7 +77,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         TableDef? tableDef = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         return tableDef is null
             ? []
-            : await this.DecodeRowsAsync(tdefPage, tableDef, cancellationToken).ConfigureAwait(false);
+            : await this.DecodeRowsAsync(tdefPage, tableDef, tableName: null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -100,12 +101,14 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     /// the rows again. Complex columns stay as their raw references, OLE cells
     /// hold the stored bytes, as in every typed read, and a MEMO / OLE value whose stored data cannot be read becomes an
     /// <see cref="ValueDecoding.Models.UnreadableLongValue"/>, which the writer
-    /// refuses to store, instead of a placeholder. MEMO / OLE columns are
-    /// therefore typed <see cref="object"/>. Returns an empty table when no
+    /// refuses to store, instead of a placeholder. An undecodable live row
+    /// refuses the snapshot rather than being omitted. MEMO / OLE columns
+    /// are therefore typed <see cref="object"/>. Returns an empty table when no
     /// table has that name.
     /// </summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
     internal async ValueTask<DataTable> ReadTableSnapshotAsync(string tableName, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -114,7 +117,7 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         List<LocatedRow> snapshotRows = resolved is null
             ? []
-            : await this.DecodeRowsAsync(resolved.Entry.TDefPage, resolved.Definition, cancellationToken).ConfigureAwait(false);
+            : await this.DecodeRowsAsync(resolved.Entry.TDefPage, resolved.Definition, resolved.Entry.Name, cancellationToken).ConfigureAwait(false);
 
         DataTable? table = null;
         try
@@ -228,12 +231,14 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
 
     /// <summary>
     /// Decodes every live row on the data pages owned by <paramref name="tdefPage"/>
-    /// together with its location. Rows too short or malformed to decode are skipped.
+    /// together with its location, refusing any live row that cannot be decoded.
     /// </summary>
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="tableDef">The table definition, with calculated-column result types hydrated.</param>
+    /// <param name="tableName">The table name when the caller resolved it by name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, CancellationToken cancellationToken)
+    /// <exception cref="JetCorruptDataException">A live row cannot be decoded for write-back.</exception>
+    private async ValueTask<List<LocatedRow>> DecodeRowsAsync(long tdefPage, TableDef tableDef, string? tableName, CancellationToken cancellationToken)
     {
         var result = new List<LocatedRow>();
 
@@ -247,14 +252,11 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             {
                 if (row.Location.RowSize < format.RowFields.NumCols)
                 {
-                    return true;
+                    throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The row is shorter than its column-count field", token).ConfigureAwait(false);
                 }
 
-                object?[]? values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, decodePlan, token).ConfigureAwait(false);
-                if (values is null)
-                {
-                    return true;
-                }
+                object?[] values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, decodePlan, token).ConfigureAwait(false)
+                    ?? throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
 
                 if (tableDef.HasHyperlinkColumns)
                 {
@@ -272,5 +274,21 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             cancellationToken).ConfigureAwait(false);
 
         return result;
+    }
+
+    private async ValueTask<JetCorruptDataException> CreateUndecodableRowExceptionAsync(long tdefPage, string? tableName, RowLocation location, string reason, CancellationToken cancellationToken)
+    {
+        tableName ??= tdefPage == 2
+            ? Constants.SystemTableNames.Objects
+            : (await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false)).Find(entry => entry.TDefPage == tdefPage)?.Name;
+        return new JetCorruptDataException(
+            JetErrorCode.MalformedValue,
+            "A live table row cannot be decoded for write-back.",
+            new JetErrorInfo
+            {
+                TableName = tableName,
+                PageNumber = location.DataPageNumber,
+                Reason = $"Row slot {location.DataRowIndex} at offset {location.RowStart} occupies {location.RowSize} bytes. {reason}.",
+            });
     }
 }
