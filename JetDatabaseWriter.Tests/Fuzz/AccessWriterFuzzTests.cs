@@ -81,13 +81,11 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         }
     }
 
-    private static void LogExpectedIterationException(ITestOutputHelper output, Exception ex)
-    {
+    private static void LogExpectedIterationException(ITestOutputHelper output, Exception ex) =>
         output.WriteLine($"""
             [Fuzzing] Expected exception during fuzzing iteration: {ex.GetType().Name}
             {ex}
             """);
-    }
 
     private static void LogExpectedOperationException(ITestOutputHelper output, string operation, Exception ex) =>
         output.WriteLine($"[Fuzzing] Expected {operation} failure: {ex.GetType().Name}");

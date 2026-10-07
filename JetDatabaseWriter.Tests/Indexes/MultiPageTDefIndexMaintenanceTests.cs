@@ -10,7 +10,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -344,19 +343,18 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
     [Fact]
     public async Task AesEncryptedAccdb_EnforcesUniquenessAndMaintainsIndexes()
     {
-        const string password = "wide-tdef";
+        const string password = "Native123";
         const DatabaseFormat format = DatabaseFormat.AceAccdb;
         string path = Path.Combine(Path.GetTempPath(), $"MultiPageTDef_{Guid.NewGuid():N}.accdb");
         this.tempFiles.Add(path);
 
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(path, format, new AccessWriterOptions { UseLockFile = false }, this.ct))
+        File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), path);
+        var writerOptions = new AccessWriterOptions { UseLockFile = false, Password = password.AsMemory() };
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(path, writerOptions, this.ct))
         {
             await writer.CreateTableAsync(TableName, WideColumns(format), WideIndexes(format), this.ct);
         }
 
-        await AccessWriter.EncryptAsync(path, password.AsMemory(), AccessEncryptionFormat.AccdbAgileCfb, new AccessWriterOptions { UseLockFile = false }, this.ct);
-
-        var writerOptions = new AccessWriterOptions { UseLockFile = false, Password = password.AsMemory() };
         await using (AccessWriter writer = await AccessWriter.OpenAsync(path, writerOptions, this.ct))
         {
             _ = await writer.InsertRowsAsync(TableName, [WideRow(format, 1), WideRow(format, 2), WideRow(format, 3)], this.ct);
@@ -366,9 +364,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         }
 
         await using FileStream encryptedStream = File.OpenRead(path);
-        (byte[] plaintext, _) = await EncryptionConverter.ReadDecryptedAsync(encryptedStream, password.AsMemory(), this.ct);
-        await using var stream = new MemoryStream(plaintext, writable: false);
-        await this.AssertIndexesMatchRowsAsync(stream, format, expectedKeys: [1, 3]);
+        await this.AssertIndexesMatchRowsAsync(encryptedStream, format, expectedKeys: [1, 3], password);
     }
 
     /// <inheritdoc/>

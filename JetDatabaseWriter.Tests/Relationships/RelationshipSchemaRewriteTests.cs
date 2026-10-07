@@ -510,11 +510,13 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         await AssertEnforcementAndCascadeAsync(stream);
     }
 
-    [Fact]
-    public async Task SchemaRewrite_OfNativeEncryptedJet4_KeepsRelationshipsAndEnforcement()
+    [Theory]
+    [InlineData("NativeJet4Rc4.mdb")]
+    [InlineData("NativeAceAgile.accdb")]
+    public async Task SchemaRewrite_OfNativeEncryptedDatabase_KeepsRelationshipsAndEnforcement(string fixture)
     {
         const string password = "Native123";
-        MemoryStream stream = await db.CopyToStreamAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), TestContext.Current.CancellationToken);
+        MemoryStream stream = await db.CopyToStreamAsync(Path.Combine(TestDatabases.EncryptedRoot, fixture), TestContext.Current.CancellationToken);
         var writerOptions = new AccessWriterOptions { UseLockFile = false, Password = password.AsMemory() };
         await using (AccessWriter writer = await OpenWriterAsync(stream, writerOptions))
         {

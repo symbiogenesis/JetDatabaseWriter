@@ -283,6 +283,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), Ct);
         Assert.True(EncryptionManager.HasHeaderPassword(bytes, DatabaseFormat.Jet4Mdb));
     }
+
     [Fact]
     public void HasHeaderPassword_CreationDateNotADayNumber_ReturnsTrueUnlessAreaIsZero()
     {

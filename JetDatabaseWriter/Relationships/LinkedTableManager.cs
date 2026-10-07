@@ -1013,9 +1013,9 @@ internal static class LinkedTableManager
                 || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase)
                 || stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase)
                 || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase)
-                || (stem.Length == 4 && (stem[3] is >= '1' and <= '9' or '¹' or '²' or '³')
+                || (stem.Length == 4 && (stem[3] is (>= '1' and <= '9') or '¹' or '²' or '³')
                     && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)));
-            if (reserved || segment.Contains(':') || segment.EndsWith('.') || segment.EndsWith(' '))
+            if (reserved || segment.Contains(':', StringComparison.Ordinal) || segment.EndsWith('.') || segment.EndsWith(' '))
             {
                 throw new UnauthorizedAccessException($"Invalid device, alternate stream or aliased path in {context}: '{path}'.");
             }

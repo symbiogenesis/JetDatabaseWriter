@@ -29,7 +29,7 @@ internal static class RelationshipKeyBuilder
             }
 
             sb.Append('|');
-            int fixedLength = fixedBinaryLengths is null ? 0 : fixedBinaryLengths[i];
+            int fixedLength = fixedBinaryLengths?[i] ?? 0;
             object normalized = fixedLength > 0 || v is byte[] or ArraySegment<byte> or Memory<byte> or ReadOnlyMemory<byte>
                 ? IndexKeyEncoder.NormalizeFixedBinaryValue(v, fixedLength)!
                 : v;

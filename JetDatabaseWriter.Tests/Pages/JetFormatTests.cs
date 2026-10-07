@@ -122,8 +122,7 @@ public sealed class JetFormatTests
 
     /// <summary>
     /// The format comes from the version byte at header offset 0x14: 0 is
-    /// Jet3, 1 is Jet4, and every later version, which Access 2007 and later
-    /// write, is ACE.
+    /// Jet3, 1 is Jet4, and the named Access 2007–2019 versions are ACE.
     /// </summary>
     /// <param name="version">The version byte.</param>
     /// <param name="expected">The expected format.</param>
@@ -132,13 +131,34 @@ public sealed class JetFormatTests
     [InlineData(0x01, DatabaseFormat.Jet4Mdb)]
     [InlineData(0x02, DatabaseFormat.AceAccdb)]
     [InlineData(0x03, DatabaseFormat.AceAccdb)]
+    [InlineData(0x04, DatabaseFormat.AceAccdb)]
     [InlineData(0x05, DatabaseFormat.AceAccdb)]
+    [InlineData(0x06, DatabaseFormat.AceAccdb)]
     public void DetectFormat_ReadsTheVersionByte(int version, DatabaseFormat expected)
     {
         byte[] header = new byte[Constants.DatabaseHeader.Length];
         header[0x14] = (byte)version;
 
         Assert.Equal(expected, JetFormat.DetectFormat(header));
+    }
+
+    [Fact]
+    public void DetectFormat_UnknownVersions_AreExplicitlyUnsupported()
+    {
+        byte[] header = new byte[Constants.DatabaseHeader.Length];
+        for (int version = 7; version <= byte.MaxValue; version++)
+        {
+            header[0x14] = (byte)version;
+            Assert.Throws<NotSupportedException>(() => JetFormat.DetectFormat(header));
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(20)]
+    public void DetectFormat_TruncatedHeader_RefusesMissingVersion(int length)
+    {
+        Assert.Throws<ArgumentException>(() => JetFormat.DetectFormat(new byte[length]));
     }
 
     /// <summary>

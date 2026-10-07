@@ -187,12 +187,9 @@ public class AccessReaderFuzzTests(ITestOutputHelper output)
             {ex}
             """);
 
-    private static void LogExpectedIterationException(ITestOutputHelper output, Exception ex)
-    {
+    private static void LogExpectedIterationException(ITestOutputHelper output, Exception ex) =>
         output.WriteLine($"""
             [Fuzzing] Expected exception during fuzzing iteration: {ex.GetType().Name}
             {ex}
             """);
-    }
-
 }

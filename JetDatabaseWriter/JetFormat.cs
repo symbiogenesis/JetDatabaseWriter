@@ -300,18 +300,32 @@ internal sealed class JetFormat
 
     /// <summary>
     /// Classifies a JET/ACE file by the format-version byte at header offset
-    /// <c>0x14</c>: 0 is Jet3, 1 is Jet4, and 2 or more is ACE (ACCDB). The
-    /// encryption code classifies a file with it before the file has a
-    /// profile.
+    /// <c>0x14</c>: 0 is Jet3, 1 is Jet4, and the named Access 2007–2019
+    /// versions (2–6) are ACE. Unknown versions remain unsupported instead
+    /// of inheriting an unrelated format's layout.
     /// </summary>
     /// <param name="header">The header, as stored; the version byte precedes the masked region.</param>
     /// <returns>The format.</returns>
-    internal static DatabaseFormat DetectFormat(byte[] header) => header[0x14] switch
+    /// <exception cref="ArgumentException"><paramref name="header"/> does not contain the version byte.</exception>
+    /// <exception cref="NotSupportedException">The file uses an unknown JET/ACE format version.</exception>
+    internal static DatabaseFormat DetectFormat(byte[] header)
     {
-        >= 2 => DatabaseFormat.AceAccdb,
-        >= 1 => DatabaseFormat.Jet4Mdb,
-        _ => DatabaseFormat.Jet3Mdb,
-    };
+        if (header.Length <= 0x14)
+        {
+            throw new ArgumentException("The database header does not contain a format version.", nameof(header));
+        }
+
+        // mdbtools file.c recognizes the named 2007, 2010, 2013, 2016 and
+        // 2019 generations. Preserve nominal 2013 (4), even though current
+        // Jackcess has not encountered an Access-authored file using it.
+        return header[0x14] switch
+        {
+            0 => DatabaseFormat.Jet3Mdb,
+            1 => DatabaseFormat.Jet4Mdb,
+            >= 2 and <= 6 => DatabaseFormat.AceAccdb,
+            _ => throw new NotSupportedException($"Unsupported JET/ACE format version: {header[0x14]}."),
+        };
+    }
 
     /// <summary>Returns the page size in bytes for the given database format (2048 for Jet3, 4096 for Jet4/ACE).</summary>
     /// <param name="format">The format.</param>

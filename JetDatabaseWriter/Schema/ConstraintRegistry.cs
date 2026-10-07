@@ -152,6 +152,51 @@ internal sealed class ConstraintRegistry(
     /// <param name="constraints">The constraints.</param>
     public bool TryGet(string tableName, [NotNullWhen(true)] out List<ColumnConstraint>? constraints) => this.constraints.TryGetValue(tableName, out constraints);
 
+    /// <summary>Refuses ambiguous persisted constraints before any values are changed.</summary>
+    /// <param name="tableName">The table whose metadata is being validated.</param>
+    /// <param name="properties">The persisted property block.</param>
+    /// <exception cref="JetCorruptDataException">Repeated constraint values conflict.</exception>
+    internal static void ValidatePersistedConstraintProperties(string tableName, ColumnPropertyBlock? properties)
+    {
+        if (properties is null)
+        {
+            return;
+        }
+
+        var targets = new Dictionary<string, Dictionary<string, ColumnPropertyEntry>>(StringComparer.OrdinalIgnoreCase);
+        foreach (ColumnPropertyTarget target in properties.Targets)
+        {
+            if (!targets.TryGetValue(target.Name, out Dictionary<string, ColumnPropertyEntry>? entries))
+            {
+                entries = new Dictionary<string, ColumnPropertyEntry>(StringComparer.OrdinalIgnoreCase);
+                targets.Add(target.Name, entries);
+            }
+
+            foreach (ColumnPropertyEntry entry in target.Entries)
+            {
+                bool modelled = string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase)
+                    || (target.Name.Length != 0 && (string.Equals(entry.Name, Constants.ColumnPropertyNames.DefaultValue, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(entry.Name, Constants.ColumnPropertyNames.Required, StringComparison.OrdinalIgnoreCase)));
+                if (!modelled)
+                {
+                    continue;
+                }
+
+                if (entries.TryGetValue(entry.Name, out ColumnPropertyEntry? previous)
+                    && (previous.DataType != entry.DataType || !previous.Value.AsSpan().SequenceEqual(entry.Value)))
+                {
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptTableDefinition,
+                        $"Table '{tableName}' has conflicting repeated '{entry.Name}' properties for target '{target.Name}'.",
+                        new JetErrorInfo { TableName = tableName });
+                }
+
+                entries[entry.Name] = entry;
+            }
+        }
+    }
+
     /// <summary>
     /// Captures the registry's contents: every table's constraint list and each
     /// AutoNumber and complex-reference counter. A transaction takes one when it
@@ -446,51 +491,6 @@ internal sealed class ConstraintRegistry(
     {
         List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
         return await this.NextComplexReferenceAsync(tableName, tableDef, list, count, checkpoints: null, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>Refuses ambiguous persisted constraints before any values are changed.</summary>
-    /// <param name="tableName">The table whose metadata is being validated.</param>
-    /// <param name="properties">The persisted property block.</param>
-    /// <exception cref="JetCorruptDataException">Repeated constraint values conflict.</exception>
-    internal static void ValidatePersistedConstraintProperties(string tableName, ColumnPropertyBlock? properties)
-    {
-        if (properties is null)
-        {
-            return;
-        }
-
-        var targets = new Dictionary<string, Dictionary<string, ColumnPropertyEntry>>(StringComparer.OrdinalIgnoreCase);
-        foreach (ColumnPropertyTarget target in properties.Targets)
-        {
-            if (!targets.TryGetValue(target.Name, out Dictionary<string, ColumnPropertyEntry>? entries))
-            {
-                entries = new Dictionary<string, ColumnPropertyEntry>(StringComparer.OrdinalIgnoreCase);
-                targets.Add(target.Name, entries);
-            }
-
-            foreach (ColumnPropertyEntry entry in target.Entries)
-            {
-                bool modelled = string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase)
-                    || (target.Name.Length != 0 && (string.Equals(entry.Name, Constants.ColumnPropertyNames.DefaultValue, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(entry.Name, Constants.ColumnPropertyNames.Required, StringComparison.OrdinalIgnoreCase)));
-                if (!modelled)
-                {
-                    continue;
-                }
-
-                if (entries.TryGetValue(entry.Name, out ColumnPropertyEntry? previous)
-                    && (previous.DataType != entry.DataType || !previous.Value.AsSpan().SequenceEqual(entry.Value)))
-                {
-                    throw new JetCorruptDataException(
-                        JetErrorCode.CorruptTableDefinition,
-                        $"Table '{tableName}' has conflicting repeated '{entry.Name}' properties for target '{target.Name}'.",
-                        new JetErrorInfo { TableName = tableName });
-                }
-
-                entries[entry.Name] = entry;
-            }
-        }
     }
 
     /// <summary>Invalidates a table's rule after its persisted properties change.</summary>

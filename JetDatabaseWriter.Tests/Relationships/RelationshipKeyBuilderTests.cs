@@ -19,11 +19,9 @@ public sealed class RelationshipKeyBuilderTests
 
     [Fact]
     public void CompositeTextKeys_RetainCaseInsensitiveMatching()
-    {
-        Assert.Equal(
+        => Assert.Equal(
             RelationshipKeyBuilder.Build(["alpha", "BETA"], [0, 1]),
             RelationshipKeyBuilder.Build(["ALPHA", "beta"], [0, 1]));
-    }
 
     [Fact]
     public void FixedBinaryKey_MatchesStoredPaddingButVariableBinaryDoesNot()

@@ -6,8 +6,8 @@ using System.Globalization;
 using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 
@@ -98,6 +98,7 @@ internal sealed class RowCriteriaEvaluator
             ColumnPredicateOperator.LessThanOrEqual => ColumnPredicate.LessThanOrEqual(name, operand!),
             ColumnPredicateOperator.Between => ColumnPredicate.Between(name, operand!, upper!),
             ColumnPredicateOperator.In => ColumnPredicate.In(name, (predicate.Operands ?? []).Select(value => IndexKeyEncoder.NormalizeFixedBinaryValue(value, width))),
+            ColumnPredicateOperator.IsNull or ColumnPredicateOperator.IsNotNull => predicate,
             _ => predicate,
         };
     }

@@ -342,6 +342,7 @@ internal static class EncryptionConverter
             CryptographicOperations.ZeroMemory(unmasked);
             return encodingKey != 0 ? AccessEncryptionFormat.Jet4Rc4 : AccessEncryptionFormat.None;
         }
+
         return AccessEncryptionFormat.None;
     }
 

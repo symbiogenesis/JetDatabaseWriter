@@ -665,8 +665,8 @@ public sealed class ConstraintRegistryTests
     {
         var builder = new ColumnPropertyBlockBuilder();
         ColumnPropertyTargetBuilder first = builder.GetOrAddTarget("Score");
-        first.AddText(Constants.ColumnPropertyNames.DefaultValue, "7", DatabaseFormat.AceAccdb);
-        first.AddText(Constants.ColumnPropertyNames.ValidationRule, ">= 0", DatabaseFormat.AceAccdb);
+        first.AddText(Constants.ColumnPropertyNames.DefaultValue, "7", JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
+        first.AddText(Constants.ColumnPropertyNames.ValidationRule, ">= 0", JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         ColumnPropertyTargetBuilder second = first;
         if (separateTargets)
         {
@@ -674,8 +674,8 @@ public sealed class ConstraintRegistryTests
             builder.Targets.Add(second);
         }
 
-        second.AddText("validationrule", "False", DatabaseFormat.AceAccdb);
-        ColumnPropertyBlock properties = ColumnPropertyBlock.Parse(builder.ToBytes(DatabaseFormat.AceAccdb), DatabaseFormat.AceAccdb)!;
+        second.AddText("validationrule", "False", JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
+        ColumnPropertyBlock properties = ColumnPropertyBlock.Parse(builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb)), JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb))!;
         ConstraintRegistry registry = RegistryWithProperties(properties);
         object[] values = [DBNull.Value];
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
