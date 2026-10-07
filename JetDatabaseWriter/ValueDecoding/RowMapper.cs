@@ -248,6 +248,7 @@ internal static class RowMapper<T>
     /// </summary>
     /// <param name="td">Parsed table definition.</param>
     /// <param name="item">The source item.</param>
+    /// <exception cref="ArgumentException">A supplied complex property is invalid or its reference disagrees with another complex property.</exception>
     public static object[] ToRow(TableDef td, T item)
     {
         Guard.NotNull(td, nameof(td));

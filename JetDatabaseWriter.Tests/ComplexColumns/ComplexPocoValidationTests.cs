@@ -137,7 +137,7 @@ public sealed class ComplexPocoValidationTests
     private static async Task CreateTableAsync(AccessWriter writer)
         => await writer.CreateTableAsync("Docs", new[]
         {
-            new ColumnDefinition("Id", typeof(int)) { IsAutoNumber = true },
+            new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true },
             new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
             new ColumnDefinition("Tags", typeof(string)) { IsMultiValue = true },
         }, Ct);

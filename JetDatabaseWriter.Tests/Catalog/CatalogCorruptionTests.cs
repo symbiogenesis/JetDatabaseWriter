@@ -8,6 +8,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -96,7 +97,7 @@ public sealed class CatalogCorruptionTests
             bool damaged = false;
             foreach (RowLocation location in await harness.Database.GetLiveRowLocationsAsync(2, TestContext.Current.CancellationToken))
             {
-                byte[] page = await harness.Database.Pages.ReadPageCopyAsync(location.PageNumber, TestContext.Current.CancellationToken);
+                byte[] page = await harness.Database.Pages.ReadPageAsync(location.PageNumber, TestContext.Current.CancellationToken);
                 if (ScalarColumnReader.DecodeSimpleColumnValue(harness.Database.Format, page, location.RowStart, location.RowSize, name) != "Victim")
                 {
                     continue;
