@@ -195,8 +195,8 @@ every header (a slot with `0x4000` and without `0x8000`) flagged
 header to the row data, up to `Constants.DataPage.MaxOverflowHops` (8) hops, and
 requires the target to be a data page of the same table and a slot the page
 has. A pointer that cannot be resolved (shorter than four bytes, past the end of
-the file, into another table, or a cycle) skips the row without throwing, as an
-undecodable row is skipped. With `DiagnosticsEnabled`, the reader traces the table-definition page, header slot and offset, and the reason it could not resolve the pointer. `StrictParsing` governs value parsing only.
+the file, into another table, or a cycle) skips the row during read-only
+traversal, as an undecodable row is skipped. With `DiagnosticsEnabled`, the reader traces the table-definition page, header slot and offset, and the reason it could not resolve the pointer. `StrictParsing` governs value parsing only.
 
 Every read path uses the directory: the `TableReader` scans,
 `RowDecoder` (catalog and flat-table scans), the index seek in `IndexRowReader`,
@@ -312,8 +312,12 @@ The owned-pages rows of the Access-authored fixtures, read raw with PowerShell
 Whether Access reads the writer's REFERENCE rows is unchecked (under
 "Unchecked against Access" in docs/todo.md).
 
-Writer snapshots use a write-back decode plan. A located live row that is too
-short for its column-count field or whose layout cannot be decoded raises
-a contextual "MalformedValue" corruption error before row updates or schema
-rewrites. The snapshot cannot omit that row and reinsert only the readable
-rows. Public read APIs retain their own decode-fault policy.
+Writer snapshots require complete row traversal and use a write-back decode
+plan. The declared directory must fit its page, and every live slot must start
+past the directory, inside the page, without sharing another live slot's
+offset. Deleted slots may alias offsets, and deleted overflow targets remain
+valid. An unresolved overflow pointer, a live row too short for its
+column-count field, or a layout that cannot be decoded raises a contextual
+"MalformedValue" corruption error before row updates or schema rewrites. The
+snapshot cannot omit that row and reinsert only the readable rows. Public read
+APIs retain their own decode-fault policy.

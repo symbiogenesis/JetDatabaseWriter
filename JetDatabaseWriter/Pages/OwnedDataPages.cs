@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -163,17 +164,20 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="visitRowAsync">Called for each row; returns <see langword="false"/> to stop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="requireCompleteRows">Whether malformed live slots and unresolved overflow pointers refuse the walk.</param>
     /// <returns>A task that completes when the walk ends.</returns>
+    /// <exception cref="JetCorruptDataException">Strict traversal cannot safely reach every live row.</exception>
     internal async ValueTask ForEachLiveTableRowAsync(
         long tdefPage,
         TableRowVisitor visitRowAsync,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireCompleteRows = false)
     {
         Guard.NotNull(visitRowAsync, nameof(visitRowAsync));
 
         await this.ForEachOwnedDataPageAsync(
             tdefPage,
-            (pageNumber, page, token) => this.ForEachRowOnPageAsync(pageNumber, page, visitRowAsync, token),
+            (pageNumber, page, token) => this.ForEachRowOnPageAsync(pageNumber, page, visitRowAsync, token, requireCompleteRows),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -183,23 +187,34 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     /// header as <see cref="RowLocation.PageNumber"/> / <see cref="RowLocation.RowIndex"/>
     /// and names the moved bytes through <see cref="RowLocation.DataPageNumber"/> /
     /// <see cref="RowLocation.DataRowIndex"/>, and <see cref="TableRow.Page"/> holds the
-    /// page with those bytes. An overflow pointer that cannot be resolved skips the
-    /// row, as an undecodable row is skipped. Visitors must not keep
+    /// page with those bytes. Unless complete traversal is required, an overflow
+    /// pointer that cannot be resolved skips the row, as an undecodable row is
+    /// skipped. Visitors must not keep
     /// <see cref="TableRow.Page"/> after they return.
     /// </summary>
     /// <param name="pageNumber">The data page's number.</param>
     /// <param name="page">The data page's bytes.</param>
     /// <param name="visitRowAsync">Called for each row; returns <see langword="false"/> to stop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="requireCompleteRows">Whether malformed live slots and unresolved overflow pointers refuse the walk.</param>
     /// <returns><see langword="false"/> when the visitor stopped the walk.</returns>
+    /// <exception cref="JetCorruptDataException">Strict traversal cannot safely reach every live row.</exception>
     internal async ValueTask<bool> ForEachRowOnPageAsync(
         long pageNumber,
         byte[] page,
         TableRowVisitor visitRowAsync,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireCompleteRows = false)
     {
+        if (requireCompleteRows)
+        {
+            this.ValidateLiveRowDirectory(pageNumber, page);
+        }
+
         foreach (RowBound entry in DataPageRows.ComputeRowDirectory(this.format, page))
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!entry.IsOverflowPointer)
             {
                 var location = new RowLocation(pageNumber, entry.RowIndex, entry.RowStart, entry.RowSize);
@@ -219,6 +234,11 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
                 cancellationToken).ConfigureAwait(false);
             if (resolved is not { } target)
             {
+                if (requireCompleteRows)
+                {
+                    throw CreateTraversalException(pageNumber, $"Row slot {entry.RowIndex} has an overflow pointer that cannot be resolved.");
+                }
+
                 continue;
             }
 
@@ -466,6 +486,58 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
 
                 this.ownedDataPagesByTdef[newOwner] = [.. updated];
             }
+        }
+    }
+
+    /// <summary>Creates a contextual failure for traversal that would omit or misidentify live content.</summary>
+    /// <param name="pageNumber">The original row-directory page.</param>
+    /// <param name="reason">The invalid directory or pointer.</param>
+    /// <returns>The corruption failure.</returns>
+    private static JetCorruptDataException CreateTraversalException(long pageNumber, string reason)
+        => new(JetErrorCode.MalformedValue, "A live table row cannot be traversed for write-back.", new JetErrorInfo { PageNumber = pageNumber, Reason = reason });
+
+    /// <summary>Validates live slot geometry before the lenient directory parser can clamp or reinterpret it.</summary>
+    /// <param name="pageNumber">The data page number.</param>
+    /// <param name="page">The data page bytes.</param>
+    /// <exception cref="JetCorruptDataException">A declared directory or live slot is outside the physical row region.</exception>
+    private void ValidateLiveRowDirectory(long pageNumber, byte[] page)
+    {
+        if (page.Length < this.format.PageSize)
+        {
+            throw CreateTraversalException(pageNumber, "The data page is shorter than its declared page size.");
+        }
+
+        int numRows = Ru16(page, this.format.DataPage.NumRows);
+        int maxRows = (this.format.PageSize - this.format.DataPage.RowsStart) / 2;
+        if (numRows > maxRows)
+        {
+            throw CreateTraversalException(pageNumber, $"The declared row count {numRows} exceeds the physical directory capacity {maxRows}.");
+        }
+
+        int directoryEnd = this.format.DataPage.RowsStart + (numRows * 2);
+        var liveOffsets = new Dictionary<int, int>();
+        for (int row = 0; row < numRows; row++)
+        {
+            int raw = Ru16(page, this.format.DataPage.RowsStart + (row * 2));
+            if ((raw & Constants.DataPage.DeletedRowFlag) != 0)
+            {
+                // Access leaves deleted aliases at a live offset and flags moved
+                // overflow data deleted. Neither is another live parent row.
+                continue;
+            }
+
+            int start = raw & Constants.DataPage.RowOffsetMask;
+            if (start < directoryEnd || start >= this.format.PageSize)
+            {
+                throw CreateTraversalException(pageNumber, $"Row slot {row} has offset {start} outside the physical row region [{directoryEnd}, {this.format.PageSize}).");
+            }
+
+            if (liveOffsets.TryGetValue(start, out int previousRow))
+            {
+                throw CreateTraversalException(pageNumber, $"Row slot {row} duplicates live row slot {previousRow}'s offset {start}.");
+            }
+
+            liveOffsets.Add(start, row);
         }
     }
 

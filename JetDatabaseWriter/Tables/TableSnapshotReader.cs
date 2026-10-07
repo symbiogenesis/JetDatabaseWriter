@@ -209,8 +209,9 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
     {
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
         var plan = RowDecodePlan.CreateTypedForWriteBack(tableDef, strictParsing: true, wantedColumns);
-        await ownedPages.ForEachLiveTableRowAsync(
+        await this.ForEachLiveRowForWriteBackAsync(
             tdefPage,
+            tableName: null,
             async (row, token) =>
             {
                 object?[] values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, plan, token).ConfigureAwait(false)
@@ -246,8 +247,9 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
         // OLE cells keep their stored bytes exactly and an unreadable MEMO /
         // OLE value becomes an UnreadableLongValue rather than a placeholder.
         var decodePlan = RowDecodePlan.CreateTypedForWriteBack(tableDef, rows.StrictParsing);
-        await ownedPages.ForEachLiveTableRowAsync(
+        await this.ForEachLiveRowForWriteBackAsync(
             tdefPage,
+            tableName,
             async (row, token) =>
             {
                 if (row.Location.RowSize < format.RowFields.NumCols)
@@ -274,6 +276,27 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             cancellationToken).ConfigureAwait(false);
 
         return result;
+    }
+
+    /// <summary>Requires complete traversal and adds the snapshot's table identity to geometry failures.</summary>
+    /// <param name="tdefPage">The table definition page.</param>
+    /// <param name="tableName">The resolved table name, when known.</param>
+    /// <param name="visit">The live row visitor.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">A live row cannot be reached safely.</exception>
+    private async ValueTask ForEachLiveRowForWriteBackAsync(long tdefPage, string? tableName, OwnedDataPages.TableRowVisitor visit, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ownedPages.ForEachLiveTableRowAsync(tdefPage, visit, cancellationToken, requireCompleteRows: true).ConfigureAwait(false);
+        }
+        catch (JetCorruptDataException failure) when (failure.ErrorCode == JetErrorCode.MalformedValue && failure.ErrorInfo.TableName is null)
+        {
+            tableName ??= tdefPage == 2
+                ? Constants.SystemTableNames.Objects
+                : (await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false)).Find(entry => entry.TDefPage == tdefPage)?.Name;
+            throw new JetCorruptDataException(failure.ErrorCode, failure.Message, failure.ErrorInfo with { TableName = tableName }, failure);
+        }
     }
 
     private async ValueTask<JetCorruptDataException> CreateUndecodableRowExceptionAsync(long tdefPage, string? tableName, RowLocation location, string reason, CancellationToken cancellationToken)
