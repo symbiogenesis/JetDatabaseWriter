@@ -1,0 +1,44 @@
+name: Portability
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portability-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.tf }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        tf: [net10.0, net8.0]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
+          cache: true
+          cache-dependency-path: '*/packages.lock.json'
+      - name: Restore
+        run: dotnet restore JetDatabaseWriter.Tests --locked-mode
+      - name: Build
+        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }}
+      - name: Test
+        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }}
