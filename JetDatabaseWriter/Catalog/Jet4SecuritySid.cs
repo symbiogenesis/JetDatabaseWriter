@@ -42,10 +42,11 @@ internal static class Jet4SecuritySid
         uint key = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x72, 4));
         for (int index = 0; index < 40; index++)
         {
-            byte value = header[0x42 + (index * 2)];
-            if (index * 2 < 40)
+            int byteIndex = index * 2;
+            byte value = header[0x42 + byteIndex];
+            if (byteIndex < 40)
             {
-                value ^= dateMask[index * 2 % 4];
+                value ^= dateMask[byteIndex % 4];
             }
 
             key ^= (uint)value << (index % 24);

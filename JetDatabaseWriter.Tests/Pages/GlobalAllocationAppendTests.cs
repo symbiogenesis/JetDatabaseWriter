@@ -50,7 +50,7 @@ public sealed class GlobalAllocationAppendTests
         Assert.Equal(Constants.UsageMap.ReferenceMapType, file[format.PageSize + rowStart]);
         int bitmapPage = BinaryPrimitives.ReadInt32LittleEndian(file.AsSpan(format.PageSize + rowStart + 1, 4));
         Assert.Equal(first + 3, bitmapPage);
-        ReadOnlySpan<byte> bitmap = file.AsSpan(bitmapPage * format.PageSize, format.PageSize);
+        byte[] bitmap = file.AsSpan(bitmapPage * format.PageSize, format.PageSize).ToArray();
         for (int page = 0; page <= bitmapPage; page++)
         {
             Assert.True(UsageMap.TryGetReferencePageState(bitmap, format.PageSize, page, out bool free));
