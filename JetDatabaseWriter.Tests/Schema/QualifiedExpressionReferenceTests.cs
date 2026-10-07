@@ -26,7 +26,7 @@ public sealed class QualifiedExpressionReferenceTests
     {
         CalculatedExpressionEvaluationContext context = Context("T");
         var plan = CalculatedExpressionPlan.Parse(reference + " * 2");
-        Assert.Equal(8d, plan.Root.Evaluate(context, plan));
+        Assert.Equal(8m, Assert.IsType<decimal>(plan.Root.Evaluate(context, plan)));
     }
 
     [Theory]
@@ -40,7 +40,7 @@ public sealed class QualifiedExpressionReferenceTests
     public void QualifiedReference_WithScientificOrRadixLiteralRetainsNumericToken(string expression, double expected)
     {
         var plan = CalculatedExpressionPlan.Parse(expression);
-        Assert.Equal(expected, Assert.IsType<double>(plan.Root.Evaluate(Context("T"), plan)), 12);
+        Assert.Equal((decimal)expected, Assert.IsType<decimal>(plan.Root.Evaluate(Context("T"), plan)));
     }
 
     [Theory]
