@@ -353,7 +353,7 @@ internal sealed class ComplexColumnManager(
         {
             template = await this.tableDefs.ReadTableDefAsync(templatePage, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is IOException or ArgumentException or OverflowException)
+        catch (Exception error) when (error is InvalidDataException or EndOfStreamException or JetCorruptDataException or ArgumentException or OverflowException)
         {
             throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage, error);
         }
