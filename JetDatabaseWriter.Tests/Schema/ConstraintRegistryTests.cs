@@ -717,6 +717,50 @@ public sealed class ConstraintRegistryTests
         Assert.Equal("True\0", PersistedExpressionText.Normalize("True\0\0"));
     }
 
+    /// <summary>Same-name columns with a changed CLR type must discard stale defaults.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_SameNameChangedType_RehydratesDefault()
+    {
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "\"text\"")));
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }]);
+        object[] values = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.TextType), values, TestContext.Current.CancellationToken);
+        Assert.Equal("text", values[0]);
+    }
+
+    /// <summary>A same-name column becoming AutoNumber must not retain its old default.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_SameNameBecomesAutoNumber_RehydratesAndRewindsCounter()
+    {
+        var registry = new ConstraintRegistry();
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }]);
+        var tableDef = new TableDef
+        {
+            Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, Flags = Constants.ColumnDescriptorFlags.AutoNumber }],
+        };
+        object[] first = [DbDefault.Value];
+        var checkpoints = await registry.ApplyAsync("T", tableDef, first, TestContext.Current.CancellationToken);
+        Assert.Equal(1, first[0]);
+        ConstraintRegistry.RestoreAutoCounters(checkpoints);
+        object[] second = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", tableDef, second, TestContext.Current.CancellationToken);
+        Assert.Equal(1, second[0]);
+    }
+
+    /// <summary>Distinct decimal storage types cannot share a cached default.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_SameClrTypeChangedStorageType_RehydratesDefault()
+    {
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "9")));
+        registry.Register("T", [new ColumnDefinition("Score", typeof(decimal)) { IsCurrency = true, DefaultValue = 7m }]);
+        object[] values = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.NumericType), values, TestContext.Current.CancellationToken);
+        Assert.Equal(9m, values[0]);
+    }
+
     private static async Task AssertRuleAsync(string rule, ColumnType type, object? value, bool accepted)
     {
         TableDef tableDef = SingleColumnTable(type);

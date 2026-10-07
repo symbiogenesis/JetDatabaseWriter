@@ -42,6 +42,9 @@ internal sealed class ColumnPropertyBlock
     /// <summary>Gets opaque chunks the parser did not recognise. Preserved verbatim for forward-compatible round-trip.</summary>
     public IReadOnlyList<ColumnPropertyUnknownChunk> UnknownChunks { get; private init; } = [];
 
+    /// <summary>Gets every source chunk in its original order.</summary>
+    internal IReadOnlyList<ColumnPropertySourceChunk> SourceChunks { get; private init; } = [];
+
     /// <summary>Gets the recognized stored signature independently of the outer database generation.</summary>
     internal uint Magic { get; private init; }
 
@@ -90,6 +93,7 @@ internal sealed class ColumnPropertyBlock
         var nameTable = new List<string>();
         var targets = new List<ColumnPropertyTarget>();
         var unknown = new List<ColumnPropertyUnknownChunk>();
+        var sourceChunks = new List<ColumnPropertySourceChunk>();
 
         int pos = 4;
         while (pos < blob.Length)
@@ -110,11 +114,16 @@ internal sealed class ColumnPropertyBlock
             int payloadStart = pos + 6;
             int payloadLen = (int)chunkLen - 6;
 
+            byte[] sourcePayload = [];
+            int unknownIndex = -1;
+            string[]? sourceNames = null;
             switch (chunkType)
             {
                 case ColumnPropertyChunkType.NamePool:
                     nameTable.Clear();
                     ReadNamePool(blob, payloadStart, payloadLen, stringEncoding, nameTable);
+                    sourceNames = nameTable.ToArray();
+                    sourcePayload = blob.AsSpan(payloadStart, payloadLen).ToArray();
                     break;
 
                 case ColumnPropertyChunkType.PropertyBlock:
@@ -122,17 +131,19 @@ internal sealed class ColumnPropertyBlock
                 case ColumnPropertyChunkType.PropertyBlockAlt2:
                     ColumnPropertyTarget target = ReadPropertyBlock(
                         blob, payloadStart, payloadLen, chunkType, nameTable, stringEncoding);
-                    targets.Add(target);
+                    targets.Add(target with { SourceChunkIndex = sourceChunks.Count });
 
                     break;
 
                 default:
                     byte[] opaque = new byte[payloadLen];
                     Buffer.BlockCopy(blob, payloadStart, opaque, 0, payloadLen);
+                    unknownIndex = unknown.Count;
                     unknown.Add(new ColumnPropertyUnknownChunk((ushort)chunkType, opaque));
                     break;
             }
 
+            sourceChunks.Add(new ColumnPropertySourceChunk((ushort)chunkType, sourcePayload, sourceNames, unknownIndex));
             pos += (int)chunkLen;
         }
 
@@ -143,6 +154,7 @@ internal sealed class ColumnPropertyBlock
             TextEncoding = stringEncoding,
             Targets = targets,
             UnknownChunks = unknown,
+            SourceChunks = sourceChunks,
         };
     }
 
@@ -190,7 +202,7 @@ internal sealed class ColumnPropertyBlock
     /// <summary>
     /// Serializes the block for <paramref name="format"/> through
     /// <see cref="ColumnPropertyBlockBuilder"/>. Returns <see langword="null"/>
-    /// when the block has no targets and no unknown chunks.
+    /// when a new block has no targets or unknown chunks. Parsed source signatures and name pools remain present.
     /// </summary>
     /// <param name="format">The database format the bytes are written for.</param>
     public byte[]? ToBytes(JetFormat format) => ColumnPropertyBlockBuilder.FromBlock(this).ToBytes(format);
@@ -274,7 +286,11 @@ internal sealed class ColumnPropertyBlock
 
             byte[] value = new byte[valueLen];
             Buffer.BlockCopy(blob, pos + 8, value, 0, valueLen);
-            entries.Add(new ColumnPropertyEntry(nameTable[nameIndex], dataType, ddlFlag, value));
+            entries.Add(new ColumnPropertyEntry(nameTable[nameIndex], dataType, ddlFlag, value)
+            {
+                Padding = blob.AsSpan(pos + 8 + valueLen, entryLen - 8 - valueLen).ToArray(),
+                SourceNameIndex = (ushort)nameIndex,
+            });
             pos += entryLen;
         }
 

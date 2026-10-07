@@ -182,6 +182,34 @@ public sealed class SystemTableLookupTests
         }
     }
 
+    /// <summary>Catalog-only ODBC identities do not become physical table-definition references.</summary>
+    [Fact]
+    public async Task FindSystemTable_MetadataOnlyOdbc_DoesNotRequireLocalDefinition()
+    {
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct))
+        {
+            await writer.CreateLinkedOdbcTableAsync("LinkedOrders", "ODBC;DSN=Sales", "dbo.Orders", this.ct);
+        }
+
+        stream.Position = 0;
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
+        Assert.Equal(0, await reader.Services.Catalog.FindSystemTablePageAsync("LinkedOrders", this.ct));
+        Assert.NotNull(await reader.Services.Catalog.GetUserTablesAsync(this.ct));
+    }
+
+    /// <summary>A fallback predicate must not silently select one of several matching tables.</summary>
+    [Fact]
+    public async Task FindSystemTable_AmbiguousPredicate_RefusesCorruption()
+    {
+        byte[] bytes = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, this.ct);
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await reader.Services.Catalog.FindSystemTablePageAsync(static _ => true, this.ct));
+        Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+    }
+
     private static async ValueTask<bool> CorruptCatalogSelfRowAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         await using var stream = new MemoryStream(bytes, writable: false);

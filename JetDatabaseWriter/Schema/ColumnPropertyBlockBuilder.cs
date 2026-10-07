@@ -21,9 +21,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Round-trip guarantee: an unmodified blob parsed via
 /// <see cref="ColumnPropertyBlock.Parse(byte[], JetFormat)"/> and re-serialized via
 /// <see cref="FromBlock(ColumnPropertyBlock)"/> + <see cref="ToBytes(JetFormat)"/>
-/// reproduces a byte stream that the parser interprets identically (entries, targets,
-/// opaque target headers and unknown chunks all preserved). Name-pool ordering and
-/// unknown-chunk placement may be normalized during serialization.
+/// preserves entries, targets, entry padding, duplicate and unused property names,
+/// opaque target headers and source chunk ordering.
 /// </para>
 /// </remarks>
 internal sealed class ColumnPropertyBlockBuilder
@@ -33,12 +32,14 @@ internal sealed class ColumnPropertyBlockBuilder
     private const int PropertyBlockTargetHeaderLength = sizeof(uint) + sizeof(ushort);
     private const int PropertyEntryHeaderLength = sizeof(ushort) + sizeof(byte) + sizeof(byte) + sizeof(ushort) + sizeof(ushort);
 
+    private readonly List<ColumnPropertyUnknownChunk> sourceUnknownChunks = [];
     private Encoding? sourceTextEncoding;
     private uint? sourceMagic;
+    private IReadOnlyList<ColumnPropertySourceChunk> sourceChunks = [];
 
     /// <summary>
-    /// Gets the mutable list of property targets in emission order. Column targets
-    /// carry the column's name; the table-level target has an empty name and can be
+    /// Gets the mutable property targets. Existing targets retain their source chunk
+    /// positions; new targets follow list order. The table-level target has an empty name and can be
     /// anywhere in the list (see <see cref="ColumnPropertyBlock.FindTableTarget"/>).
     /// </summary>
     public List<ColumnPropertyTargetBuilder> Targets { get; } = [];
@@ -48,10 +49,9 @@ internal sealed class ColumnPropertyBlockBuilder
 
     /// <summary>
     /// Gets a value indicating whether the builder would emit zero targets and
-    /// zero unknown chunks — i.e. the resulting blob would carry only the magic
-    /// header and is therefore not worth persisting.
+    /// zero unknown chunks and has no preserved source chunks or stored signature.
     /// </summary>
-    public bool IsEmpty => this.Targets.Count == 0 && this.UnknownChunks.Count == 0;
+    public bool IsEmpty => this.Targets.Count == 0 && this.UnknownChunks.Count == 0 && this.sourceChunks.Count == 0 && this.sourceMagic is null;
 
     /// <summary>
     /// Constructs a builder seeded with the parsed targets and unknown chunks of an
@@ -65,6 +65,7 @@ internal sealed class ColumnPropertyBlockBuilder
         {
             sourceTextEncoding = block.TextEncoding,
             sourceMagic = block.Magic == 0 ? null : block.Magic,
+            sourceChunks = block.SourceChunks,
         };
         foreach (ColumnPropertyTarget t in block.Targets)
         {
@@ -73,7 +74,9 @@ internal sealed class ColumnPropertyBlockBuilder
 
         foreach (ColumnPropertyUnknownChunk u in block.UnknownChunks)
         {
-            b.UnknownChunks.Add(new ColumnPropertyUnknownChunk(u.ChunkType, (byte[])u.Payload.Clone()));
+            var copy = new ColumnPropertyUnknownChunk(u.ChunkType, (byte[])u.Payload.Clone());
+            b.UnknownChunks.Add(copy);
+            b.sourceUnknownChunks.Add(copy);
         }
 
         return b;
@@ -93,6 +96,7 @@ internal sealed class ColumnPropertyBlockBuilder
             ChunkType = target.ChunkType,
             TextEncoding = target.TextEncoding,
             SourceHeader = target.SourceHeader,
+            SourceChunkIndex = target.SourceChunkIndex,
             SourceHeaderIsNameLength = target.SourceHeaderIsNameLength,
         };
         foreach (ColumnPropertyEntry e in target.Entries)
@@ -103,6 +107,8 @@ internal sealed class ColumnPropertyBlockBuilder
                 DataType = e.DataType,
                 DdlFlag = e.DdlFlag,
                 Value = (byte[])e.Value.Clone(),
+                Padding = (byte[])e.Padding.Clone(),
+                SourceNameIndex = e.SourceNameIndex,
             });
         }
 
@@ -191,8 +197,8 @@ internal sealed class ColumnPropertyBlockBuilder
     }
 
     /// <summary>
-    /// Serializes to bytes. Returns <see langword="null"/> when the builder is empty
-    /// (no targets, no unknown chunks) to signal that no <c>LvProp</c> cell is needed.
+    /// Serializes to bytes. Returns <see langword="null"/> when a new builder is empty
+    /// (no targets or unknown chunks). Parsed source signatures and name pools remain present.
     /// </summary>
     /// <param name="format">Database format. Selects Jet3 codepage vs Jet4 UTF-16LE string encoding.</param>
     /// <exception cref="InvalidOperationException">If a chunk would exceed the on-disk uint16 / uint32 length limits.</exception>
@@ -205,62 +211,152 @@ internal sealed class ColumnPropertyBlockBuilder
 
         Encoding stringEncoding = this.sourceTextEncoding ?? format.PropertyTextEncoding;
 
-        // Build the name pool from every distinct entry name encountered, in stable
-        // first-seen order. The parser indexes by uint16 so we cap at 65,535 names entries.
-        var nameToIndex = new Dictionary<string, ushort>(StringComparer.Ordinal);
-        var nameOrder = new List<string>();
-        foreach (ColumnPropertyTargetBuilder t in this.Targets)
+        // Keep every original pool in place, including unused and duplicate names.
+        // A target uses the last pool preceding its original chunk.
+        var pools = new Dictionary<int, List<string>> { [-1] = [] };
+        var poolIndices = new Dictionary<int, Dictionary<string, int>> { [-1] = new(StringComparer.Ordinal) };
+        var sourceTargetPools = new Dictionary<int, int>();
+        int currentPool = -1;
+        for (int chunkIndex = 0; chunkIndex < this.sourceChunks.Count; chunkIndex++)
         {
-            foreach (ColumnPropertyEntryBuilder e in t.Entries)
+            ColumnPropertySourceChunk chunk = this.sourceChunks[chunkIndex];
+            if (chunk.Names is { } names)
             {
-                if (!nameToIndex.ContainsKey(e.Name))
+                pools.Add(chunkIndex, new List<string>(names));
+                poolIndices.Add(chunkIndex, IndexNames(names));
+                currentPool = chunkIndex;
+            }
+            else if (chunk.UnknownIndex < 0)
+            {
+                sourceTargetPools.Add(chunkIndex, currentPool);
+            }
+        }
+
+        var targetsByChunk = new Dictionary<int, List<ColumnPropertyTargetBuilder>>();
+        var targetPools = new Dictionary<ColumnPropertyTargetBuilder, int>();
+        var newTargets = new List<ColumnPropertyTargetBuilder>();
+        foreach (ColumnPropertyTargetBuilder target in this.Targets)
+        {
+            bool sourceTarget = sourceTargetPools.TryGetValue(target.SourceChunkIndex, out int poolIndex);
+            if (sourceTarget)
+            {
+                if (!targetsByChunk.TryGetValue(target.SourceChunkIndex, out List<ColumnPropertyTargetBuilder>? chunkTargets))
                 {
-                    if (nameOrder.Count >= ushort.MaxValue)
+                    chunkTargets = [];
+                    targetsByChunk.Add(target.SourceChunkIndex, chunkTargets);
+                }
+
+                chunkTargets.Add(target);
+            }
+            else
+            {
+                poolIndex = currentPool;
+                newTargets.Add(target);
+            }
+
+            targetPools.Add(target, poolIndex);
+            if (sourceTarget && poolIndex < 0 && target.Entries.Count == 0)
+            {
+                continue;
+            }
+
+            if (!pools.TryGetValue(poolIndex, out List<string>? names))
+            {
+                names = [];
+                pools.Add(poolIndex, names);
+                poolIndices.Add(poolIndex, new Dictionary<string, int>(StringComparer.Ordinal));
+            }
+
+            Dictionary<string, int> indices = poolIndices[poolIndex];
+            foreach (ColumnPropertyEntryBuilder entry in target.Entries)
+            {
+                if (!indices.ContainsKey(entry.Name))
+                {
+                    if (names.Count > ushort.MaxValue)
                     {
                         throw new InvalidOperationException("Property name pool exceeds the uint16 index limit.");
                     }
 
-                    nameToIndex[e.Name] = (ushort)nameOrder.Count;
-                    nameOrder.Add(e.Name);
+                    indices.Add(entry.Name, names.Count);
+                    names.Add(entry.Name);
                 }
             }
         }
 
-        byte[] namePoolPayload = BuildNamePoolPayload(nameOrder, stringEncoding);
-
-        byte[][] propertyBlockPayloads = new byte[this.Targets.Count][];
-        int totalLength = MagicLength;
-        totalLength = AddChunkLength(totalLength, namePoolPayload.Length);
-
-        for (int targetIndex = 0; targetIndex < this.Targets.Count; targetIndex++)
+        var chunks = new List<(ColumnPropertyChunkType Type, byte[] Payload)>();
+        var retainedUnknown = new HashSet<ColumnPropertyUnknownChunk>(this.UnknownChunks);
+        var emittedUnknown = new HashSet<ColumnPropertyUnknownChunk>();
+        bool insertedPool = false;
+        for (int chunkIndex = 0; chunkIndex < this.sourceChunks.Count; chunkIndex++)
         {
-            propertyBlockPayloads[targetIndex] = BuildPropertyBlockPayload(this.Targets[targetIndex], nameToIndex, stringEncoding);
-            totalLength = AddChunkLength(totalLength, propertyBlockPayloads[targetIndex].Length);
+            ColumnPropertySourceChunk chunk = this.sourceChunks[chunkIndex];
+            if (chunk.Names is not null)
+            {
+                byte[] appendedNames = BuildNamePoolPayload(pools[chunkIndex].GetRange(chunk.Names.Length, pools[chunkIndex].Count - chunk.Names.Length), stringEncoding);
+                byte[] payload = new byte[AddPayloadLength(chunk.Payload.Length, appendedNames.Length, "name-pool payload")];
+                chunk.Payload.CopyTo(payload, 0);
+                appendedNames.CopyTo(payload, chunk.Payload.Length);
+                chunks.Add((ColumnPropertyChunkType.NamePool, payload));
+            }
+            else if (chunk.UnknownIndex >= 0)
+            {
+                ColumnPropertyUnknownChunk unknown = this.sourceUnknownChunks[chunk.UnknownIndex];
+                if (retainedUnknown.Contains(unknown))
+                {
+                    chunks.Add(((ColumnPropertyChunkType)unknown.ChunkType, unknown.Payload));
+                    _ = emittedUnknown.Add(unknown);
+                }
+            }
+            else if (targetsByChunk.TryGetValue(chunkIndex, out List<ColumnPropertyTargetBuilder>? chunkTargets))
+            {
+                foreach (ColumnPropertyTargetBuilder target in chunkTargets)
+                {
+                    int poolIndex = targetPools[target];
+                    if (poolIndex < 0 && target.Entries.Count > 0 && !insertedPool)
+                    {
+                        chunks.Add((ColumnPropertyChunkType.NamePool, BuildNamePoolPayload(pools[-1], stringEncoding)));
+                        insertedPool = true;
+                    }
+
+                    chunks.Add((target.ChunkType, BuildPropertyBlockPayload(target, pools[poolIndex], poolIndices[poolIndex], stringEncoding)));
+                }
+            }
         }
 
-        foreach (ColumnPropertyUnknownChunk unknownChunk in this.UnknownChunks)
+        // Append new names to the last existing pool; existing indices stay unchanged.
+        if (newTargets.Count > 0)
         {
-            totalLength = AddChunkLength(totalLength, unknownChunk.Payload.Length);
+            if (currentPool < 0 && !insertedPool)
+            {
+                chunks.Add((ColumnPropertyChunkType.NamePool, BuildNamePoolPayload(pools[-1], stringEncoding)));
+            }
+
+            foreach (ColumnPropertyTargetBuilder target in newTargets)
+            {
+                chunks.Add((target.ChunkType, BuildPropertyBlockPayload(target, pools[currentPool], poolIndices[currentPool], stringEncoding)));
+            }
+        }
+
+        foreach (ColumnPropertyUnknownChunk unknown in this.UnknownChunks)
+        {
+            if (!emittedUnknown.Contains(unknown))
+            {
+                chunks.Add(((ColumnPropertyChunkType)unknown.ChunkType, unknown.Payload));
+            }
+        }
+
+        int totalLength = MagicLength;
+        foreach ((ColumnPropertyChunkType _, byte[] payload) in chunks)
+        {
+            totalLength = AddChunkLength(totalLength, payload.Length);
         }
 
         byte[] blob = new byte[totalLength];
         int offset = 0;
         WriteUInt32(blob, ref offset, this.sourceMagic ?? JetFormat.PropertyBlockMagicOf(format.Kind));
-
-        // Name-pool chunk (always first; mdbtools requires it before property blocks).
-        WriteChunk(blob, ref offset, ColumnPropertyChunkType.NamePool, namePoolPayload);
-
-        // Property-block chunks.
-        for (int targetIndex = 0; targetIndex < this.Targets.Count; targetIndex++)
+        foreach ((ColumnPropertyChunkType type, byte[] payload) in chunks)
         {
-            WriteChunk(blob, ref offset, this.Targets[targetIndex].ChunkType, propertyBlockPayloads[targetIndex]);
-        }
-
-        // Unknown chunks (preserved verbatim — re-emit at the end so they don't shadow
-        // the name pool the parser depends on).
-        foreach (ColumnPropertyUnknownChunk unknownChunk in this.UnknownChunks)
-        {
-            WriteChunk(blob, ref offset, (ColumnPropertyChunkType)unknownChunk.ChunkType, unknownChunk.Payload);
+            WriteChunk(blob, ref offset, type, payload);
         }
 
         return blob;
@@ -272,6 +368,17 @@ internal sealed class ColumnPropertyBlockBuilder
         sourceTextEncoding = this.sourceTextEncoding,
         sourceMagic = this.sourceMagic,
     };
+
+    private static Dictionary<string, int> IndexNames(string[] names)
+    {
+        var indices = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int index = 0; index < names.Length; index++)
+        {
+            _ = indices.TryAdd(names[index], index);
+        }
+
+        return indices;
+    }
 
     private static byte[] BuildNamePoolPayload(List<string> names, Encoding encoding)
     {
@@ -297,7 +404,8 @@ internal sealed class ColumnPropertyBlockBuilder
 
     private static byte[] BuildPropertyBlockPayload(
         ColumnPropertyTargetBuilder target,
-        Dictionary<string, ushort> nameToIndex,
+        List<string> names,
+        Dictionary<string, int> nameIndices,
         Encoding encoding)
     {
         int targetNameByteCount = GetUInt16StringByteCount(encoding, target.Name, "Property target name");
@@ -307,14 +415,14 @@ internal sealed class ColumnPropertyBlockBuilder
         {
             ColumnPropertyEntryBuilder entry = target.Entries[entryIndex];
             int valueLength = entry.Value.Length;
-            int entryLength = PropertyEntryHeaderLength + valueLength;
+            long entryLength = PropertyEntryHeaderLength + (long)valueLength + entry.Padding.Length;
             if (entryLength > ushort.MaxValue)
             {
                 throw new InvalidOperationException($"Property entry '{entry.Name}' value is {valueLength} bytes; max supported is {ushort.MaxValue - PropertyEntryHeaderLength}.");
             }
 
-            entryLengths[entryIndex] = entryLength;
-            payloadLength = AddPayloadLength(payloadLength, entryLength, "property-block payload");
+            entryLengths[entryIndex] = (int)entryLength;
+            payloadLength = AddPayloadLength(payloadLength, (int)entryLength, "property-block payload");
         }
 
         byte[] payload = new byte[payloadLength];
@@ -330,7 +438,10 @@ internal sealed class ColumnPropertyBlockBuilder
         for (int entryIndex = 0; entryIndex < target.Entries.Count; entryIndex++)
         {
             ColumnPropertyEntryBuilder entry = target.Entries[entryIndex];
-            if (!nameToIndex.TryGetValue(entry.Name, out ushort nameIndex))
+            int index = entry.SourceNameIndex is { } sourceIndex && sourceIndex < names.Count && names[sourceIndex] == entry.Name
+                ? sourceIndex
+                : nameIndices.GetValueOrDefault(entry.Name, -1);
+            if (index < 0 || index > ushort.MaxValue)
             {
                 throw new InvalidOperationException($"Entry name '{entry.Name}' was not registered in the name pool.");
             }
@@ -340,9 +451,10 @@ internal sealed class ColumnPropertyBlockBuilder
             WriteUInt16(payload, ref offset, (ushort)entryLength);
             payload[offset++] = entry.DdlFlag;
             payload[offset++] = (byte)entry.DataType;
-            WriteUInt16(payload, ref offset, nameIndex);
+            WriteUInt16(payload, ref offset, (ushort)index);
             WriteUInt16(payload, ref offset, (ushort)valueLength);
             WriteBytes(payload, ref offset, entry.Value);
+            WriteBytes(payload, ref offset, entry.Padding);
         }
 
         return payload;

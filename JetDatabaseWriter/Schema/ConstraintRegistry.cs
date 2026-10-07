@@ -518,6 +518,7 @@ internal sealed class ConstraintRegistry(
         return new()
         {
             Name = def.Name,
+            StorageType = JetTypeInfo.TypeCodeFromDefinition(def),
             ClrType = def.ClrType,
             IsNullable = def.IsNullable,
             DefaultValue = takesDefault ? ToAppliedClrDefault(def) : null,
@@ -841,6 +842,13 @@ internal sealed class ConstraintRegistry(
         this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties!.Format));
     }
 
+    private static bool MatchesColumnIdentity(ColumnConstraint constraint, ColumnInfo column)
+        => string.Equals(constraint.Name, column.Name, StringComparison.OrdinalIgnoreCase)
+            && constraint.StorageType == column.Type
+            && constraint.IsAutoIncrement == column.IsAutoNumber
+            && constraint.IsCalculated == column.IsCalculated
+            && constraint.IsComplexReference == (column.Type is ComplexType);
+
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
     {
         this.constraints.TryGetValue(tableName, out List<ColumnConstraint>? list);
@@ -849,7 +857,7 @@ internal sealed class ConstraintRegistry(
             bool aligned = true;
             for (int index = 0; index < list.Count; index++)
             {
-                aligned &= string.Equals(list[index].Name, tableDef.Columns[index].Name, StringComparison.OrdinalIgnoreCase);
+                aligned &= MatchesColumnIdentity(list[index], tableDef.Columns[index]);
             }
 
             if (aligned)
@@ -871,7 +879,14 @@ internal sealed class ConstraintRegistry(
             for (int index = 0; index < hydrated.Count; index++)
             {
                 ColumnConstraint current = hydrated[index];
-                ColumnConstraint? registered = list.Find(candidate => string.Equals(candidate.Name, current.Name, StringComparison.OrdinalIgnoreCase) && candidate.ClrType == current.ClrType);
+                ColumnConstraint? registered = list.Find(candidate =>
+                    string.Equals(candidate.Name, current.Name, StringComparison.OrdinalIgnoreCase)
+                    && candidate.ClrType == current.ClrType
+                    && candidate.StorageType == current.StorageType
+                    && candidate.IsAutoIncrement == current.IsAutoIncrement
+                    && candidate.IsCalculated == current.IsCalculated
+                    && (!current.IsCalculated || candidate.CalculatedResultType == current.CalculatedResultType)
+                    && candidate.IsComplexReference == current.IsComplexReference);
                 if (registered != null)
                 {
                     hydrated[index] = registered;
@@ -939,6 +954,7 @@ internal sealed class ConstraintRegistry(
             ColumnConstraint c = new()
             {
                 Name = col.Name,
+                StorageType = col.Type,
                 ClrType = JetTypeInfo.GetClrType(constraintType) ?? typeof(object),
                 IsNullable = isNullable,
                 IsAutoIncrement = isAutoIncrement,

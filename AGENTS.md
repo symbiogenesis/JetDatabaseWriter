@@ -38,27 +38,22 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 
 Gate every commit that can change the build or the tests on GitHub CI, not with local builds and test runs. A commit that touches only docs or scripts outside the build needs no gate. Several agents often share one machine, and long local runs slow everyone down and stall agents. A local run is fine for debugging one test; report gate results from CI.
 
-`ci.yml` runs on a push only for `main`; for any other commit it needs a pull request or a `workflow_dispatch`. `scripts/ci-gate.ps1` handles that:
+`ci.yml` runs on a push to `main`. Integrate the reviewed work into local `main`, then publish only that branch:
 
 ```
-pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha <commit> -Branch ci/<name>
+git -c push.followTags=false push origin main:main
+gh run list --workflow ci.yml --branch main --commit <commit>
 ```
 
-It pushes the commit to the temporary branch `ci/<name>` on `origin`, starts `ci.yml` on it, and waits at most 480 seconds per call, so a call stays under a 10-minute tool timeout. Never move the call to the background to wait on it.
+Record the run URL, exact tested SHA and verdict. Inspect all six jobs: four Release analyzer/package jobs and one ordinary test job per target framework. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
 
-- Exit code 2: the run is still going. Call again with the same arguments; it never pushes or dispatches twice for the same commit on the same branch.
-- Exit code 0: the run passed.
-- Exit code 1: the run failed. The output lists every step result, the build summary, both test summaries, and the failing tests with their messages.
+For a completed run, the reporting mode of the existing helper prints every step result, build summaries, both test summaries and failing-test messages without pushing or dispatching:
 
-The script's other switches:
+```
+pwsh -NoProfile -File scripts/ci-gate.ps1 -RunId <id>
+```
 
-- `-RerunFailed` re-runs the failed jobs of the last run on that branch.
-- `-RunId <id>` reports on an existing run.
-- `-Branch ci/<name> -Delete` deletes the branch.
-
-Use one `ci/*` branch per commit you gate, such as `ci/<topic>-<n>`, and delete the branches when you are done. A run takes about 2.5 minutes: its six jobs run in parallel on windows-latest, four analyze jobs (the library and its package, the other tools, and the test project on each target framework) and one test job per leg, which builds without analyzers. The script uses the GitHub CLI (`gh`) when it is installed and logged in. `gh run view <id> --log-failed` shows a failed run's logs.
-
-A timing-sensitive test can fail on CI and pass on a re-run. Re-run the failed jobs once before you call a failure real.
+Do not use the helper's `-Branch` mode: it publishes temporary branches, contrary to the main-only publication rule. If a matching run is missing, dispatch `gh workflow run ci.yml --ref main` and verify the resulting run's SHA. Keep work branches local and remove this session's eligible worktrees and branches after their changes are integrated and validated, retaining useful outputs.
 
 ## Tests
 
@@ -68,7 +63,7 @@ Expected results on both legs:
 - Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is absent on hosted CI, so those cases skip there. A local DAO host can run them with CI-built binaries when authorized; engine-specific skips remain evidence gaps.
 - 3 explicit-only fuzz tests are not run.
 
-The Microsoft Testing Platform summary counts both groups as skipped: 43 + 3 = 46 after the native encryption cases. Any other skip is a regression.
+The Microsoft Testing Platform summary counts guarded DAO cases and the three explicit-only fuzz harnesses together as skipped. Check the skip reasons against the current guarded cases; any other skip is a regression.
 
 For a quick local loop, build in Release and run the test executable directly. `JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -longRunning 300` runs one leg in about 1.5 minutes; add `-method "<Namespace.Class.Method>"` to run one test.
 
@@ -100,13 +95,13 @@ xUnit v3 on Microsoft Testing Platform:
 Run benchmarks on GitHub Actions (`.github/workflows/benchmarks.yml`), not on a shared development machine:
 
 ```
-pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha <commit> -Branch ci/bench-<name> -Benchmarks "<filter patterns>" -Baseline <branch point>
+gh workflow run benchmarks.yml --ref main -f filter="<filter patterns>" -f baseline="<branch point SHA>" -f job=default
 ```
 
-- `-Benchmarks` takes BenchmarkDotNet `--filter` patterns separated by spaces, for example `"*AccessWriterBenchmarks* *AccessReaderRowDecodeBenchmarks*"`.
-- With `-Baseline`, the runner benchmarks the baseline commit and then the commit under test back to back on the same machine. The script prints the comparison table (mean, error, allocations and head/baseline ratios), which also goes to the run summary.
-- `-Job short`, `medium` or `dry` replaces BenchmarkDotNet's default adaptive job.
-- The call waits and exits with code 2 like a CI gate. A run can take an hour or more, so keep calling it until it finishes.
+- The `filter` input takes BenchmarkDotNet `--filter` patterns separated by spaces, for example `"*AccessWriterBenchmarks* *AccessReaderRowDecodeBenchmarks*"`. Verify the dispatched run tests the settled `main` SHA.
+- With `baseline`, the runner benchmarks the baseline commit and then the commit under test back to back on the same machine. Use a baseline already published in main history; never publish a work branch or tag to make it available. The comparison table (mean, error, allocations and head/baseline ratios) goes to the run summary.
+- The `job` input accepts `short`, `medium` or `dry` in place of BenchmarkDotNet's default adaptive job.
+- Dispatch returns immediately. A run can take an hour or more; inspect its status and require a completed verdict before claiming benchmark acceptance. The helper's `-RunId` reporting mode can summarize the completed run.
 - The full results are in the run's `benchmark-results` artifact.
 - Hosted runners are noisy: treat a difference of a few percent as noise unless it is well outside both error columns (BenchmarkDotNet's Error, half the 99.9% confidence interval).
 
@@ -117,7 +112,7 @@ BenchmarkDotNet practice, wherever the benchmarks run:
 - BenchmarkDotNet already switches Windows to the High performance power plan during runs; add no boilerplate for it.
 - `[IterationSetup]` suits destructive writer benchmarks that need a fresh database per operation, but it forces `InvocationCount=1` and `UnrollFactor=1`. Copy from an unmeasured baseline fixture instead of rebuilding the schema in each benchmark.
 - A `Mean` or `Allocated` of `NA`, or a "Benchmarks with issues" section in `BenchmarkDotNet.Artifacts/results/*-report-github.md`, means the benchmark is broken; fix it before tuning anything. `--job dry` reports `Error = NA` from its single measurement, which is expected.
-- Compare a change against its branch point, measured in the same run: `-Baseline` does that.
+- Compare a change against its branch point, measured in the same run: the `baseline` workflow input does that.
 
 ## Code
 
@@ -145,7 +140,7 @@ BenchmarkDotNet practice, wherever the benchmarks run:
   - Never modify, remove or prune another worktree, branch or stash. The stash stack is shared, so never use a bare `git stash` or `git stash pop`.
   - Land work by fast-forwarding `main` to the reviewed branch.
 - Commit titles follow Conventional Commits: `feat:`, `fix:`, `refactor:`, `perf:`, `test:`, `docs:`, `build:`, `ci:`, with `!` for a breaking change.
-- Commit locally. Do not push `main` or tags unless the user asks. The `ci/*` branches that `scripts/ci-gate.ps1` pushes are the exception; delete them when you are done.
+- Commit in isolated local work branches, integrate reviewed session work into local `main`, and publish only `main`. Never push work branches or publication tags. Preserve other active sessions' uncommitted work; only remove this session's eligible worktrees and local branches after integration and validation.
 
 ## docs/todo.md
 

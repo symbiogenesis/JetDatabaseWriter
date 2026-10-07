@@ -32,6 +32,9 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <summary>Gets or sets a value indicating whether newly constructed readers verify structural cache hits.</summary>
     internal static bool VerifyCacheHits { get; set; }
 
+    /// <summary>Gets the current file geometry for catalog reference validation.</summary>
+    internal long PageCount => this.pages.PageCount;
+
     /// <summary>Gets or sets a value indicating whether cache hits are checked against the source.</summary>
     internal bool VerifyOnHit { get; set; } = VerifyCacheHits;
 

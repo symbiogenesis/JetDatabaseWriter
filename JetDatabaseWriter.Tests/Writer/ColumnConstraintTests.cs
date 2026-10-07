@@ -1274,6 +1274,138 @@ public sealed class ColumnConstraintTests
         Assert.True(foundTable, "Did not find the FlagGuard TDEF page in the writer-produced file.");
     }
 
+    /// <summary>Gets cases for every public mutation surface rejecting unevaluable persisted constraints.</summary>
+    public static TheoryData<DatabaseFormat, string, bool, WriteMode> UnevaluableMutationCases
+    {
+        get
+        {
+            var cases = new TheoryData<DatabaseFormat, string, bool, WriteMode>();
+            string[] surfaces = ["Array", "ArrayBatch", "Poco", "PocoBatch", "Named", "NamedBatch", "CriteriaUpdate", "PredicateUpdate"];
+            foreach (string surface in surfaces)
+            {
+                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
+                {
+                    foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+                    {
+                        cases.Add(format, surface, false, mode);
+                        if (!surface.EndsWith("Update", StringComparison.Ordinal))
+                        {
+                            cases.Add(format, surface, true, mode);
+                        }
+                    }
+                }
+            }
+
+            return cases;
+        }
+    }
+
+    /// <summary>Refusal preserves bytes, caller transaction and AutoNumber after reopen and rollback.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="surface">The public mutation overload.</param>
+    /// <param name="badDefault">Whether to request an unsupported default instead of an unevaluable rule.</param>
+    /// <param name="mode">The transaction mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(UnevaluableMutationCases))]
+    public async Task UnevaluablePersistedConstraint_EveryMutationSurface_RefusesAfterReopenAndRollback(DatabaseFormat format, string surface, bool badDefault, WriteMode mode)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "Boundary";
+        await using (AccessWriter creator = await OpenWriterAsync(stream))
+        {
+            await creator.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true },
+                    new("Score", typeof(int))
+                    {
+                        DefaultValueExpression = badDefault ? "GenUniqueID()" : null,
+                        ValidationRuleExpression = badDefault ? null : "1 / [Score] > 0",
+                    },
+                ],
+                TestContext.Current.CancellationToken);
+            await creator.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+        }
+
+        byte[] original = stream.ToArray();
+        await using (AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit }))
+        {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                if (mode == WriteMode.ExplicitCommit)
+                {
+                    await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+                    await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+                    int pages = transaction.JournaledPageCount;
+                    Assert.True(pages > 0);
+                    _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault));
+                    Assert.Equal(original, stream.ToArray());
+                    Assert.Equal(pages, transaction.JournaledPageCount);
+                    Assert.False(transaction.IsCommitted);
+                    Assert.False(transaction.IsRolledBack);
+                    await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+                    await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+                }
+                else
+                {
+                    _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault));
+                    Assert.Equal(original, stream.ToArray());
+                    await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+                    await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+                    await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+                }
+
+                Assert.Equal(original, stream.ToArray());
+            }
+
+            await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(new[] { 1, 2 }, rows.AsEnumerable().Select(row => (int)row["Id"]).Order());
+        Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
+    }
+
+    private static async Task RefuseMutationAsync(AccessWriter writer, string table, string surface, bool badDefault)
+    {
+        object score = badDefault ? DbDefault.Value : 0;
+        var named = new RowValues { ["Score"] = score };
+        var poco = new ConstraintBoundaryRow { Score = score };
+        switch (surface)
+        {
+            case "Array":
+                await writer.InsertRowAsync(table, [DbDefault.Value, score], TestContext.Current.CancellationToken);
+                break;
+            case "ArrayBatch":
+                _ = await writer.InsertRowsAsync(table, new object?[][] { [DbDefault.Value, 1], [DbDefault.Value, score] }, TestContext.Current.CancellationToken);
+                break;
+            case "Poco":
+                await writer.InsertRowAsync(table, poco, TestContext.Current.CancellationToken);
+                break;
+            case "PocoBatch":
+                _ = await writer.InsertRowsAsync(table, new[] { new ConstraintBoundaryRow { Score = 1 }, poco }, TestContext.Current.CancellationToken);
+                break;
+            case "Named":
+                await writer.InsertRowAsync(table, named, TestContext.Current.CancellationToken);
+                break;
+            case "NamedBatch":
+                _ = await writer.InsertRowsAsync(table, new[] { new RowValues { ["Score"] = 1 }, named }, TestContext.Current.CancellationToken);
+                break;
+            case "CriteriaUpdate":
+                _ = await writer.UpdateRowsAsync(table, RowCriteria.All(), named, TestContext.Current.CancellationToken);
+                break;
+            case "PredicateUpdate":
+                _ = await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = score }, TestContext.Current.CancellationToken);
+                break;
+            default:
+                throw new ArgumentException("Unknown mutation surface.", nameof(surface));
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────
 
     private static async ValueTask<MemoryStream> CreateFreshStreamAsync(DatabaseFormat format)
@@ -1458,5 +1590,10 @@ public sealed class ColumnConstraintTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
+    }
+
+    private sealed class ConstraintBoundaryRow
+    {
+        public object Score { get; set; } = DBNull.Value;
     }
 }

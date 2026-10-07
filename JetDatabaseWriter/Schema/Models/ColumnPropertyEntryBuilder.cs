@@ -16,4 +16,10 @@ internal sealed class ColumnPropertyEntryBuilder
 
     /// <summary>Gets or sets the raw value bytes per <see cref="DataType"/>'s encoding.</summary>
     public byte[] Value { get; set; } = [];
+
+    /// <summary>Gets or sets the opaque bytes following the declared property value.</summary>
+    internal byte[] Padding { get; set; } = [];
+
+    /// <summary>Gets or sets the original name-pool index.</summary>
+    internal ushort? SourceNameIndex { get; set; }
 }

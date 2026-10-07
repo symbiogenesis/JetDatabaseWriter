@@ -84,6 +84,59 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
         return result;
     }
 
+    /// <summary>Validates all local table references, including hidden system tables and ODBC definitions.</summary>
+    /// <param name="rows">The decoded catalog rows.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask ValidateTableReferencesAsync(List<CatalogRow> rows, CancellationToken cancellationToken)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var roots = new HashSet<long>();
+        foreach (CatalogRow row in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (row.ObjectType != Constants.SystemObjects.UserTableType
+                && row.ObjectType != Constants.SystemObjects.LinkedOdbcType)
+            {
+                continue;
+            }
+
+            bool isCatalog = string.Equals(row.Name, Constants.SystemTableNames.Objects, StringComparison.OrdinalIgnoreCase);
+            if (isCatalog && row.ObjectType != Constants.SystemObjects.UserTableType)
+            {
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptCatalog,
+                    "The reserved MSysObjects name must identify the local catalog table.",
+                    new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
+            }
+
+            if (!names.Add(row.Name))
+            {
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptCatalog,
+                    "A catalog table name is ambiguous.",
+                    new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
+            }
+
+            // Negative ODBC IDs identify catalog-only links whose schema lives in LvProp.
+            // Their low bits are object identities, not physical table-definition pointers.
+            if (row.ObjectType == Constants.SystemObjects.LinkedOdbcType && row.Id < 0)
+            {
+                continue;
+            }
+
+            if (row.TDefPage < 2 || row.TDefPage >= tableDefs.PageCount
+                || (isCatalog ? row.TDefPage != 2 : row.TDefPage == 2)
+                || !roots.Add(row.TDefPage)
+                || await tableDefs.ReadTableDefAsync(row.TDefPage, cancellationToken).ConfigureAwait(false) is null)
+            {
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptCatalog,
+                    "A catalog table reference is invalid or ambiguous.",
+                    new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
+            }
+        }
+    }
+
     /// <summary>
     /// Locates a local system or user table's TDEF page number by name
     /// (case-insensitive). Returns <c>0</c> when not found.
@@ -117,7 +170,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     }
 
     /// <summary>
-    /// Returns the TDEF page of the first <c>MSysObjects</c> row whose name satisfies
+    /// Returns the TDEF page of the unique <c>MSysObjects</c> row whose name satisfies
     /// <paramref name="nameMatches"/> and that is a local table (type 1) or, with
     /// <paramref name="includeLinkedOdbc"/>, a linked ODBC table (type 4). Malformed required row values are refused.
     /// Returns <c>0</c> when none matches.
@@ -132,17 +185,24 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
             ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
 
         List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        await this.ValidateTableReferencesAsync(rows, cancellationToken).ConfigureAwait(false);
+        long match = 0;
         foreach (CatalogRow row in rows)
         {
             bool isTable = row.ObjectType == Constants.SystemObjects.UserTableType
-                || (includeLinkedOdbc && row.ObjectType == Constants.SystemObjects.LinkedOdbcType);
+                || (includeLinkedOdbc && row.ObjectType == Constants.SystemObjects.LinkedOdbcType && row.Id >= 0);
             if (isTable && row.IsDecoded && row.TDefPage > 0 && nameMatches(row.Name))
             {
-                return row.TDefPage;
+                if (match != 0)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The catalog table lookup is ambiguous.");
+                }
+
+                match = row.TDefPage;
             }
         }
 
-        return 0;
+        return match;
     }
 
     private static JetCorruptDataException CorruptRow(RowLocation location, string reason)

@@ -284,6 +284,113 @@ public class ColumnPropertyBlockTests
         Assert.Equal("Keep", ColumnPropertyBlock.Parse(bytes, format)!.FindTarget("LongerName")!.GetTextValue("Description", format));
     }
 
+    [Fact]
+    public void Rewrite_PreservesNamePoolsChunkOrderAndEntryPadding()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        using var stream = new MemoryStream();
+        WriteMagic(stream, mr2: true);
+        WriteChunk(stream, 0xABCD, [0x13, 0x37]);
+        WriteChunk(stream, 0x0080, BuildNamePoolPayload(["Unused", "Description", "Description"]));
+        byte[] payload = BuildPropertyBlockPayload("A", [new SyntheticEntry(2, ColumnType.TextType, 0, Encoding.Unicode.GetBytes("Keep"))]);
+        int entryOffset = 6 + Encoding.Unicode.GetByteCount("A");
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(entryOffset), (ushort)(payload.Length - entryOffset + 3));
+        byte[] padded = new byte[payload.Length + 3];
+        payload.CopyTo(padded, 0);
+        padded[^3] = 0xDE;
+        padded[^2] = 0xAD;
+        padded[^1] = 0xFF;
+        WriteChunk(stream, 0x0001, padded);
+        WriteChunk(stream, 0xBCDE, [0x42]);
+        WriteChunk(stream, 0x0080, BuildNamePoolPayload(["Spare", "Required"]));
+        WriteChunk(stream, 0x0002, BuildPropertyBlockPayload("B", [new SyntheticEntry(1, ColumnType.BooleanType, 1, [0xFF])]));
+        byte[] original = stream.ToArray();
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(original, format)!;
+        Assert.Equal(original, parsed.ToBytes(format));
+
+        var builder = ColumnPropertyBlockBuilder.FromBlock(parsed);
+        builder.RenameTarget("A", "Longer");
+        builder.GetOrAddTarget("B").AddText("Description", "Added", format);
+        ColumnPropertyBlock edited = ColumnPropertyBlock.Parse(builder.ToBytes(format), format)!;
+        Assert.Equal(new byte[] { 0xDE, 0xAD, 0xFF }, edited.FindTarget("Longer")!.Find("Description")!.Padding);
+        Assert.Equal("Keep", edited.FindTarget("Longer")!.GetTextValue("Description", format));
+        Assert.Equal("Added", edited.FindTarget("B")!.GetTextValue("Description", format));
+        Assert.Equal(new[] { "Unused", "Description", "Description" }, edited.SourceChunks[1].Names);
+        Assert.Equal(new[] { "Spare", "Required", "Description" }, edited.SourceChunks[4].Names);
+        Assert.Equal(original[..10], builder.ToBytes(format)![..10]);
+        Assert.Equal((ushort)0xABCD, edited.SourceChunks[0].ChunkType);
+        Assert.Equal(new byte[] { 0x13, 0x37 }, edited.UnknownChunks[0].Payload);
+        Assert.Equal((ushort)0xBCDE, edited.SourceChunks[3].ChunkType);
+        Assert.Equal(new byte[] { 0x42 }, edited.UnknownChunks[1].Payload);
+
+        ColumnDefinition before = new("A", typeof(int)) { Description = "Keep" };
+        ColumnDefinition after = new("Renamed", typeof(int)) { Description = "Changed" };
+        ColumnPropertyBlock projected = PersistedPropertyProjector.ProjectForRewrite(parsed, [before], [after], static _ => "Renamed", format);
+        Assert.Equal(new byte[] { 0xDE, 0xAD, 0xFF }, projected.FindTarget("Renamed")!.Find("Description")!.Padding);
+        Assert.Equal("Changed", projected.FindTarget("Renamed")!.GetTextValue("Description", format));
+        Assert.Equal(new[] { "Unused", "Description", "Description" }, projected.SourceChunks[1].Names);
+
+        _ = builder.RemoveTarget("Longer");
+        builder.GetOrAddTarget("New").AddByte("NewProperty", 23);
+        ColumnPropertyBlock added = ColumnPropertyBlock.Parse(builder.ToBytes(format), format)!;
+        Assert.Equal(new[] { "Unused", "Description", "Description" }, added.SourceChunks[1].Names);
+        Assert.Null(added.FindTarget("Longer"));
+        Assert.Equal(new byte[] { 23 }, added.FindTarget("New")!.Find("NewProperty")!.Value);
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyTargetBeforeNamePool_KeepsSourcePosition()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        using var stream = new MemoryStream();
+        WriteMagic(stream, mr2: true);
+        WriteChunk(stream, 0x0000, BuildPropertyBlockPayload(string.Empty, []));
+        WriteChunk(stream, 0x0080, BuildNamePoolPayload(["Unused"]));
+        byte[] original = stream.ToArray();
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(original, format)!;
+        Assert.Equal(original, parsed.ToBytes(format));
+        var edited = ColumnPropertyBlockBuilder.FromBlock(parsed);
+        edited.GetOrAddTableTarget().AddByte("NewProperty", 7);
+        Assert.Equal(new byte[] { 7 }, ColumnPropertyBlock.Parse(edited.ToBytes(format), format)!.FindTableTarget()!.Find("NewProperty")!.Value);
+    }
+
+    [Fact]
+    public void Serialize_EntryPaddingCountsTowardStoredLengthLimit()
+    {
+        var builder = new ColumnPropertyBlockBuilder();
+        builder.GetOrAddTarget("A").Entries.Add(new ColumnPropertyEntryBuilder
+        {
+            Name = "Opaque",
+            DataType = ColumnType.ByteType,
+            Value = [1],
+            Padding = new byte[ushort.MaxValue - 8],
+        });
+        Assert.Throws<InvalidOperationException>(() => builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb)));
+    }
+
+    [Fact]
+    public void AddTarget_ReusesSingleSourceNamePool()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var original = new ColumnPropertyBlockBuilder();
+        original.GetOrAddTarget("A").AddByte("First", 1);
+        var edited = ColumnPropertyBlockBuilder.FromBlock(ColumnPropertyBlock.Parse(original.ToBytes(format), format)!);
+        edited.GetOrAddTarget("B").AddByte("Second", 2);
+        ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(edited.ToBytes(format), format)!;
+        Assert.Equal(3, parsed.SourceChunks.Count);
+        Assert.Equal(new[] { "First", "Second" }, parsed.SourceChunks[0].Names);
+        Assert.Equal("B", parsed.Targets[1].Name);
+    }
+
+    [Fact]
+    public void RoundTrip_MagicOnly_KeepsPresentValue()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        byte[] blob = [(byte)'M', (byte)'R', (byte)'2', 0];
+        Assert.Equal(blob, ColumnPropertyBlock.Parse(blob, format)!.ToBytes(format));
+        Assert.Null(new ColumnPropertyBlockBuilder().ToBytes(format));
+    }
+
     private static byte[] BuildBlob(bool magicMr2, string[] namePool, SyntheticBlock[] propertyBlocks)
     {
         var ms = new MemoryStream();

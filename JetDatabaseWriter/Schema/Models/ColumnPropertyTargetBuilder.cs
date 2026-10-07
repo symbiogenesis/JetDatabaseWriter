@@ -17,6 +17,9 @@ internal sealed class ColumnPropertyTargetBuilder
     /// <summary>Gets the mutable list of property entries in emission order.</summary>
     public List<ColumnPropertyEntryBuilder> Entries { get; } = [];
 
+    /// <summary>Gets or sets the position of this target in the source chunk sequence.</summary>
+    internal int SourceChunkIndex { get; set; } = -1;
+
     /// <summary>Gets or sets the source inner header; absent for a newly created target.</summary>
     internal uint? SourceHeader { get; set; }
 

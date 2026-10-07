@@ -202,11 +202,10 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
             ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
 
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
+        await catalogRows.ValidateTableReferencesAsync(rows, cancellationToken).ConfigureAwait(false);
         var result = new List<CatalogEntry>();
         var catalogPages = new HashSet<long>();
         int rowsDecoded = 0;
-        var tableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var tablePages = new HashSet<long>();
         foreach (CatalogRow row in rows)
         {
             _ = catalogPages.Add(row.PageNumber);
@@ -224,16 +223,6 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
             if ((unchecked((uint)row.Flags) & Constants.SystemObjects.SystemTableMask) != 0)
             {
                 continue;
-            }
-
-            if (row.TDefPage < 2 || row.TDefPage >= totalPages
-                || !tableNames.Add(row.Name) || !tablePages.Add(row.TDefPage)
-                || await tableDefs.ReadTableDefAsync(row.TDefPage, cancellationToken).ConfigureAwait(false) is null)
-            {
-                throw new JetCorruptDataException(
-                    JetErrorCode.CorruptCatalog,
-                    "A catalog table reference is invalid or ambiguous.",
-                    new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
             }
 
             result.Add(new CatalogEntry(row.Name, row.TDefPage));

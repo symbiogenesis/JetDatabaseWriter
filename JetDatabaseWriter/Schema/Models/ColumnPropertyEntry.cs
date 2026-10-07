@@ -13,4 +13,11 @@ internal sealed record ColumnPropertyEntry(
     string Name,
     ColumnType DataType,
     byte DdlFlag,
-    byte[] Value);
+    byte[] Value)
+{
+    /// <summary>Gets the opaque bytes following the declared property value.</summary>
+    internal byte[] Padding { get; init; } = [];
+
+    /// <summary>Gets the original name-pool index, including duplicate names.</summary>
+    internal ushort? SourceNameIndex { get; init; }
+}

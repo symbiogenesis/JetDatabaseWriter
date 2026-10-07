@@ -66,7 +66,7 @@ Payload layout (`chunkLen − 6` bytes total):
 N       ...     entries       sequence of property entries until payload exhausted
 ```
 
-Writer parity: preserve unrecognized inner-header values verbatim. When a parsed header matches `4 + 2 + targetNameLen`, treat it as the native name-length field and recompute it if the target name changes. New targets use that DAO-observed value. Both the encoding and opaque headers survive property edits and Add/Drop/Rename rewrites; name-pool ordering, entry padding and unknown-chunk placement are not guaranteed byte-identical.
+Writer parity: preserve unrecognized inner-header values verbatim. When a parsed header matches `4 + 2 + targetNameLen`, treat it as the native name-length field and recompute it if the target name changes. New targets use that DAO-observed value. The encoding, opaque headers, entry padding, raw name-pool bytes (including unused and duplicate names), original entry indices and source chunk ordering survive property edits and Add/Drop/Rename rewrites. New names append to the target's existing pool; new targets use the final existing pool. A new pool is inserted only when no source pool can precede a target that needs names. Removing the last target retains the original name pool, and a parsed signature-only blob remains present.
 
 ### 2.5 Property entry
 
@@ -133,7 +133,7 @@ These LvProp differences were real DAO deltas, but matching them was not suffici
 
 Observed linked-table facts:
 
-- The ODBC Type 4 fixture row stores a 6,465-byte `MR2\0` `LvProp` payload with 21 parsed targets, no unknown chunks, and a table-level `NameMap` property. The parser/builder pair retains opaque inner property-block headers and has parse/build/parse structural parity. Name-pool ordering, entry padding and unknown-chunk placement may still be normalized, so this does not promise byte identity for every blob.
+- The ODBC Type 4 fixture row stores a 6,465-byte `MR2\0` `LvProp` payload with 21 parsed targets, no unknown chunks, and a table-level `NameMap` property. The parser/builder pair retains opaque inner headers, raw name-pool bytes and indices, entry padding and source chunk positions. Synthetic multi-pool and padded-entry regressions verify preservation through edits; these cases still need native DAO acceptance evidence.
 - The linked Access Type 6 comparison fixture also stores a real `MR2\0` cache in this older Access-authored Jackcess corpus, but DAO-authored Access-file and text links are separately observed to tolerate null `Lv`/`LvProp`/`LvModule`/`LvExtra` cache columns.
 - `NameMap` is `dataType = 0x0B` and remains partly opaque. The probe extracts recognizable UTF-16 string runs for human inspection, while the writer now synthesizes a conservative generated `NameMap` with table/column GUID records and source table/column names. The generated payload is parseable and structurally useful, but it is not expected to be byte-identical to Access-authored ODBC caches.
 - Linked-cache `GUID` properties appear as `dataType = 0x09` Binary with 16-byte GUID payloads, not `dataType = 0x0F`.
@@ -155,6 +155,6 @@ AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again.
 - A block that names no column is kept, unless a column of the rebuilt table takes its name.
 - A surviving column keeps every entry byte for byte, except a property the writer models (one [`JetExpressionConverter.ApplyColumn`](../../JetDatabaseWriter/Schema/JetExpressionConverter.cs) emits: `DefaultValue`, `ValidationRule`, `ValidationText`, `Description`, `Required`, `AllowZeroLength`, `Expression`, `ResultType`) whose value the rewrite changes, such as an expression that names a renamed column. That entry takes the new value in place, keeping its data type when both are text (Access stores `DefaultValue`, `ValidationRule` and `Expression` as Memo, `0x0C`) and its DDL flag.
 - An added column gets the entries `ApplyColumn` emits for its definition.
-- Unknown chunks are kept, after the property blocks.
+- Unknown chunks retain their source positions relative to surviving chunks. Existing name pools retain their raw content and placement; new names append without renumbering prior entries.
 
 The projected blob is the same on both rewrite paths: the copy that is renamed into place and the copy transplanted onto the original TDEF page.

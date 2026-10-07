@@ -142,8 +142,8 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
         catalogRows.FindSystemTableTdefPageAsync(name, includeLinkedOdbc: true, cancellationToken);
 
     /// <summary>
-    /// Finds the TDEF page for the first system table whose name satisfies <paramref name="nameMatches"/>,
-    /// such as a complex-column flat table found by its name suffix. Linked ODBC tables match too.
+    /// Finds the TDEF page for the unique table whose name satisfies <paramref name="nameMatches"/>,
+    /// such as a complex-column flat table found by its name suffix. Linked ODBC tables with local definitions match too.
     /// </summary>
     /// <param name="nameMatches">The name matches.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

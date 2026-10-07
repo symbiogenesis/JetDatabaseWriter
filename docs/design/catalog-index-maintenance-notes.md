@@ -19,6 +19,12 @@ Both now run under the normal Microsoft Access guard and pass. They remain the p
 
 ---
 
+## Read-side catalog validation
+
+Before caching a user-table list or resolving a system-table name, `CatalogRowReader` validates the local table references in `MSysObjects`. Local tables and positive-ID ODBC definitions must point to readable TDEFs inside the file, with unique roots and case-insensitively unique table names across system and user entries. Page 2 is reserved for `MSysObjects`. A missing catalog self-row can use the bootstrap page-2 fallback; a malformed or aliased self-row cannot. Predicate-based fallback lookups refuse multiple matches.
+
+Negative ODBC IDs identify catalog-only objects whose cached schema can live in `LvProp`; their low bits are not page pointers. Those objects participate in name checks but do not resolve to a local TDEF. These checks apply in both strict and lenient modes, and a failed scan cannot publish a partial user-table cache. Linked metadata and complex-row discovery still need the validation and aggregate work limits tracked under S5 in [the TODO](../todo.md).
+
 ## 1. Background
 
 `AccessWriter.CreateTableAsync` performs three operations against the live database:

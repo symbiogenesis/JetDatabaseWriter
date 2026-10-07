@@ -186,7 +186,7 @@ public sealed class PersistedPropertyProjectorTests
     }
 
     [Fact]
-    public void ProjectForRewrite_NothingLeft_ReturnsAnEmptyBlockThatWritesNoBlob()
+    public void ProjectForRewrite_DroppedLastTarget_PreservesUnusedNamePool()
     {
         var builder = new ColumnPropertyBlockBuilder();
         AddEntry(builder.GetOrAddTarget("Name"), "Caption", ColumnType.MemoType, Encoding.Unicode.GetBytes("c"));
@@ -194,7 +194,8 @@ public sealed class PersistedPropertyProjectorTests
         ColumnPropertyBlock projected = PersistedPropertyProjector.ProjectForRewrite(Parse(builder), [IdColumn, NameColumn], [IdColumn], name => name == "Name" ? null : name, Format);
 
         Assert.Empty(projected.Targets);
-        Assert.Null(projected.ToBytes(Format));
+        Assert.NotNull(projected.ToBytes(Format));
+        Assert.Equal(new[] { "Caption" }, Assert.Single(projected.SourceChunks).Names);
     }
 
     [Fact]

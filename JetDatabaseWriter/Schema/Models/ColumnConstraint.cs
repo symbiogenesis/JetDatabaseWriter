@@ -12,6 +12,8 @@ internal sealed class ColumnConstraint
 {
     public string Name { get; set; } = string.Empty;
 
+    public ColumnType StorageType { get; set; }
+
     public Type ClrType { get; set; } = typeof(object);
 
     public bool IsNullable { get; set; } = true;

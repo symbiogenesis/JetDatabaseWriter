@@ -18,6 +18,48 @@ using Xunit;
 public sealed class CatalogCorruptionTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CatalogReferences_RejectsDuplicateNamesWithDistinctRoots(bool systemAlias)
+    {
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Victim", [new ColumnDefinition("Value", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync("Other", [new ColumnDefinition("Value", typeof(int))], TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        var catalog = new CatalogRowReader(reader.Database.Format, reader.Database.TableDefs, reader.Database.OwnedPages);
+        TableDef definition = Assert.IsType<TableDef>(await reader.Database.TableDefs.ReadTableDefAsync(2, TestContext.Current.CancellationToken));
+        System.Collections.Generic.List<CatalogRow> rows = await catalog.GetCatalogRowsAsync(definition, TestContext.Current.CancellationToken);
+        int victimIndex = rows.FindIndex(static row => row.Name == "Victim");
+        int otherIndex = rows.FindIndex(static row => row.Name == "Other");
+        Assert.True(victimIndex >= 0 && otherIndex >= 0);
+        Assert.NotEqual(rows[victimIndex].TDefPage, rows[otherIndex].TDefPage);
+        rows[otherIndex] = rows[otherIndex] with
+        {
+            Name = systemAlias ? "vIcTiM" : "Victim",
+            Flags = systemAlias ? Constants.SystemObjects.SystemTableMask : 0,
+        };
+
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await catalog.ValidateTableReferencesAsync(rows, TestContext.Current.CancellationToken));
+        Assert.Equal(JetErrorCode.CorruptCatalog, failure.ErrorCode);
+    }
+
+    [Fact]
+    public async Task CatalogReferences_RejectsCatalogOnlyOdbcAliasForReservedSelfName()
+    {
+        var catalog = new CatalogRowReader(JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb), null!, null!);
+        var row = new CatalogRow(3, 0, "mSySoBjEcTs", Constants.SystemObjects.LinkedOdbcType, 0, 1, -1, 0, true);
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await catalog.ValidateTableReferencesAsync([row], TestContext.Current.CancellationToken));
+        Assert.Equal(JetErrorCode.CorruptCatalog, failure.ErrorCode);
+    }
+
+    [Theory]
     [InlineData("Id")]
     [InlineData("Name")]
     [InlineData("Type")]
@@ -70,6 +112,16 @@ public sealed class CatalogCorruptionTests
     [InlineData(false, "Reference")]
     [InlineData(true, "Duplicate")]
     [InlineData(false, "Duplicate")]
+    [InlineData(true, "SystemReference")]
+    [InlineData(false, "SystemReference")]
+    [InlineData(true, "SystemDuplicate")]
+    [InlineData(false, "SystemDuplicate")]
+    [InlineData(true, "SystemAlias")]
+    [InlineData(false, "SystemAlias")]
+    [InlineData(true, "SystemOutOfRange")]
+    [InlineData(false, "SystemOutOfRange")]
+    [InlineData(true, "SystemTdef")]
+    [InlineData(false, "SystemTdef")]
     [InlineData(true, "NullId")]
     [InlineData(false, "NullId")]
     [InlineData(true, "NullType")]
@@ -95,6 +147,7 @@ public sealed class CatalogCorruptionTests
             ColumnInfo name = Assert.IsType<ColumnInfo>(definition.FindColumn("Name"));
             ColumnInfo id = Assert.IsType<ColumnInfo>(definition.FindColumn("Id"));
             long otherPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("Other", TestContext.Current.CancellationToken)).Entry.TDefPage;
+            long victimPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("Victim", TestContext.Current.CancellationToken)).Entry.TDefPage;
             bool damaged = false;
             foreach (RowLocation location in await harness.Database.GetLiveRowLocationsAsync(2, TestContext.Current.CancellationToken))
             {
@@ -120,16 +173,34 @@ public sealed class CatalogCorruptionTests
                 {
                     int targetPage = damage switch
                     {
-                        "Duplicate" => checked((int)otherPage),
+                        "Duplicate" or "SystemDuplicate" => checked((int)otherPage),
+                        "SystemAlias" => 2,
+                        "SystemOutOfRange" => checked((int)harness.Database.Pages.PageCount),
+                        "SystemTdef" => checked((int)victimPage),
                         "Id" => 0,
                         _ => 1,
                     };
+                    if (damage.StartsWith("System", StringComparison.Ordinal) && damage != "SystemAlias")
+                    {
+                        ColumnInfo flags = Assert.IsType<ColumnInfo>(definition.FindColumn("Flags"));
+                        BinaryPrimitives.WriteInt32LittleEndian(
+                            page.AsSpan(location.RowStart + harness.Database.Format.RowFields.NumCols + flags.FixedOff, 4),
+                            unchecked((int)Constants.SystemObjects.SystemTableMask));
+                    }
+
                     BinaryPrimitives.WriteInt32LittleEndian(
                         page.AsSpan(location.RowStart + harness.Database.Format.RowFields.NumCols + id.FixedOff, 4),
                         targetPage);
                 }
 
                 await harness.Pager.WritePageAsync(location.PageNumber, page, TestContext.Current.CancellationToken);
+                if (damage == "SystemTdef")
+                {
+                    byte[] root = await harness.Database.Pages.ReadPageAsync(victimPage, TestContext.Current.CancellationToken);
+                    root[0] = 0;
+                    await harness.Pager.WritePageAsync(victimPage, root, TestContext.Current.CancellationToken);
+                }
+
                 damaged = true;
                 break;
             }
@@ -138,6 +209,17 @@ public sealed class CatalogCorruptionTests
         }
 
         stream.Position = 0;
+        await using (var lookupStream = new MemoryStream(stream.ToArray(), writable: false))
+        await using (ReaderHarness lookup = await ReaderHarness.OpenAsync(lookupStream, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                JetCorruptDataException lookupFailure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    await lookup.Services.Catalog.FindSystemTablePageAsync("Victim", TestContext.Current.CancellationToken));
+                Assert.Equal(JetErrorCode.CorruptCatalog, lookupFailure.ErrorCode);
+            }
+        }
+
         await using AccessReader reader = await AccessReader.OpenAsync(
             stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         for (int attempt = 0; attempt < 2; attempt++)

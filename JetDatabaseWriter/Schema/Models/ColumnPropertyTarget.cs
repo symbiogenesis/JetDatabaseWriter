@@ -18,6 +18,9 @@ internal sealed record ColumnPropertyTarget(
     ColumnPropertyChunkType ChunkType,
     IReadOnlyList<ColumnPropertyEntry> Entries)
 {
+    /// <summary>Gets the position of this target in the source chunk sequence.</summary>
+    internal int SourceChunkIndex { get; init; } = -1;
+
     /// <summary>Gets the four-byte inner header preserved from the source target.</summary>
     internal uint? SourceHeader { get; init; }
 
