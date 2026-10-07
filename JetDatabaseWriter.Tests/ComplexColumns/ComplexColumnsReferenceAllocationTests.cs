@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ComplexColumns;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -52,6 +53,21 @@ public sealed class ComplexColumnsReferenceAllocationTests
         {
             data.Add(TestDatabases.ComplexDataTestV2007, 7, mode);
             data.Add(TestDatabases.ComplexDataTestV2010, 8, mode);
+        }
+
+        return data;
+    }
+
+    /// <summary>Gets malformed persisted slots in every write mode.</summary>
+    public static TheoryData<int?, WriteMode> InvalidReferencesAndModes()
+    {
+        var data = new TheoryData<int?, WriteMode>();
+        foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
+        {
+            data.Add(null, mode);
+            data.Add(0, mode);
+            data.Add(-1, mode);
+            data.Add(7, mode);
         }
 
         return data;
@@ -565,6 +581,24 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task AddColumn_CachedCounterWithDuplicateInOneExistingColumn_RefusesWithoutWrite(WriteMode mode) =>
+        await AssertCachedAddColumnRefusesAsync(mode, (row, column) => (int)row[0] == 4 && column == "Files" ? 3 : (int)row[0], "Files");
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
+    public async Task AddColumn_CachedCounterWithMismatchedExistingReferences_RefusesWithoutWrite(WriteMode mode) =>
+        await AssertCachedAddColumnRefusesAsync(
+            mode,
+            (row, column) => column == "Tags" && (int)row[0] is 3 or 4 ? 7 - (int)row[0] : (int)row[0],
+            "Tags");
+
+    [Theory]
+    [MemberData(nameof(InvalidReferencesAndModes))]
+    public async Task AddColumn_CachedCounterWithInvalidExistingReference_RefusesWithoutWrite(int? reference, WriteMode mode) =>
+        await AssertCachedAddColumnRefusesAsync(mode, (row, column) => (int)row[0] == 4 && column == "Tags" ? reference : (int)row[0], "Tags");
+
+    [Theory]
+    [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
     public async Task InsertRow_SuppliedReference_IsSharedByTheRowsComplexColumns(WriteMode mode)
     {
         await using var ms = new MemoryStream();
@@ -695,6 +729,67 @@ public sealed class ComplexColumnsReferenceAllocationTests
         });
 
         return ms;
+    }
+
+    private static async Task AssertCachedAddColumnRefusesAsync(WriteMode mode, Func<object[], string, int?> slotFor, string offendingColumn)
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await CreateWriterAsync(ms))
+        {
+            await CreateDocsAsync(writer);
+            await writer.InsertRowsAsync("Docs", [.. Enumerable.Range(1, 5).Select(id => new object?[] { id, DBNull.Value, DBNull.Value })], Ct);
+        }
+
+        ms.Position = 0;
+        byte[] baseline;
+        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, WriterOptions(mode), cancellationToken: Ct))
+        {
+            // Prime the same writer's next-reference cache before corrupting
+            // persisted slots, so allocation cannot rely on a cold seed scan.
+            await harness.InsertRowAsync("Docs", [6, DBNull.Value, DBNull.Value], Ct);
+            ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", Ct);
+            DatabaseFile db = harness.Database;
+            foreach (LocatedRow row in await harness.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, Ct))
+            {
+                RowLocation location = row.Location;
+                byte[] page = await harness.Pager.ReadPageCopyAsync(location.DataPageNumber, Ct);
+                int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(db.Format.ReadRowColumnCount(page, location.RowStart));
+                foreach (ColumnInfo column in table.Definition.Columns.Where(c => c.Type is ColumnType.ComplexType))
+                {
+                    int? reference = slotFor(row.Values, column.Name);
+                    JetTypeInfo.SetNullMaskBit(page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize), column.ColNum, reference.HasValue);
+                    BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(location.RowStart + db.Format.RowFields.NumCols + column.FixedOff, 4), reference ?? 0);
+                }
+
+                await harness.Pager.WritePageAsync(location.DataPageNumber, page, Ct);
+            }
+
+            baseline = ms.ToArray();
+            await using JetTransaction? transaction = mode == WriteMode.ExplicitCommit ? await harness.BeginTransactionAsync(Ct) : null;
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await harness.Services.Transactions.RunAutoCommitAsync(
+                    _ => harness.Services.Schema.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct),
+                    Ct));
+            Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
+            Assert.Equal("Docs", error.ErrorInfo.TableName);
+            Assert.Equal(offendingColumn, error.ErrorInfo.ColumnName);
+            Assert.True(error.ErrorInfo.PageNumber > 0);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(Ct);
+            }
+        }
+
+        Assert.Equal(baseline, ms.ToArray());
+        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        Assert.Equal(6, docs.Rows.Count);
+        Assert.Equal(6, docs.ComplexAutoNumber);
+        Assert.DoesNotContain(docs.Definition.Columns, column => column.Name == "Labels");
+        Assert.All(docs.Rows, row =>
+        {
+            Assert.Equal(slotFor(row, "Files"), Slot(docs, row, "Files"));
+            Assert.Equal(slotFor(row, "Tags"), Slot(docs, row, "Tags"));
+        });
     }
 
     private static async Task CreateDocsAsync(AccessWriter writer) =>
