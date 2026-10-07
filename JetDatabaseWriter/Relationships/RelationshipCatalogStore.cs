@@ -174,6 +174,7 @@ internal sealed class RelationshipCatalogStore(
                             ColumnType.MemoType or
                             ColumnType.GuidType or
                             ColumnType.NumericType or
+                            ColumnType.BigBinaryType or
                             ColumnType.ComplexType or
                             ColumnType.DateTimeExtendedType or
                             _ => raw,

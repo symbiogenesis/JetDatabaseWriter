@@ -220,7 +220,7 @@ internal sealed class RowDecodePlan
             int start = rowFields.NumCols + col.FixedOff;
             int sz = col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
             if (sz == 0 || start + sz > rowSize
-                || col.Type == BigBinaryType && start + sz > Math.Min(layout.Eod, layout.NullMaskPos))
+                || (col.Type == BigBinaryType && start + sz > Math.Min(layout.Eod, layout.NullMaskPos)))
             {
                 return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
             }

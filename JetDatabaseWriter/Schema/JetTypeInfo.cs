@@ -88,6 +88,7 @@ internal static class JetTypeInfo
             TextType or
             OleType or
             MemoType or
+            BigBinaryType or
             _ => 0,
         };
 
@@ -107,11 +108,11 @@ internal static class JetTypeInfo
 
     /// <summary>
     /// Returns the CLR type used when projecting a TDEF column descriptor back
-    /// to a public <c>ColumnDefinition</c>. Complex-column codes (<c>Complex</c>
-    /// / <c>Attachment</c>) map to <see cref="byte"/>[] — the surface CLR type the
+    /// to a public <c>ColumnDefinition</c>. Complex columns map to
+    /// <see cref="byte"/>[] — the surface CLR type the
     /// reader resolves them to after joining the hidden flat child table — but
     /// callers that need the additional metadata (ComplexId, IsAttachment,
-    /// IsMultiValue) must still special-case those codes before reaching this
+    /// IsMultiValue) must still special-case complex columns before reaching this
     /// projection. Returns <see langword="null"/> for unknown codes.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>

@@ -60,19 +60,17 @@ internal sealed class TableReader(
 
     /// <summary>
     /// Returns <see langword="true"/> when any column flagged in
-    /// <paramref name="wantedColumns"/> has type <paramref name="type1"/> or
-    /// <paramref name="type2"/>.
+    /// <paramref name="wantedColumns"/> has type <paramref name="type"/>.
     /// </summary>
     /// <param name="columns">The columns.</param>
     /// <param name="wantedColumns">Optional bitmap selecting columns to decode.</param>
-    /// <param name="type1">The type1.</param>
-    /// <param name="type2">The type2.</param>
-    internal static bool HasWantedColumnOfType(IReadOnlyList<ColumnInfo> columns, bool[] wantedColumns, ColumnType type1, ColumnType type2)
+    /// <param name="type">The column type.</param>
+    internal static bool HasWantedColumnOfType(IReadOnlyList<ColumnInfo> columns, bool[] wantedColumns, ColumnType type)
     {
         int limit = Math.Min(columns.Count, wantedColumns.Length);
         for (int i = 0; i < limit; i++)
         {
-            if (wantedColumns[i] && (columns[i].Type == type1 || columns[i].Type == type2))
+            if (wantedColumns[i] && columns[i].Type == type)
             {
                 return true;
             }

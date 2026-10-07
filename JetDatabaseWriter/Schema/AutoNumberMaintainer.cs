@@ -81,7 +81,7 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
         long highWater = 0;
         for (int colIndex = 0; colIndex < tableDef.Columns.Count && colIndex < row.Length; colIndex++)
         {
-            if (tableDef.Columns[colIndex].Type is not (ColumnType.ComplexType))
+            if (tableDef.Columns[colIndex].Type is not ColumnType.ComplexType)
             {
                 continue;
             }

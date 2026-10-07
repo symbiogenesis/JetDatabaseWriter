@@ -71,7 +71,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             if (width != GetFixedSize(BigBinaryType)
                 || definition.SourceColumn is { IsFixed: false }
                 || definition.ForceVariableLengthStorage
-                || definition.DescriptorFlagsOverride is byte binaryFlags && (binaryFlags & Constants.ColumnDescriptorFlags.Fixed) == 0)
+                || (definition.DescriptorFlagsOverride is byte binaryFlags && (binaryFlags & Constants.ColumnDescriptorFlags.Fixed) == 0))
             {
                 throw new NotSupportedException($"Column '{definition.Name}': BIGBINARY requires its native 3992-byte fixed descriptor.");
             }

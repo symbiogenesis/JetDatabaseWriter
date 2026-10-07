@@ -921,6 +921,6 @@ internal static class IndexKeyEncoder
     {
         ByteType or IntegerType or LongIntegerType or BigIntType or MoneyType or FloatType or DoubleType
             or DateTimeType or DateTimeExtendedType or BinaryType or TextType or MemoType or GuidType or NumericType => true,
-        BooleanType or OleType or ComplexType or _ => false,
+        BooleanType or OleType or BigBinaryType or ComplexType or _ => false,
     };
 }
