@@ -47,7 +47,15 @@ public sealed class ComplexTemplateIntegrityTests
         }
 
         byte[] bytes = created.ToArray();
-        await HideTemplateAsync(bytes);
+        await DeleteTemplateCatalogRowAsync(bytes);
+        await using (var missingStream = new MemoryStream(bytes, writable: false))
+        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(missingStream, cancellationToken: Ct))
+        {
+            TableDef catalog = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(2, Ct));
+            var rows = new CatalogRowReader(reader.Database.Format, reader.Database.TableDefs, reader.Database.OwnedPages);
+            Assert.DoesNotContain(await rows.GetCatalogRowsAsync(catalog, Ct), row => row.Name == "MSysComplexType_Attachment");
+        }
+
         await using var stream = new MemoryStream();
         await stream.WriteAsync(bytes, Ct);
         await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
@@ -121,7 +129,7 @@ public sealed class ComplexTemplateIntegrityTests
         }
     }
 
-    private static async Task HideTemplateAsync(byte[] bytes)
+    private static async Task DeleteTemplateCatalogRowAsync(byte[] bytes)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
         await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
@@ -130,9 +138,9 @@ public sealed class ComplexTemplateIntegrityTests
         Assert.NotNull(catalog);
         var catalogRows = new CatalogRowReader(database.Format, database.TableDefs, database.OwnedPages);
         CatalogRow template = Assert.Single(await catalogRows.GetCatalogRowsAsync(catalog, Ct), row => row.Name == "MSysComplexType_Attachment");
-        byte[] page = await reader.ReadPageCopyAsync(template.PageNumber, Ct);
-        RowBound row = DataPageRows.EnumerateLiveRowBounds(database.Format, page).Single(bound => bound.RowIndex == template.RowIndex);
-        int offset = checked((int)(template.PageNumber * database.Format.PageSize)) + row.RowStart;
-        bytes.AsSpan(offset, database.Format.RowFields.NumCols).Clear();
+        int slotOffset = checked((int)(template.PageNumber * database.Format.PageSize))
+            + database.Format.DataPage.RowsStart + (template.RowIndex * sizeof(ushort));
+        ushort slot = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(slotOffset, sizeof(ushort)));
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(slotOffset, sizeof(ushort)), (ushort)(slot | Constants.DataPage.DeletedRowFlag));
     }
 }

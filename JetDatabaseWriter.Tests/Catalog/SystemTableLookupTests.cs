@@ -62,15 +62,12 @@ public sealed class SystemTableLookupTests
 
     /// <summary>
     /// The reader's and the writer's system-table lookups resolve <c>MSysObjects</c>
-    /// to TDEF page 2 when its catalog row is absent from a created Jet3 or Jet4 database.
+    /// to TDEF page 2 when its catalog row is absent from a created Jet3 database.
     /// </summary>
-    /// <param name="format">The database format.</param>
-    [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb)]
-    [InlineData(DatabaseFormat.Jet4Mdb)]
-    public async Task FindSystemTable_MSysObjects_WithMissingCatalogRow_ResolvesPage2(DatabaseFormat format)
+    [Fact]
+    public async Task FindSystemTable_MSysObjects_WithMissingCatalogRow_ResolvesPage2()
     {
-        byte[] bytes = await CreateDatabaseAsync(format, this.ct);
+        byte[] bytes = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, this.ct);
         Assert.False(await CorruptCatalogSelfRowAsync(bytes, this.ct));
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
@@ -87,10 +84,13 @@ public sealed class SystemTableLookupTests
     }
 
     /// <summary>A malformed present catalog self-row cannot trigger the absent-row bootstrap fallback.</summary>
-    [Fact]
-    public async Task FindSystemTable_MSysObjects_WithMalformedCatalogRow_RefusesCorruption()
+    /// <param name="format">The database format with a catalog self-row.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task FindSystemTable_MSysObjects_WithMalformedCatalogRow_RefusesCorruption(DatabaseFormat format)
     {
-        byte[] bytes = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, this.ct);
+        byte[] bytes = await CreateDatabaseAsync(format, this.ct);
         Assert.True(await CorruptCatalogSelfRowAsync(bytes, this.ct));
 
         await using (var readStream = new MemoryStream(bytes, writable: false))

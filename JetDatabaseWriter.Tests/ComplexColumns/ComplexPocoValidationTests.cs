@@ -155,7 +155,7 @@ public sealed class ComplexPocoValidationTests
             [
                 new ColumnDefinition("Id", typeof(int)) { IsAutoIncrement = true },
                 new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
-                new ColumnDefinition("Tags", typeof(string)) { IsMultiValue = true },
+                new ColumnDefinition("Tags", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(string) },
             ],
             Ct);
 

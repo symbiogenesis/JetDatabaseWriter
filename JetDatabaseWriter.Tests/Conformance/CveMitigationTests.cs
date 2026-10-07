@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 #pragma warning disable SA1312 // Variable '_' is a discard.
@@ -14,7 +15,7 @@ using Xunit;
 /// Regression tests for CVE-class vulnerabilities in the JET/MDB parsing paths.
 /// Each test corrupts a specific field in a valid database file and asserts that
 /// the reader handles the malformation gracefully: no OOM, no infinite loop,
-/// no unhandled exception escaping to the caller.
+/// deliberate corruption errors instead of uncontrolled runtime exceptions.
 /// </summary>
 /// <param name="db">The database input.</param>
 /// <remarks>
@@ -243,13 +244,17 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
     /// <summary>
     /// Corrupts the numRows field on EVERY data page (type 0x01) in the file to
     /// 2500, exceeding the physical max of (4096 − 14) / 2 = 2041 row-offset
-    /// entries. Then reads all tables through the normal API. Without the numRows
+    /// entries, including the catalog pages. Catalog discovery must deliberately
+    /// refuse malformed live metadata in both parsing modes. Without the numRows
     /// clamp in <c>EnumerateLiveRowBounds</c> / <c>ComputeRowDirectory</c>,
     /// <c>Ru16</c> reads past the page buffer and throws
     /// <see cref="ArgumentOutOfRangeException"/>.
     /// </summary>
-    [Fact]
-    public async Task ReadTable_AllDataPagesNumRowsCorrupted_DoesNotThrow()
+    /// <param name="strictParsing">Whether scalar value parsing is strict.</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ListTables_AllDataPagesNumRowsCorrupted_RefusesCorruptCatalog(bool strictParsing)
     {
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))
@@ -279,22 +284,17 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         await using var stream = new MemoryStream(corrupted, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
-            new AccessReaderOptions { UseLockFile = false },
+            new AccessReaderOptions { UseLockFile = false, StrictParsing = strictParsing },
             leaveOpen: true,
             ct);
 
-        IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
-        foreach (string table in tables)
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            int count = 0;
-            await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
-            {
-                count++;
-                if (count > 10)
-                {
-                    break;
-                }
-            }
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await reader.ListTablesAsync(ct));
+            Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+            Assert.Equal("MSysObjects", error.ErrorInfo.TableName);
+            Assert.NotNull(error.ErrorInfo.PageNumber);
         }
     }
 

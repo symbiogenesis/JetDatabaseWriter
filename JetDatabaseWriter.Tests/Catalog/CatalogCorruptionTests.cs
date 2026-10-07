@@ -118,14 +118,15 @@ public sealed class CatalogCorruptionTests
                 }
                 else
                 {
+                    int targetPage = damage switch
+                    {
+                        "Duplicate" => checked((int)otherPage),
+                        "Id" => 0,
+                        _ => 1,
+                    };
                     BinaryPrimitives.WriteInt32LittleEndian(
                         page.AsSpan(location.RowStart + harness.Database.Format.RowFields.NumCols + id.FixedOff, 4),
-                        damage switch
-                        {
-                            "Duplicate" => checked((int)otherPage),
-                            "Id" => 0,
-                            _ => 1,
-                        });
+                        targetPage);
                 }
 
                 await harness.Pager.WritePageAsync(location.PageNumber, page, TestContext.Current.CancellationToken);
