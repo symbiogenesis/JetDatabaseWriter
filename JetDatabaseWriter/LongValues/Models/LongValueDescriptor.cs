@@ -63,7 +63,7 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
 
         if (this.Length is < 0 or > MaxLength)
         {
-            throw new ArgumentOutOfRangeException(nameof(this.Length), "The native long-value length must fit its 30-bit field.");
+            throw new InvalidOperationException("The native long-value length must fit its 30-bit field.");
         }
 
         uint lengthWithFlags = checked((uint)this.Length) | ((uint)this.StorageMode << 24);

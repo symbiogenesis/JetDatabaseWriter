@@ -506,7 +506,6 @@ public sealed class LvPropReadTests
                         payloadPage[location.Start + prefixLength] ^= 0x01;
                         await harness.Pager.WritePageAsync(LongValueStore.PageNumber(descriptor.FirstDp), payloadPage, token);
                     }
-
                 }
 
                 await harness.Pager.WritePageAsync(row.Location.DataPageNumber, patched, token);

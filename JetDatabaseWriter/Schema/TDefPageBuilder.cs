@@ -513,6 +513,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             Wu16(page, namePos, ushort.MaxValue);
             namePos += 10;
         }
+
         Wi32(page, 8, Math.Max(0, namePos - 8));
         if (formatMagic)
         {

@@ -16,6 +16,15 @@ The creation locale was `;LANGID=0x0409;CP=1252;COUNTRY=0;pwd=Native123`.
 This records the installed producer, not a claim that this engine represents
 all historical Microsoft providers.
 
+## JET4 schema oracle
+
+`NativeJet4Schema.mdb` is the JET4 RC4 fixture above with an additional empty
+`Added` table (`Id LONG`, primary key), created by the same DAO engine.
+SHA-256: `F6C3B19F5C73C4D0E8E99A598FE8100489E6A517A7EB682EDAE9AE28F71EA4E7`.
+DAO reopened both original `T` and new `Added` successfully. The fixture
+pins native catalog ownership and ACL rows; library-generated schema
+compatibility remains subject to the separate DAO regression.
+
 ## JET4
 
 The password-only file has a zero unmasked encoding key; encrypted pages use

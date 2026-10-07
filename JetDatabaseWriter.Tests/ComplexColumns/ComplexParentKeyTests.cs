@@ -22,17 +22,7 @@ public sealed class ComplexParentKeyTests
     [InlineData("date")]
     public async Task AddMultiValueItem_TargetsTypedParentIdentity(string kind)
     {
-        (ColumnDefinition Column, object First, object Second) values = kind switch
-        {
-            "binary" => (new("Key", typeof(byte[]), 4), (byte[])[1], (byte[])[2]),
-            "memo" => (new("Key", typeof(string)), new string('x', 600) + "one", new string('x', 600) + "two"),
-            "null-empty" => (new("Key", typeof(string), 32), DBNull.Value, string.Empty),
-            "guid" => (new("Key", typeof(Guid)), Guid.Parse("00000000-0000-0000-0000-000000000001"), Guid.Parse("00000000-0000-0000-0000-000000000002")),
-            "decimal" => (new("Key", typeof(decimal)), 1.25m, 1.5m),
-            "date" => (new("Key", typeof(DateTime)), new DateTime(2026, 1, 1, 0, 0, 1), new DateTime(2026, 1, 1, 0, 0, 2)),
-            _ => throw new ArgumentException("Unknown test case.", nameof(kind)),
-        };
-        var (column, first, second) = values;
+        (ColumnDefinition column, object first, object second) = ParentCase(kind);
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: Ct))
         {
@@ -52,9 +42,9 @@ public sealed class ComplexParentKeyTests
     [Fact]
     public void ParentBinaryComparison_PadsOnlyNativeFixedColumns()
     {
-        ColumnInfo fixedColumn = new { Name = "Key", Type = ColumnType.BinaryType, Flags = 1, Size = 4 };
-        var variableColumn = fixedColumn with { Flags = 0 };
-        JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        ColumnInfo fixedColumn = new() { Name = "Key", Type = ColumnType.BinaryType, Flags = 1, Size = 4 };
+        ColumnInfo variableColumn = fixedColumn with { Flags = 0 };
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         Assert.Equal(
             ComplexParentKeyComparer.Encode(format, fixedColumn, (byte[])[1]),
             ComplexParentKeyComparer.Encode(format, fixedColumn, (byte[])[1, 0, 0, 0]));
@@ -76,4 +66,16 @@ public sealed class ComplexParentKeyTests
         Assert.Equal("parentRowKey", error.ParamName);
         Assert.Equal(baseline, stream.ToArray());
     }
+
+    private static (ColumnDefinition Column, object First, object Second) ParentCase(string kind)
+        => kind switch
+        {
+            "binary" => (new("Key", typeof(byte[]), 4), (byte[])[1], (byte[])[2]),
+            "memo" => (new("Key", typeof(string)), new string('x', 600) + "one", new string('x', 600) + "two"),
+            "null-empty" => (new("Key", typeof(string), 32), DBNull.Value, string.Empty),
+            "guid" => (new("Key", typeof(Guid)), Guid.Parse("00000000-0000-0000-0000-000000000001"), Guid.Parse("00000000-0000-0000-0000-000000000002")),
+            "decimal" => (new("Key", typeof(decimal)), 1.25m, 1.5m),
+            "date" => (new("Key", typeof(DateTime)), new DateTime(2026, 1, 1, 0, 0, 1), new DateTime(2026, 1, 1, 0, 0, 2)),
+            _ => throw new ArgumentException("Unknown test case.", nameof(kind)),
+        };
 }

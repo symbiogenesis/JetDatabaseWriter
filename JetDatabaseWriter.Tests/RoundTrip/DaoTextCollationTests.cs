@@ -9,6 +9,7 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Compares persisted text rules with Microsoft's Access engine.</summary>
+/// <param name="output">Receives native comparison diagnostics.</param>
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class DaoTextCollationTests(ITestOutputHelper output)
 {
