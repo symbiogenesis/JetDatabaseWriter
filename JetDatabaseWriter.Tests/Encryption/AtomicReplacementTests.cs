@@ -105,7 +105,7 @@ public sealed class AtomicReplacementTests
                     Assert.Equal(replacement, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
                 }
 
-                using var observed = new MemoryStream();
+                await using var observed = new MemoryStream();
                 await reader.CopyToAsync(observed, TestContext.Current.CancellationToken);
                 Assert.Equal(original, observed.ToArray());
                 Assert.Empty(Directory.GetFiles(directory, "*.tmp"));

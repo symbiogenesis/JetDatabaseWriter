@@ -276,7 +276,7 @@ public class ColumnPropertyBlockTests
         var builder = new ColumnPropertyBlockBuilder();
         builder.GetOrAddTarget("A").AddText("Description", "Keep", format);
         ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(builder.ToBytes(format), format)!;
-        ColumnPropertyBlockBuilder renamed = ColumnPropertyBlockBuilder.FromBlock(parsed);
+        var renamed = ColumnPropertyBlockBuilder.FromBlock(parsed);
         renamed.RenameTarget("A", "LongerName");
         byte[] bytes = renamed.ToBytes(format)!;
         int targetOffset = 4 + System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(4)) + 6;

@@ -486,7 +486,7 @@ internal sealed class RelationshipEnforcer(
                 for (int index = 0; index < columns.Length; index++)
                 {
                     object replacement = values[index] ?? DBNull.Value;
-                    var target = (row, columns[index]);
+                    (object[] Row, int Column) target = (row, columns[index]);
                     if (generationAssignments.TryGetValue(target, out object? previous) && !SameKeyValue(previous, replacement, columns[index], definition))
                     {
                         throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' has contradictory cascade assignments through relationship '{relationship.Name}' to '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });

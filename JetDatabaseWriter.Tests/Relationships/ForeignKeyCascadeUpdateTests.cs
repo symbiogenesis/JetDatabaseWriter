@@ -949,7 +949,8 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
             Assert.Equal(["5"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, name));
         }
 
-        Assert.Equal([1L, 1L, 1L, 1L], await ReadRowCountsAsync(ms, "A", "B", "C", "D"));
+        long[] counts = await ReadRowCountsAsync(ms, "A", "B", "C", "D");
+        Assert.Equal([1L, 1L, 1L, 1L], counts);
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C", "D");
     }
 
@@ -987,7 +988,8 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
             Assert.Equal(["1|3", "5|6"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, name));
         }
 
-        Assert.Equal([2L, 2L, 2L, 2L], await ReadRowCountsAsync(ms, "A", "B", "C", "D"));
+        long[] counts = await ReadRowCountsAsync(ms, "A", "B", "C", "D");
+        Assert.Equal([2L, 2L, 2L, 2L], counts);
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C", "D");
     }
 
@@ -1025,7 +1027,8 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
             }
         }
 
-        Assert.Equal([1L, 1L], await ReadRowCountsAsync(ms, "P", "C"));
+        long[] counts = await ReadRowCountsAsync(ms, "P", "C");
+        Assert.Equal([1L, 1L], counts);
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
     }
 
