@@ -173,7 +173,7 @@ public sealed class InsertDefaultSemanticsTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("Auto", cancellationToken: ct);
+        DataTable dt = await reader.ReadTableAsync("Auto", cancellationToken: ct);
         Assert.Equal(
             ["1|a", "2|b", "3|c", "4|d", "5|e", "6|f"],
             dt.AsEnumerable().Select(row => $"{row["Id"]}|{row["Name"]}").Order(StringComparer.Ordinal));
@@ -201,7 +201,7 @@ public sealed class InsertDefaultSemanticsTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("Calc", cancellationToken: ct);
+        DataTable dt = await reader.ReadTableAsync("Calc", cancellationToken: ct);
         Assert.Equal(["3|6", "4|8", "5|10"], dt.AsEnumerable().Select(row => $"{row["Score"]}|{row["Doubled"]}").Order(StringComparer.Ordinal));
     }
 
@@ -309,7 +309,7 @@ public sealed class InsertDefaultSemanticsTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
+        DataTable dt = await reader.ReadTableAsync("Table1", cancellationToken: ct);
         DataRow probe = Assert.Single(dt.AsEnumerable(), row => Equals(row["A"], "probe"));
         Assert.Equal(DBNull.Value, probe["C"]);
         Assert.Equal(DBNull.Value, probe["F"]);
@@ -336,7 +336,7 @@ public sealed class InsertDefaultSemanticsTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable products = await reader.ReadDataTableAsync("Products", cancellationToken: ct);
+        DataTable products = await reader.ReadTableAsync("Products", cancellationToken: ct);
         DataRow probe = Assert.Single(products.AsEnumerable(), row => Equals(row["ProductName"], "probe"));
         Assert.Equal(DBNull.Value, probe["UnitsInStock"]);
         Assert.Equal((short)0, probe["UnitsOnOrder"]);
@@ -445,7 +445,7 @@ public sealed class InsertDefaultSemanticsTests
     private static async Task<Dictionary<int, object>> ReadScoresAsync(MemoryStream stream)
     {
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(Table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(Table, cancellationToken: TestContext.Current.CancellationToken);
         return dt.AsEnumerable().ToDictionary(row => (int)row["Id"], row => row["Score"]);
     }
 

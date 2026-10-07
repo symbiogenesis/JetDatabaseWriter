@@ -129,7 +129,7 @@ public sealed class Jet3JumpTableDecodeTests
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.Test2V1997, new AccessReaderOptions { UseLockFile = false }, ct);
-        using DataTable table = await reader.ReadDataTableAsync("MSP_PROJECTS", cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync("MSP_PROJECTS", cancellationToken: ct);
         DataRow project = Assert.Single(table.AsEnumerable());
         Assert.Equal("Project1", project["PROJ_NAME"]);
         Assert.Equal("Standard", project["PROJ_INFO_CAL_NAME"]);
@@ -185,7 +185,7 @@ public sealed class Jet3JumpTableDecodeTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        using DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync("T", cancellationToken: ct);
         DataRow typed = Assert.Single(table.AsEnumerable());
         Assert.Equal(7, typed["Id"]);
         Assert.Equal(a, typed["A"]);

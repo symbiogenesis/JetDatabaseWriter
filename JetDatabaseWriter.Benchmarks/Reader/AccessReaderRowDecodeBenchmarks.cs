@@ -93,7 +93,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Numeric_DataTable()
     {
-        DataTable dt = await this.numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        DataTable dt = await this.numericReader.ReadTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
         return dt.Rows.Count;
     }
 
@@ -141,7 +141,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Text_DataTable()
     {
-        DataTable dt = await this.textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
+        DataTable dt = await this.textReader.ReadTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
         return dt.Rows.Count;
     }
 
@@ -254,7 +254,7 @@ public class AccessReaderRowDecodeBenchmarks
     [Benchmark]
     public async Task<int> Decode_Memo_DataTable()
     {
-        DataTable dt = await this.memoReader.ReadDataTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
+        DataTable dt = await this.memoReader.ReadTableAsync(SyntheticDatabases.MemoTable).ConfigureAwait(false);
         return dt.Rows.Count;
     }
 

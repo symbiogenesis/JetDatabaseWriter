@@ -458,7 +458,7 @@ public sealed class IndexWriterTests
         }
 
         // Row data round-trips with every column populated.
-        System.Data.DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        System.Data.DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         System.Data.DataRow r = Assert.Single(System.Data.DataTableExtensions.AsEnumerable(dt));
         for (int i = 0; i < columnCount; i++)
         {

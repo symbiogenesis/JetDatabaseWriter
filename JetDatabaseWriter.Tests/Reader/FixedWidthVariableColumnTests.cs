@@ -62,7 +62,7 @@ public sealed class FixedWidthVariableColumnTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        using DataTable typedTable = await reader.ReadDataTableAsync(
+        using DataTable typedTable = await reader.ReadTableAsync(
             tableName,
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -121,7 +121,7 @@ public sealed class FixedWidthVariableColumnTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        using DataTable typedTable = await reader.ReadDataTableAsync(
+        using DataTable typedTable = await reader.ReadTableAsync(
             tableName,
             cancellationToken: TestContext.Current.CancellationToken);
 

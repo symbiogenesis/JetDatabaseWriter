@@ -119,7 +119,7 @@ public sealed class CatalogCompletenessTests
 
         foreach (string table in listed)
         {
-            using DataTable schema = await reader.ReadDataTableAsync(table, maxRows: 0, cancellationToken: this.ct);
+            using DataTable schema = await reader.ReadTableAsync(table, maxRows: 0, cancellationToken: this.ct);
             Assert.True(schema.Columns.Count > 0, $"'{table}' read with no columns.");
         }
     }
@@ -157,7 +157,7 @@ public sealed class CatalogCompletenessTests
         await using AccessReader reader = await TestDatabases.OpenAsync(path, cancellationToken: this.ct);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(this.ct);
-        using DataTable data = await reader.ReadDataTableAsync(tableName, cancellationToken: this.ct);
+        using DataTable data = await reader.ReadTableAsync(tableName, cancellationToken: this.ct);
         IReadOnlyList<TableStat> stats = await reader.GetTableStatsAsync(this.ct);
 
         Assert.Contains(tableName, tables);
@@ -178,7 +178,7 @@ public sealed class CatalogCompletenessTests
     {
         await using AccessReader reader = await TestDatabases.OpenAsync(path, cancellationToken: this.ct);
 
-        using DataTable data = await reader.ReadDataTableAsync("Table", cancellationToken: this.ct);
+        using DataTable data = await reader.ReadTableAsync("Table", cancellationToken: this.ct);
         int rows = await CountAsync(reader.Rows("Table", cancellationToken: this.ct));
         int stringRows = await CountAsync(reader.RowsAsStrings("Table", cancellationToken: this.ct));
         long realCount = await reader.GetRealRowCountAsync("Table", this.ct);

@@ -407,7 +407,7 @@ public sealed class ComplexColumnsWriterTests
 
         // The MSysComplexColumns row for "Files" must reference a real template id
         // (>0) instead of a placeholder 0.
-        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable cx = await reader.ReadTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         DataRow row = Assert.Single(
             cx.Rows.Cast<DataRow>(),
@@ -447,7 +447,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable cx = await reader.ReadTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         DataRow row = Assert.Single(
             cx.Rows.Cast<DataRow>(),

@@ -5189,7 +5189,7 @@ internal static class LongRowSuffixProbe
         DataTable dataTable;
         try
         {
-            dataTable = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+            dataTable = await reader.ReadTableAsync(tableName, cancellationToken: ct);
         }
         catch (NotSupportedException)
         {
@@ -5762,7 +5762,7 @@ internal static class LongRowSuffixProbe
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        DataTable dataTable = await reader.ReadTableAsync("Table11", cancellationToken: ct);
         IndexPageLayout ascLayout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, ascLayout, reader.PageSize, firstPage: 112, ct);
 
@@ -5885,7 +5885,7 @@ internal static class LongRowSuffixProbe
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        DataTable dataTable = await reader.ReadTableAsync("Table11", cancellationToken: ct);
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
 
         List<IndexEntry> ascKeys = await CollectAllLeafKeysAsync(reader, layout, reader.PageSize, firstPage: 112, ct);
@@ -6564,7 +6564,7 @@ internal static class LongRowSuffixProbe
         string tableName,
         CancellationToken ct)
     {
-        DataTable dataTable = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+        DataTable dataTable = await reader.ReadTableAsync(tableName, cancellationToken: ct);
         CatalogEntry catalogEntry = await reader.GetCatalogEntryAsync(tableName, ct)
             ?? throw new InvalidOperationException($"Table '{tableName}' was not found in the catalog.");
         List<RowLocation> locations = await CollectPhysicalRowLocationsAsync(reader, catalogEntry.TDefPage, ct);

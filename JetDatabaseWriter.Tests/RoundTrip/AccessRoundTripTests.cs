@@ -258,11 +258,11 @@ public sealed class AccessRoundTripTests
                 .OrderBy(i => i.Name, StringComparer.Ordinal)
                 .ToList();
 
-            DataTable dt = await reader.ReadDataTableAsync(t, cancellationToken: ct);
+            DataTable dt = await reader.ReadTableAsync(t, cancellationToken: ct);
             snap.RowCounts[t] = dt?.Rows.Count ?? -1;
         }
 
-        DataTable rel = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: ct);
+        DataTable rel = await reader.ReadTableAsync("MSysRelationships", cancellationToken: ct);
         if (rel?.Columns.Contains("szRelationship") == true)
         {
             int n = 0;

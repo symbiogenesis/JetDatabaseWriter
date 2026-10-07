@@ -174,7 +174,7 @@ public sealed class IndexNonTextSingleColumnFixtureTests
                 DataTable dt;
                 try
                 {
-                    dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+                    dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
                 }
                 catch (NotSupportedException)
                 {

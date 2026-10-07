@@ -75,7 +75,7 @@ public sealed class OverflowRowTests
             new AccessReaderOptions { UseLockFile = false, PageReadOptimizationMode = readMode },
             this.ct);
 
-        using DataTable data = await reader.ReadDataTableAsync("Table1", cancellationToken: this.ct);
+        using DataTable data = await reader.ReadTableAsync("Table1", cancellationToken: this.ct);
         List<object[]> rows = await CollectAsync(reader.Rows("Table1", cancellationToken: this.ct));
         List<string[]> stringRows = await CollectAsync(reader.RowsAsStrings("Table1", cancellationToken: this.ct));
         using DataTable strings = await reader.ReadTableAsStringsAsync("Table1", cancellationToken: this.ct);
@@ -106,7 +106,7 @@ public sealed class OverflowRowTests
         path = (string)typeof(TestDatabases).GetField(path)!.GetValue(null)!;
         await using AccessReader reader = await TestDatabases.OpenAsync(path, cancellationToken: this.ct);
 
-        using DataTable data = await reader.ReadDataTableAsync("Table1", cancellationToken: this.ct);
+        using DataTable data = await reader.ReadTableAsync("Table1", cancellationToken: this.ct);
         Assert.Equal(expectedRows, data.Rows.Count);
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table1", this.ct);
@@ -206,7 +206,7 @@ public sealed class OverflowRowTests
                     new AccessReaderOptions { UseLockFile = false, DiagnosticsEnabled = enabled, PageReadOptimizationMode = readMode },
                     leaveOpen: true,
                     this.ct);
-                using DataTable rows = await reader.ReadDataTableAsync(TableName, cancellationToken: this.ct);
+                using DataTable rows = await reader.ReadTableAsync(TableName, cancellationToken: this.ct);
                 Assert.Equal(originalCount - 1, rows.Rows.Count);
                 listener.Flush();
                 Assert.Equal(enabled, messages.ToString().Contains("Skipped corrupt overflow row", StringComparison.Ordinal));
@@ -272,9 +272,9 @@ public sealed class OverflowRowTests
             ["RowsAsStrings"] = (await CollectAsync(reader.RowsAsStrings(TableName, cancellationToken: this.ct))).Count,
         };
 
-        using (DataTable typed = await reader.ReadDataTableAsync(TableName, cancellationToken: this.ct))
+        using (DataTable typed = await reader.ReadTableAsync(TableName, cancellationToken: this.ct))
         {
-            counts["ReadDataTableAsync"] = typed.Rows.Count;
+            counts["ReadTableAsync"] = typed.Rows.Count;
         }
 
         using (DataTable strings = await reader.ReadTableAsStringsAsync(TableName, cancellationToken: this.ct))

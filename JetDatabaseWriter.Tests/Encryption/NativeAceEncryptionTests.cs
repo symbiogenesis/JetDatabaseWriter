@@ -20,7 +20,7 @@ public sealed class NativeAceEncryptionTests
         string path = Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb");
         Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions("Native123") { UseLockFile = false }, TestContext.Current.CancellationToken);
-        DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(rows.Rows.Cast<DataRow>());
         Assert.Equal(7, row["Id"]);
         Assert.Equal("Native encrypted row", row["Label"]);
@@ -53,7 +53,7 @@ public sealed class NativeAceEncryptionTests
         Assert.Equal(original.AsSpan(0, Constants.PageSizes.Jet4).ToArray(), stream.ToArray().AsSpan(0, Constants.PageSizes.Jet4).ToArray());
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions("Native123") { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Rows.Count);
         Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["Id"], 8) && Equals(row["Label"], "Library updated native file"));
     }

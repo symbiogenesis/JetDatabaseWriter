@@ -44,7 +44,7 @@ public sealed class OverflowRowFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.OverflowTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 

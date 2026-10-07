@@ -353,10 +353,10 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
-        using DataTable details = await reader.ReadDataTableAsync("OrderDetails", cancellationToken: Ct);
+        using DataTable details = await reader.ReadTableAsync("OrderDetails", cancellationToken: Ct);
         Assert.Empty(details.Select("OrderDetailID = 1 OR OrderID = 2"));
         Assert.NotEmpty(details.Select("OrderID = 1"));
-        using DataTable orders = await reader.ReadDataTableAsync("Orders", cancellationToken: Ct);
+        using DataTable orders = await reader.ReadTableAsync("Orders", cancellationToken: Ct);
         Assert.Empty(orders.Select("OrderID = 2"));
     }
 
@@ -397,7 +397,7 @@ public sealed class ForeignKeyResolutionTests(DatabaseCache db) : IClassFixture<
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
-        using DataTable table1 = await reader.ReadDataTableAsync("Table1", cancellationToken: Ct);
+        using DataTable table1 = await reader.ReadTableAsync("Table1", cancellationToken: Ct);
         Assert.Equal(
             [11, 11, 13, 13],
             table1.AsEnumerable().Select(row => Convert.ToInt32(row["otherfk2"], CultureInfo.InvariantCulture)).Order());

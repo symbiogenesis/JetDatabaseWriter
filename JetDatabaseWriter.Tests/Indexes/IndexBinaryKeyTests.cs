@@ -69,7 +69,7 @@ public sealed class IndexBinaryKeyTests
         }
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
-        DataTable rows = await reader.ReadDataTableAsync("BinIdx", cancellationToken: this.ct);
+        DataTable rows = await reader.ReadTableAsync("BinIdx", cancellationToken: this.ct);
         Assert.Equal(4, rows.Rows.Count);
     }
 
@@ -127,7 +127,7 @@ public sealed class IndexBinaryKeyTests
         }
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
-        DataTable rows = await reader.ReadDataTableAsync("BinComposite", cancellationToken: this.ct);
+        DataTable rows = await reader.ReadTableAsync("BinComposite", cancellationToken: this.ct);
         Assert.Equal(3, rows.Rows.Count);
     }
 
@@ -168,7 +168,7 @@ public sealed class IndexBinaryKeyTests
         }
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
-        DataTable rows = await reader.ReadDataTableAsync("BinDesc", cancellationToken: this.ct);
+        DataTable rows = await reader.ReadTableAsync("BinDesc", cancellationToken: this.ct);
         Assert.Equal(3, rows.Rows.Count);
     }
 }

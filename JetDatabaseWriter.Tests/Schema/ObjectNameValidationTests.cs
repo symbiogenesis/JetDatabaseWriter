@@ -387,7 +387,7 @@ public sealed class ObjectNameValidationTests
         Assert.Equal(new[] { "T", name }.Order(StringComparer.Ordinal), (await reader.ListTablesAsync(Ct)).Order(StringComparer.Ordinal));
         Assert.Equal(["Id", name], (await reader.GetColumnMetadataAsync(name, Ct)).Select(c => c.Name));
         Assert.Contains(await reader.ListIndexesAsync(name, Ct), i => i.Name == name);
-        Assert.Equal("v", Assert.Single((await reader.ReadDataTableAsync(name, cancellationToken: Ct)).AsEnumerable())[1]);
+        Assert.Equal("v", Assert.Single((await reader.ReadTableAsync(name, cancellationToken: Ct)).AsEnumerable())[1]);
         Assert.Equal(["Id", name, added], (await reader.GetColumnMetadataAsync("T", Ct)).Select(c => c.Name));
     }
 
@@ -429,7 +429,7 @@ public sealed class ObjectNameValidationTests
             Assert.Contains(await reader.ListIndexesAsync(invalidName, Ct), i => i.Name == "ix.Lead");
             Assert.Equal(
                 ["1|one|", "2|two|20"],
-                (await reader.ReadDataTableAsync(invalidName, cancellationToken: Ct)).AsEnumerable().Select(r => $"{r["Id"]}|{r["Lead"]}|{r["Ok"]}").Order(StringComparer.Ordinal));
+                (await reader.ReadTableAsync(invalidName, cancellationToken: Ct)).AsEnumerable().Select(r => $"{r["Id"]}|{r["Lead"]}|{r["Ok"]}").Order(StringComparer.Ordinal));
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, WriteMode.Direct))
@@ -467,14 +467,14 @@ public sealed class ObjectNameValidationTests
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal("Good", Assert.Single(await reader.ListTablesAsync(Ct)));
         Assert.Equal(["Id", "Name"], (await reader.GetColumnMetadataAsync("Good", Ct)).Select(c => c.Name));
-        Assert.Equal("one", Assert.Single((await reader.ReadDataTableAsync("Good", cancellationToken: Ct)).AsEnumerable())["Name"]);
+        Assert.Equal("one", Assert.Single((await reader.ReadTableAsync("Good", cancellationToken: Ct)).AsEnumerable())["Name"]);
     }
 
     private static async Task AssertTableUnchangedAsync(MemoryStream ms)
     {
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal(["Id", "Name"], (await reader.GetColumnMetadataAsync("T", Ct)).Select(c => c.Name));
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("T", cancellationToken: Ct)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("T", cancellationToken: Ct)).AsEnumerable());
         Assert.Equal(1, row["Id"]);
         Assert.Equal("one", row["Name"]);
     }

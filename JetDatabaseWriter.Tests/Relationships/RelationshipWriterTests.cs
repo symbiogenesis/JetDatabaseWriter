@@ -46,7 +46,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rels = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
 
         DataRow[] matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
@@ -88,7 +88,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rels = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
 
         DataRow[] matching = rels.AsEnumerable()
             .Where(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal))
@@ -130,7 +130,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
         }
 
         await using AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken);
-        DataTable rels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rels = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
 
         DataRow row = rels.AsEnumerable()
             .Single(r => string.Equals(SafeString(r, "szRelationship"), relName, StringComparison.Ordinal));
@@ -263,7 +263,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
 
         ms.Position = 0;
         await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        DataTable rels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rels = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Contains(
             rels.AsEnumerable(),
             row => string.Equals(SafeString(row, "szRelationship"), "FK_C_P", StringComparison.Ordinal));

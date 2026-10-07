@@ -270,7 +270,7 @@ public sealed class IndexSurgicalNWaySplitTests
     private static async Task AssertAllRowsPresentAsync(MemoryStream stream, int expectedRows, CancellationToken ct)
     {
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: ct);
         Assert.NotNull(dt);
         Assert.Equal(expectedRows, dt.Rows.Count);
 

@@ -134,7 +134,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         Assert.Empty(infoAfter);
 
         // MSysComplexColumns no longer has the row for this column.
-        DataTable cx = await reader.ReadDataTableAsync(
+        DataTable cx = await reader.ReadTableAsync(
             "MSysComplexColumns",
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
@@ -252,7 +252,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         ComplexColumnInfo only = Assert.Single(await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken));
         Assert.Equal("FILES", only.ColumnName);
 
-        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable cx = await reader.ReadTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(
             cx.Rows.Cast<DataRow>(),
             r => string.Equals(Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture), "Files", StringComparison.OrdinalIgnoreCase));
@@ -305,7 +305,7 @@ public sealed class ComplexColumnsSchemaEvolutionTests
         IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("Tags", TestContext.Current.CancellationToken);
         Assert.Empty(info);
 
-        DataTable cx = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable cx = await reader.ReadTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(cx);
         Assert.DoesNotContain(
             cx.Rows.Cast<DataRow>(),

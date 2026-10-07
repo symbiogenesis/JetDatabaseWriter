@@ -68,8 +68,8 @@ public sealed class NativeJet4CatalogSecurityTests
             Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"),
             new AccessReaderOptions("Native123") { UseLockFile = false },
             TestContext.Current.CancellationToken);
-        using DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
-        using DataTable permissions = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable permissions = await reader.ReadTableAsync("MSysACEs", cancellationToken: TestContext.Current.CancellationToken);
         string[] owners = objects.AsEnumerable().Select(row => string.Format(
             CultureInfo.InvariantCulture,
             "OBJECT:{0}:{1}:{2}",
@@ -97,12 +97,12 @@ public sealed class NativeJet4CatalogSecurityTests
 
     private static async Task<string[]> ReadSecurityAsync(AccessReader reader)
     {
-        using DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
         DataRow table = Assert.Single(objects.AsEnumerable(), row => string.Equals(
             Convert.ToString(row["Name"], CultureInfo.InvariantCulture), "Added", StringComparison.Ordinal));
         long objectId = Convert.ToInt64(table["Id"], CultureInfo.InvariantCulture);
         string owner = Convert.ToHexString(Assert.IsType<byte[]>(table["Owner"]));
-        using DataTable permissions = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable permissions = await reader.ReadTableAsync("MSysACEs", cancellationToken: TestContext.Current.CancellationToken);
         return permissions.AsEnumerable()
             .Where(row => Convert.ToInt64(row["ObjectId"], CultureInfo.InvariantCulture) == objectId)
             .Select(row => string.Concat(

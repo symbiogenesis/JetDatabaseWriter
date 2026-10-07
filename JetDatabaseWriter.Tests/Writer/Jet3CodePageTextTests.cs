@@ -153,7 +153,7 @@ public sealed class Jet3CodePageTextTests
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal(
             ["1|one|notes one|A1", "5|five|notes five|E5"],
-            (await reader.ReadDataTableAsync("T", cancellationToken: Ct)).AsEnumerable().Select(Format).Order(StringComparer.Ordinal));
+            (await reader.ReadTableAsync("T", cancellationToken: Ct)).AsEnumerable().Select(Format).Order(StringComparer.Ordinal));
     }
 
     /// <summary>
@@ -215,7 +215,7 @@ public sealed class Jet3CodePageTextTests
 
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Contains(tableName, await reader.ListTablesAsync(Ct));
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync(tableName, cancellationToken: Ct)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync(tableName, cancellationToken: Ct)).AsEnumerable());
         Assert.Equal(everyCharacter, row[columnName]);
         Assert.Equal(everyCharacter + everyCharacter, row["Memo"]);
         Assert.Contains(await reader.ListIndexesAsync(tableName, Ct), i => i.Name == "Ix ‰");
@@ -257,7 +257,7 @@ public sealed class Jet3CodePageTextTests
         Assert.Equal(["T"], await reader.ListTablesAsync(Ct));
         Assert.Empty(await reader.ListLinkedTablesAsync(Ct));
         Assert.Equal(["Id", "Name", "Notes", "Code"], (await reader.GetColumnMetadataAsync("T", Ct)).Select(c => c.Name));
-        Assert.Equal("1|one|notes one|A1", Format(Assert.Single((await reader.ReadDataTableAsync("T", cancellationToken: Ct)).AsEnumerable())));
+        Assert.Equal("1|one|notes one|A1", Format(Assert.Single((await reader.ReadTableAsync("T", cancellationToken: Ct)).AsEnumerable())));
     }
 
     private static async Task<MemoryStream> CreateJet3TableAsync()

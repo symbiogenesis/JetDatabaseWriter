@@ -33,7 +33,7 @@ public sealed class IndexBulkInsertStressTests
     /// Bulk-inserts enough unique integer keys to force the B-tree rebuild
     /// to emit at least one intermediate (non-leaf) index page in addition
     /// to the leafs. Verifies the data round-trips through
-    /// <see cref="AccessReader.ReadDataTableAsync"/>.
+    /// <see cref="AccessReader.ReadTableAsync"/>.
     /// </summary>
     /// <param name="format">The format.</param>
     /// <remarks>
@@ -71,11 +71,11 @@ public sealed class IndexBulkInsertStressTests
             Assert.Equal(rowCount, inserted);
         }
 
-        // Reader must surface every row. (Round-trip via ReadDataTableAsync
+        // Reader must surface every row. (Round-trip via ReadTableAsync
         // confirms the data pages remain readable; the index B-tree was
         // exercised purely on the write side.)
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(rowCount, dt.Rows.Count);
         var seen = new HashSet<int>();
         foreach (DataRow r in dt.Rows)
@@ -179,7 +179,7 @@ public sealed class IndexBulkInsertStressTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
 
         (int Id, string Data)[] rows = dt.AsEnumerable()
             .Select(r => (Id: (int)r["Id"], Data: (string)r["Data"]))
@@ -239,7 +239,7 @@ public sealed class IndexBulkInsertStressTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("Big", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(rowCount - 2, dt.Rows.Count);
 
         var ids = dt.AsEnumerable().Select(r => (int)r["Id"]).ToHashSet();

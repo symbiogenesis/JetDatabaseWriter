@@ -73,7 +73,7 @@ public sealed class RenameColumnExpressionTests
         Assert.Equal("[Unit Price] + 1", Expression(meta, "Bare"));
         Assert.Equal("[Total]*2", Expression(meta, "Twice"));
 
-        DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: Ct);
+        DataTable rows = await reader.ReadTableAsync("T", cancellationToken: Ct);
         AssertPriceRow(rows, 1, total: 12.5, label: "[Price] is 2.5", bare: 3.5, twice: 25);
         AssertPriceRow(rows, 2, total: 6, label: "[Price] is 3", bare: 4, twice: 12);
         AssertPriceRow(rows, 3, total: 6, label: "[Price] is 1.5", bare: 2.5, twice: 12);
@@ -95,7 +95,7 @@ public sealed class RenameColumnExpressionTests
         Assert.Equal("[Price]*[Qty]", Expression(meta, "Subtotal"));
         Assert.Equal("[Subtotal]*2", Expression(meta, "Twice"));
 
-        DataRow row = FindRow(await reader.ReadDataTableAsync("T", cancellationToken: Ct), 2);
+        DataRow row = FindRow(await reader.ReadTableAsync("T", cancellationToken: Ct), 2);
         Assert.Equal(6d, Convert.ToDouble(row["Subtotal"], CultureInfo.InvariantCulture));
         Assert.Equal(12d, Convert.ToDouble(row["Twice"], CultureInfo.InvariantCulture));
     }
@@ -151,7 +151,7 @@ public sealed class RenameColumnExpressionTests
         Assert.Equal("3 chars", Assert.Single(meta, c => c.Name == "Sku").ValidationText);
         Assert.Equal("[Sku] & \"-n\"", Assert.Single(meta, c => c.Name == "Note").DefaultValueExpression);
 
-        DataTable rows = await reader.ReadDataTableAsync("R", cancellationToken: Ct);
+        DataTable rows = await reader.ReadTableAsync("R", cancellationToken: Ct);
         Assert.Equal(
             ["1|ABC|ABC-n", "3|XYZ|XYZ-n", "5|UVW|UVW-n"],
             rows.AsEnumerable().Select(r => $"{r["Id"]}|{r["Sku"]}|{r["Note"]}").Order(StringComparer.Ordinal));
@@ -178,7 +178,7 @@ public sealed class RenameColumnExpressionTests
         Assert.Equal("Price", meta[1].Name);
         Assert.Equal("[Price]*[Qty]", Expression(meta, "Total"));
         Assert.Equal("Price + 1", Expression(meta, "Bare"));
-        AssertPriceRow(await reader.ReadDataTableAsync("T", cancellationToken: Ct), 2, total: 6, label: "[Price] is 3", bare: 4, twice: 12);
+        AssertPriceRow(await reader.ReadTableAsync("T", cancellationToken: Ct), 2, total: 6, label: "[Price] is 3", bare: 4, twice: 12);
     }
 
     /// <summary>
@@ -196,7 +196,7 @@ public sealed class RenameColumnExpressionTests
         DataTable before;
         await using (AccessReader reader = await OpenReaderAsync(ms))
         {
-            before = await reader.ReadDataTableAsync("Table1", cancellationToken: Ct);
+            before = await reader.ReadTableAsync("Table1", cancellationToken: Ct);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, mode))
@@ -225,7 +225,7 @@ public sealed class RenameColumnExpressionTests
             Assert.Equal("[Base Pay]*0.13/[DecimalTest]", Expression(meta, "FloatTest"));
             Assert.Equal("([Base Pay]*[MonthlySalary]/[DecimalTest])*34.12342134", Expression(meta, "BigNumTest"));
 
-            DataTable after = await reader.ReadDataTableAsync("Table1", cancellationToken: Ct);
+            DataTable after = await reader.ReadTableAsync("Table1", cancellationToken: Ct);
             var mismatches = new List<string>();
             foreach (DataRow original in before.Rows)
             {
@@ -304,7 +304,7 @@ public sealed class RenameColumnExpressionTests
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", Ct);
         Assert.Equal(["Id", "Price", "Qty", "Total", "Label", "Bare", "Twice"], meta.Select(c => c.Name));
         Assert.Equal("[Price]*[Qty]", Expression(meta, "Total"));
-        DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: Ct);
+        DataTable rows = await reader.ReadTableAsync("T", cancellationToken: Ct);
         AssertPriceRow(rows, 1, total: 5, label: "[Price] is 2.5", bare: 3.5, twice: 10);
         AssertPriceRow(rows, 2, total: 6, label: "[Price] is 3", bare: 4, twice: 12);
     }
@@ -330,7 +330,7 @@ public sealed class RenameColumnExpressionTests
 
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal("\"[Price]\" & 'Price' & [Qty]", Expression(await reader.GetColumnMetadataAsync("S", Ct), "Label"));
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("S", cancellationToken: Ct)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("S", cancellationToken: Ct)).AsEnumerable());
         Assert.Equal("[Price]Price2", row["Label"]);
     }
 
@@ -366,7 +366,7 @@ public sealed class RenameColumnExpressionTests
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", Ct);
         Assert.Equal(["Id", "Price", "Qty", "Total", "Label", "Bare", "Twice"], meta.Select(c => c.Name));
         Assert.Equal("[Price]*[Qty]", Expression(meta, "Total"));
-        DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: Ct);
+        DataTable rows = await reader.ReadTableAsync("T", cancellationToken: Ct);
         AssertPriceRow(rows, 1, total: 5, label: "[Price] is 2.5", bare: 3.5, twice: 10);
         AssertPriceRow(rows, 2, total: 6, label: "[Price] is 3", bare: 4, twice: 12);
     }
@@ -400,7 +400,7 @@ public sealed class RenameColumnExpressionTests
 
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal(["Id", "Code", "Other"], (await reader.GetColumnMetadataAsync("D", Ct)).Select(c => c.Name));
-        Assert.Equal("1|ABC|x", string.Join("|", Assert.Single((await reader.ReadDataTableAsync("D", cancellationToken: Ct)).AsEnumerable()).ItemArray));
+        Assert.Equal("1|ABC|x", string.Join("|", Assert.Single((await reader.ReadTableAsync("D", cancellationToken: Ct)).AsEnumerable()).ItemArray));
     }
 
     /// <summary>
@@ -438,7 +438,7 @@ public sealed class RenameColumnExpressionTests
         Assert.Equal("\"[Code]\" & 'Code'", meta[1].DefaultValueExpression);
         Assert.Equal(
             ["1|[Code]Code", "2|[Code]Code"],
-            (await reader.ReadDataTableAsync("D", cancellationToken: Ct)).AsEnumerable().Select(r => $"{r["Id"]}|{r["Note"]}").Order(StringComparer.Ordinal));
+            (await reader.ReadTableAsync("D", cancellationToken: Ct)).AsEnumerable().Select(r => $"{r["Id"]}|{r["Note"]}").Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -457,7 +457,7 @@ public sealed class RenameColumnExpressionTests
 
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal(["Id", "Price", "Qty", "Label", "Bare"], (await reader.GetColumnMetadataAsync("T", Ct)).Select(c => c.Name));
-        DataRow row = FindRow(await reader.ReadDataTableAsync("T", cancellationToken: Ct), 2);
+        DataRow row = FindRow(await reader.ReadTableAsync("T", cancellationToken: Ct), 2);
         Assert.Equal("[Price] is 3", row["Label"]);
         Assert.Equal(4d, Convert.ToDouble(row["Bare"], CultureInfo.InvariantCulture));
     }

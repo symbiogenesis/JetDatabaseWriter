@@ -221,7 +221,7 @@ public sealed class IndexTailPageAppendTests
 
         // Row count must still be correct after the append.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows + 1, rowsRead.Rows.Count);
     }
 
@@ -266,7 +266,7 @@ public sealed class IndexTailPageAppendTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal((initialRows / 2) + 1, rowsRead.Rows.Count);
     }
 
@@ -314,7 +314,7 @@ public sealed class IndexTailPageAppendTests
             $"Expected {appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows + appends, rowsRead.Rows.Count);
     }
 
@@ -351,7 +351,7 @@ public sealed class IndexTailPageAppendTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows + 3, rowsRead.Rows.Count);
 
         // The three appended values must be present at least once each.

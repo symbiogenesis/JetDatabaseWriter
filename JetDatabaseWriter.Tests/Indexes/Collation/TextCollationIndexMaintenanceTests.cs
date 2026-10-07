@@ -57,7 +57,7 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
                         continue;
                     }
 
-                    using DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: ct);
+                    using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: ct);
                     foreach (DataRow row in rows.Rows)
                     {
                         if (row[column] is string)
@@ -148,7 +148,7 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
             }
         }
 
-        using DataTable scanned = await reader.ReadDataTableAsync("CollatedKeys", cancellationToken: ct);
+        using DataTable scanned = await reader.ReadTableAsync("CollatedKeys", cancellationToken: ct);
         Assert.Equal(2, scanned.Rows.Count);
         stream.Position = 0;
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);

@@ -47,7 +47,7 @@ public sealed class SystemTableLookupTests
         Assert.NotEmpty(catalog.Columns);
 
         await using AccessReader reader = await OpenReaderAsync(bytes, this.ct);
-        using DataTable data = await reader.ReadDataTableAsync(CatalogTable, cancellationToken: this.ct);
+        using DataTable data = await reader.ReadTableAsync(CatalogTable, cancellationToken: this.ct);
         Assert.Equal(catalog.Columns.Select(c => c.Name), data.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
         Assert.Equal(rowCount, data.Rows.Count);
         Assert.Contains(data.Rows.Cast<DataRow>(), row => Equals(row["Name"], "T1"));
@@ -127,7 +127,7 @@ public sealed class SystemTableLookupTests
         string path = (string)typeof(TestDatabases).GetField(fixture)!.GetValue(null)!;
         await using AccessReader reader = await TestDatabases.OpenAsync(path, cancellationToken: this.ct);
 
-        using DataTable data = await reader.ReadDataTableAsync(systemTable, cancellationToken: this.ct);
+        using DataTable data = await reader.ReadTableAsync(systemTable, cancellationToken: this.ct);
         Assert.NotEmpty(data.Columns);
     }
 

@@ -156,7 +156,7 @@ public sealed class ComplexColumnsFlatIndexesTests
 
         // Read the raw flat-table rows and assert the autoincrement scalar PK
         // column carries two distinct values.
-        System.Data.DataTable dt = await reader.ReadDataTableAsync(att.FlatTableName, cancellationToken: TestContext.Current.CancellationToken)
+        System.Data.DataTable dt = await reader.ReadTableAsync(att.FlatTableName, cancellationToken: TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException("Flat table not found.");
         Assert.Equal(2, dt.Rows.Count);
 
@@ -208,7 +208,7 @@ public sealed class ComplexColumnsFlatIndexesTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         ComplexColumnInfo att = Assert.Single(await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken));
-        System.Data.DataTable dt = await reader.ReadDataTableAsync(att.FlatTableName, cancellationToken: TestContext.Current.CancellationToken)
+        System.Data.DataTable dt = await reader.ReadTableAsync(att.FlatTableName, cancellationToken: TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException("Flat table not found.");
 
         var scalarsByFile = dt.Rows.Cast<System.Data.DataRow>().ToDictionary(

@@ -160,7 +160,7 @@ public sealed class DataRemanenceTests
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            DataTable table = await reader.ReadDataTableAsync(
+            DataTable table = await reader.ReadTableAsync(
                 "LongValues",
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(1, table.Rows.Count);
@@ -187,7 +187,7 @@ public sealed class DataRemanenceTests
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            DataTable table = await reader.ReadDataTableAsync(
+            DataTable table = await reader.ReadTableAsync(
                 "LongValues",
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, table.Rows.Count);
@@ -294,7 +294,7 @@ public sealed class DataRemanenceTests
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            DataTable table = await reader.ReadDataTableAsync(
+            DataTable table = await reader.ReadTableAsync(
                 "SecureLongValues",
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, table.Rows.Count);
@@ -354,7 +354,7 @@ public sealed class DataRemanenceTests
         static async Task<DataTable> ReadLearnAsync(MemoryStream stream)
         {
             await using AccessReader reader = await OpenReaderAsync(stream);
-            return await reader.ReadDataTableAsync("Learn", cancellationToken: TestContext.Current.CancellationToken);
+            return await reader.ReadTableAsync("Learn", cancellationToken: TestContext.Current.CancellationToken);
         }
     }
 

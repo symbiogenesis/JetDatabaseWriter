@@ -53,14 +53,14 @@ public class AccessReaderBenchmarks
     public async Task<DataTable?> ReadTable_100()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadDataTableAsync(this.tableName, 100);
+        return await reader.ReadTableAsync(this.tableName, 100);
     }
 
     [Benchmark]
     public async Task<DataTable?> ReadTable_1000()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadDataTableAsync(this.tableName, 1000);
+        return await reader.ReadTableAsync(this.tableName, 1000);
     }
 
     [Benchmark]
@@ -133,7 +133,7 @@ public class AccessReaderBenchmarks
     public async Task<DataTable?> ReadTable_AsDataTable()
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadDataTableAsync(this.tableName, 100);
+        return await reader.ReadTableAsync(this.tableName, 100);
     }
 
     [Benchmark]

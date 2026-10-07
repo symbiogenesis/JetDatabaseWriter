@@ -116,7 +116,7 @@ public sealed class TransactionRollbackStateTests
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Single(tables, name => string.Equals(name, "X", StringComparison.OrdinalIgnoreCase));
 
-        DataTable x = await reader.ReadDataTableAsync("X", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable x = await reader.ReadTableAsync("X", cancellationToken: TestContext.Current.CancellationToken);
         DataColumn column = Assert.Single(x.Columns.Cast<DataColumn>());
         Assert.Equal("Code", column.ColumnName);
         DataRow row = Assert.Single(x.Rows.Cast<DataRow>());
@@ -156,7 +156,7 @@ public sealed class TransactionRollbackStateTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(
             ["1|5", "2|7"],
             table.Rows.Cast<DataRow>().Select(r => $"{r["Id"]}|{r["Score"]}").Order(StringComparer.Ordinal));
@@ -199,7 +199,7 @@ public sealed class TransactionRollbackStateTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(["Id", "Name", "Other"], table.Columns.Cast<DataColumn>().Select(c => c.ColumnName));
         Assert.Equal(
             ["1|a|1", "2|b|3"],
@@ -244,7 +244,7 @@ public sealed class TransactionRollbackStateTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
         Assert.Equal(1, row["Id"]);
         Assert.Equal(7, row["Score"]);
@@ -285,7 +285,7 @@ public sealed class TransactionRollbackStateTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(
             ["1|a", "2|b"],
             table.Rows.Cast<DataRow>().Select(r => $"{r["Id"]}|{r["Name"]}").Order(StringComparer.Ordinal));

@@ -84,7 +84,7 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
         });
 
         Task readTask = Task.Run(
-            () => reader.ReadDataTableAsync(
+            () => reader.ReadTableAsync(
                 stat.Name,
                 progress: progress,
                 cancellationToken: TestContext.Current.CancellationToken).AsTask(),

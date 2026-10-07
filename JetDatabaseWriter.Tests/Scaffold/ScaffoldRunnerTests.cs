@@ -723,9 +723,6 @@ public sealed class ScaffoldRunnerTests : IDisposable
         public ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public ValueTask<System.Data.DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
-
         public ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 

@@ -170,7 +170,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
 
         var readerOptions = new AccessReaderOptions { Password = "test".AsMemory() };
         await using AccessReader reader = await AccessReader.OpenAsync(temp, readerOptions, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
@@ -198,7 +198,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
         var options = new AccessReaderOptions { Password = "test".AsMemory() };
         await using MemoryStream ms = ToStream(data);
         await using AccessReader reader = await AccessReader.OpenAsync(ms, options, leaveOpen: true, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync("Product", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("Product", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         Assert.True(dt.Rows.Count > 0, "RC4-decrypted table should contain rows");

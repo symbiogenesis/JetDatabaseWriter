@@ -84,7 +84,7 @@ public sealed class NativeBigBinaryTests
         Assert.Equal(typeof(byte[]), metadata.ClrType);
         Assert.True(metadata.IsFixedLength);
         Assert.Equal(ColumnSize.FromBytes(NativeWidth), metadata.Size);
-        using DataTable table = await reader.ReadDataTableAsync("MSysAccessObjects", cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync("MSysAccessObjects", cancellationToken: ct);
         Assert.Equal(expected, table.AsEnumerable().Select(row => Assert.IsType<byte[]>(row["Data"])), ByteArrayComparer.Instance);
         Assert.Equal(expected, (await reader.Rows("MSysAccessObjects", cancellationToken: ct).ToListAsync(ct)).Select(row => Assert.IsType<byte[]>(row[0])), ByteArrayComparer.Instance);
         Assert.Equal(expected.Select(Convert.ToHexString), (await reader.RowsAsStrings("MSysAccessObjects", cancellationToken: ct).ToListAsync(ct)).Select(row => row[0]));
@@ -118,7 +118,7 @@ public sealed class NativeBigBinaryTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        using DataTable table = await reader.ReadDataTableAsync("Samples", cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync("Samples", cancellationToken: ct);
         DataRow row = Assert.Single(table.AsEnumerable());
         Assert.Equal(payload, Assert.IsType<byte[]>(row["Payload"]));
         Assert.Equal(7, row["Id"]);
@@ -171,7 +171,7 @@ public sealed class NativeBigBinaryTests
         stream.Position = 0;
         await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct))
         {
-            using DataTable table = await reader.ReadDataTableAsync("Samples", cancellationToken: ct);
+            using DataTable table = await reader.ReadTableAsync("Samples", cancellationToken: ct);
             DataRow row = Assert.Single(table.AsEnumerable());
             Assert.Equal(7, row["Id"]);
             Assert.Equal(DBNull.Value, row["Data"]);

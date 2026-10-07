@@ -218,7 +218,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         int survivors = childIds.Count(id => parentIds[id % parentIds.Count] != parentIds[0]);
         Assert.True(survivors < childIds.Count);
         await using AccessReader reader = await AccessReader.OpenAsync(stream, ReaderOptions, leaveOpen: true, this.ct);
-        Assert.Equal(survivors, (await reader.ReadDataTableAsync(Child, cancellationToken: this.ct)).Rows.Count);
+        Assert.Equal(survivors, (await reader.ReadTableAsync(Child, cancellationToken: this.ct)).Rows.Count);
     }
 
     /// <summary>
@@ -304,7 +304,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(stream, ReaderOptions, leaveOpen: true, this.ct);
-        Assert.Equal(seedRows + 9, (await reader.ReadDataTableAsync(Child, cancellationToken: this.ct)).Rows.Count);
+        Assert.Equal(seedRows + 9, (await reader.ReadTableAsync(Child, cancellationToken: this.ct)).Rows.Count);
     }
 
     [Fact]
@@ -362,7 +362,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         await using (AccessReader reader = await AccessReader.OpenAsync(stream, ReaderOptions, leaveOpen: true, this.ct))
         {
             Assert.Equal(relationshipsBefore - 1, (await reader.ListRelationshipsAsync(this.ct)).Count);
-            Assert.Equal(4, (await reader.ReadDataTableAsync("Table1", cancellationToken: this.ct)).Rows.Count);
+            Assert.Equal(4, (await reader.ReadTableAsync("Table1", cancellationToken: this.ct)).Rows.Count);
         }
     }
 

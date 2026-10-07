@@ -20,7 +20,7 @@ public sealed class NativeJet3EncryptionTests
         string path = Path.Combine(TestDatabases.EncryptedRoot, "UpstreamJet3Rc4.mdb");
         Assert.Equal(AccessEncryptionFormat.Jet3Rc4, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
-        DataTable rows = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Rows.Count);
         Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["ID"], 1) && Equals(row["col1"], "hello") && Equals(row["col2"], 0));
         Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["ID"], 2) && Equals(row["col1"], "world") && Equals(row["col2"], 42));
@@ -42,7 +42,7 @@ public sealed class NativeJet3EncryptionTests
         Assert.Equal(original.AsSpan(0, Constants.PageSizes.Jet3).ToArray(), stream.ToArray().AsSpan(0, Constants.PageSizes.Jet3).ToArray());
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        DataTable rows = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(3, rows.Rows.Count);
         Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["col1"], "native write"));
     }
@@ -71,7 +71,7 @@ public sealed class NativeJet3EncryptionTests
 
         await using var stream = new MemoryStream(fixture, writable: false);
         await using AccessReader accepted = await AccessReader.OpenAsync(stream, new AccessReaderOptions(password) { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        DataTable rows = await accepted.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await accepted.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Rows.Count);
     }
 }

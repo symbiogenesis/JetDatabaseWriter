@@ -70,7 +70,7 @@ public sealed class TypePromotionFixtureTests(DatabaseCache db) : IClassFixture<
         long totalRows = 0;
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadTableAsync(
                 table, cancellationToken: TestContext.Current.CancellationToken);
             totalRows += dt.Rows.Count;
         }

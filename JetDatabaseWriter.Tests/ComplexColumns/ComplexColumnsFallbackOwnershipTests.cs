@@ -53,7 +53,7 @@ public sealed class ComplexColumnsFallbackOwnershipTests
 
         await DamageCatalogAsync(stream, damage);
         await using AccessReader reader = await ComplexColumnTestSupport.OpenReaderAsync(stream);
-        using DataTable table = await reader.ReadDataTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
+        using DataTable table = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
         object cell = Assert.Single(table.Rows.Cast<DataRow>())["Files"];
         if (damage is "None" or "DescriptorOnly")
         {
@@ -85,7 +85,7 @@ public sealed class ComplexColumnsFallbackOwnershipTests
 
         await DamageCatalogAsync(stream, "TDEF");
         await using AccessReader reader = await ComplexColumnTestSupport.OpenReaderAsync(stream);
-        using DataTable table = await reader.ReadDataTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
+        using DataTable table = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
         Assert.IsType<DBNull>(Assert.Single(table.Rows.Cast<DataRow>())["Files"]);
     }
 

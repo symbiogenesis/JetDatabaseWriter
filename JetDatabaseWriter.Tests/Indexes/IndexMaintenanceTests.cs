@@ -400,7 +400,7 @@ public sealed class IndexMaintenanceTests
         Assert.Equal(3, await FindMaxLeafEntryCountAsync(stream, format, "T"));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(3, rowsRead.Rows.Count);
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", this.ct);
@@ -450,7 +450,7 @@ public sealed class IndexMaintenanceTests
 
         // Rows still readable via table scan (the reader does not consume the
         // index, but the rows-on-disk count is the index's truth source).
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(rowCount, rowsRead.Rows.Count);
     }
 
@@ -489,7 +489,7 @@ public sealed class IndexMaintenanceTests
         Assert.Equal(0x03, FindLatestRootPageType(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows + 1, rowsRead.Rows.Count);
     }
 
@@ -522,7 +522,7 @@ public sealed class IndexMaintenanceTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows - 1, rowsRead.Rows.Count);
     }
 
@@ -617,7 +617,7 @@ public sealed class IndexMaintenanceTests
 
         // Net: InitialRows + 1 insert − 1 delete = InitialRows.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rowsRead = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows, rowsRead.Rows.Count);
     }
 

@@ -51,7 +51,7 @@ public sealed class IndexLongBinaryKeyTests
         }
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
-        DataTable dt = await reader.ReadDataTableAsync("LongBin", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("LongBin", cancellationToken: this.ct);
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
         byte[] actual = Assert.IsType<byte[]>(row["Bin"]);
         Assert.Equal(payload, actual);
@@ -97,7 +97,7 @@ public sealed class IndexLongBinaryKeyTests
         }
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
-        DataTable dt = await reader.ReadDataTableAsync("MultiBin", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("MultiBin", cancellationToken: this.ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
         // Verify each payload was stored and round-tripped correctly.
@@ -148,7 +148,7 @@ public sealed class IndexLongBinaryKeyTests
         }
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
-        DataTable dt = await reader.ReadDataTableAsync("DescLongBin", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("DescLongBin", cancellationToken: this.ct);
         Assert.Equal(payloads.Length, dt.Rows.Count);
 
         foreach (byte[] expected in payloads)
@@ -216,7 +216,7 @@ public sealed class IndexLongBinaryKeyTests
         }
 
         await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, this.ct);
-        DataTable dt = await reader.ReadDataTableAsync("CompLongBin", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("CompLongBin", cancellationToken: this.ct);
         Assert.Equal(3, dt.Rows.Count);
     }
 

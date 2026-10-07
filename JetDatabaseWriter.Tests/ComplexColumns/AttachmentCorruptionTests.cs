@@ -67,11 +67,11 @@ public sealed class AttachmentCorruptionTests
         if (strict)
         {
             await Assert.ThrowsAsync<InvalidDataException>(async () =>
-                await reader.ReadDataTableAsync("Docs", cancellationToken: Ct));
+                await reader.ReadTableAsync("Docs", cancellationToken: Ct));
         }
         else
         {
-            using System.Data.DataTable table = await reader.ReadDataTableAsync("Docs", cancellationToken: Ct);
+            using System.Data.DataTable table = await reader.ReadTableAsync("Docs", cancellationToken: Ct);
             Assert.Equal(DBNull.Value, table.Rows[0]["Files"]);
         }
     }

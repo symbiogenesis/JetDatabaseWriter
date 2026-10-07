@@ -121,7 +121,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            DataTable children = await reader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
+            DataTable children = await reader.ReadTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(12, (int)Assert.Single(children.AsEnumerable())["Id"]);
         }
     }
@@ -163,7 +163,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            DataTable children = await reader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
+            DataTable children = await reader.ReadTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(12, (int)Assert.Single(children.AsEnumerable())["Id"]);
         }
     }
@@ -246,7 +246,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
-            DataTable rows = await reader.ReadDataTableAsync(tree, cancellationToken: TestContext.Current.CancellationToken);
+            DataTable rows = await reader.ReadTableAsync(tree, cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(4, (int)Assert.Single(rows.AsEnumerable())["Id"]);
         }
     }
@@ -546,7 +546,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
 
         stream.Position = 0;
         await using AccessReader finalReader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, Password = password.AsMemory() }, leaveOpen: true, TestContext.Current.CancellationToken);
-        using DataTable children = await finalReader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable children = await finalReader.ReadTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(12, Assert.Single(children.AsEnumerable())["Id"]);
     }
 
@@ -575,7 +575,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        Assert.Empty((await reader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken)).Rows);
+        Assert.Empty((await reader.ReadTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken)).Rows);
     }
 
     /// <summary>
@@ -620,7 +620,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
             relationshipsBefore = (await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken)).Count;
-            rowsBefore = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count;
+            rowsBefore = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count;
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -650,7 +650,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
             Assert.Equal(relationshipsBefore, (await reader.ListRelationshipsAsync(TestContext.Current.CancellationToken)).Count);
-            Assert.Equal(rowsBefore, (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count);
+            Assert.Equal(rowsBefore, (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows.Count);
         }
     }
 
@@ -927,14 +927,14 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable children = await reader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable children = await reader.ReadTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(RemainingChildIds, children.AsEnumerable().Select(r => (int)r["Id"]).Order().ToArray());
     }
 
     private static async ValueTask<int[]> ReadChildIdsAsync(MemoryStream stream)
     {
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable children = await reader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable children = await reader.ReadTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
         return [.. children.AsEnumerable().Select(r => (int)r["Id"]).Order()];
     }
 

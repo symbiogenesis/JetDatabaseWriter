@@ -51,7 +51,7 @@ public sealed class DaoNativeEncryptionTests
         Assert.Contains("ROWS=2", result.StdOut, StringComparison.Ordinal);
         Assert.Contains("ADDED=1", result.StdOut, StringComparison.Ordinal);
         await using AccessReader reader = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions("Native123") { UseLockFile = false }, TestContext.Current.CancellationToken);
-        using DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         DataRow updated = Assert.Single(rows.Select("Id = 8"));
         Assert.Equal("DAO updated", updated["Label"]);
     }

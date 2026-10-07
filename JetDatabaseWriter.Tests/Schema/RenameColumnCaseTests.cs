@@ -84,7 +84,7 @@ public sealed class RenameColumnCaseTests
         Assert.Equal("IX_Code", index.Name);
         Assert.Equal("CODE", Assert.Single(index.Columns).Name);
 
-        DataTable rows = await reader.ReadDataTableAsync("T", cancellationToken: Ct);
+        DataTable rows = await reader.ReadTableAsync("T", cancellationToken: Ct);
         Assert.Equal("CODE", rows.Columns[1].ColumnName);
         Assert.Equal(
             ["1|ABC|ABC-n", "2|XYZ|XYZ-n", "5|UVW|UVW-n"],
@@ -135,7 +135,7 @@ public sealed class RenameColumnCaseTests
         Assert.Equal("[PRICE]*2", meta[2].CalculationExpression);
         Assert.Equal("[PRICE] + 1", meta[3].CalculationExpression);
 
-        DataTable rows = await reader.ReadDataTableAsync("C", cancellationToken: Ct);
+        DataTable rows = await reader.ReadTableAsync("C", cancellationToken: Ct);
         Assert.Equal(
             ["1|2.5|5|3.5", "2|3|6|4"],
             rows.AsEnumerable().Select(r => $"{r["Id"]}|{Number(r["PRICE"])}|{Number(r["Twice"])}|{Number(r["Bare"])}").Order(StringComparer.Ordinal));
@@ -169,7 +169,7 @@ public sealed class RenameColumnCaseTests
 
         await using AccessReader reader = await OpenReaderAsync(ms);
         Assert.Equal(["Id", "code", "Note"], (await reader.GetColumnMetadataAsync("T", Ct)).Select(c => c.Name));
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("T", cancellationToken: Ct)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("T", cancellationToken: Ct)).AsEnumerable());
         Assert.Equal("1|ABC|ABC-n", string.Join("|", row.ItemArray));
     }
 
@@ -219,7 +219,7 @@ public sealed class RenameColumnCaseTests
             IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("T", Ct);
             Assert.Equal(["Id", "code", "Note"], meta.Select(c => c.Name));
             Assert.Equal("Len([code]) = 3", meta[1].ValidationRuleExpression);
-            DataRow row = Assert.Single((await reader.ReadDataTableAsync("T", cancellationToken: Ct)).AsEnumerable());
+            DataRow row = Assert.Single((await reader.ReadTableAsync("T", cancellationToken: Ct)).AsEnumerable());
             Assert.Equal("1|ABC|ABC-n", string.Join("|", row.ItemArray));
         }
     }

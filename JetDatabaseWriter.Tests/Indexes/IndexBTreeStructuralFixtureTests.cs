@@ -103,7 +103,7 @@ public sealed class IndexBTreeStructuralFixtureTests
         // whose entry count equals the table row count. Jackcess hard-codes
         // the row count (512) — we instead read it from the table so the
         // assertion stays meaningful even if the fixture is regenerated.
-        DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
+        DataTable dt = await reader.ReadTableAsync("Table1", cancellationToken: ct);
         int rowCount = dt.Rows.Count;
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table1", ct);
@@ -344,7 +344,7 @@ public sealed class IndexBTreeStructuralFixtureTests
             IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
             int pageSize = reader.PageSize;
 
-            DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: ct);
+            DataTable dt = await reader.ReadTableAsync("Table1", cancellationToken: ct);
             Assert.Equal(rowCount, dt.Rows.Count);
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("Table1", ct);

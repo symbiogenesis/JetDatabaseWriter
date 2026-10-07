@@ -277,7 +277,7 @@ public sealed class NamedRowAndCriteriaTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        return await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        return await reader.ReadTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     private static async Task<DataRow> SingleRowAsync(MemoryStream ms, string filter)

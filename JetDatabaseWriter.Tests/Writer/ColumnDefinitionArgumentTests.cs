@@ -91,7 +91,7 @@ public sealed class ColumnDefinitionArgumentTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         Assert.Equal(["Existing"], await reader.ListTablesAsync(Ct));
-        DataTable table = await reader.ReadDataTableAsync("Existing", cancellationToken: Ct);
+        DataTable table = await reader.ReadTableAsync("Existing", cancellationToken: Ct);
         Assert.Equal("Id", Assert.Single(table.Columns.Cast<DataColumn>()).ColumnName);
         Assert.Equal(1, Assert.Single(table.AsEnumerable())["Id"]);
     }

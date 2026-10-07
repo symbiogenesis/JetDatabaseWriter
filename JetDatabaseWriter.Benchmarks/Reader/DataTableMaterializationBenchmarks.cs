@@ -45,7 +45,7 @@ public class DataTableMaterializationBenchmarks
     [Benchmark]
     public async Task<int> Numeric_PublicReadDataTable()
     {
-        using DataTable table = await this.numericReader.ReadDataTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
+        using DataTable table = await this.numericReader.ReadTableAsync(SyntheticDatabases.NumericTable).ConfigureAwait(false);
         return table.Rows.Count;
     }
 
@@ -95,7 +95,7 @@ public class DataTableMaterializationBenchmarks
     [Benchmark]
     public async Task<int> Text_PublicReadDataTable()
     {
-        using DataTable table = await this.textReader.ReadDataTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
+        using DataTable table = await this.textReader.ReadTableAsync(SyntheticDatabases.TextTable).ConfigureAwait(false);
         return table.Rows.Count;
     }
 

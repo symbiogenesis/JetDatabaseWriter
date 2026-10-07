@@ -370,7 +370,7 @@ public sealed class LongValueWriteBackTests
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false, StrictParsing = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
         DataRow first = table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 1);
         DataRow second = table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 2);
         Assert.Equal(DBNull.Value, first["Body"]);
@@ -546,7 +546,7 @@ public sealed class LongValueWriteBackTests
         await using (AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await Assert.ThrowsAsync<InvalidDataException>(async () =>
-                await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken));
+                await reader.ReadTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken));
         }
 
         return ms;
@@ -615,7 +615,7 @@ public sealed class LongValueWriteBackTests
     {
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
         return Assert.IsType<byte[]>(table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == id)[column]);
     }
 }

@@ -141,7 +141,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -192,7 +192,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
         Assert.NotNull(isRich.CalculationExpression);
         Assert.True(isRich.CalculatedResultType > 0);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -227,7 +227,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.CalcFieldTestV2010, TestContext.Current.CancellationToken);
 
-        DataTable typed = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable typed = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(expected, typed.AsEnumerable().Select(r => (string)r["AllNames"]).Order(StringComparer.Ordinal));
 
         DataTable strings = await reader.ReadTableAsStringsAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
@@ -271,7 +271,7 @@ public sealed class CalculatedColumnFixtureTests(DatabaseCache db) : IClassFixtu
             });
         }
 
-        DataTable dt = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotEqual(0, dt.Rows.Count);
 
         int compared = 0;

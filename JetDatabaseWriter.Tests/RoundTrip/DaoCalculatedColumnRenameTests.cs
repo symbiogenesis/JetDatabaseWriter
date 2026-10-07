@@ -173,7 +173,7 @@ public sealed class DaoCalculatedColumnRenameTests
         Assert.Equal("[Pay]/12", Assert.Single(meta, c => c.Name == "MonthlySalary").CalculationExpression);
         Assert.Equal("[Pay]>100000", Assert.Single(meta, c => c.Name == "IsRich").CalculationExpression);
 
-        DataTable rows = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         DataRow edited = Assert.Single(rows.AsEnumerable(), r => Convert.ToInt32(r["ID"], CultureInfo.InvariantCulture) == 1);
         Assert.Equal(100m, Convert.ToDecimal(edited["MonthlySalary"], CultureInfo.InvariantCulture));
         Assert.Equal(4, rows.Rows.Count);

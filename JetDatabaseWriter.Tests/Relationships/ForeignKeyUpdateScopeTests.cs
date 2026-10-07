@@ -178,7 +178,7 @@ public sealed class ForeignKeyUpdateScopeTests(DatabaseCache db) : IClassFixture
 
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
-        using DataTable after = await reader.ReadDataTableAsync(table, cancellationToken: Ct);
+        using DataTable after = await reader.ReadTableAsync(table, cancellationToken: Ct);
         Assert.Equal(rows, after.Rows.Count);
         Assert.All(
             after.AsEnumerable(),

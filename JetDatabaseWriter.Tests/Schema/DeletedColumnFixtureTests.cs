@@ -102,7 +102,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
 
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadTableAsync(
                 table, cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
         }
@@ -126,7 +126,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
         {
             IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
-            DataTable dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadTableAsync(
                 table, maxRows: 1, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(meta.Count, dt.Columns.Count);
@@ -225,7 +225,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
 
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadTableAsync(
                 table, cancellationToken: TestContext.Current.CancellationToken);
 
             int rowsCount = 0;
@@ -248,7 +248,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
     }
 
     /// <summary>
-    /// Values decoded via <c>Rows()</c> match those from <c>ReadDataTableAsync</c>,
+    /// Values decoded via <c>Rows()</c> match those from <c>ReadTableAsync</c>,
     /// verifying no column misalignment from the stale-row fix.
     /// </summary>
     /// <param name="path">Path to the file.</param>
@@ -262,7 +262,7 @@ public sealed class DeletedColumnFixtureTests(DatabaseCache db) : IClassFixture<
 
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadTableAsync(
                 table, cancellationToken: TestContext.Current.CancellationToken);
 
             var rowsList = new List<object[]>();

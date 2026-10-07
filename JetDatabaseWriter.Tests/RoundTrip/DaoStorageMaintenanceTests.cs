@@ -76,7 +76,7 @@ public sealed class DaoStorageMaintenanceTests
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.Contains("SM_FreshBootstrap", tables);
 
-        DataTable table = await reader.ReadDataTableAsync("SM_FreshBootstrap", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("SM_FreshBootstrap", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, table.Rows.Count);
         Assert.Contains(
             table.AsEnumerable(),
@@ -121,7 +121,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable writerRows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable writerRows = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, writerRows.Rows.Count);
         Assert.Contains(
             writerRows.AsEnumerable(),
@@ -131,7 +131,7 @@ public sealed class DaoStorageMaintenanceTests
         await AssertSystemTablesAreHiddenFromUserTablesAsync(reader, expectedHiddenSystemTables, TestContext.Current.CancellationToken);
         await AssertCatalogContainsSystemTablesAsync(reader, expectedHiddenSystemTables, TestContext.Current.CancellationToken);
 
-        DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable relationships = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Contains("szRelationship", relationships.Columns.Cast<DataColumn>().Select(column => column.ColumnName));
         Assert.True(relationships.Rows.Count > 0, "Northwind should contain Access-authored relationship rows.");
     }
@@ -156,7 +156,7 @@ public sealed class DaoStorageMaintenanceTests
         await AssertSystemTablesAreHiddenFromUserTablesAsync(reader, expectedHiddenSystemTables, TestContext.Current.CancellationToken);
         await AssertCatalogContainsSystemTablesAsync(reader, expectedHiddenSystemTables, TestContext.Current.CancellationToken);
 
-        DataTable complexColumns = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable complexColumns = await reader.ReadTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Contains("FlatTableID", complexColumns.Columns.Cast<DataColumn>().Select(column => column.ColumnName));
 
         IReadOnlyList<string> attachmentTemplateColumns = (await reader.GetColumnMetadataAsync("MSysComplexType_Attachment", TestContext.Current.CancellationToken))
@@ -250,7 +250,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(Jet3IndexRows, rows.Rows.Count);
         Assert.DoesNotContain(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 17);
         Assert.Contains(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == Jet3IndexRows + 1);
@@ -378,7 +378,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable text = await reader.ReadDataTableAsync(textTable, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable text = await reader.ReadTableAsync(textTable, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(textRows.Length, text.Rows.Count);
         foreach (object[] expected in textRows)
         {
@@ -386,7 +386,7 @@ public sealed class DaoStorageMaintenanceTests
             Assert.Equal<object?>(expected, actual.ItemArray);
         }
 
-        DataTable fixedRows = await reader.ReadDataTableAsync(longTable, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable fixedRows = await reader.ReadTableAsync(longTable, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(longRows.Length, fixedRows.Rows.Count);
         foreach (object[] expected in longRows)
         {
@@ -468,7 +468,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable parent = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable parent = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, parent.Rows.Count);
         Assert.Contains(parent.AsEnumerable(), row => Convert.ToInt32(row["ID"], CultureInfo.InvariantCulture) == 1);
         Assert.Contains(parent.AsEnumerable(), row => Convert.ToInt32(row["ID"], CultureInfo.InvariantCulture) == 2);
@@ -580,7 +580,7 @@ public sealed class DaoStorageMaintenanceTests
             session.CompactedPath,
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
-        DataTable table = await reader.ReadDataTableAsync("SM_SecureErase", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("SM_SecureErase", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, table.Rows.Count);
 
         DataRow replacementRow = table.AsEnumerable().Single(row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 2);
@@ -700,7 +700,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(AdvancedIndexRows, rows.Rows.Count);
         Assert.DoesNotContain(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 17);
         Assert.Contains(rows.AsEnumerable(), row => Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture) == 301);
@@ -806,10 +806,10 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable wideChildRows = await reader.ReadDataTableAsync(wideChild, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable wideChildRows = await reader.ReadTableAsync(wideChild, cancellationToken: TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> parentIndexes = await reader.ListIndexesAsync(parent, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(wideChild, TestContext.Current.CancellationToken);
-        DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable relationships = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(1, wideChildRows.Rows.Count);
         AssertRenamedRelationshipSurvived(relationships, parent, parentIndexes, oldRelationship, newRelationship, requireNamedIndex: false);
@@ -900,7 +900,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable child = await reader.ReadDataTableAsync(indexedChild, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable child = await reader.ReadTableAsync(indexedChild, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(IndexRows, child.Rows.Count);
 
         IReadOnlyList<IndexMetadata> childIndexes = await reader.ListIndexesAsync(indexedChild, TestContext.Current.CancellationToken);
@@ -911,7 +911,7 @@ public sealed class DaoStorageMaintenanceTests
         Assert.DoesNotContain(wideParentIndexes, index => index.Kind == IndexKind.ForeignKey || index.Name == wideRelationship);
         Assert.DoesNotContain(wideChildIndexes, index => index.Kind == IndexKind.ForeignKey || index.Name == wideRelationship);
 
-        DataTable relationships = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable relationships = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         Assert.DoesNotContain(relationships.AsEnumerable(), row => string.Equals(SafeString(row, "szRelationship"), wideRelationship, StringComparison.Ordinal));
     }
 
@@ -1139,7 +1139,7 @@ public sealed class DaoStorageMaintenanceTests
         IEnumerable<string> systemTables,
         CancellationToken cancellationToken)
     {
-        DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: cancellationToken);
         foreach (string systemTable in systemTables)
         {
             Assert.Contains(catalog.AsEnumerable(), row => string.Equals(SafeString(row, "Name"), systemTable, StringComparison.OrdinalIgnoreCase));
@@ -1186,7 +1186,7 @@ public sealed class DaoStorageMaintenanceTests
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken: cancellationToken))
         {
-            DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+            DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: cancellationToken);
             DataRow row = objects.AsEnumerable().Single(r => string.Equals(SafeString(r, "Name"), tableName, StringComparison.Ordinal));
             tdefPageNumber = Convert.ToInt32(row["Id"], CultureInfo.InvariantCulture);
         }

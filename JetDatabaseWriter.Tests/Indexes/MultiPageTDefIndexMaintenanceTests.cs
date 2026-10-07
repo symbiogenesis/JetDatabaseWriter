@@ -334,7 +334,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         await this.AssertIndexesMatchRowsAsync(stream, format, [.. Enumerable.Range(1, 20).Where(k => k != 3)], expectedForeignKeys: 2);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        using DataTable children = await reader.ReadDataTableAsync("Child", cancellationToken: this.ct);
+        using DataTable children = await reader.ReadTableAsync("Child", cancellationToken: this.ct);
         Assert.Equal([3, 4], children.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order());
         Assert.Equal(15, Assert.Single(await SeekAsync(reader, "UX_00", 15))[0]);
         Assert.Empty(await SeekAsync(reader, "UX_00", 3));
@@ -538,7 +538,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         DataTable rows;
         await using (AccessReader reader = await OpenReaderAsync(stream, password))
         {
-            rows = await reader.ReadDataTableAsync(TableName, cancellationToken: this.ct);
+            rows = await reader.ReadTableAsync(TableName, cancellationToken: this.ct);
         }
 
         using (rows)

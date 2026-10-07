@@ -345,7 +345,7 @@ internal static class FormatProbeApplication
         Console.WriteLine($"Reading {dbPath}");
         await using ProbeDatabase rdr = await ProbeDatabase.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false });
         string tableName = Environment.GetEnvironmentVariable("DIAG_MEMO_TABLE") ?? "MemoFidelity";
-        System.Data.DataTable dt = await rdr.ReadDataTableAsync(tableName);
+        System.Data.DataTable dt = await rdr.ReadTableAsync(tableName);
         Console.WriteLine($"Reader sees RowCount={dt.Rows.Count}");
         foreach (System.Data.DataRow row in dt.Rows)
         {

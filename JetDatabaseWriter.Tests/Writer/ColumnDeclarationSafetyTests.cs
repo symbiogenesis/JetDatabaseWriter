@@ -64,7 +64,7 @@ public sealed class ColumnDeclarationSafetyTests
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
         Assert.Equal(["Existing"], await reader.ListTablesAsync(ct));
-        DataTable table = await reader.ReadDataTableAsync("Existing", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("Existing", cancellationToken: ct);
         Assert.Single(table.Columns.Cast<DataColumn>());
         Assert.Equal(1, Assert.Single(table.Rows.Cast<DataRow>())[0]);
     }
@@ -94,7 +94,7 @@ public sealed class ColumnDeclarationSafetyTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        DataTable table = await reader.ReadDataTableAsync("Items", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("Items", cancellationToken: ct);
         Assert.Equal(2, table.Rows.Count);
         Assert.All(table.Rows.Cast<DataRow>(), row => Assert.Equal(42, row[0]));
     }

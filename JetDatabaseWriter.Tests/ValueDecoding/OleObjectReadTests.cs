@@ -162,9 +162,9 @@ public sealed class OleObjectReadTests
             reads["ReadTableAsync"] = (byte[])table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 1)["Blob"];
         }
 
-        using (DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: Ct))
+        using (DataTable table = await reader.ReadTableAsync("T", cancellationToken: Ct))
         {
-            reads["ReadDataTableAsync"] = (byte[])table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 1)["Blob"];
+            reads["ReadTableAsync"] = (byte[])table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 1)["Blob"];
         }
 
         // Jet3 index seeks are not supported yet.

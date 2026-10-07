@@ -91,7 +91,7 @@ public sealed class CurrencyColumnTests
         ColumnMetadata copied = Assert.Single(await reader.GetColumnMetadataAsync(TableName, ct), c => c.Name == currency.Name);
         Assert.Equal("Currency", copied.TypeName);
         Assert.True(copied.IsCurrency);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         Assert.Equal(12.3456m, Assert.Single(table.Rows.Cast<DataRow>())[currency.Name]);
     }
 
@@ -149,7 +149,7 @@ public sealed class CurrencyColumnTests
             Assert.Equal(0, column.NumericScale);
         }
 
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         DataRow[] rows = [.. table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"])];
         Assert.Equal(expected, rows.Select(row => (decimal)row["Amount"]));
         Assert.Equal(12.3456m, rows[0]["Scaled"]);
@@ -182,7 +182,7 @@ public sealed class CurrencyColumnTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         Assert.Equal([12.3456m, 12.3457m], table.Rows.Cast<DataRow>().Select(row => (decimal)row["Amount"]));
     }
 

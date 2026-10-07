@@ -57,7 +57,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(rowCount, dt.Rows.Count);
     }
@@ -150,7 +150,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
         Assert.Equal(1, row["Id"]);
@@ -227,7 +227,7 @@ public sealed class WideRowTests(DatabaseCache db) : IClassFixture<DatabaseCache
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(3, dt.Rows.Count);
 

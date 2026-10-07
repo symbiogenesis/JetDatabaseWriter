@@ -705,7 +705,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     private static async ValueTask<CatalogObjectSnapshot> GetCatalogObjectAsync(string dbPath, string objectName, CancellationToken cancellationToken)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
-        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: cancellationToken);
         DataRow row = objects.AsEnumerable().Single(r => string.Equals(
             Convert.ToString(r["Name"], CultureInfo.InvariantCulture),
             objectName,
@@ -719,7 +719,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             return id != objectId && id != 0 && (id & 0x00FFFFFF) == objectLow24;
         });
 
-        DataTable aces = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: cancellationToken);
+        DataTable aces = await reader.ReadTableAsync("MSysACEs", cancellationToken: cancellationToken);
         int aceCount = aces.AsEnumerable().Count(r => Convert.ToInt32(r["ObjectId"], CultureInfo.InvariantCulture) == objectId);
         byte[]? lvProp = row["LvProp"] is byte[] lvPropBytes ? (byte[])lvPropBytes.Clone() : null;
 
@@ -737,7 +737,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     private static async ValueTask<LinkedOdbcFixtureSnapshot> GetOdbcFixtureSnapshotAsync(CancellationToken cancellationToken)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.OdbcLinkerTestV2007, cancellationToken: cancellationToken);
-        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: cancellationToken);
         DataRow row = objects.AsEnumerable().Single(r =>
             Convert.ToInt32(r["Type"], CultureInfo.InvariantCulture) == Constants.SystemObjects.LinkedOdbcType);
 
@@ -762,7 +762,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     private static async ValueTask<LinkedCacheColumnSnapshot> GetLinkedCacheColumnSnapshotAsync(string dbPath, string objectName, CancellationToken cancellationToken)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(dbPath, cancellationToken: cancellationToken);
-        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: cancellationToken);
+        DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: cancellationToken);
         DataRow row = objects.AsEnumerable().Single(r => string.Equals(
             Convert.ToString(r["Name"], CultureInfo.InvariantCulture),
             objectName,

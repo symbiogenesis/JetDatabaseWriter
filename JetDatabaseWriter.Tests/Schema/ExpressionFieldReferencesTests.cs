@@ -107,7 +107,7 @@ public sealed class ExpressionFieldReferencesTests(DatabaseCache db) : IClassFix
     {
         AccessReader reader = await db.GetReaderAsync(TestDatabases.CalcFieldTestV2010, TestContext.Current.CancellationToken);
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("Table1", TestContext.Current.CancellationToken);
-        DataTable rows = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(11, meta.Count(c => c.IsCalculated));
 
         var renames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

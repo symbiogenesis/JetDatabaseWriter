@@ -189,7 +189,7 @@ public class CommitFaultSweepTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
-        System.Data.DataTable table = await reader.ReadDataTableAsync("Items", cancellationToken: TestContext.Current.CancellationToken);
+        System.Data.DataTable table = await reader.ReadTableAsync("Items", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, table.Rows.Count);
         Assert.Equal(1, table.Rows[0]["Id"]);
         Assert.Equal(2, table.Rows[1]["Id"]);

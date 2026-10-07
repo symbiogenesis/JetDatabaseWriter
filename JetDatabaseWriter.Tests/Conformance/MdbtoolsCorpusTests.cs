@@ -176,7 +176,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         }
 
         AccessReader reader = await db.GetReaderAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
-        using DataTable customers = await reader.ReadDataTableAsync("Customers", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable customers = await reader.ReadTableAsync("Customers", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(91, customers.Rows.Count);
         Assert.Single(customers.Rows.Cast<DataRow>(), row => Equals(row["City"], "Helsinki"));
@@ -409,7 +409,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
     }
 
     /// <summary>
-    /// <see cref="AccessReader.ReadDataTableAsync"/> returns a <see cref="DataTable"/> whose
+    /// <see cref="AccessReader.ReadTableAsync"/> returns a <see cref="DataTable"/> whose
     /// <c>DataType</c> for the date column is <see cref="System.DateTime"/>.
     /// </summary>
     [Fact]
@@ -426,7 +426,7 @@ public sealed class MdbtoolsCorpusTests(DatabaseCache db) : IClassFixture<Databa
         bool checkedAtLeastOne = false;
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+            DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
 
             foreach (DataColumn col in dt.Columns)

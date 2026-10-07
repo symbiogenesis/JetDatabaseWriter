@@ -190,7 +190,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
                 pages, layout, pageSize, index.FirstDp, ct);
 
-            DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+            DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
             var values = new List<string?>(dt.Rows.Count);
             foreach (DataRow row in dt.Rows)
             {
@@ -326,7 +326,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             TestDatabases.TestIndexCodesV2010,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        DataTable dataTable = await reader.ReadDataTableAsync("Table11", cancellationToken: ct);
+        DataTable dataTable = await reader.ReadTableAsync("Table11", cancellationToken: ct);
         DataRow row = dataTable.Rows
             .Cast<DataRow>()
             .Single(row => string.Equals((string)row["name"], rowName, StringComparison.OrdinalIgnoreCase));

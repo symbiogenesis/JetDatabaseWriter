@@ -93,7 +93,7 @@ public sealed partial class CatalogDiagnosticsTests
 
         _ = await reader.ListTablesAsync(ct);
         int rowsScanned = ParseRowsScanned(reader.LastDiagnostics);
-        using DataTable msys = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
+        using DataTable msys = await reader.ReadTableAsync("MSysObjects", cancellationToken: ct);
 
         Assert.Equal(declaredRows - 1, rowsScanned);
         Assert.Equal(msys.Rows.Count, rowsScanned);
@@ -140,7 +140,7 @@ public sealed partial class CatalogDiagnosticsTests
         _ = await reader.ListTablesAsync(ct);
         int rowsScanned = ParseRowsScanned(reader.LastDiagnostics);
 
-        using DataTable msys = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
+        using DataTable msys = await reader.ReadTableAsync("MSysObjects", cancellationToken: ct);
 
         Assert.Equal(msys.Rows.Count, rowsScanned);
     }
@@ -179,7 +179,7 @@ public sealed partial class CatalogDiagnosticsTests
         _ = await reader.ListTablesAsync(ct);
         int rowsScanned = ParseRowsScanned(reader.LastDiagnostics);
 
-        using DataTable msys = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: ct);
+        using DataTable msys = await reader.ReadTableAsync("MSysObjects", cancellationToken: ct);
 
         Assert.True(rowsScanned > 0, "The catalog scan found no rows.");
         Assert.Equal(msys.Rows.Count, rowsScanned);

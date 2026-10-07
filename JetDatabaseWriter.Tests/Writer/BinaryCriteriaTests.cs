@@ -97,7 +97,7 @@ public sealed class BinaryCriteriaTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct);
-        DataTable table = await reader.ReadDataTableAsync("Bytes", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("Bytes", cancellationToken: ct);
         int[] actual = table.AsEnumerable().Where(row => delete || row.Field<bool>("Changed")).Select(row => row.Field<int>("Id")).Order().ToArray();
         Assert.Equal(delete ? Enumerable.Range(1, 5).Except(expected).ToArray() : expected, actual);
     }

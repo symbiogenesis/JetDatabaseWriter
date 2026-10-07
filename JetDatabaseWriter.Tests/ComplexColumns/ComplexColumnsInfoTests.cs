@@ -294,7 +294,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable objects = await reader.ReadDataTableAsync(
+        DataTable objects = await reader.ReadTableAsync(
             "MSysObjects",
             cancellationToken: TestContext.Current.CancellationToken);
         foreach (DataRow row in objects.Rows)

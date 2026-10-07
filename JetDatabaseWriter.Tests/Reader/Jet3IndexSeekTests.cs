@@ -56,7 +56,7 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
                 }
 
                 ColumnInfo column = await CollationTestSupport.ReadColumnAsync(stream, table, name, ct);
-                using DataTable scanned = await reader.ReadDataTableAsync(table, cancellationToken: ct);
+                using DataTable scanned = await reader.ReadTableAsync(table, cancellationToken: ct);
                 foreach (object key in scanned.Rows.Cast<DataRow>().Select(row => row[name]).Where(value => value is not DBNull).Distinct().Take(4))
                 {
                     byte[] sought = IndexKeyEncoder.EncodeColumnEntry(format, column, key, index.Columns[0].IsAscending);
@@ -122,7 +122,7 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
         List<SeekChild> children = await reader.Query<SeekChild>("SeekChild").Include(row => row.Parent).ToListAsync(ct);
         Assert.Equal([1, 3], children.Select(row => row.Id).Order());
         Assert.All(children, child => Assert.Equal("caf\u00e9", Assert.IsType<SeekParent>(child.Parent).Code));
-        using DataTable scan = await reader.ReadDataTableAsync("SeekChild", cancellationToken: ct);
+        using DataTable scan = await reader.ReadTableAsync("SeekChild", cancellationToken: ct);
         Assert.Equal(scan.Rows.Count, children.Count);
     }
 
@@ -132,8 +132,8 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await cache.CopyToStreamAsync(TestDatabases.MdbtoolsNwind, ct);
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        using DataTable shippers = await reader.ReadDataTableAsync("Shippers", cancellationToken: ct);
-        using DataTable orders = await reader.ReadDataTableAsync("Orders", cancellationToken: ct);
+        using DataTable shippers = await reader.ReadTableAsync("Shippers", cancellationToken: ct);
+        using DataTable orders = await reader.ReadTableAsync("Orders", cancellationToken: ct);
         DataRow shipper = shippers.Rows[0];
         int id = (int)shipper["ShipperID"];
         List<Shippers> result = await reader.Query<Shippers>("Shippers").Where(row => row.ShipperID == id).Include(row => row.Orders).ToListAsync(ct);

@@ -50,7 +50,7 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "MSysAccessStorage",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -88,7 +88,7 @@ public sealed class SystemTableFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.ComplexDataTestV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "MSysNavPaneGroups",
             cancellationToken: TestContext.Current.CancellationToken);
 

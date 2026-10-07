@@ -250,7 +250,7 @@ public sealed class LinkedTextTableTests : IDisposable
         long realRowCount = await reader.GetRealRowCountAsync("LinkedOrdersCsv", ct);
         Assert.Equal(2, realRowCount);
 
-        DataTable table = await reader.ReadDataTableAsync("LinkedOrdersCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedOrdersCsv", cancellationToken: ct);
         Assert.Equal(3, table.Columns.Count);
         Assert.Equal(2, table.Rows.Count);
         Assert.Equal("Ada, Inc.", table.Rows[0]["Customer"]);
@@ -309,7 +309,7 @@ public sealed class LinkedTextTableTests : IDisposable
         long realRowCount = await reader.GetRealRowCountAsync("LinkedCustomersCsv", ct);
         Assert.Equal(2, realRowCount);
 
-        DataTable table = await reader.ReadDataTableAsync("LinkedCustomersCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedCustomersCsv", cancellationToken: ct);
 
         Assert.Equal("F1", table.Columns[0].ColumnName);
         Assert.Equal("F2", table.Columns[1].ColumnName);
@@ -340,7 +340,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        DataTable table = await reader.ReadDataTableAsync("LinkedSemicolonCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedSemicolonCsv", cancellationToken: ct);
 
         Assert.Equal(3, table.Columns.Count);
         Assert.Equal("Customer", table.Columns[1].ColumnName);
@@ -375,7 +375,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        DataTable table = await reader.ReadDataTableAsync("LinkedFormatCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedFormatCsv", cancellationToken: ct);
 
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
         Assert.True(table.Columns.Contains(expectedColumnName));
@@ -404,7 +404,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        DataTable table = await reader.ReadDataTableAsync("LinkedCarriageReturnCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedCarriageReturnCsv", cancellationToken: ct);
 
         Assert.Equal(2, table.Rows.Count);
         Assert.Equal("Ada", table.Rows[0]["Customer"]);
@@ -433,7 +433,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        DataTable table = await reader.ReadDataTableAsync("LinkedEmptyFieldsCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedEmptyFieldsCsv", cancellationToken: ct);
 
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
         Assert.Equal(string.Empty, row["A"]);
@@ -482,7 +482,7 @@ public sealed class LinkedTextTableTests : IDisposable
             row => Assert.Equal(["1", "2", string.Empty], row),
             row => Assert.Equal(["3", "4", "5"], row));
 
-        DataTable table = await reader.ReadDataTableAsync("LinkedRaggedRowsCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedRaggedRowsCsv", cancellationToken: ct);
         Assert.Equal(3, table.Columns.Count);
         Assert.Equal(string.Empty, table.Rows[0]["C"]);
         Assert.Equal("5", table.Rows[1]["C"]);
@@ -529,7 +529,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
         Assert.Equal(["Name", "City", "Note"], metadata.Select(column => column.Name).ToArray());
 
-        DataTable table = await reader.ReadDataTableAsync("LinkedEncodingCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedEncodingCsv", cancellationToken: ct);
         Assert.Equal(2, table.Rows.Count);
         Assert.Equal(firstName, table.Rows[0]["Name"]);
         Assert.Equal(firstCity, table.Rows[0]["City"]);
@@ -564,7 +564,7 @@ public sealed class LinkedTextTableTests : IDisposable
         }
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
-        DataTable table = await reader.ReadDataTableAsync("LinkedValueWhitespaceCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedValueWhitespaceCsv", cancellationToken: ct);
 
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
         Assert.Equal("unquoted", row["Unquoted"]);
@@ -598,7 +598,7 @@ public sealed class LinkedTextTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await reader.ReadDataTableAsync("LinkedFieldBudgetCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedFieldBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxFieldLength), exception.Message, StringComparison.Ordinal);
     }
 
@@ -631,7 +631,7 @@ public sealed class LinkedTextTableTests : IDisposable
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxRecordLength), countException.Message, StringComparison.Ordinal);
 
         InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await reader.ReadDataTableAsync("LinkedRecordBudgetCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedRecordBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxRecordLength), tableException.Message, StringComparison.Ordinal);
     }
 
@@ -663,7 +663,7 @@ public sealed class LinkedTextTableTests : IDisposable
         Assert.Contains("closing quote", countException.Message, StringComparison.OrdinalIgnoreCase);
 
         InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await reader.ReadDataTableAsync("LinkedMissingQuoteCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedMissingQuoteCsv", cancellationToken: ct));
         Assert.Contains("closing quote", tableException.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -696,7 +696,7 @@ public sealed class LinkedTextTableTests : IDisposable
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxColumnCount), countException.Message, StringComparison.Ordinal);
 
         InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await reader.ReadDataTableAsync("LinkedColumnBudgetCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedColumnBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxColumnCount), tableException.Message, StringComparison.Ordinal);
     }
 
@@ -758,12 +758,12 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedTextMaxFieldLength = 8 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        DataTable preview = await reader.ReadDataTableAsync("LinkedPreviewBudgetCsv", maxRows: 1, cancellationToken: ct);
+        DataTable preview = await reader.ReadTableAsync("LinkedPreviewBudgetCsv", maxRows: 1, cancellationToken: ct);
         DataRow row = Assert.Single(preview.Rows.Cast<DataRow>());
         Assert.Equal("ok", row["Note"]);
 
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await reader.ReadDataTableAsync("LinkedPreviewBudgetCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedPreviewBudgetCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxFieldLength), exception.Message, StringComparison.Ordinal);
     }
 
@@ -796,7 +796,7 @@ public sealed class LinkedTextTableTests : IDisposable
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes), countException.Message, StringComparison.Ordinal);
 
         InvalidDataException tableException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await reader.ReadDataTableAsync("LinkedSourceSizeCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedSourceSizeCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxSourceFileBytes), tableException.Message, StringComparison.Ordinal);
     }
 
@@ -824,11 +824,11 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions { LinkedTextMaxMaterializedRows = 1 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        DataTable preview = await reader.ReadDataTableAsync("LinkedMaterializedRowsCsv", maxRows: 1, cancellationToken: ct);
+        DataTable preview = await reader.ReadTableAsync("LinkedMaterializedRowsCsv", maxRows: 1, cancellationToken: ct);
         Assert.Single(preview.Rows);
 
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await reader.ReadDataTableAsync("LinkedMaterializedRowsCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedMaterializedRowsCsv", cancellationToken: ct));
         Assert.Contains(nameof(AccessReaderOptions.LinkedTextMaxMaterializedRows), exception.Message, StringComparison.Ordinal);
     }
 
@@ -897,7 +897,7 @@ public sealed class LinkedTextTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
         UnauthorizedAccessException exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
-            await reader.ReadDataTableAsync("LinkedReparseCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedReparseCsv", cancellationToken: ct));
         Assert.Contains("reparse", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -934,7 +934,7 @@ public sealed class LinkedTextTableTests : IDisposable
         };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
-        DataTable table = await reader.ReadDataTableAsync("LinkedValidatorMutationCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedValidatorMutationCsv", cancellationToken: ct);
         Assert.Single(table.Rows);
 
         IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
@@ -965,7 +965,7 @@ public sealed class LinkedTextTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
-            await reader.ReadDataTableAsync("LinkedEscapedCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedEscapedCsv", cancellationToken: ct));
     }
 
     [Fact]
@@ -1011,7 +1011,7 @@ public sealed class LinkedTextTableTests : IDisposable
             ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
-            await reader.ReadDataTableAsync("LinkedStreamCsv", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedStreamCsv", cancellationToken: ct));
     }
 
     [Fact]
@@ -1057,7 +1057,7 @@ public sealed class LinkedTextTableTests : IDisposable
         };
         await using AccessReader reader = await AccessReader.OpenAsync(stream, options, leaveOpen: true, ct);
 
-        DataTable table = await reader.ReadDataTableAsync("LinkedAllowedCsv", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("LinkedAllowedCsv", cancellationToken: ct);
 
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
         Assert.Equal("Ada", row["Name"]);
@@ -1088,7 +1088,7 @@ public sealed class LinkedTextTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
         NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await reader.ReadDataTableAsync("LinkedUnsupportedFormatText", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedUnsupportedFormatText", cancellationToken: ct));
         Assert.Contains(expectedFormat, exception.Message, StringComparison.Ordinal);
     }
 

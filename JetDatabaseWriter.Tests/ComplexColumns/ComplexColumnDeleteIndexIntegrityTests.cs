@@ -120,7 +120,7 @@ public sealed class ComplexColumnDeleteIndexIntegrityTests
             await using (AccessReader reader = await OpenReaderAsync(stream))
             {
                 indexes = await reader.ListIndexesAsync(column.FlatTableName, Ct);
-                Assert.Equal(1, (await reader.ReadDataTableAsync(column.FlatTableName, cancellationToken: Ct))!.Rows.Count);
+                Assert.Equal(1, (await reader.ReadTableAsync(column.FlatTableName, cancellationToken: Ct))!.Rows.Count);
             }
 
             foreach (IndexMetadata index in indexes)

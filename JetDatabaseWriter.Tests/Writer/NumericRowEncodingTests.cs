@@ -32,7 +32,7 @@ public sealed class NumericRowEncodingTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream, TestContext.Current.CancellationToken);
-        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(2, table.Rows.Count);
         Assert.Equal(1.24m, table.Rows[0].Field<decimal>("N"));

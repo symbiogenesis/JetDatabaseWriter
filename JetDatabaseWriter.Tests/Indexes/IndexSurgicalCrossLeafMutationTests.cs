@@ -77,7 +77,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt.Rows.Count);
 
@@ -136,7 +136,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.Equal(idxBefore, idxAfter);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(802, dt.Rows.Count);
 
@@ -186,7 +186,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(803, dt.Rows.Count);
 
@@ -260,7 +260,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         Assert.True(delta <= 2, $"Expected ≤2 new index pages, got {delta}.");
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt.Rows.Count);
 
@@ -315,7 +315,7 @@ public sealed class IndexSurgicalCrossLeafMutationTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(807, dt.Rows.Count);
 

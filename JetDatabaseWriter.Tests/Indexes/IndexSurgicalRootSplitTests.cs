@@ -160,7 +160,7 @@ public sealed class IndexSurgicalRootSplitTests
         await using AccessReader reader = await OpenReaderAsync(stream);
 
         int rowCount = expectedRowCount
-            ?? (await reader.ReadDataTableAsync("T", cancellationToken: ct)).Rows.Count;
+            ?? (await reader.ReadTableAsync("T", cancellationToken: ct)).Rows.Count;
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", ct);
         IndexMetadata index = indexes.Single(i => i.Name == indexName);

@@ -75,7 +75,7 @@ public sealed class TextCollationSchemaTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(header, (await CollationTestSupport.ReadColumnAsync(stream, "CollationSchema", "AddedText", ct)).TextSortOrder);
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        using System.Data.DataTable rows = await reader.ReadDataTableAsync("CollationSchema", cancellationToken: ct);
+        using System.Data.DataTable rows = await reader.ReadTableAsync("CollationSchema", cancellationToken: ct);
         Assert.Equal("caf\u00e9", Assert.Single(rows.Rows.Cast<System.Data.DataRow>())["RenamedText"]);
     }
 

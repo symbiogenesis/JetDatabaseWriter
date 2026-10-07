@@ -34,7 +34,7 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -54,7 +54,7 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -88,7 +88,7 @@ public sealed class MsysQueriesFixtureTests(DatabaseCache db) : IClassFixture<Da
             TestDatabases.QueryTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "MSysQueries",
             cancellationToken: TestContext.Current.CancellationToken);
 

@@ -65,7 +65,7 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -90,7 +90,7 @@ public sealed class OldDateFixtureTests(DatabaseCache db) : IClassFixture<Databa
             TestDatabases.OldDatesV2007,
             TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "Table1",
             cancellationToken: TestContext.Current.CancellationToken);
 

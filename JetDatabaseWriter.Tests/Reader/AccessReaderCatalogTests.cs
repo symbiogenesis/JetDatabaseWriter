@@ -306,7 +306,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         long real = await reader.GetRealRowCountAsync(table, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(dt.Rows.Count, real);
     }
@@ -334,7 +334,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        DataTable preview = await reader.ReadDataTableAsync(table, 10, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable preview = await reader.ReadTableAsync(table, 10, cancellationToken: TestContext.Current.CancellationToken);
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.NotNull(preview);
@@ -353,7 +353,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
         const int max = 5;
 
-        DataTable preview = await reader.ReadDataTableAsync(table, max, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable preview = await reader.ReadTableAsync(table, max, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(preview);
         Assert.True(preview.Rows.Count <= max);
@@ -366,7 +366,7 @@ public class AccessReaderCatalogTests(DatabaseCache db) : IClassFixture<Database
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
-        DataTable preview = await reader.ReadDataTableAsync(table, 20, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable preview = await reader.ReadTableAsync(table, 20, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(preview);
         foreach (DataRow row in preview.Rows)

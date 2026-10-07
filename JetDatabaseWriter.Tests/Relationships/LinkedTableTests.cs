@@ -260,7 +260,7 @@ public sealed class LinkedTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
         NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await reader.ReadDataTableAsync("LinkedSales", cancellationToken: TestContext.Current.CancellationToken));
+            await reader.ReadTableAsync("LinkedSales", cancellationToken: TestContext.Current.CancellationToken));
         Assert.Contains("ODBC", exception.Message, StringComparison.Ordinal);
     }
 
@@ -296,7 +296,7 @@ public sealed class LinkedTableTests : IDisposable
 
         // Verify the source data is readable directly
         await using AccessReader sourceReader = await AccessReader.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken);
-        DataTable dt = await sourceReader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await sourceReader.ReadTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(1, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["ProductID"]);
@@ -356,7 +356,7 @@ public sealed class LinkedTableTests : IDisposable
         Assert.Equal(sourcePath, entry.SourcePath);
 
         // Reading through the link should return source data
-        DataTable dt = await reader.ReadDataTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("LinkedProducts", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
         Assert.Equal("Widget", dt.Rows[0]["Name"]);
@@ -439,7 +439,7 @@ public sealed class LinkedTableTests : IDisposable
         Assert.NotNull(entry);
 
         // Attempting to read through a broken link should throw
-        await Assert.ThrowsAsync<FileNotFoundException>(async () => await reader.ReadDataTableAsync("LinkedMissing", cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<FileNotFoundException>(async () => await reader.ReadTableAsync("LinkedMissing", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -457,7 +457,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadDataTableAsync("LinkedTraversal", cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadTableAsync("LinkedTraversal", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -481,7 +481,7 @@ public sealed class LinkedTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
-            await reader.ReadDataTableAsync("LinkedAbsolute", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedAbsolute", cancellationToken: ct));
     }
 
     [Fact]
@@ -523,7 +523,7 @@ public sealed class LinkedTableTests : IDisposable
             ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
-            await reader.ReadDataTableAsync("LinkedStreamData", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedStreamData", cancellationToken: ct));
     }
 
     [Fact]
@@ -561,7 +561,7 @@ public sealed class LinkedTableTests : IDisposable
         };
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("LinkedTrusted", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
@@ -599,7 +599,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadDataTableAsync("LinkedBlocked", cancellationToken: TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadTableAsync("LinkedBlocked", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -633,7 +633,7 @@ public sealed class LinkedTableTests : IDisposable
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
-            await reader.ReadDataTableAsync("LinkedSibling", cancellationToken: ct));
+            await reader.ReadTableAsync("LinkedSibling", cancellationToken: ct));
     }
 
     [Fact]

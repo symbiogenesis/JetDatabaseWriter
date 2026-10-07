@@ -166,7 +166,7 @@ public sealed class DaoRenameColumnCaseTests
         ComplexColumnInfo complex = Assert.Single(await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken));
         Assert.Equal("ATTACHMENTS", complex.ColumnName);
 
-        DataTable complexColumns = await reader.ReadDataTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable complexColumns = await reader.ReadTableAsync("MSysComplexColumns", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(
             complexColumns.AsEnumerable(),
             r => string.Equals(Convert.ToString(r["ColumnName"], CultureInfo.InvariantCulture), "Attachments", StringComparison.OrdinalIgnoreCase));

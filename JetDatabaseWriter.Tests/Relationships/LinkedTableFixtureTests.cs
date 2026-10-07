@@ -40,7 +40,7 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
         LinkedTableInfo link = Assert.Single(await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken), table => table.Kind == LinkedTableKind.Odbc);
         Assert.NotEmpty(await reader.GetColumnMetadataAsync(link.Name, TestContext.Current.CancellationToken));
         _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.GetRealRowCountAsync(link.Name, TestContext.Current.CancellationToken));
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.ReadDataTableAsync(link.Name, cancellationToken: TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.ReadTableAsync(link.Name, cancellationToken: TestContext.Current.CancellationToken));
         _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.ReadTableAsStringsAsync(link.Name, cancellationToken: TestContext.Current.CancellationToken));
         _ = await Assert.ThrowsAsync<NotSupportedException>(async () => await reader.ReadTableAsync<object>(link.Name, cancellationToken: TestContext.Current.CancellationToken));
         _ = await Assert.ThrowsAsync<NotSupportedException>(async () =>
@@ -99,7 +99,7 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
         long totalRows = 0;
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadTableAsync(
                 table,
                 cancellationToken: TestContext.Current.CancellationToken);
             totalRows += dt.Rows.Count;
@@ -222,7 +222,7 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
         // excluded. Read whatever is local.
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(
+            DataTable dt = await reader.ReadTableAsync(
                 table,
                 cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
@@ -242,7 +242,7 @@ public sealed class LinkedTableFixtureTests(DatabaseCache db) : IClassFixture<Da
         IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(linked);
 
-        DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
         foreach (LinkedTableInfo table in linked)
         {
             DataRow row = objects.AsEnumerable().Single(r => string.Equals(

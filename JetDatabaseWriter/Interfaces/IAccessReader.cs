@@ -310,16 +310,6 @@ public interface IAccessReader : IAccessBase
     public ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Compatibility alias for <see cref="ReadTableAsync(string?, uint?, IProgress{long}?, CancellationToken)"/>.
-    /// </summary>
-    /// <param name="tableName">Table name (case-insensitive). If null or empty, reads the first table.</param>
-    /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
-    /// <param name="progress">Optional row-count progress sink.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
-    public ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Returns statistical information about the database asynchronously.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

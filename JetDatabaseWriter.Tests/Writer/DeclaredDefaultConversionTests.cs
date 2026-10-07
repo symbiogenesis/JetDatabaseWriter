@@ -48,7 +48,7 @@ public sealed class DeclaredDefaultConversionTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        DataTable rows = await reader.ReadDataTableAsync("Defaults", cancellationToken: ct);
+        DataTable rows = await reader.ReadTableAsync("Defaults", cancellationToken: ct);
         Assert.Equal(2, rows.Rows.Count);
         foreach (DataRow row in rows.Rows)
         {
@@ -118,7 +118,7 @@ public sealed class DeclaredDefaultConversionTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
-        DataTable rows = await reader.ReadDataTableAsync("Defaults", cancellationToken: ct);
+        DataTable rows = await reader.ReadTableAsync("Defaults", cancellationToken: ct);
         Assert.Equal(3, rows.Rows.Count);
         foreach (DataRow row in rows.Rows)
         {

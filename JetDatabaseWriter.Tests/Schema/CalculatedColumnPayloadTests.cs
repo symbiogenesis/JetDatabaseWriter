@@ -35,7 +35,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
             TestDatabases.CalcFieldTestV2010,
             TestContext.Current.CancellationToken);
 
-        DataTable table = await reader.ReadDataTableAsync(
+        DataTable table = await reader.ReadTableAsync(
             JackcessTableName,
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -94,7 +94,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
             Assert.Contains($"DOMAIN_AGGREGATE_REJECTED {functionName}=", result.StdOut, StringComparison.Ordinal);
         }
 
-        DataTable table = await reader.ReadDataTableAsync(
+        DataTable table = await reader.ReadTableAsync(
             DaoTableName,
             cancellationToken: TestContext.Current.CancellationToken);
 

@@ -212,7 +212,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
             if (encryptedTableExists)
             {
-                DataTable? table = await reader.ReadDataTableAsync(
+                DataTable? table = await reader.ReadTableAsync(
                     EncryptedCompactTable,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 encryptedRowCount = table?.Rows.Count ?? -1;
@@ -252,7 +252,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
         AccessReader postReader,
         CancellationToken cancellationToken)
     {
-        DataTable? parentTable = await postReader.ReadDataTableAsync(
+        DataTable? parentTable = await postReader.ReadTableAsync(
             ComplexTable,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         int parentRowCount = parentTable?.Rows.Count ?? -1;
@@ -324,7 +324,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             string tableName = GetStressTableName(tableOrdinal);
             if (postTables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
             {
-                DataTable table = await postReader.ReadDataTableAsync(
+                DataTable table = await postReader.ReadTableAsync(
                     tableName,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 rowCounts[tableName] = table?.Rows.Count ?? -1;
@@ -338,7 +338,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             }
         }
 
-        DataTable relationships = await postReader.ReadDataTableAsync("MSysRelationships", cancellationToken: cancellationToken).ConfigureAwait(false);
+        DataTable relationships = await postReader.ReadTableAsync("MSysRelationships", cancellationToken: cancellationToken).ConfigureAwait(false);
         string[] relationshipNames = relationships.AsEnumerable()
             .Select(row => Convert.ToString(row["szRelationship"], CultureInfo.InvariantCulture) ?? string.Empty)
             .Where(name => name.StartsWith("StressFK_", StringComparison.Ordinal))
@@ -648,7 +648,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
             new AccessReaderOptions { UseLockFile = false },
             cancellationToken).ConfigureAwait(false);
 
-        DataTable? table = await reader.ReadDataTableAsync(
+        DataTable? table = await reader.ReadTableAsync(
             MemoNulsTable,
             cancellationToken: cancellationToken).ConfigureAwait(false);
         if (table is null || table.Rows.Count != 1)

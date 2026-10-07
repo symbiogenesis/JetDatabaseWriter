@@ -219,7 +219,7 @@ public sealed class OverflowRowWriteTests
         Assert.All(headers, h => Assert.Equal(rollback ? OverflowHeader : OverflowFlags, SyntheticOverflowRows.ReadSlot(after, pageSize, rowsStart, h.Page, h.Row) & OverflowFlags));
         Assert.Equal(rowCount, updated);
         await using AccessReader reader = await OpenReaderAsync(after);
-        using DataTable data = await reader.ReadDataTableAsync(table, cancellationToken: Ct);
+        using DataTable data = await reader.ReadTableAsync(table, cancellationToken: Ct);
         Assert.Equal(rowCount, data.Rows.Count);
         int changed = data.Rows.Cast<DataRow>().Count(row => Equals(row[column], "updated"));
         Assert.Equal(rollback ? 0 : rowCount, changed);
@@ -703,7 +703,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<int[]> ReadParentIdsAsync(byte[] bytes)
     {
         await using AccessReader reader = await OpenReaderAsync(bytes);
-        using DataTable data = await reader.ReadDataTableAsync(SyntheticTable, cancellationToken: Ct);
+        using DataTable data = await reader.ReadTableAsync(SyntheticTable, cancellationToken: Ct);
         return [.. data.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"]).Select(row => (int)row["ParentId"])];
     }
 
@@ -748,7 +748,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<Dictionary<int, string[]>> ReadAttachmentsByIdAsync(byte[] bytes)
     {
         await using AccessReader reader = await OpenReaderAsync(bytes);
-        using DataTable data = await reader.ReadDataTableAsync(SyntheticTable, cancellationToken: Ct);
+        using DataTable data = await reader.ReadTableAsync(SyntheticTable, cancellationToken: Ct);
         var result = new Dictionary<int, string[]>();
         foreach (DataRow row in data.Rows)
         {
@@ -833,7 +833,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<int> CountRowsAsync(byte[] bytes, string table)
     {
         await using AccessReader reader = await OpenReaderAsync(bytes);
-        using DataTable data = await reader.ReadDataTableAsync(table, cancellationToken: Ct);
+        using DataTable data = await reader.ReadTableAsync(table, cancellationToken: Ct);
         return data.Rows.Count;
     }
 
@@ -862,7 +862,7 @@ public sealed class OverflowRowWriteTests
         }
 
         IndexMetadata primaryKey = (await reader.ListIndexesAsync(table, Ct)).Single(i => i.Kind == IndexKind.PrimaryKey);
-        using DataTable data = await reader.ReadDataTableAsync(table, cancellationToken: Ct);
+        using DataTable data = await reader.ReadTableAsync(table, cancellationToken: Ct);
         foreach (DataRow row in data.Rows)
         {
             int hits = 0;
@@ -1029,8 +1029,8 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<(RowValues MissingOrder, RowValues ExistingOrder)> BuildOrderDetailRowsAsync(byte[] bytes)
     {
         await using AccessReader reader = await OpenReaderAsync(bytes);
-        using DataTable details = await reader.ReadDataTableAsync("OrderDetails", cancellationToken: Ct);
-        using DataTable products = await reader.ReadDataTableAsync("Products", cancellationToken: Ct);
+        using DataTable details = await reader.ReadTableAsync("OrderDetails", cancellationToken: Ct);
+        using DataTable products = await reader.ReadTableAsync("Products", cancellationToken: Ct);
         DataRow template = details.Rows[0];
         object orderId = template["OrderID"];
         var usedProducts = details.Rows.Cast<DataRow>().Where(r => Equals(r["OrderID"], orderId)).Select(r => r["ProductID"]).ToHashSet();

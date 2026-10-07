@@ -88,7 +88,7 @@ public sealed class Jet3DecimalColumnTests
             [5, -1m, -99_999_999_999_999.9999m],
         ];
 
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         Assert.Equal(expected, table.Rows.Cast<DataRow>().Select(row => row.ItemArray).OrderBy(row => (int)row[0]!));
         Assert.Equal(expected, (await reader.Rows(TableName, cancellationToken: ct).ToListAsync(ct)).OrderBy(row => (int)row[0]));
     }
@@ -191,7 +191,7 @@ public sealed class Jet3DecimalColumnTests
 
         Assert.Equal(ColumnType.MoneyType, (await ReadColumnDescriptorsAsync(ms, ct))[1].Type);
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         Assert.Equal(
             [largest, -largest, step],
             table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"]).Select(row => (decimal)row["Amt"]));
@@ -248,7 +248,7 @@ public sealed class Jet3DecimalColumnTests
         Assert.Equal(ColumnType.MoneyType, (await ReadColumnDescriptorsAsync(ms, ct))[2].Type);
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
         Assert.Equal("Currency", Assert.Single(await reader.GetColumnMetadataAsync(TableName, ct), c => c.Name == "Fee").TypeName);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         DataRow[] rows = [.. table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"])];
         Assert.Equal(0.05m, rows[0]["Fee"]);
         Assert.Equal(DBNull.Value, rows[1]["Fee"]);
@@ -308,7 +308,7 @@ public sealed class Jet3DecimalColumnTests
         Assert.Equal(ColumnType.MoneyType, (await ReadColumnDescriptorsAsync(ms, ct))[1].Type);
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
         Assert.Equal("Currency", Assert.Single(await reader.GetColumnMetadataAsync(TableName, ct), c => c.Name == "Amount").TypeName);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         Assert.Equal([12.34m, 0.75m, 1.5m], table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"]).Select(row => (decimal)row["Amount"]));
     }
 
@@ -329,7 +329,7 @@ public sealed class Jet3DecimalColumnTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         Assert.Equal(
             [12.34m, 0.75m, 12.3456m, 12.3458m],
             table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"]).Select(row => (decimal)row["Amt"]));
@@ -434,7 +434,7 @@ public sealed class Jet3DecimalColumnTests
             ct);
 
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         Assert.Equal([12.34m, 12.35m], table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"]).Select(row => (decimal)row["Amt"]));
     }
 
@@ -488,7 +488,7 @@ public sealed class Jet3DecimalColumnTests
         Assert.Equal(2, metadata[0].NumericScale);
         Assert.Equal(18, metadata[1].NumericPrecision);
         Assert.Equal(0, metadata[1].NumericScale);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
         Assert.Equal(12.34m, row["Amt"]);
         Assert.Equal(123_456_789_012_345_678m, row["Plain"]);

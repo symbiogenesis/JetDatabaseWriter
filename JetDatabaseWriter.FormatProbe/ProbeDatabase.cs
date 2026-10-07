@@ -139,7 +139,7 @@ internal sealed class ProbeDatabase : IAsyncDisposable
     public ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default)
         => this.services.Tables.GetRealRowCountAsync(tableName, cancellationToken);
 
-    public ValueTask<DataTable> ReadDataTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+    public ValueTask<DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
         => this.services.Tables.ReadTableAsync(tableName, maxRows, progress, cancellationToken);
 
     public IAsyncEnumerable<object[]> Rows(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)

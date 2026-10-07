@@ -126,7 +126,7 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(0x04, Assert.Single(metadata, c => c.Name == "NextScore").CalculatedResultType);
         Assert.Equal(0x10, Assert.Single(metadata, c => c.Name == "Weighted").CalculatedResultType);
 
-        DataTable table = await reader.ReadDataTableAsync("CalcRoundTrip", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcRoundTrip", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, table.Rows.Count);
 
         DataRow row = table.Rows[0];
@@ -171,7 +171,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcMemo", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcMemo", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, table.Rows.Count);
         Assert.Equal(memo, table.Rows[0]["ComputedMemo"]);
     }
@@ -228,7 +228,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcEval", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcEval", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Alpha", row["SafeLabel"]);
@@ -284,7 +284,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcUpdate", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcUpdate", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Beta #3", row["CalcLabel"]);
@@ -318,7 +318,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcPoco", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcPoco", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(table.AsEnumerable());
 
         Assert.Equal("Gamma #7", row["CalcLabel"]);
@@ -453,7 +453,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcAccessSyntax", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
 
         Assert.True(Convert.ToBoolean(row["IsEven"], CultureInfo.InvariantCulture));
         Assert.True(Convert.ToBoolean(row["MatchesLabel"], CultureInfo.InvariantCulture));
@@ -553,7 +553,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcFunctionRegistry", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
 
         Assert.True(Convert.ToBoolean(row["LogicalEdge"], CultureInfo.InvariantCulture));
         Assert.Equal("second", row["ChoiceEdge"]);
@@ -727,7 +727,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcPrecedence", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcPrecedence", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
 
         Assert.Equal(-4d, Convert.ToDouble(row["NegPow"], CultureInfo.InvariantCulture));
         Assert.Equal(-4d, Convert.ToDouble(row["NegPowMod"], CultureInfo.InvariantCulture));
@@ -793,7 +793,7 @@ public sealed class CalculatedColumnWriteTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("CalcAddPercent", TestContext.Current.CancellationToken);
         Assert.Equal("Rate", Assert.Single(metadata).Name);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAddPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcAddPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal(2.5d, Convert.ToDouble(row["Rate"], CultureInfo.InvariantCulture));
     }
 
@@ -891,7 +891,7 @@ public sealed class CalculatedColumnWriteTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         Assert.Equal("A", Assert.Single(await reader.GetColumnMetadataAsync("CalcAddMdb", TestContext.Current.CancellationToken)).Name);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcAddMdb", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcAddMdb", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal(5, Convert.ToInt32(row["A"], CultureInfo.InvariantCulture));
     }
 
@@ -1010,7 +1010,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcUnsupportedPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcUnsupportedPercent", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal(50, Convert.ToInt32(row["R"], CultureInfo.InvariantCulture));
         Assert.Equal(0.5d, Convert.ToDouble(row["C"], CultureInfo.InvariantCulture));
     }
@@ -1034,7 +1034,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcPercentText", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcPercentText", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal("15%", row["Label"]);
     }
 
@@ -1071,7 +1071,7 @@ public sealed class CalculatedColumnWriteTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         ColumnMetadata calc = Assert.Single(await reader.GetColumnMetadataAsync("CalcUnparsed", TestContext.Current.CancellationToken), c => c.Name == "Calc");
         Assert.Equal("[Score] 2", calc.CalculationExpression);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcUnparsed", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcUnparsed", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal(42, Convert.ToInt32(row["Calc"], CultureInfo.InvariantCulture));
     }
 
@@ -1115,7 +1115,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow[] rows = [.. (await reader.ReadDataTableAsync("CalcInputTypes", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable()
+        DataRow[] rows = [.. (await reader.ReadTableAsync("CalcInputTypes", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable()
             .OrderBy(r => Convert.ToInt32(r["Id"], CultureInfo.InvariantCulture))];
         Assert.Equal(2, rows.Length);
 
@@ -1152,7 +1152,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcTextInputs", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcTextInputs", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal("10", row["T1"]);
         Assert.Equal("109", row["Joined"]);
         Assert.True((bool)row["Less"]);
@@ -1331,7 +1331,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(table.AsEnumerable(), r => (string)r["FirstName"] == first);
         Assert.Equal(expected, row["AllNames"]);
 
@@ -1484,7 +1484,7 @@ public sealed class CalculatedColumnWriteTests
         });
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcByteFlag", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcByteFlag", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal((byte)255, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Flag"]);
         Assert.Equal((byte)255, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Flag"]);
         Assert.Equal((byte)0, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 3)["Flag"]);
@@ -1528,7 +1528,7 @@ public sealed class CalculatedColumnWriteTests
         });
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcOverflow", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcOverflow", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal((byte)200, row["Hundreds"]);
     }
 
@@ -1559,7 +1559,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcFlags", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcFlags", cancellationToken: TestContext.Current.CancellationToken);
         DataRow twelve = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1);
         DataRow eight = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2);
         DataRow none = Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 3);
@@ -1603,7 +1603,7 @@ public sealed class CalculatedColumnWriteTests
         Assert.Equal(fullName, Assert.Single(metadata, c => c.Name == "FullName").CalculationExpression);
         Assert.Equal(lowBits, Assert.Single(metadata, c => c.Name == "LowBits").CalculationExpression);
 
-        DataRow row = Assert.Single((await reader.ReadDataTableAsync("CalcLiterals", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
+        DataRow row = Assert.Single((await reader.ReadTableAsync("CalcLiterals", cancellationToken: TestContext.Current.CancellationToken)).AsEnumerable());
         Assert.Equal("Ann O'Lee", row["FullName"]);
         Assert.Equal(0x0A, row["LowBits"]);
     }
@@ -1652,7 +1652,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable table = await reader.ReadDataTableAsync("CalcDueText", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync("CalcDueText", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("Due 1/31/2020 6:30:05 PM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Label"]);
         Assert.Equal("Due 12/9/2021 7:05:00 AM", Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Label"]);
     }
@@ -1700,7 +1700,7 @@ public sealed class CalculatedColumnWriteTests
             });
         }
 
-        DataTable table = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable table = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         var mismatches = new List<string>();
         foreach (DataRow row in table.Rows)
         {

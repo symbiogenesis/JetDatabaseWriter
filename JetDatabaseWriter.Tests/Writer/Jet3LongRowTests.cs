@@ -132,7 +132,7 @@ public sealed class Jet3LongRowTests
         var expected = new Dictionary<int, string?[]> { [1] = boundary, [2] = updated };
         await using (AccessReader reader = await OpenReaderAsync(ms, ct))
         {
-            using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+            using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
             Assert.Equal(2, table.Rows.Count);
             foreach (DataRow row in table.Rows)
             {
@@ -194,7 +194,7 @@ public sealed class Jet3LongRowTests
 
         await using (AccessReader reader = await OpenReaderAsync(ms, ct))
         {
-            using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
+            using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: ct);
             Assert.Equal([1, 2, 5, 33], table.AsEnumerable().Select(r => (int)r["C000"]).Order());
             foreach (DataRow row in table.Rows)
             {

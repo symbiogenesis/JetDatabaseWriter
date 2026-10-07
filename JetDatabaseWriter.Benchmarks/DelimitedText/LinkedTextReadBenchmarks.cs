@@ -125,7 +125,7 @@ public class LinkedTextReadBenchmarks
     [Benchmark]
     public async Task<int> ReadDataTable()
     {
-        using DataTable table = await this.reader.ReadDataTableAsync(this.CurrentTableName).ConfigureAwait(false);
+        using DataTable table = await this.reader.ReadTableAsync(this.CurrentTableName).ConfigureAwait(false);
         return table.Rows.Count;
     }
 

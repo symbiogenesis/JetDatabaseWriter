@@ -64,7 +64,7 @@ public sealed class NonAsciiNamesTests
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == columnName);
 
-        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(rows);
         Assert.Equal(2, rows.Rows.Count);
         Assert.Equal("Größe", rows.Rows[0][columnName]);
@@ -109,7 +109,7 @@ public sealed class NonAsciiNamesTests
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == columnName);
 
-        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("Océ", rows.Rows[0][columnName]);
     }
 
@@ -155,7 +155,7 @@ public sealed class NonAsciiNamesTests
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         Assert.Contains(meta, c => c.Name == columnName);
 
-        DataTable rows = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("山田太郎", rows.Rows[0][columnName]);
     }
 

@@ -564,7 +564,7 @@ public sealed class RowSizeLimitTests
         Assert.Equal(before, ms.ToArray());
         await using AccessReader reader = await OpenReaderAsync(ms, cancellationToken);
         Assert.Equal(0, await reader.GetRealRowCountAsync(TableName, cancellationToken));
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: cancellationToken);
+        using DataTable table = await reader.ReadTableAsync(TableName, cancellationToken: cancellationToken);
         Assert.Empty(table.Rows);
     }
 

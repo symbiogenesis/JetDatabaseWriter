@@ -65,7 +65,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(1, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
         Assert.Equal(42, row["Id"]);
@@ -106,7 +106,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(5, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(5, dt.Rows.Count);
     }
@@ -149,7 +149,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
     }
@@ -194,7 +194,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
         bool foundUpdated = false;
@@ -245,7 +245,7 @@ public sealed class IndexIncrementalMaintenanceTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt.Rows.Count);
     }
@@ -296,7 +296,7 @@ public sealed class IndexIncrementalMaintenanceTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(rowCount, dt.Rows.Count);
         if (format != DatabaseFormat.Jet3Mdb)
         {
@@ -339,7 +339,7 @@ public sealed class IndexIncrementalMaintenanceTests
         Assert.Equal(3, GetLatestLeafEntryCount(stream.ToArray(), format));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
     }

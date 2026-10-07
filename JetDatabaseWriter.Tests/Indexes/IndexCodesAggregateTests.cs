@@ -93,7 +93,7 @@ public sealed class IndexCodesAggregateTests
 
                 List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(pages, layout, pageSize, index.FirstDp, ct);
 
-                DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+                DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
                 var values = new List<string?>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {

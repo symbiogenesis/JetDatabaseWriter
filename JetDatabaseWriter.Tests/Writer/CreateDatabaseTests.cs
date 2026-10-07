@@ -170,7 +170,7 @@ public sealed class CreateDatabaseTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
         Assert.Equal(["Cafés"], await reader.ListTablesAsync(ct));
-        DataTable table = await reader.ReadDataTableAsync("Cafés", cancellationToken: ct);
+        DataTable table = await reader.ReadTableAsync("Cafés", cancellationToken: ct);
         Assert.Equal("Café", table.Rows[0]["Name"]);
     }
 

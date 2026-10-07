@@ -88,7 +88,7 @@ internal static class LinkedOdbcLvPropProbe
 
         await using ProbeDatabase probe = await ProbeDatabase.OpenAsync(path);
 
-        DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: CancellationToken.None);
+        DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: CancellationToken.None);
         List<LinkedCatalogRow> rows = ReadLinkedRows(catalog);
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Format: `{reader.DatabaseFormat}`");
         _ = sb.AppendLine(CultureInfo.InvariantCulture, $"- Linked rows found: {rows.Count}");

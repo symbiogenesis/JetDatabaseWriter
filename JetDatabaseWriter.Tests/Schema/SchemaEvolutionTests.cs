@@ -51,7 +51,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(3, dt.Columns.Count);
         Assert.Equal("Score", dt.Columns[2].ColumnName);
@@ -91,7 +91,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.False(dt.Columns.Contains("Score"));
@@ -126,7 +126,7 @@ public sealed class SchemaEvolutionTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(2, dt.Columns.Count);
         Assert.True(dt.Columns.Contains("Rating"));
@@ -201,7 +201,7 @@ public sealed class SchemaEvolutionTests
         ColumnMetadata amount = Assert.Single(metadata, column => column.Name == "Amount");
         Assert.Equal("Currency", amount.TypeName);
 
-        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(12.3456m, rows.Rows[0]["Amount"]);
     }
 
@@ -236,7 +236,7 @@ public sealed class SchemaEvolutionTests
         Assert.Equal(10, amount.NumericPrecision);
         Assert.Equal(2, amount.NumericScale);
 
-        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(12.34m, rows.Rows[0]["Amount"]);
         Assert.Equal(0.75m, rows.Rows[1]["Amount"]);
     }
@@ -271,7 +271,7 @@ public sealed class SchemaEvolutionTests
             column => column.Name == "Total");
         Assert.Equal("Currency", total.TypeName);
 
-        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(12.3456m, rows.Rows[0]["Total"]);
     }
 
@@ -307,7 +307,7 @@ public sealed class SchemaEvolutionTests
         Assert.Equal("[Score] * 2", twice.CalculationExpression);
         Assert.Equal((byte)ColumnType.LongIntegerType, twice.CalculatedResultType);
 
-        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(42, rows.Rows[0]["Twice"]);
         Assert.Equal(10, rows.Rows[1]["Twice"]);
     }
@@ -342,7 +342,7 @@ public sealed class SchemaEvolutionTests
         Assert.True(Assert.Single(columns, column => column.Name == "Packed2").IsCompressedUnicode);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("plain text", rows.Rows[0]["Plain2"]);
         Assert.Equal("packed text", rows.Rows[0]["Packed2"]);
     }
@@ -427,7 +427,7 @@ public sealed class SchemaEvolutionTests
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {
             metadataBefore = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
-            valuesBefore = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows[0].ItemArray;
+            valuesBefore = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows[0].ItemArray;
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -466,7 +466,7 @@ public sealed class SchemaEvolutionTests
                 Assert.Equal(expected, metadataAfter[i]);
             }
 
-            object?[] valuesAfter = (await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows[0].ItemArray;
+            object?[] valuesAfter = (await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken)).Rows[0].ItemArray;
             Assert.Equal(valuesBefore, valuesAfter);
         }
     }
@@ -595,7 +595,7 @@ public sealed class SchemaEvolutionTests
         Assert.True(unique.IgnoreNulls);
         Assert.Equal("Code", Assert.Single(unique.Columns).Name);
 
-        using DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(["Id", "Code"], rows.Columns.Cast<DataColumn>().Select(column => column.ColumnName));
         Assert.Equal([10, 20], rows.Rows.Cast<DataRow>().Select(row => (int)row["Code"]).Order());
     }
@@ -619,7 +619,7 @@ public sealed class SchemaEvolutionTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
 
-        DataTable? msysIndexes = await reader.ReadDataTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable? msysIndexes = await reader.ReadTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
         if (msysIndexes is not null)
         {
             int matches = msysIndexes.AsEnumerable()
@@ -627,7 +627,7 @@ public sealed class SchemaEvolutionTests
             Assert.Equal(0, matches);
         }
 
-        DataTable? msysRels = await reader.ReadDataTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable? msysRels = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
         if (msysRels is not null)
         {
             int matches = msysRels.AsEnumerable()

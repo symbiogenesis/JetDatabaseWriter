@@ -42,7 +42,7 @@ public sealed class DateTimeExtendedEncodingTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        using DataTable table = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(1, table.Rows.Count);
         Assert.Equal(typeof(DateTime), table.Columns["ExtendedAt"]!.DataType);
@@ -92,7 +92,7 @@ public sealed class DateTimeExtendedEncodingTests
         Assert.Equal("Date/Time Extended", extended.TypeName);
         Assert.Equal(typeof(DateTime), extended.ClrType);
 
-        using DataTable table = await reader.ReadDataTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync(tableName, cancellationToken: TestContext.Current.CancellationToken);
         DateTime actual = Assert.IsType<DateTime>(table.Rows[0]["ExtendedAt"]);
         Assert.Equal(expected, actual);
     }

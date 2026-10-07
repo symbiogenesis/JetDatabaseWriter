@@ -61,7 +61,7 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
     }
 
     /// <summary>
-    /// For every readable fixture, <c>ReadDataTableAsync</c> on every table returns
+    /// For every readable fixture, <c>ReadTableAsync</c> on every table returns
     /// a non-null <see cref="DataTable"/> with column count matching
     /// <c>GetColumnMetadataAsync</c>. This is the catalog-side complement of
     /// <see cref="EveryFixture_EveryTable_StreamsToCompletion"/>.
@@ -76,7 +76,7 @@ public sealed class JetFormatMatrixTests(DatabaseCache db) : IClassFixture<Datab
 
         foreach (string table in tables)
         {
-            DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+            DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
             Assert.NotNull(dt);
 
             IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);

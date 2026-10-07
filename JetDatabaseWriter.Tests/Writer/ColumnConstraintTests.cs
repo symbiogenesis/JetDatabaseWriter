@@ -50,7 +50,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(3, dt.Rows.Count);
         Assert.Equal(42, dt.Rows[0]["Score"]);
         Assert.Equal(7, dt.Rows[1]["Score"]);
@@ -96,7 +96,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(3, dt.Rows.Count);
 
         DataRow first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
@@ -227,7 +227,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal("y", row["Name"]);
     }
@@ -262,7 +262,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal(1, row["Id"]);
     }
@@ -328,7 +328,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal(75, row["Score"]);
     }
@@ -392,7 +392,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(rowCount, dt.Rows.Count);
         Assert.All(dt.AsEnumerable(), row => Assert.Equal(padding + (int)row["Id"], row["Name"]));
     }
@@ -424,7 +424,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal("b", row["Name"]);
         Assert.Equal(DBNull.Value, row["Code"]);
@@ -471,7 +471,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(99, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Score"]);
         Assert.Equal(DBNull.Value, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2)["Score"]);
@@ -507,7 +507,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(3, dt.Rows.Count);
         DataRow first = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1);
         DataRow second = Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2);
@@ -589,7 +589,7 @@ public sealed class ColumnConstraintTests
         DateTime after = DateTimeOffset.Now.DateTime.Date;
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, dt.Rows.Count);
         Assert.InRange((DateTime)Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Due"], before.AddDays(7), after.AddDays(7));
         Assert.Equal(before.AddDays(-1), Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2)["Due"]);
@@ -638,7 +638,7 @@ public sealed class ColumnConstraintTests
         });
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal("N/A", row["Code"]);
         Assert.Equal(255, row["Mask"]);
@@ -686,7 +686,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal(7, row["Score"]);
         Assert.Equal("a \"b\"", row["Name"]);
@@ -755,7 +755,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(expected, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Value"]);
         Assert.Equal(expected, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 2)["Value"]);
     }
@@ -851,7 +851,7 @@ public sealed class ColumnConstraintTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         Assert.Equal(["Id"], metadata.Select(c => c.Name));
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, Assert.Single(dt.AsEnumerable())["Id"]);
     }
 
@@ -940,7 +940,7 @@ public sealed class ColumnConstraintTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
         Assert.Equal(["Id", "Name"], metadata.Select(c => c.Name));
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         Assert.Equal(1, row["Id"]);
         Assert.Equal("a", row["Name"]);
@@ -976,7 +976,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Empty(dt.AsEnumerable());
     }
 
@@ -1022,7 +1022,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(dt.AsEnumerable());
         for (int i = 0; i < defaultCount; i++)
         {
@@ -1081,7 +1081,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(1, Assert.Single(dt.AsEnumerable(), row => (int)row["Id"] == 1)["Score"]);
         if (commit)
         {
@@ -1118,7 +1118,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable products = await reader.ReadDataTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable products = await reader.ReadTableAsync("Products", cancellationToken: TestContext.Current.CancellationToken);
         DataRow probe = Assert.Single(products.AsEnumerable(), row => Equals(row["ProductName"], "Default probe"));
         Assert.Equal(0m, probe["UnitPrice"]);
         Assert.Equal((short)0, probe["UnitsInStock"]);
@@ -1170,7 +1170,7 @@ public sealed class ColumnConstraintTests
         Assert.Equal(before, stream.ToArray());
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Empty(dt.Rows);
     }
 
@@ -1205,7 +1205,7 @@ public sealed class ColumnConstraintTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, dt.Rows.Count);
         Assert.Equal(250, dt.Rows[1]["Score"]);
     }

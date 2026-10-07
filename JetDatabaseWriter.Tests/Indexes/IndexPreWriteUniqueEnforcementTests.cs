@@ -47,7 +47,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         // Table should still contain exactly the two rows successfully inserted.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(2, dt.Rows.Count);
     }
@@ -80,7 +80,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount, dt.Rows.Count);
     }
@@ -105,7 +105,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
     }
@@ -136,7 +136,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await writer.InsertRowAsync("T", [DBNull.Value, 300], this.ct);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         int[] ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
         Assert.Equal(ExpectedIds123, ids);
@@ -171,7 +171,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         // Re-open and confirm the batch was fully rolled back.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Empty(dt.Rows);
     }
@@ -204,7 +204,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         await writer.InsertRowAsync("T", new UniqueTagRow { Tag = 300 }, this.ct);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
         Assert.Equal(1, row["Id"]);
         Assert.Equal(300, row["Tag"]);
@@ -247,7 +247,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         // Reopen and confirm the original Code value survived.
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         var codeById = dt.Rows.Cast<DataRow>().ToDictionary(r => (int)r["Id"], r => (int)r["Code"]);
         Assert.Equal(100, codeById[1]);
@@ -321,7 +321,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         }
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: this.ct);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
     }

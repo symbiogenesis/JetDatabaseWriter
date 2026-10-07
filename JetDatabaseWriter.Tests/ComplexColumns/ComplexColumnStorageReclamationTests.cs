@@ -110,7 +110,7 @@ public sealed class ComplexColumnStorageReclamationTests
         }
 
         await using AccessReader verify = await OpenReaderAsync(stream);
-        using DataTable replacement = (await verify.ReadDataTableAsync("Replacement", cancellationToken: Ct))!;
+        using DataTable replacement = (await verify.ReadTableAsync("Replacement", cancellationToken: Ct))!;
         Assert.Single(replacement.Rows);
     }
 

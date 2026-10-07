@@ -120,7 +120,7 @@ public sealed class CompressedMemoLvalTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync(
+        DataTable dt = await reader.ReadTableAsync(
             "MemoTest",
             cancellationToken: TestContext.Current.CancellationToken);
 
@@ -174,7 +174,7 @@ public sealed class CompressedMemoLvalTests
         // Round-trip: the reader should still see the original string.
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        DataTable dt = await reader.ReadDataTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.NotNull(dt);
         Assert.Equal(sentinel, dt.Rows[0]["Txt"]);
     }
@@ -234,7 +234,7 @@ public sealed class CompressedMemoLvalTests
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        DataTable dt = await reader.ReadDataTableAsync("LvalComp", cancellationToken: TestContext.Current.CancellationToken);
+        DataTable dt = await reader.ReadTableAsync("LvalComp", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(memoValue, Assert.IsType<string>(dt.Rows[0]["Content"]));
     }
 

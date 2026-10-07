@@ -44,7 +44,7 @@ public sealed class BinaryEncodingTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct);
-        DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: Ct);
+        DataTable table = await reader.ReadTableAsync("T", cancellationToken: Ct);
         Assert.Equal(2, table.Rows.Count);
         DataRow original = Assert.Single(table.AsEnumerable(), row => row.Field<int>("Id") == 1);
         byte[] expectedOriginal = new byte[20];

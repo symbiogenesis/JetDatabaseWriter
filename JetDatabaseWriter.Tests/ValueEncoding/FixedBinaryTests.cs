@@ -44,7 +44,7 @@ public sealed class FixedBinaryTests
         Assert.Contains("ATTR=1", result.StdOut, StringComparison.Ordinal);
         Assert.Contains("VALUE=01-00-00-00", result.StdOut, StringComparison.Ordinal);
         await using AccessReader reader = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
-        using DataTable table = await reader.ReadDataTableAsync("Samples", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync("Samples", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(new byte[] { 0x01, 0x00, 0x00, 0x00 }, Assert.IsType<byte[]>(Assert.Single(table.Select())["Data"]));
     }
 
@@ -115,10 +115,10 @@ public sealed class FixedBinaryTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        using DataTable catalog = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable catalog = await reader.ReadTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
         Assert.IsType<DBNull>(Assert.Single(catalog.Select("Name = 'Samples'"))["LvProp"]);
         Assert.True(Assert.Single(await reader.GetColumnMetadataAsync("Samples", TestContext.Current.CancellationToken), column => column.Name == "Data").IsFixedLength);
-        using DataTable table = await reader.ReadDataTableAsync("Samples", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync("Samples", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(new byte[] { 0x01, 0x00, 0x00, 0x00 }, Assert.IsType<byte[]>(Assert.Single(table.Select("Id = 1"))["Data"]));
         Assert.IsType<DBNull>(Assert.Single(table.Select("Id = 2"))["Data"]);
     }

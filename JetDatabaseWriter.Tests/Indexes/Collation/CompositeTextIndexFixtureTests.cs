@@ -80,7 +80,7 @@ public sealed class CompositeTextIndexFixtureTests
 
                 List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(pages, layout, pageSize, index.FirstDp, ct);
 
-                DataTable dt = await reader.ReadDataTableAsync(tableName, cancellationToken: ct);
+                DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
                 var encoded = new List<(string Repr, byte[] Key)>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {

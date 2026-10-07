@@ -35,7 +35,7 @@ public sealed class FixedTextFixtureTests
         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
         ColumnMetadata column = Assert.Single(await reader.GetColumnMetadataAsync("users", TestContext.Current.CancellationToken), c => c.Name == "c_flag_");
         Assert.True(column.IsFixedLength);
-        using DataTable table = await reader.ReadDataTableAsync("users", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync("users", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("N", table.Rows[0]["c_flag_"]);
         int ordinal = table.Columns["c_flag_"]!.Ordinal;
         await foreach (string[] row in reader.RowsAsStrings("users", cancellationToken: TestContext.Current.CancellationToken))
@@ -116,7 +116,7 @@ public sealed class FixedTextFixtureTests
         session.RunDaoCompact();
         await using AccessReader reader = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
         Assert.True(Assert.Single(await reader.GetColumnMetadataAsync("FixedText", TestContext.Current.CancellationToken), column => column.Name == "Value").IsFixedLength);
-        using DataTable table = await reader.ReadDataTableAsync("FixedText", cancellationToken: TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync("FixedText", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(6, table.Rows.Count);
         Assert.Equal("    ", Assert.Single(table.Select("Id = 1"))["Value"]);
         Assert.Equal("A   ", Assert.Single(table.Select("Id = 2"))["Value"]);

@@ -413,7 +413,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         Assert.Contains(table1, i => i.Name == "Table3Table1" && i.Kind == IndexKind.ForeignKey);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
-        Assert.Equal(4, (await reader.ReadDataTableAsync("Table1", cancellationToken: Ct)).Rows.Count);
+        Assert.Equal(4, (await reader.ReadTableAsync("Table1", cancellationToken: Ct)).Rows.Count);
     }
 
     [Fact]
@@ -590,7 +590,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     private static async ValueTask<int[]> ReadIdsAsync(MemoryStream stream, string table)
     {
         await using AccessReader reader = await OpenReaderAsync(stream);
-        DataTable rows = await reader.ReadDataTableAsync(table, cancellationToken: Ct);
+        DataTable rows = await reader.ReadTableAsync(table, cancellationToken: Ct);
         return [.. rows.AsEnumerable().Select(r => (int)r["Id"]).Order()];
     }
 
