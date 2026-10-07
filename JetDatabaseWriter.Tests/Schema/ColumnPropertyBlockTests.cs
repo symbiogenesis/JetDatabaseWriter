@@ -315,8 +315,8 @@ public class ColumnPropertyBlockTests
         Assert.Equal(new byte[] { 0xDE, 0xAD, 0xFF }, edited.FindTarget("Longer")!.Find("Description")!.Padding);
         Assert.Equal("Keep", edited.FindTarget("Longer")!.GetTextValue("Description", format));
         Assert.Equal("Added", edited.FindTarget("B")!.GetTextValue("Description", format));
-        Assert.Equal(["Unused", "Description", "Description"], edited.SourceChunks[1].Names);
-        Assert.Equal(["Spare", "Required", "Description"], edited.SourceChunks[4].Names);
+        Assert.Equal(["Unused", "Description", "Description"], Assert.IsType<string[]>(edited.SourceChunks[1].Names));
+        Assert.Equal(["Spare", "Required", "Description"], Assert.IsType<string[]>(edited.SourceChunks[4].Names));
         Assert.Equal(original[..10], builder.ToBytes(format)![..10]);
         Assert.Equal((ushort)0xABCD, edited.SourceChunks[0].ChunkType);
         Assert.Equal(new byte[] { 0x13, 0x37 }, edited.UnknownChunks[0].Payload);
@@ -328,12 +328,12 @@ public class ColumnPropertyBlockTests
         ColumnPropertyBlock projected = PersistedPropertyProjector.ProjectForRewrite(parsed, [before], [after], static _ => "Renamed", format);
         Assert.Equal(new byte[] { 0xDE, 0xAD, 0xFF }, projected.FindTarget("Renamed")!.Find("Description")!.Padding);
         Assert.Equal("Changed", projected.FindTarget("Renamed")!.GetTextValue("Description", format));
-        Assert.Equal(["Unused", "Description", "Description"], projected.SourceChunks[1].Names);
+        Assert.Equal(["Unused", "Description", "Description"], Assert.IsType<string[]>(projected.SourceChunks[1].Names));
 
         _ = builder.RemoveTarget("Longer");
         builder.GetOrAddTarget("New").AddByte("NewProperty", 23);
         ColumnPropertyBlock added = ColumnPropertyBlock.Parse(builder.ToBytes(format), format)!;
-        Assert.Equal(["Unused", "Description", "Description"], added.SourceChunks[1].Names);
+        Assert.Equal(["Unused", "Description", "Description"], Assert.IsType<string[]>(added.SourceChunks[1].Names));
         Assert.Null(added.FindTarget("Longer"));
         Assert.Equal(new byte[] { 23 }, added.FindTarget("New")!.Find("NewProperty")!.Value);
     }
@@ -378,7 +378,7 @@ public class ColumnPropertyBlockTests
         edited.GetOrAddTarget("B").AddByte("Second", 2);
         ColumnPropertyBlock parsed = ColumnPropertyBlock.Parse(edited.ToBytes(format), format)!;
         Assert.Equal(3, parsed.SourceChunks.Count);
-        Assert.Equal(["First", "Second"], parsed.SourceChunks[0].Names);
+        Assert.Equal(["First", "Second"], Assert.IsType<string[]>(parsed.SourceChunks[0].Names));
         Assert.Equal("B", parsed.Targets[1].Name);
     }
 

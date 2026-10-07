@@ -507,7 +507,10 @@ public sealed class ConstraintRegistryTests
     [Fact]
     public async Task Register_DefaultOnAutoNumberColumn_IsNotApplied()
     {
-        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        var tableDef = new TableDef
+        {
+            Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, Flags = Constants.ColumnDescriptorFlags.AutoNumber }],
+        };
         var registry = new ConstraintRegistry();
         registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { IsAutoIncrement = true, DefaultValueExpression = "0", DefaultValue = 5 }], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         object[] values = [DbDefault.Value];

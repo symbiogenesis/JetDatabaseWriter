@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
@@ -91,8 +92,10 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         });
     }
 
-    [Fact]
-    public async Task ComplexMetadata_WhenMSysComplexColumnsTdefIsCorrupt_FallsBackWithoutThrowing()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ComplexMetadata_WhenMSysComplexColumnsTdefIsCorrupt_RefusesWithoutCaching(bool strict)
     {
         byte[] database = await CreateAttachmentDatabaseAsync();
         int complexColumnsTdefPage = await FindSystemTablePageAsync(database, "MSysComplexColumns");
@@ -101,20 +104,19 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         await using var stream = new MemoryStream(database, writable: false);
         await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
-            new AccessReaderOptions { UseLockFile = false },
+            new AccessReaderOptions { UseLockFile = false, StrictParsing = strict },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync(
-            "Documents",
-            TestContext.Current.CancellationToken);
-        ColumnMetadata files = Assert.Single(metadata, column => string.Equals(column.Name, "Files", StringComparison.Ordinal));
-        Assert.Equal("Complex", files.TypeName);
-
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync(
-            "Documents",
-            TestContext.Current.CancellationToken);
-        Assert.Empty(info);
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            JetCorruptDataException metadataError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await reader.GetColumnMetadataAsync("Documents", TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.CorruptCatalog, metadataError.ErrorCode);
+            JetCorruptDataException complexError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.CorruptCatalog, complexError.ErrorCode);
+        }
     }
 
     /// <summary>

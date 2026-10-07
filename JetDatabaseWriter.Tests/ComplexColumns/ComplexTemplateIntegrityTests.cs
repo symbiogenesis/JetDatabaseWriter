@@ -75,6 +75,7 @@ public sealed class ComplexTemplateIntegrityTests
     [MemberData(nameof(TemplateDamageCases))]
     public async Task CreateAttachment_DamagedTemplate_RefusesWithoutWriting(WriteMode mode, string damage)
     {
+        ArgumentNullException.ThrowIfNull(damage);
         await using var created = new MemoryStream();
         await using (await CreateWriterAsync(created))
         {
@@ -90,9 +91,18 @@ public sealed class ComplexTemplateIntegrityTests
             {
                 JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                     await writer.CreateTableAsync("Docs", [new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }], Ct));
-                Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
-                Assert.Equal("Files", error.ErrorInfo.ColumnName);
-                Assert.Equal("MSysComplexType_Attachment", error.ErrorInfo.ObjectName);
+                if (damage == "WrongShape")
+                {
+                    Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
+                    Assert.Equal("Files", error.ErrorInfo.ColumnName);
+                    Assert.Equal("MSysComplexType_Attachment", error.ErrorInfo.ObjectName);
+                }
+                else
+                {
+                    Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+                    Assert.Equal("MSysObjects", error.ErrorInfo.TableName);
+                }
+
                 Assert.True(error.ErrorInfo.PageNumber > 0);
             });
         }

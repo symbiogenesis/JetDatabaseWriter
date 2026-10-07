@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -53,6 +54,16 @@ public sealed class ComplexColumnsFallbackOwnershipTests
 
         await DamageCatalogAsync(stream, damage);
         await using AccessReader reader = await ComplexColumnTestSupport.OpenReaderAsync(stream);
+        if (damage == "TDEF")
+        {
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            {
+                using DataTable rejected = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
+            });
+            Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+            return;
+        }
+
         using DataTable table = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
         object cell = Assert.Single(table.Rows.Cast<DataRow>())["Files"];
         if (damage is "None" or "DescriptorOnly")
@@ -65,8 +76,10 @@ public sealed class ComplexColumnsFallbackOwnershipTests
         }
     }
 
-    [Fact]
-    public async Task Rows_MissingCatalog_DoesNotReadUserTableWithMatchingSuffix()
+    [Theory]
+    [InlineData("TDEF")]
+    [InlineData("FlatTableID")]
+    public async Task Rows_DamagedMetadata_DoesNotReadUserTableWithMatchingSuffix(string damage)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await ComplexColumnTestSupport.CreateWriterAsync(stream))
@@ -83,8 +96,18 @@ public sealed class ComplexColumnsFallbackOwnershipTests
             await writer.InsertRowAsync("Docs", [1, DBNull.Value], ComplexColumnTestSupport.Ct);
         }
 
-        await DamageCatalogAsync(stream, "TDEF");
+        await DamageCatalogAsync(stream, damage);
         await using AccessReader reader = await ComplexColumnTestSupport.OpenReaderAsync(stream);
+        if (damage == "TDEF")
+        {
+            JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            {
+                using DataTable rejected = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
+            });
+            Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+            return;
+        }
+
         using DataTable table = await reader.ReadTableAsync("Docs", cancellationToken: ComplexColumnTestSupport.Ct);
         Assert.IsType<DBNull>(Assert.Single(table.Rows.Cast<DataRow>())["Files"]);
     }

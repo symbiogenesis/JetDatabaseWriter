@@ -241,6 +241,7 @@ public sealed class SchemaRewritePropertyPreservationTests
 
         await PlantPropertiesAsync(ms, "T", AddTableTarget);
         List<TargetView> before = await ReadTargetsAsync(ms, "T");
+        Assert.Equal(0, before.FindIndex(t => t.Name.Length == 0));
 
         await RunRewriteAsync(ms, mode, writer => RunAsync(writer, rewrite, "T", "Note"));
 
@@ -446,6 +447,14 @@ public sealed class SchemaRewritePropertyPreservationTests
         target.Entries.Add(new ColumnPropertyEntryBuilder { Name = "GUID", DataType = ColumnType.BinaryType, DdlFlag = 1, Value = Guid.Parse("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0").ToByteArray() });
         target.Entries.Add(new ColumnPropertyEntryBuilder { Name = NameMap, DataType = ColumnType.OleType, DdlFlag = 0, Value = [1, 2, 3, 4] });
         builder.Targets.Insert(0, target);
+
+        // This synthetic fixture intentionally plants the table target first.
+        // Clear the source positions so serialization uses this constructed order;
+        // the fresh reader below then verifies the order actually stored on disk.
+        foreach (ColumnPropertyTargetBuilder planted in builder.Targets)
+        {
+            planted.SourceChunkIndex = -1;
+        }
     }
 
     private static void AddCaption(ColumnPropertyBlockBuilder builder, string column, string caption)
