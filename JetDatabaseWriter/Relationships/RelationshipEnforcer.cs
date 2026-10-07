@@ -258,7 +258,7 @@ internal sealed class RelationshipEnforcer(
         foreach (CascadeUpdate cascade in cascades)
         {
             var changes = new List<(RowLocation Location, object[] OldRow, object[] NewRow)>();
-            var finalRows = replacements[cascade.TableName];
+            Dictionary<(long PageNumber, int RowIndex), object[]> finalRows = replacements[cascade.TableName];
             foreach (LocatedRow stored in await snapshots.ReadRowsAsync(cascade.Table.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
             {
                 if (finalRows.TryGetValue((stored.Location.PageNumber, stored.Location.RowIndex), out object[]? replacement))
@@ -574,6 +574,7 @@ internal sealed class RelationshipEnforcer(
                 {
                     object replacement = values[index] ?? DBNull.Value;
                     (object[] Row, int Column) target = (row, columns[index]);
+
                     // DAO refuses a shared child key reached from different
                     // parent tables even when the final assignments agree.
                     if (assignmentSources.TryGetValue(target, out string? source)

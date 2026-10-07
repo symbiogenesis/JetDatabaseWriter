@@ -91,7 +91,8 @@ public sealed class DaoCascadeGraphTests
     private static async Task AssertRowsAsync(string path, bool diamond)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, cancellationToken: Ct);
-        foreach (string table in diamond ? new[] { "A", "B", "C", "D" } : new[] { "A", "B" })
+        string[] tables = diamond ? ["A", "B", "C", "D"] : ["A", "B"];
+        foreach (string table in tables)
         {
             int count = 0;
             await foreach (object[] row in reader.Rows(table, cancellationToken: Ct))
