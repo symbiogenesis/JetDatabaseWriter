@@ -472,6 +472,8 @@ internal sealed class ComplexColumnManager(
     /// <exception cref="ArgumentException">Thrown when a multi-value column does not declare its element type or declares a Text length outside 0..255.</exception>
     /// <exception cref="NotSupportedException">Thrown when complex columns are declared for a non-ACE database or a catalog missing <c>MSysComplexColumns</c>.</exception>
     /// <exception cref="JetNotSupportedException">The complex-column system table is missing.</exception>
+    /// <exception cref="InvalidOperationException">The requested columns exceed the remaining ComplexID capacity.</exception>
+    /// <exception cref="JetCorruptDataException">A required native template or persisted complex counter is malformed.</exception>
     public async ValueTask<IReadOnlyList<ComplexColumnAllocation>?> PrepareComplexColumnAllocationsAsync(
         IReadOnlyList<ColumnDefinition> columns,
         CancellationToken cancellationToken)
