@@ -196,7 +196,7 @@ public sealed class PagerFrameCacheTests
     public async Task EncryptedFrame_DecodesOnce_AndWriteUsesScratch(string scheme)
     {
 #pragma warning disable CA2000 // Cipher ownership flows through CountingCodec into the awaited pager; the pager also owns the store.
-        IPageCodec cipher = scheme switch
+        var cipher = scheme switch
         {
             "rc4" => new Jet4Rc4PageCodec(0x12345678),
             _ => new Jet4Rc4PageCodec(0xA7E0C0FE),

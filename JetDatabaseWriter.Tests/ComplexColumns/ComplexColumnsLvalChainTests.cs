@@ -11,7 +11,7 @@ using Xunit;
 
 /// <summary>
 /// Round-trip tests: attachment payloads larger than the legacy
-/// 256-byte inline-OLE cap are pushed onto freshly-allocated LVAL data pages
+/// 64-byte inline-OLE cap are pushed onto freshly-allocated LVAL data pages
 /// (single-page <c>0x40</c> form for sub-page payloads, chained <c>0x00</c>
 /// form for multi-page payloads) and re-read by
 /// <see cref="IAccessReader.GetAttachmentsAsync"/>.
@@ -21,7 +21,7 @@ public sealed class ComplexColumnsLvalChainTests
     [Fact]
     public async Task AddAttachmentAsync_PayloadLargerThanInlineCap_RoundTripsViaSinglePageLval()
     {
-        // 1 KB binary payload — well above the 256-byte inline-OLE cap, but
+        // 1 KB binary payload — well above the 64-byte inline-OLE cap, but
         // small enough that the wrapper header + payload fit in a single LVAL
         // row (bitmask 0x40). Use a .jpg extension, which Access stores raw, so
         // AttachmentWrapper.Encode skips deflate (typeFlag = 0x00).

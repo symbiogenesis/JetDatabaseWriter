@@ -1,10 +1,18 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
+using System;
+using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -19,17 +27,17 @@ using Xunit;
 public sealed class LvalFormAssertionTests
 {
     /// <summary>
-    /// A short Memo (under the inline cap of 1024 encoded bytes) is stored
+    /// A short Memo (under the inline cap of 64 encoded bytes) is stored
     /// as inline (bitmask 0x80) and round-trips correctly.
     /// </summary>
     [Fact]
     public async Task Memo_ShortInline_RoundTripsAndUsesInlineForm()
     {
-        // 50 ASCII chars → 100 bytes UTF-16 LE (well under 1024-byte inline cap).
+        // 32 non-Latin-1 chars → 64 bytes UTF-16 LE (the native inline limit).
         // Use non-Latin-1 so the Jet4 encoder cannot compress to 1 byte/char.
-        string memoValue = new('\u4E2D', 50);
+        string memoValue = new('\u4E2D', 32);
 
-        await AssertMemoRoundTripAsync(memoValue, expectedMinLen: memoValue.Length);
+        await AssertMemoRoundTripAsync(memoValue, expectedMinLen: memoValue.Length, expectedStorageMode: Constants.LongValue.InlineStorageMode);
     }
 
     /// <summary>
@@ -39,11 +47,11 @@ public sealed class LvalFormAssertionTests
     [Fact]
     public async Task Memo_MediumSinglePage_RoundTripsCorrectly()
     {
-        // 600 non-Latin-1 chars → 1200 bytes UTF-16 LE (above 1024-byte cap,
+        // 600 non-Latin-1 chars → 1200 bytes UTF-16 LE (above 64-byte cap,
         // but under page size minus overhead → single LVAL page form).
         string memoValue = new('\u4E2D', 600);
 
-        await AssertMemoRoundTripAsync(memoValue, expectedMinLen: memoValue.Length);
+        await AssertMemoRoundTripAsync(memoValue, expectedMinLen: memoValue.Length, expectedStorageMode: Constants.LongValue.SinglePageStorageMode);
     }
 
     /// <summary>
@@ -58,19 +66,19 @@ public sealed class LvalFormAssertionTests
         // a multi-page chain (bitmask 0x00).
         string memoValue = new('\u4E2D', 4000);
 
-        await AssertMemoRoundTripAsync(memoValue, expectedMinLen: memoValue.Length);
+        await AssertMemoRoundTripAsync(memoValue, expectedMinLen: memoValue.Length, expectedStorageMode: Constants.LongValue.ChainedStorageMode);
     }
 
     /// <summary>
-    /// A short OLE blob (under the 256-byte inline cap) is stored inline
+    /// A short OLE blob (under the 64-byte inline cap) is stored inline
     /// and round-trips correctly.
     /// </summary>
     [Fact]
     public async Task Ole_ShortInline_RoundTripsCorrectly()
     {
-        byte[] payload = BuildDeterministicPayload(100);
+        byte[] payload = BuildDeterministicPayload(64);
 
-        await AssertOleRoundTripAsync(payload);
+        await AssertOleRoundTripAsync(payload, Constants.LongValue.InlineStorageMode);
     }
 
     /// <summary>
@@ -79,10 +87,10 @@ public sealed class LvalFormAssertionTests
     [Fact]
     public async Task Ole_MediumSinglePage_RoundTripsCorrectly()
     {
-        // 2000 bytes: above 256-byte inline cap, under page-size minus overhead.
+        // 2000 bytes: above 64-byte inline cap, under page-size minus overhead.
         byte[] payload = BuildDeterministicPayload(2000);
 
-        await AssertOleRoundTripAsync(payload);
+        await AssertOleRoundTripAsync(payload, Constants.LongValue.SinglePageStorageMode);
     }
 
     /// <summary>
@@ -94,10 +102,37 @@ public sealed class LvalFormAssertionTests
         // 8000 bytes: exceeds the single LVAL page capacity, forces chained form.
         byte[] payload = BuildDeterministicPayload(8000);
 
-        await AssertOleRoundTripAsync(payload);
+        await AssertOleRoundTripAsync(payload, Constants.LongValue.ChainedStorageMode);
     }
 
-    private static async Task AssertMemoRoundTripAsync(string memoValue, int expectedMinLen)
+    internal static async Task AssertStorageModeAsync(MemoryStream stream, string tableName, byte expectedStorageMode)
+    {
+        stream.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        var entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken));
+        DataPageLayout layout = harness.Database.Format.DataPage;
+        var modes = new List<byte>();
+        for (long pageNumber = 1; pageNumber < harness.Database.Pages.PageCount; pageNumber++)
+        {
+            byte[] page = await harness.ReadPageCopyAsync(pageNumber, TestContext.Current.CancellationToken);
+            if (page[0] != Constants.PageTypes.Data || JetTypeInfo.Ri32(page, layout.TDefOff) != entry.TDefPage)
+            {
+                continue;
+            }
+
+            foreach (RowBound bound in DataPageRows.EnumerateLiveRowBounds(harness.Database.Format, page))
+            {
+                // These two-column test tables place one Int32 before their MEMO/OLE slot.
+                int valueStart = bound.RowStart + harness.Database.Format.RowFields.NumCols + sizeof(int);
+                Assert.True(LongValueDescriptor.TryRead(page.AsSpan(valueStart, Constants.LongValue.HeaderSize), out LongValueDescriptor descriptor));
+                modes.Add(descriptor.StorageMode);
+            }
+        }
+
+        Assert.Equal(expectedStorageMode, Assert.Single(modes));
+    }
+
+    private static async Task AssertMemoRoundTripAsync(string memoValue, int expectedMinLen, byte expectedStorageMode)
     {
         var ms = new MemoryStream();
 
@@ -136,9 +171,10 @@ public sealed class LvalFormAssertionTests
         string actual = Assert.IsType<string>(dt.Rows[0]["Content"]);
         Assert.True(actual.Length >= expectedMinLen, $"Expected at least {expectedMinLen} chars, got {actual.Length}.");
         Assert.Equal(memoValue, actual);
+        await AssertStorageModeAsync(ms, "LvalTest", expectedStorageMode);
     }
 
-    private static async Task AssertOleRoundTripAsync(byte[] expected)
+    private static async Task AssertOleRoundTripAsync(byte[] expected, byte expectedStorageMode)
     {
         var ms = new MemoryStream();
 
@@ -176,6 +212,7 @@ public sealed class LvalFormAssertionTests
         Assert.Equal(1, dt.Rows.Count);
         byte[] actual = Assert.IsType<byte[]>(dt.Rows[0]["Blob"]);
         Assert.Equal(expected, actual);
+        await AssertStorageModeAsync(ms, "OleTest", expectedStorageMode);
     }
 
     private static byte[] BuildDeterministicPayload(int length)

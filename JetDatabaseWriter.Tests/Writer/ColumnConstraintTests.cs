@@ -10,10 +10,13 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 /// <summary>
@@ -978,10 +981,9 @@ public sealed class ColumnConstraintTests
     }
 
     /// <summary>
-    /// On Jet3, four or five CLR <c>DateTime</c> defaults give an LvProp blob
-    /// that is still stored inline (256 bytes or less) but makes the table's
-    /// <c>MSysObjects</c> row longer than 255 bytes. The Jet3 row encoder threw
-    /// <see cref="OverflowException"/> on such a row, so CreateTableAsync failed.
+    /// On Jet3, four or five CLR <c>DateTime</c> defaults exceed the native
+    /// 64-byte inline property limit. Their LvProp payload uses an external
+    /// LVAL row, and a later writer must hydrate and apply every default.
     /// </summary>
     /// <param name="defaultCount">The number of defaulted columns.</param>
     /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit or WriteMode.ExplicitCommit.</param>
@@ -993,7 +995,7 @@ public sealed class ColumnConstraintTests
     [InlineData(5, WriteMode.Direct)]
     [InlineData(5, WriteMode.AutoCommit)]
     [InlineData(5, WriteMode.ExplicitCommit)]
-    public async Task Jet3ClrDefaults_LongCatalogRow_AreAppliedByALaterWriter(int defaultCount, WriteMode mode)
+    public async Task Jet3ClrDefaults_ExternalProperties_AreAppliedByALaterWriter(int defaultCount, WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.Jet3Mdb);
         const string table = "DateDefaults";
@@ -1009,7 +1011,9 @@ public sealed class ColumnConstraintTests
         stream.Position = 0;
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
-            Assert.InRange(await ReadCatalogRowLengthAsync(harness.Database, table), 256, 2036);
+            LongValueDescriptor properties = await ReadCatalogLvPropDescriptorAsync(harness.Database, table);
+            Assert.True(properties.IsSinglePage);
+            Assert.True(properties.Length > Constants.LongValue.MaxInlineBytes);
         }
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1315,28 +1319,35 @@ public sealed class ColumnConstraintTests
         }
     }
 
-    /// <summary>Returns the stored length of the <c>MSysObjects</c> row named <paramref name="name"/>.</summary>
+    /// <summary>Reads the raw LvProp descriptor of the named catalog row without following its LVAL chain.</summary>
     /// <param name="db">The database.</param>
     /// <param name="name">The object name.</param>
-    /// <returns>The row length in bytes, or -1 when no row has the name.</returns>
-    private static async Task<int> ReadCatalogRowLengthAsync(DatabaseFile db, string name)
+    /// <returns>The persisted property descriptor.</returns>
+    private static async Task<LongValueDescriptor> ReadCatalogLvPropDescriptorAsync(DatabaseFile db, string name)
     {
         TableDef msys = Assert.IsType<TableDef>(await db.TableDefs.ReadTableDefAsync(2, TestContext.Current.CancellationToken));
         ColumnInfo nameColumn = msys.Columns.Single(c => c.Name == "Name");
-        int length = -1;
+        ColumnInfo propertyColumn = msys.Columns.Single(c => c.Name == "LvProp");
+        LongValueDescriptor? found = null;
         await db.OwnedPages.ForEachLiveTableRowAsync(
             2,
             (row, _) =>
             {
-                if (ScalarColumnReader.DecodeSimpleColumnValue(db.Format, row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn) == name)
+                if (ScalarColumnReader.DecodeSimpleColumnValue(db.Format, row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn) != name)
                 {
-                    length = row.Location.RowSize;
+                    return new ValueTask<bool>(true);
                 }
 
-                return new ValueTask<bool>(true);
+                Assert.True(RowDecodePlan.TryParseRowLayout(db.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, msys.HasVarColumns, out RowLayout layout));
+                ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(db.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, propertyColumn);
+                Assert.Equal(ColumnSliceKind.Var, slice.Kind);
+                Assert.Equal(Constants.LongValue.HeaderSize, slice.DataLen);
+                Assert.True(LongValueDescriptor.TryRead(row.Page.AsSpan(row.Location.RowStart + slice.DataStart, slice.DataLen), out LongValueDescriptor descriptor));
+                found = descriptor;
+                return new ValueTask<bool>(false);
             },
             TestContext.Current.CancellationToken);
-        return length;
+        return Assert.IsType<LongValueDescriptor>(found);
     }
 
     /// <summary>

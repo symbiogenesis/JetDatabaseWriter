@@ -27,34 +27,33 @@ public sealed class CompressedMemoLvalTests
     public async Task Memo_ShortLatin1_RoundTripsCompressed()
     {
         string memoValue = new('A', 50);
-        await AssertMemoRoundTripAsync(memoValue);
+        await AssertMemoRoundTripAsync(memoValue, Constants.LongValue.InlineStorageMode);
     }
 
     /// <summary>
     /// A Latin-1 Memo that exceeds the inline cap when encoded as UCS-2 but
-    /// compresses to fit inline (1 byte/char) still round-trips. 600 Latin-1
-    /// chars → 600 compressed bytes (under 1024-byte inline cap).
+    /// compresses to fit inline (1 byte/char) still round-trips. 62 Latin-1
+    /// characters plus the compression marker occupy the native 64-byte inline limit.
     /// </summary>
     [Fact]
-    public async Task Memo_MediumLatin1Compressible_FitsInlineAndRoundTrips()
+    public async Task Memo_Latin1Compressible_FitsNativeInlineBoundaryAndRoundTrips()
     {
-        // 600 Latin-1 chars: uncompressed = 1200 UCS-2 bytes (would exceed
-        // inline cap), but Jet4 compression → 600 bytes (fits inline).
-        string memoValue = new('Z', 600);
-        await AssertMemoRoundTripAsync(memoValue);
+        // 62 Latin-1 characters: 124 uncompressed bytes, 64 compressed bytes.
+        string memoValue = new('Z', 62);
+        await AssertMemoRoundTripAsync(memoValue, Constants.LongValue.InlineStorageMode);
     }
 
     /// <summary>
-    /// A Latin-1 Memo longer than 1024 bytes even compressed forces a
+    /// A Latin-1 Memo longer than 64 bytes even compressed forces a
     /// single-page LVAL (bitmask 0x40) and round-trips correctly.
     /// </summary>
     [Fact]
     public async Task Memo_LargeLatin1_ForcesLvalAndRoundTrips()
     {
-        // 1500 Latin-1 chars → 1500 compressed bytes > 1024-byte inline cap
+        // 1500 Latin-1 characters plus the marker exceed the 64-byte inline cap
         // → single-page LVAL form.
         string memoValue = new('X', 1500);
-        await AssertMemoRoundTripAsync(memoValue);
+        await AssertMemoRoundTripAsync(memoValue, Constants.LongValue.SinglePageStorageMode);
     }
 
     /// <summary>
@@ -68,7 +67,7 @@ public sealed class CompressedMemoLvalTests
         // 5000 Latin-1 chars → 5000 compressed bytes > single LVAL page cap
         // → chained LVAL pages.
         string memoValue = new('Q', 5000);
-        await AssertMemoRoundTripAsync(memoValue);
+        await AssertMemoRoundTripAsync(memoValue, Constants.LongValue.ChainedStorageMode);
     }
 
     /// <summary>
@@ -87,10 +86,10 @@ public sealed class CompressedMemoLvalTests
         }
 
         string memoValue = new(chars);
-        await AssertMemoRoundTripAsync(memoValue);
+        await AssertMemoRoundTripAsync(memoValue, Constants.LongValue.SinglePageStorageMode);
     }
 
-    private static async Task AssertMemoRoundTripAsync(string memoValue)
+    private static async Task AssertMemoRoundTripAsync(string memoValue, byte expectedStorageMode)
     {
         var ms = new MemoryStream();
 
@@ -129,6 +128,7 @@ public sealed class CompressedMemoLvalTests
         string actual = Assert.IsType<string>(dt.Rows[0]["Content"]);
         Assert.Equal(memoValue.Length, actual.Length);
         Assert.Equal(memoValue, actual);
+        await LvalFormAssertionTests.AssertStorageModeAsync(ms, "MemoTest", expectedStorageMode);
     }
 
     /// <summary>

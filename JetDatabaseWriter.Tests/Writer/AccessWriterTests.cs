@@ -1388,7 +1388,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         // MEMO payloads larger than Constants.LongValue.MaxInlineBytes are pushed to LVAL
         // pages instead of throwing. Round-trip a 513-char Chinese-glyph string
         // (= 1026 UTF-16 bytes; Jet4 cannot compress non-Latin-1 to 1 byte/char,
-        // so the encoded payload exceeds the 1024-byte inline cap and forces
+        // so the encoded payload exceeds the 64-byte inline cap and forces
         // the writer onto the LVAL path).
         string path = TestDatabases.NorthwindTraders;
         if (!File.Exists(path))

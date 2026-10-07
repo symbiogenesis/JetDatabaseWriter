@@ -374,5 +374,4 @@ public sealed class StandardEncryptionTests
         OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(plaintext, TestPassword);
         return package.EncryptionInfo;
     }
-
 }

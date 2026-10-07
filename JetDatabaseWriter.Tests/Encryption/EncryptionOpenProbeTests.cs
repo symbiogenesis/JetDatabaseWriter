@@ -334,8 +334,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
 
     [Theory]
     [MemberData(nameof(PasswordFormatsByPathAndStream))]
-    [InlineData(AccessEncryptionFormat.AccdbAgile, true)]
-    [InlineData(AccessEncryptionFormat.AccdbAgile, false)]
     public async Task ReaderOpen_MissingPassword_NamesReaderOptions(AccessEncryptionFormat encryption, bool byPath)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

@@ -234,8 +234,8 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
     }
 
     /// <summary>
-    /// Round-trip: an inline-OLE payload (≤ 256 bytes per the writer's
-    /// documented inline-OLE limit) created via <see cref="AccessWriter"/>
+    /// Round-trip: an OLE payload stored externally on LVAL pages by
+    /// <see cref="AccessWriter"/>
     /// reads back byte-identical via <see cref="AccessReader"/>. Mirrors the
     /// Jackcess <c>testWriteAndReadInDb</c> path of <c>OleBlobTest</c>.
     /// </summary>
@@ -259,7 +259,7 @@ public sealed class ComplexColumnsOleObjectTests(DatabaseCache db) : IClassFixtu
             new("Blob", typeof(byte[])),
         };
 
-        // 200 bytes – well under the writer's inline-OLE limit, with a
+        // 200 bytes exceed the native 64-byte inline limit, with a
         // recognisable byte pattern so byte-for-byte equality is meaningful.
         // Use unchecked arithmetic because the project enables CheckForOverflowUnderflow.
         byte[] payload = new byte[200];

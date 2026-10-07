@@ -22,7 +22,7 @@ using Xunit;
 /// <summary>
 /// A row must fit on one data page: the page size less the data-page header
 /// and one row-offset slot, 2,036 bytes on Jet3 and 4,080 on Jet4/ACE. Long
-/// values over the inline caps (1,024 MEMO and 256 OLE bytes) move to LVAL
+/// values over the 64-byte inline limit move to LVAL
 /// pages first, and while the row is still too long the largest MEMO and
 /// byte-array OLE values left in it follow (Access also moves long values out
 /// of a full row), so only the other columns can push a row past a page.
@@ -57,18 +57,16 @@ public sealed class RowSizeLimitTests
     public static TheoryData<WriteMode> Modes() => [.. new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit }];
 
     /// <summary>
-    /// The README's "Table and row size" case: a row of <c>Id</c> and
-    /// 1,000-character MEMO values, three on Jet3 (3,058 bytes inline) and
-    /// five on Jet4 and ACCDB (5,091 bytes), each value under the 1,024-byte
-    /// inline cap. Two of them move to LVAL pages, the insert succeeds, and
-    /// every value reads back intact through a reopened reader.
+    /// Multiple MEMO values exceed the native inline limit and their combined
+    /// payload exceeds a data page. External storage keeps the row within
+    /// capacity and every value survives reopening.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">How the writer runs the insert.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(FormatsAndModes))]
-    public async Task InsertRowWithInlineMemoValuesPastAPage_MovesThemToLvalPages(DatabaseFormat format, WriteMode mode)
+    public async Task InsertRowWithLargeMemoValues_StoresThemOnLvalPages(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int memoColumns = format == DatabaseFormat.Jet3Mdb ? 3 : 5;
@@ -85,11 +83,8 @@ public sealed class RowSizeLimitTests
     }
 
     /// <summary>
-    /// A row of <c>Id</c>, a 300-character MEMO value and 250-byte OLE values
-    /// (eight on Jet3, sixteen on Jet4 and ACCDB), all under their inline
-    /// caps, is past a page. The MEMO value, the largest, moves to LVAL pages
-    /// first and then the first OLE value; the insert succeeds and every value
-    /// reads back intact.
+    /// A row mixing MEMO and OLE payloads over the native inline limit stores
+    /// them externally and preserves every byte through reopening.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">How the writer runs the insert.</param>
@@ -113,18 +108,15 @@ public sealed class RowSizeLimitTests
     }
 
     /// <summary>
-    /// A calculated column with a Memo result takes part, measured by its
-    /// wrapped payload. On ACCDB a row of <c>Id</c>, thirteen 250-byte Binary
-    /// values and a 490-character cached result (980 bytes of UCS-2, 1,003
-    /// once wrapped, under the 1,024-byte inline cap) is 4,305 bytes, and the
-    /// calculated value is the only one that can leave the row. It moves to
-    /// LVAL pages, the insert succeeds and every value reads back intact.
+    /// A calculated Memo result over the native inline limit uses LVAL pages
+    /// alongside thirteen fixed 250-byte Binary values. The cached result
+    /// and fixed fields survive reopening.
     /// </summary>
     /// <param name="mode">How the writer runs the insert.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(Modes))]
-    public async Task InsertRowWithAnInlineCalculatedMemoPastAPage_MovesItToLvalPages(WriteMode mode)
+    public async Task InsertRowWithALargeCalculatedMemo_StoresItOnLvalPages(WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         const int binaryColumns = 13;
@@ -135,7 +127,7 @@ public sealed class RowSizeLimitTests
                 TableName,
                 [
                     new("Id", typeof(int)),
-                    .. Enumerable.Range(0, binaryColumns).Select(i => new ColumnDefinition($"Bin{i}", typeof(byte[]), maxLength: 255)),
+                    .. Enumerable.Range(0, binaryColumns).Select(i => new ColumnDefinition($"Bin{i}", typeof(byte[]), maxLength: 250)),
                     new("Calc", typeof(string)) { IsCalculated = true, CalculationExpression = "[Id] & \" memo\"" },
                 ],
                 ct);
@@ -155,17 +147,29 @@ public sealed class RowSizeLimitTests
     /// The no-I/O encoding step that inserts, updates and cascades share
     /// (<see cref="TableRowStore.EncodeRow"/>) moves the largest inline long
     /// value first, the first of equal ones in column order, and only as many
-    /// as the row needs. On ACCDB, MEMO values of 900, 1,000, 1,000, 950 and
-    /// 1,000 characters make a 4,941-byte row; moving the first 1,000-character
-    /// value (<c>Memo1</c>) is enough. A row that fits comes back as the same
-    /// array, with nothing moved.
+    /// as the row needs. Fixed Binary values occupy most of the page; every
+    /// MEMO individually fits the native inline limit. Moving the first
+    /// largest value (<c>Memo1</c>) makes the combined row fit. A shorter row
+    /// comes back as the same array, with nothing moved.
     /// </summary>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Fact]
     public async Task EncodeRow_MovesTheLargestInlineLongValueFirst_AndOnlyAsManyAsTheRowNeeds()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, binaryColumns: 0, oleColumns: 0, memoColumns: 5, ct);
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync(
+                TableName,
+                [
+                    new("Id", typeof(int)),
+                    .. Enumerable.Range(0, 15).Select(i => new ColumnDefinition($"Bin{i}", typeof(byte[]), maxLength: 250)),
+                    .. Enumerable.Range(0, 5).Select(i => new ColumnDefinition($"Memo{i}", typeof(string))),
+                ],
+                ct);
+        }
+
         ms.Position = 0;
         var options = new AccessWriterOptions { UseLockFile = false };
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
@@ -182,7 +186,7 @@ public sealed class RowSizeLimitTests
             new DataPageInserter(db.Format, db.OwnedPages, harness.Pager, harness.Services.PageAllocator, harness.Services.OwnedMaps, new UsageMapEditor(db.Format, harness.Pager, harness.Services.PageAllocator)),
             new TDefPageBuilder(db.Format, harness.Pager));
 
-        int[] lengths = [900, 1_000, 1_000, 950, 1_000];
+        int[] lengths = [58, 62, 62, 56, 62];
         object[] values = Row(tableDef, lengths);
         object[] original = (object[])values.Clone();
         (object[] prepared, byte[] rowBytes) = store.EncodeRow(tableDef, values);
@@ -203,7 +207,7 @@ public sealed class RowSizeLimitTests
             }
         }
 
-        int[] shorter = [900, 900, 900, 600, 400];
+        int[] shorter = [40, 40, 40, 40, 40];
         object[] fits = Row(tableDef, shorter);
         (object[] unchanged, _) = store.EncodeRow(tableDef, fits);
         Assert.Same(fits, unchanged);
@@ -211,7 +215,7 @@ public sealed class RowSizeLimitTests
 
     /// <summary>
     /// Inserts a row of <c>Id</c> plus 250-byte Binary values that alone add
-    /// up to more than a page, with two inline OLE values and an inline MEMO
+    /// up to more than a page, with two OLE values and a MEMO
     /// value. The long values move to LVAL pages and the row is still too
     /// long, so the insert throws before anything is written, LVAL pages
     /// included: the file is byte-for-byte what it was, in every write mode
@@ -403,19 +407,16 @@ public sealed class RowSizeLimitTests
     }
 
     /// <summary>
-    /// A multi-row update that grows rows of inline MEMO values past a page
-    /// moves the largest of them to LVAL pages and succeeds. On Jet3 three
-    /// MEMO columns, where the second row holds two 900-character values and
-    /// the update sets the third to 1,000 characters (2,858 bytes inline), and
-    /// on Jet4 and ACCDB five, four of them 900 characters long (4,691 bytes).
-    /// Both rows read back with the new value.
+    /// A multi-row update adds large MEMO values to rows with different
+    /// existing external values. Both rows retain their other values and
+    /// read back with the new value.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">How the writer runs the update.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     [Theory]
     [MemberData(nameof(FormatsAndModes))]
-    public async Task UpdateGrowingRowsPastAPageWithInlineMemoValues_MovesThemToLvalPages(DatabaseFormat format, WriteMode mode)
+    public async Task UpdateRowsWithLargeMemoValues_PreservesExternalValues(DatabaseFormat format, WriteMode mode)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         int memoColumns = format == DatabaseFormat.Jet3Mdb ? 3 : 5;
@@ -459,7 +460,18 @@ public sealed class RowSizeLimitTests
         for (int i = 0; i < values.Length; i++)
         {
             string name = tableDef.Columns[i].Name;
-            values[i] = name == "Id" ? 1 : new string((char)('a' + (name[^1] - '0')), lengths[name[^1] - '0']);
+            if (name == "Id")
+            {
+                values[i] = 1;
+            }
+            else if (tableDef.Columns[i].Type == ColumnType.BinaryType)
+            {
+                values[i] = Bytes(tableDef.Columns[i].Size, i);
+            }
+            else
+            {
+                values[i] = new string((char)('a' + (name[^1] - '0')), lengths[name[^1] - '0']);
+            }
         }
 
         return values;

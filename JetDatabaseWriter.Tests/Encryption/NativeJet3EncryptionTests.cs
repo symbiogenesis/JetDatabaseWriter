@@ -73,4 +73,5 @@ public sealed class NativeJet3EncryptionTests
         await using AccessReader accepted = await AccessReader.OpenAsync(stream, new AccessReaderOptions(password) { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
         DataTable rows = await accepted.ReadDataTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Rows.Count);
-    }}
+    }
+}

@@ -109,6 +109,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         await AssertRefusedAsync(path, password: null);
         Assert.Equal(["7|Native encrypted row", "8|two"], await ReadRowsAsync(path, FirstPassword));
     }
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     public void Dispose()

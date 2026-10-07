@@ -331,7 +331,7 @@ public sealed class DaoValidationFixture : IAsyncDisposable
 
                 IReadOnlyList<IndexMetadata> indexes = await postReader.ListIndexesAsync(tableName, cancellationToken).ConfigureAwait(false);
                 foreignKeyIndexNames[tableName] = indexes
-                    .Where(index => index.Kind == IndexKind.ForeignKey)
+                    .Where(index => index.Kind == JetDatabaseWriter.Enums.IndexKind.ForeignKey)
                     .Select(index => index.Name)
                     .OrderBy(name => name, StringComparer.Ordinal)
                     .ToArray();
