@@ -42,7 +42,7 @@ principals.
 An independent DAO creation in the Access-authored `testV2003.mdb` fixture
 confirms that an explicit inheritable owner SID takes precedence over the owner
 placeholder. Its Tables container holds placeholder E4A6 with mask 0xF00FE and
-owner E4A3 with mask 0xFFEFF; DAO emits one owner entry with 0xFFEFF. The masks
+owner E5A3 with mask 0xFFEFF; DAO emits one owner entry with 0xFFEFF. The masks
 are not combined. Distinct stored identities may therefore legitimately
 converge when the placeholder is resolved.
 
