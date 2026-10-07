@@ -338,3 +338,14 @@ General DAO validation rules live in [dao-validation-strategy.md](dao-validation
 - [Jackcess `ComplexDataType.java`](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/complex/ComplexDataType.java) — type-discriminator integer values
 - This repo: `JetDatabaseWriter/ComplexColumns/ComplexColumnReader.cs` (`BuildColumnDataAsync`, flat-table decode), `JetDatabaseWriter/ComplexColumns/Models/AttachmentWrapper.cs`, `JetDatabaseWriter/Models/ComplexCellValue.cs`
 - Companion design doc: [`index-and-relationship-format-notes.md`](index-and-relationship-format-notes.md)
+
+## Native short LVAL packing
+
+Every emitted single-row LVAL payload ends at the physical page boundary,
+including short single-page values and the last chunk of a chain. The row
+directory stores the actual start; free space excludes the header and row
+slot. DAO characterization of a 372-byte compressed attachment wrapper on
+an ACE page established start 3724 and free space 3708. With identical
+payload bytes and token, placing that row at offset20 caused extraction to
+fail and compacting to lose its content; end packing preserved all6144
+payload bytes before and after compacting. Compression framing was unchanged.

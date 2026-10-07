@@ -3,7 +3,7 @@ namespace JetDatabaseWriter.Encryption;
 using System;
 using System.Security.Cryptography;
 
-/// <summary>Jet4 RC4 with its per-page MD5-derived key.</summary>
+/// <summary>Native Jet RC4 with the database encoding key XOR the page number.</summary>
 internal sealed class Jet4Rc4PageCodec : IPageCodec
 {
     private uint databaseKey;

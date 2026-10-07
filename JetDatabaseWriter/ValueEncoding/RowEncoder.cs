@@ -326,9 +326,10 @@ internal sealed class RowEncoder(JetFormat format)
     /// <returns>The row's bytes, or <see langword="null"/> when the row is longer than one data page holds (<see cref="MaxRowLength"/>).</returns>
     /// <exception cref="JetLimitationException">
     /// A Jet3 row would have more than 255 columns or variable columns, or 255
-    /// variable columns with an EOD the jump table cannot encode.
+    /// variable columns with an EOD the jump table cannot encode, or a fixed Text value
+    /// exceeds its descriptor's encoded width.
     /// </exception>
-    /// <exception cref="NotSupportedException">A fixed Text value does not occupy its descriptor's exact encoded width.</exception>
+    /// <exception cref="NotSupportedException">A fixed Text descriptor cannot hold whole encoded padding spaces.</exception>
     internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength)
     {
         int numCols = 0;
@@ -364,9 +365,14 @@ internal sealed class RowEncoder(JetFormat format)
             {
                 string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
                 int byteCount = format.PropertyTextEncoding.GetByteCount(text);
-                if (byteCount != column.Size)
+                if (byteCount > column.Size)
                 {
-                    throw new NotSupportedException($"Fixed Text column '{column.Name}' requires exactly {column.Size} encoded bytes; padding behavior has not been verified for this format.");
+                    throw new JetLimitationException($"Fixed Text column '{column.Name}' holds at most {column.Size} encoded bytes; the value occupies {byteCount}.");
+                }
+
+                if ((column.Size - byteCount) % format.PropertyTextEncoding.GetByteCount(" ") != 0)
+                {
+                    throw new NotSupportedException($"Fixed Text column '{column.Name}' cannot hold whole encoded padding spaces within its {column.Size}-byte descriptor.");
                 }
             }
         }
@@ -407,7 +413,13 @@ internal sealed class RowEncoder(JetFormat format)
                 if (value is not DBNull)
                 {
                     string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
-                    _ = format.PropertyTextEncoding.GetBytes(text.AsSpan(), fixedArea.AsSpan(column.FixedOff, column.Size));
+                    Span<byte> destination = fixedArea.AsSpan(column.FixedOff, column.Size);
+                    int written = format.PropertyTextEncoding.GetBytes(text.AsSpan(), destination);
+                    byte[] space = format.PropertyTextEncoding.GetBytes(" ");
+                    for (int offset = written; offset < destination.Length; offset += space.Length)
+                    {
+                        space.AsSpan().CopyTo(destination.Slice(offset, space.Length));
+                    }
                     JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 

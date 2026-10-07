@@ -695,6 +695,76 @@ public sealed class LinkedTableTests : IDisposable
     // Helpers
     // ═══════════════════════════════════════════════════════════════════
 
+    [Fact]
+    public async Task LinkedTable_Cycle_IsRefusedBeforeReopeningHost()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string first = await this.CreateTempAccdbDatabaseAsync("CycleA");
+        string second = await this.CreateTempAccdbDatabaseAsync("CycleB");
+        await InjectLinkedTableEntryAsync(first, "ToB", second, "ToA", ct);
+        await InjectLinkedTableEntryAsync(second, "ToA", first, "ToB", ct);
+        int authorizations = 0;
+        var options = new AccessReaderOptions
+        {
+            UseLockFile = false,
+            LinkedSourcePathValidator = (_, _) =>
+            {
+                authorizations++;
+                return true;
+            },
+        };
+        await using AccessReader reader = await AccessReader.OpenAsync(first, options, ct);
+        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
+        Assert.Contains("cycle", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, authorizations);
+    }
+
+    [Fact]
+    public async Task LinkedTable_DepthLimit_IsRefusedBeforeOpeningNextSource()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string first = await this.CreateTempAccdbDatabaseAsync("DepthA");
+        string second = await this.CreateTempAccdbDatabaseAsync("DepthB");
+        string missing = Path.Combine(Path.GetDirectoryName(first)!, $"not-opened-{Guid.NewGuid():N}.accdb");
+        await InjectLinkedTableEntryAsync(first, "ToB", second, "ToMissing", ct);
+        await InjectLinkedTableEntryAsync(second, "ToMissing", missing, "Data", ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(first, new AccessReaderOptions { UseLockFile = false, LinkedSourceMaxDepth = 1 }, ct);
+        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
+        Assert.Contains("depth", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LinkedTable_EncryptedSource_UsesExplicitSourcePassword()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        const string sourcePassword = "source-secret";
+        string sourcePath = await this.CreateTempAccdbDatabaseAsync("PasswordSource");
+        string hostPath = await this.CreateTempAccdbDatabaseAsync("PasswordHost");
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, new AccessWriterOptions { UseLockFile = false }, ct))
+        {
+            await writer.CreateTableAsync("Data", [new("Id", typeof(int))], ct);
+            await writer.InsertRowAsync("Data", [7], ct);
+        }
+
+        await AccessWriter.EncryptAsync(sourcePath, sourcePassword.AsMemory(), AccessEncryptionFormat.AccdbLegacyPassword, new AccessWriterOptions { UseLockFile = false }, ct);
+        await InjectLinkedTableEntryAsync(hostPath, "LinkedData", sourcePath, "Data", ct);
+        int passwordRequests = 0;
+        var options = new AccessReaderOptions("unrelated-host-password")
+        {
+            UseLockFile = false,
+            LinkedSourcePasswordResolver = (link, path) =>
+            {
+                Assert.Equal("LinkedData", link.Name);
+                Assert.Equal(sourcePath, path);
+                passwordRequests++;
+                return sourcePassword.AsMemory();
+            },
+        };
+        await using AccessReader reader = await AccessReader.OpenAsync(hostPath, options, ct);
+        Assert.Equal(1, await reader.GetRealRowCountAsync("LinkedData", ct));
+        Assert.Equal(1, passwordRequests);
+    }
+
     public void Dispose()
     {
         foreach (string path in this.tempFiles)

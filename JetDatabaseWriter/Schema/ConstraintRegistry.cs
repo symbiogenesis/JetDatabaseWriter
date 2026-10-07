@@ -448,6 +448,22 @@ internal sealed class ConstraintRegistry(
         return await this.NextComplexReferenceAsync(tableName, tableDef, list, count, checkpoints: null, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Invalidates a table's rule after its persisted properties change.</summary>
+    /// <param name="tableName">The table name.</param>
+    internal void InvalidateTableRule(string tableName) => this.tableRules.Remove(tableName);
+
+    /// <summary>Checks a proposed rule against one existing row before property mutation.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="values">The existing row.</param>
+    /// <param name="rule">The proposed validation rule.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask ValidateTableRuleAsync(string tableName, TableDef tableDef, object[] values, TableValidationConstraint rule, CancellationToken cancellationToken)
+    {
+        List<ColumnConstraint> columns = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
+        this.EvaluateTableValidationRule(tableName, tableDef, columns, values, rule);
+    }
+
     private static ColumnConstraint ToConstraint(ColumnDefinition def)
     {
         // Access gives AutoNumber, calculated and complex columns no default.
@@ -654,83 +670,6 @@ internal sealed class ConstraintRegistry(
         }
     }
 
-    /// <summary>Invalidates a table's rule after its persisted properties change.</summary>
-    /// <param name="tableName">The table name.</param>
-    internal void InvalidateTableRule(string tableName) => this.tableRules.Remove(tableName);
-
-    /// <summary>Checks a proposed rule against one existing row before property mutation.</summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="tableDef">The table definition.</param>
-    /// <param name="values">The existing row.</param>
-    /// <param name="rule">The proposed validation rule.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    internal async ValueTask ValidateTableRuleAsync(string tableName, TableDef tableDef, object[] values, TableValidationConstraint rule, CancellationToken cancellationToken)
-    {
-        List<ColumnConstraint> columns = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
-        this.EvaluateTableValidationRule(tableName, tableDef, columns, values, rule);
-    }
-
-    /// <summary>Evaluates the complete row against a cached rule.</summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="tableDef">The table definition.</param>
-    /// <param name="columns">The column metadata.</param>
-    /// <param name="values">The complete row.</param>
-    /// <param name="rule">The validation rule.</param>
-    /// <exception cref="JetValidationRuleException">The rule cannot be evaluated or rejects the row.</exception>
-    private void EvaluateTableValidationRule(string tableName, TableDef tableDef, List<ColumnConstraint> columns, object[] values, TableValidationConstraint rule)
-    {
-        try
-        {
-            rule.Plan ??= CalculatedExpressionPlan.Parse(rule.Expression);
-            var context = new CalculatedExpressionEvaluationContext(tableDef, columns, values, force: false, tableName, textCollation);
-            object result = rule.Plan.Root.Evaluate(context, rule.Plan);
-            if (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result))
-            {
-                return;
-            }
-        }
-        catch (Exception ex) when (ColumnValidationRule.IsEvaluationFailure(ex))
-        {
-            throw TableRuleFailure(tableName, rule, "cannot be evaluated");
-        }
-
-        throw TableRuleFailure(tableName, rule, "rejected the row");
-    }
-
-    /// <summary>Checks the persisted table rule against the complete candidate row.</summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="tableDef">The table definition.</param>
-    /// <param name="columns">The column constraints.</param>
-    /// <param name="values">The complete candidate row.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <exception cref="JetValidationRuleException">The stored rule rejects the row or cannot be evaluated.</exception>
-    private async ValueTask CheckTableValidationRuleAsync(string tableName, TableDef tableDef, List<ColumnConstraint> columns, object[] values, CancellationToken cancellationToken)
-    {
-        if (!this.tableRules.TryGetValue(tableName, out TableValidationConstraint? rule))
-        {
-            ColumnPropertyBlock? properties = readLvPropForTable is null ? null : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
-            this.CacheTableValidationRule(tableName, properties);
-            rule = this.tableRules[tableName];
-        }
-
-        if (rule is null)
-        {
-            return;
-        }
-
-        this.EvaluateTableValidationRule(tableName, tableDef, columns, values, rule);
-    }
-
-    /// <summary>Remembers the rule or its absence without relying on property block order.</summary>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="properties">The readable persisted properties, or absence.</param>
-    private void CacheTableValidationRule(string tableName, ColumnPropertyBlock? properties)
-    {
-        ColumnPropertyTarget? target = properties?.FindTableTarget();
-        string? expression = NullIfBlank(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties!.Format));
-        this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties!.Format));
-    }
-
     private static void ValidateCalculatedResults(string tableName, List<ColumnConstraint> constraints, object[] values)
     {
         for (int i = 0; i < constraints.Count; i++)
@@ -795,6 +734,67 @@ internal sealed class ConstraintRegistry(
 
         ColumnPropertyEntry? resultType = target?.Find(Constants.ColumnPropertyNames.ResultType);
         return resultType?.Value.Length > 0 ? (ColumnType)resultType.Value[0] : col.Type;
+    }
+
+    /// <summary>Evaluates the complete row against a cached rule.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="columns">The column metadata.</param>
+    /// <param name="values">The complete row.</param>
+    /// <param name="rule">The validation rule.</param>
+    /// <exception cref="JetValidationRuleException">The rule cannot be evaluated or rejects the row.</exception>
+    private void EvaluateTableValidationRule(string tableName, TableDef tableDef, List<ColumnConstraint> columns, object[] values, TableValidationConstraint rule)
+    {
+        try
+        {
+            rule.Plan ??= CalculatedExpressionPlan.Parse(rule.Expression);
+            var context = new CalculatedExpressionEvaluationContext(tableDef, columns, values, force: false, tableName, textCollation);
+            object result = rule.Plan.Root.Evaluate(context, rule.Plan);
+            if (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result))
+            {
+                return;
+            }
+        }
+        catch (Exception ex) when (ColumnValidationRule.IsEvaluationFailure(ex))
+        {
+            throw TableRuleFailure(tableName, rule, "cannot be evaluated");
+        }
+
+        throw TableRuleFailure(tableName, rule, "rejected the row");
+    }
+
+    /// <summary>Checks the persisted table rule against the complete candidate row.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="columns">The column constraints.</param>
+    /// <param name="values">The complete candidate row.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetValidationRuleException">The stored rule rejects the row or cannot be evaluated.</exception>
+    private async ValueTask CheckTableValidationRuleAsync(string tableName, TableDef tableDef, List<ColumnConstraint> columns, object[] values, CancellationToken cancellationToken)
+    {
+        if (!this.tableRules.TryGetValue(tableName, out TableValidationConstraint? rule))
+        {
+            ColumnPropertyBlock? properties = readLvPropForTable is null ? null : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
+            this.CacheTableValidationRule(tableName, properties);
+            rule = this.tableRules[tableName];
+        }
+
+        if (rule is null)
+        {
+            return;
+        }
+
+        this.EvaluateTableValidationRule(tableName, tableDef, columns, values, rule);
+    }
+
+    /// <summary>Remembers the rule or its absence without relying on property block order.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="properties">The readable persisted properties, or absence.</param>
+    private void CacheTableValidationRule(string tableName, ColumnPropertyBlock? properties)
+    {
+        ColumnPropertyTarget? target = properties?.FindTableTarget();
+        string? expression = NullIfBlank(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties!.Format));
+        this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties!.Format));
     }
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)

@@ -20,7 +20,7 @@ public sealed class StatementSpillTests
         await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
         byte[] ciphertext = new byte[16 * 80];
         Array.Fill(ciphertext, (byte)0xA5);
-        using IPageCodec codec = new Jet4Rc4PageCodec(0x12345678);
+        using var codec = new Jet4Rc4PageCodec(0x12345678);
         for (int page = 1; page < 80; page++)
         {
             codec.Encode(ciphertext, page * 16, page, 16);

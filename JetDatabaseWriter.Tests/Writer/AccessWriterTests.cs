@@ -2067,6 +2067,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
     /// </summary>
     /// <param name="columns">The columns.</param>
     /// <param name="seed">The random seed.</param>
+    /// <exception cref="InvalidOperationException">A fixed Text column has no descriptor width.</exception>
     private static object[] BuildDummyRow(IReadOnlyList<ColumnMetadata> columns, int seed = 0)
     {
         object[] values = new object[columns.Count];

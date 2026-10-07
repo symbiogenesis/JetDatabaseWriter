@@ -43,11 +43,13 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     /// databases use page storage rather than this container budget.
     /// </summary>
     public int MaxEncryptionContainerBytes { get; init; } = 256 * 1024 * 1024;
+
     /// <summary>
     /// Gets the maximum Agile XML descriptor size in bytes, excluding its
     /// eight-byte version header. Default: 1 MiB. Must be positive.
     /// </summary>
     public int MaxEncryptionInfoBytes { get; init; } = 1024 * 1024;
+
     /// <summary>
     /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
     /// alongside the database while it is open, and deleted on dispose.

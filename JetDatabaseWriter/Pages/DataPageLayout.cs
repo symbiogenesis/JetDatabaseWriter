@@ -34,7 +34,7 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
 /// owner field at offset 4 holds the <c>"LVAL"</c> signature instead of a TDEF
 /// page number. The row count and row-offset table sit where
 /// <see cref="DataPage"/> puts them on any data page; the rest follows the
-/// pages Access writes. On Jet4/ACE a full chained row starts at offset 20,
+/// pages Access writes. Every row ends at the page boundary. On Jet4/ACE a full chained row starts at offset 20,
 /// leaving 4 bytes of free space, and bytes 8-11 are unused (Access leaves
 /// them zero; the writer stores its LVAL token there). On Jet3, Access 97
 /// starts a full chained row at 12, right after the one-entry row-offset
@@ -45,14 +45,13 @@ internal readonly record struct DataPageLayout(int TDefOff, int NumRows, int Row
 /// <param name="DataPage">The data-page header layout (row count and row-offset table).</param>
 /// <param name="MinRowStart">The lowest row start of a one-row LVAL page; a row's payload capacity is the page size minus this.</param>
 /// <param name="WritesToken">Whether bytes 8-11 are free for the LVAL token (Jet4/ACE only).</param>
-/// <param name="PackRowsAtEnd">Whether every row is written at the end of its page, as Access 97 does, rather than at <paramref name="MinRowStart"/>.</param>
-internal readonly record struct LvalPageLayout(DataPageLayout DataPage, int MinRowStart, bool WritesToken, bool PackRowsAtEnd)
+internal readonly record struct LvalPageLayout(DataPageLayout DataPage, int MinRowStart, bool WritesToken)
 {
     /// <summary>Gets the Jet3 LVAL page layout, which Access 97 writes.</summary>
-    public static LvalPageLayout Jet3 => new(DataPageLayout.Jet3, MinRowStart: 12, WritesToken: false, PackRowsAtEnd: true);
+    public static LvalPageLayout Jet3 => new(DataPageLayout.Jet3, MinRowStart: 12, WritesToken: false);
 
     /// <summary>Gets the Jet4 / ACE LVAL page layout the writer uses.</summary>
-    public static LvalPageLayout Jet4 => new(DataPageLayout.Jet4, MinRowStart: 20, WritesToken: true, PackRowsAtEnd: false);
+    public static LvalPageLayout Jet4 => new(DataPageLayout.Jet4, MinRowStart: 20, WritesToken: true);
 
     /// <summary>
     /// Returns the largest payload one LVAL row holds on a page of

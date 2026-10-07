@@ -141,6 +141,7 @@ public sealed record IndexDefinition
     /// keys implicitly set this flag.
     /// </summary>
     public bool IsRequired { get; init; }
+
     /// <summary>
     /// Gets a value indicating whether this is an engine-owned index on a
     /// complex reference, preserved from a table or created with its complex column.

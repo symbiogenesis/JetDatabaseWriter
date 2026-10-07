@@ -227,8 +227,8 @@ public class ColumnPropertyBlockTests
     [Fact]
     public void Parse_RecognizedSignatureIsPreservedAcrossOuterFormatDifferences()
     {
-        JetFormat source = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb);
-        JetFormat outer = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb);
+        var outer = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
         var builder = new ColumnPropertyBlockBuilder();
         builder.GetOrAddTarget("A").AddText("Description", "Café", source);
         byte[] blob = builder.ToBytes(source)!;

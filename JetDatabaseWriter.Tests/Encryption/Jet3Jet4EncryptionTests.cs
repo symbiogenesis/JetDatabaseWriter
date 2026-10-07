@@ -12,12 +12,11 @@ using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-
 /// <summary>
 /// Tests for database encryption across all Jet/ACE versions:
 ///   1. Jet3 XOR mask  — fixed XOR pattern applied to all pages after page 0
 ///   2. Jet4 RC4 flag  — password verified against the XOR-encoded header hash (0x42)
-///   3. Jet4 RC4 pages — RC4 page decryption
+///   3. Jet4 RC4 pages — RC4 page decryption.
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
@@ -378,101 +377,29 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
     internal static void SetJet3EncryptionFlag(byte[] data) => data[0x62] = 0x01; // Office97 password flag
 
     /// <summary>
-    /// Sets the Office97 password flag (0x01) and encodes password <c>"test"</c>
+    /// Encodes the native date-masked password <c>"test"</c>
     /// in a Jet4 database header. Data pages are <em>not</em> RC4-encrypted —
     /// use <see cref="Rc4EncryptDataPages"/> to also encrypt the page data.
     /// </summary>
     /// <param name="data">The data bytes or values.</param>
     private static void SetJet4PasswordFlag(byte[] data)
-    {
-        // Encode password "test" as UTF-16LE, XOR with masks, write to 0x42
-        byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes("test");
-        byte[] encoded = new byte[40];
-        for (int i = 0; i < 40; i++)
-        {
-            byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ EncryptionManager.Jet4PasswordMask[i] ^ data[0x72 + (i % 4)]);
-        }
+        => EncryptionManager.WriteNativeJet4EncryptionHeader(data, 0, "test");
 
-        Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
-
-        // Set Office97 password flag (0x01): password required but pages are NOT RC4-encrypted.
-        // Flag 0x02 would mean RC4 page encryption, which requires also encrypting the page
-        // data — this helper only sets the header flag for password-verification tests.
-        data[0x62] = 0x01;
-    }
-
-    /// <summary>
-    /// Simulates RC4 encryption of data pages in a Jet4 database.
-    /// Sets the encryption flag (0x02), encodes the password, and applies RC4
-    /// to pages 1+ using the standard Jet4 page-key derivation.
-    /// </summary>
-    /// <param name="data">The data bytes or values.</param>
-    /// <param name="password">The password.</param>
+    /// <summary>Encrypts data pages with the native Jet encoding key.</summary>
+    /// <param name="data">The database bytes.</param>
+    /// <param name="password">The database password.</param>
     private static void Rc4EncryptDataPages(byte[] data, string password)
     {
-        // Step 1: Write the RC4 encryption flag (0x02) and encode the password in the header
-        SetJet4Rc4EncryptionFlag(data, password);
-
-        // Step 2: Derive RC4 key from the database key at offset 0x3E and
-        // encrypt each data page (pages 1+). The key for each page is:
-        //   RC4Key = MD5(DatabaseKey + PageNumber)
-        // where PageNumber is a 4-byte little-endian integer.
-        uint dbKey = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0x3E));
-
+        const uint dbKey = 0x12345678;
+        EncryptionManager.WriteNativeJet4EncryptionHeader(data, dbKey, password);
         const int pageSize = Constants.PageSizes.Jet4;
-        for (int pageNum = 1; pageNum * pageSize < data.Length; pageNum++)
+        for (int page = 1; page * pageSize < data.Length; page++)
         {
-            int offset = pageNum * pageSize;
-            int length = Math.Min(pageSize, data.Length - offset);
-
-            byte[] rc4Key = DeriveJet4PageKey(dbKey, (uint)pageNum);
-            Rc4Transform(data, offset, length, rc4Key);
+            byte[] key = new byte[sizeof(uint)];
+            BinaryPrimitives.WriteUInt32LittleEndian(key, dbKey ^ (uint)page);
+            Rc4Transform(data, page * pageSize, Math.Min(pageSize, data.Length - (page * pageSize)), key);
         }
     }
-
-    /// <summary>
-    /// Sets the RC4 page-encryption flag (0x02) and encodes a password
-    /// in a Jet4 database header.
-    /// </summary>
-    /// <param name="data">The data bytes or values.</param>
-    /// <param name="password">The password.</param>
-    private static void SetJet4Rc4EncryptionFlag(byte[] data, string password)
-    {
-        byte[] pwdUtf16 = System.Text.Encoding.Unicode.GetBytes(password);
-        byte[] encoded = new byte[40];
-        for (int i = 0; i < 40; i++)
-        {
-            byte pwdByte = i < pwdUtf16.Length ? pwdUtf16[i] : (byte)0;
-            encoded[i] = (byte)(pwdByte ^ EncryptionManager.Jet4PasswordMask[i] ^ data[0x72 + (i % 4)]);
-        }
-
-        Buffer.BlockCopy(encoded, 0, data, 0x42, 40);
-
-        // Set RC4 page-encryption flag
-        data[0x62] = 0x02;
-    }
-
-#pragma warning disable CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec
-    /// <summary>
-    /// Derives the RC4 key for a specific page using the Jet4 algorithm:
-    /// key = first 4 bytes of MD5(dbKey LE bytes + pageNumber LE bytes).
-    /// </summary>
-    /// <param name="dbKey">The db key.</param>
-    /// <param name="pageNumber">The page number.</param>
-    private static byte[] DeriveJet4PageKey(uint dbKey, uint pageNumber)
-    {
-        byte[] input = new byte[8];
-        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(0), dbKey);
-        BinaryPrimitives.WriteUInt32LittleEndian(input.AsSpan(4), pageNumber);
-
-        byte[] hash = MD5.HashData(input);
-
-        // Use first 4 bytes as the RC4 key (per Jet4 spec)
-        return hash[..4];
-    }
-#pragma warning restore CA5351, RS0030
-
     /// <summary>In-place RC4 transform (encrypt/decrypt are the same operation).</summary>
     /// <param name="data">The data bytes or values.</param>
     /// <param name="offset">The offset.</param>

@@ -39,6 +39,13 @@ using JetDatabaseWriter.Models;
 /// </remarks>
 public interface IAccessSchema : IAccessBase
 {
+    /// <summary>Sets or removes a table validation rule after checking every existing row.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="rule">The new rule, or null to remove it and its validation message.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous operation.</returns>
+    public ValueTask SetTableValidationRuleAsync(string tableName, TableValidationRule? rule, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Asynchronously creates a new table with the specified columns.
     /// Throws if a table with the same name already exists.
@@ -78,16 +85,13 @@ public interface IAccessSchema : IAccessBase
 
     /// <summary>
     /// Asynchronously drops (deletes) the specified table and all of its data.
-    /// Throws if the table does not exist. The table must not take part in any
-    /// foreign-key relationship, as its primary or its foreign table, including a
-    /// relationship that does not enforce referential integrity or one that relates
-    /// the table to itself: Microsoft Access refuses such a drop (error 3303), so drop
-    /// the relationships first with <see cref="DropRelationshipAsync"/>.
+    /// An enforced relationship to another table blocks the drop. Self relationships
+    /// and relationships without integrity enforcement are removed with the table.
     /// </summary>
     /// <param name="tableName">Name of the table to drop (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the table does not exist, or, before anything is written, when a relationship names it; the message lists the relationships.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the table does not exist, or, before anything is written, when an enforced relationship to another table names it; the message lists the relationships.</exception>
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -147,7 +151,7 @@ public interface IAccessSchema : IAccessBase
     /// <c>T.[New]</c>); the expression engine does not evaluate table-qualified references
     /// yet, before or after the rename. The rest of each expression, including text inside
     /// string literals, is kept as it was. The table-level <c>Filter</c>, <c>OrderBy</c> and
-    /// <c>ValidationRule</c> are not rewritten, so one that names the column keeps the old name.
+    /// <c>ValidationRule</c> follows the renamed column; dropping a field it names is refused.
     /// A rename may change only the letter case of the name, and is then handled like any other
     /// rename. A rename to the name the column already has, spelled as stored, changes nothing
     /// and does not rewrite the table. Both follow what Microsoft Access is believed to do,

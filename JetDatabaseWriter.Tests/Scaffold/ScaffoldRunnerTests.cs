@@ -646,6 +646,8 @@ public sealed class ScaffoldRunnerTests : IDisposable
             return new ValueTask<IReadOnlyList<string>>([.. tables]);
         }
 
+        public ValueTask<TableValidationRule?> GetTableValidationRuleAsync(string tableName, CancellationToken cancellationToken = default) => ValueTask.FromResult<TableValidationRule?>(null);
+
         public ValueTask<IReadOnlyList<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();

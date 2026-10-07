@@ -430,3 +430,17 @@ real Microsoft Access oracle:
 
 This avoids a multi-week mega-PR and keeps the scope of each Jackcess
 translation bounded.
+
+## Native row counts and schema preservation
+
+DAO120 on 2026-10-06 enumerated four live rows in `calcFieldTestV2010.accdb`
+Table1 (Bruce, Bart, John, Test), while its table recordset reported
+`RecordCount = 3`. The table's stored statistic is stale; scans must retain
+all four rows. `WriterRenamedCalculatedColumn_OpensEvaluatesAndCompactsInDao`
+pins that distinction before changing the fixture.
+
+Schema edits retain original descriptor storage types, sizes, flags,
+miscellaneous fields and unknown bytes. Only column numbers, variable-slot
+indexes and fixed offsets change with the rebuilt row layout. Calculated
+result types remain separate from their physical descriptor type; a native
+variable Numeric field must not become fixed during a rename.

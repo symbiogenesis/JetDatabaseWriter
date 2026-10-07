@@ -77,9 +77,6 @@ internal static class TestDatabases
     public static string EncryptedRoot =>
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Encrypted");
 
-    /// <summary>A writer-created Jet4 <c>.mdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.Jet4Rc4"/>.</summary>
-    public static readonly string EncryptedJet4Rc4 = Path.Combine(EncryptedRoot, "Jet4Rc4.mdb");
-
     /// <summary>A writer-created ACE <c>.accdb</c> encrypted as <see cref="Enums.AccessEncryptionFormat.AccdbLegacyPassword"/>.</summary>
     public static readonly string EncryptedAccdbLegacyPassword = Path.Combine(EncryptedRoot, "AccdbLegacyPassword.accdb");
 

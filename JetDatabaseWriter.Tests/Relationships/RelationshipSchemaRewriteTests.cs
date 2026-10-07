@@ -511,7 +511,6 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword)]
     public async Task SchemaRewrite_OfEncryptedDatabase_KeepsForeignKeyIndexes(DatabaseFormat format, AccessEncryptionFormat encryption)
     {
@@ -546,6 +545,44 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public async Task SchemaRewrite_OfNativeEncryptedJet4_KeepsRelationshipsAndEnforcement()
+    {
+        const string password = "Native123";
+        MemoryStream stream = await db.CopyToStreamAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), TestContext.Current.CancellationToken);
+        var writerOptions = new AccessWriterOptions { UseLockFile = false, Password = password.AsMemory() };
+        await using (AccessWriter writer = await OpenWriterAsync(stream, writerOptions))
+        {
+            await CreateParentAndChildAsync(writer);
+            await writer.RenameColumnAsync(Child, "Note", "Note2", TestContext.Current.CancellationToken);
+            await writer.AddColumnAsync(Parent, new ColumnDefinition("Extra", typeof(int)), TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, Password = password.AsMemory() }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            IndexMetadata parentFk = Assert.Single(await reader.ListIndexesAsync(Parent, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
+            IndexMetadata childFk = Assert.Single(await reader.ListIndexesAsync(Child, TestContext.Current.CancellationToken), index => index.Kind == IndexKind.ForeignKey);
+            Assert.Equal(childFk.IndexNumber, parentFk.RelatedIndexNumber);
+            Assert.Equal(parentFk.IndexNumber, childFk.RelatedIndexNumber);
+            Assert.Equal(RelationshipName, childFk.Name);
+            Assert.Equal("ParentId", Assert.Single(childFk.Columns).Name);
+            Assert.True(childFk.CascadeDeletes);
+            Assert.Equal(1, await reader.GetRealRowCountAsync("T", TestContext.Current.CancellationToken));
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream, writerOptions))
+        {
+            _ = await Assert.ThrowsAsync<JetConstraintException>(async () => await writer.InsertRowAsync(Child, RowValues.Create().Set("Id", 20).Set("ParentId", 99), TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.DeleteRowsAsync(Parent, "Id", 1, TestContext.Current.CancellationToken));
+        }
+
+        stream.Position = 0;
+        await using AccessReader finalReader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, Password = password.AsMemory() }, leaveOpen: true, TestContext.Current.CancellationToken);
+        using DataTable children = await finalReader.ReadDataTableAsync(Child, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(12, Assert.Single(children.AsEnumerable())["Id"]);
     }
 
     [Theory]

@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -164,39 +165,24 @@ internal static class EncryptionManager
     {
         uint? rc4DbKey = null;
 
-        // Jet4 .mdb (Access 2000 – 2003): the library's Jet4 RC4 scheme keeps
-        // its flag in raw header byte 0x62. That byte is byte 32 of the masked
-        // header password area, which on a file without a password holds a
-        // creation-date byte, so the flag counts only when the area holds a
-        // password.
-        if (format == DatabaseFormat.Jet4Mdb && header.Length > 0x62)
+        if (format == DatabaseFormat.Jet4Mdb)
         {
-            byte encFlag = header[0x62];
-
-            // Jet4 encryption flag values:
-            //   0x01 = Office97 password only (no page encryption)
-            //   0x02 = RC4 page encryption
-            //   0x03 = RC4 + password
-            if (encFlag is >= 0x01 and <= 0x03 && HasHeaderPassword(header, format))
+            if (HasHeaderPassword(header, format))
             {
-                if (password.IsEmpty)
+                if (password.IsEmpty || !NativeJet4PasswordMatches(header, password.Span))
                 {
                     throw new UnauthorizedAccessException(
-                        "This database is encrypted or password-protected. " +
-                        $"Provide a password via {passwordOptionName}, or " +
-                        "remove the password in Microsoft Access (File > Info > Encrypt with Password) and try again.");
+                        $"This database requires its password via {passwordOptionName}; the supplied password is missing or incorrect.");
                 }
+            }
 
-                if (!HeaderPasswordMatches(header, Jet4PasswordMask, password.Span))
-                {
-                    throw new UnauthorizedAccessException(
-                        "The provided password is incorrect for this database.");
-                }
-
-                if ((encFlag & 0x02) != 0)
-                {
-                    rc4DbKey = Ru32(header, 0x3E);
-                }
+            byte[] unmasked = (byte[])header.Clone();
+            TransformHeaderMask(unmasked);
+            uint encodingKey = Ru32(unmasked, Constants.DatabaseHeader.EncodingKey);
+            CryptographicOperations.ZeroMemory(unmasked);
+            if (encodingKey != 0)
+            {
+                rc4DbKey = encodingKey;
             }
         }
 
@@ -754,7 +740,7 @@ internal static class EncryptionManager
                 _ = stream.Seek(0, SeekOrigin.Begin);
                 byte[] rawFile = new byte[stream.Length];
                 await stream.ReadExactlyAsync(rawFile.AsMemory(), cancellationToken).ConfigureAwait(false);
-                return OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? 1024 * 1024);
+                return OfficeCryptoAgile.DecryptFlatDatabase(rawFile, password.Span, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024));
             }
             finally
             {
@@ -797,7 +783,7 @@ internal static class EncryptionManager
             return (null, AccessEncryptionFormat.None);
         }
 
-        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken, options?.MaxEncryptionContainerBytes ?? 256 * 1024 * 1024).ConfigureAwait(false);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken, options?.MaxEncryptionContainerBytes ?? (256 * 1024 * 1024)).ConfigureAwait(false);
         if (!streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo)
             || !streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage))
         {
@@ -831,7 +817,7 @@ internal static class EncryptionManager
                 "or remove the password in Microsoft Access (File > Info > Decrypt Database) and try again.");
         }
 
-        return (OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? 1024 * 1024),
+        return (OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, password.Span, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024)),
             AccessEncryptionFormat.AccdbAgileCfb);
     }
 
@@ -1207,6 +1193,11 @@ internal static class EncryptionManager
             .ReadDecryptedAsync(source, oldPwd, cancellationToken)
             .ConfigureAwait(false);
 
+        if (sourceFormat == AccessEncryptionFormat.Jet4Rc4)
+        {
+            throw new NotSupportedException("Changing or removing native Jet4 encryption requires native system security metadata that is not supported. The database remains unchanged.");
+        }
+
         AccessEncryptionFormat effectiveTarget = targetFormat
             ?? (requireSourceEncrypted
                 ? sourceFormat
@@ -1216,46 +1207,12 @@ internal static class EncryptionManager
 
     // ── Crypto primitives ────────────────────────────────────────────
 
-    /// <summary>
-    /// Derives the RC4 key for a specific page: MD5(dbKey LE + pageNumber LE)[0..4].
-    /// </summary>
-    /// <param name="dbKey">The db key.</param>
+    /// <summary>Combines the native Jet encoding key with the little-endian page number using XOR.</summary>
+    /// <param name="dbKey">The unmasked database encoding key.</param>
     /// <param name="pageNumber">The page number.</param>
-    /// <param name="destination">The destination.</param>
-    /// <exception cref="CryptographicException">Thrown when the MD5 page-key hash cannot be computed.</exception>
+    /// <param name="destination">The four-byte RC4 key destination.</param>
     internal static void DeriveRc4PageKey(uint dbKey, uint pageNumber, Span<byte> destination)
-    {
-        Span<byte> input = stackalloc byte[8];
-        Wu32(input, 0, dbKey);
-        Wu32(input, 4, pageNumber);
-        Span<byte> hash = stackalloc byte[16];
-        try
-        {
-#pragma warning disable CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
-#if NETSTANDARD2_1
-            using (var md5 = MD5.Create())
-            {
-                if (!md5.TryComputeHash(input, hash, out _))
-                {
-                    throw new CryptographicException("MD5 hash computation failed.");
-                }
-            }
-#else
-            if (MD5.HashData(input, hash) != hash.Length)
-            {
-                throw new CryptographicException("MD5 hash computation failed.");
-            }
-#endif
-#pragma warning restore CA5351, RS0030 // MD5 is required by the Jet4 RC4 key derivation spec, and this code is not used for any security-sensitive purpose. The 8-byte input is too short to be meaningfully brute-forced, and the output is truncated to 4 bytes for the actual key, so collision resistance is not a concern.
-
-            hash[..4].CopyTo(destination);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(input);
-            CryptographicOperations.ZeroMemory(hash);
-        }
-    }
+        => Wu32(destination, 0, dbKey ^ pageNumber);
 
     /// <summary>In-place RC4 transform (encrypt and decrypt are the same operation).</summary>
     /// <param name="data">The data bytes or values.</param>
@@ -1291,6 +1248,79 @@ internal static class EncryptionManager
         finally
         {
             CryptographicOperations.ZeroMemory(s);
+        }
+    }
+
+    /// <summary>Writes a native Jet4 encoding key and date-masked UTF-16 password into the raw header.</summary>
+    /// <param name="header">The raw page-zero header.</param>
+    /// <param name="encodingKey">The native database encoding key.</param>
+    /// <param name="password">The database password.</param>
+    /// <exception cref="JetLimitationException">The password exceeds the native twenty-character field.</exception>
+    internal static void WriteNativeJet4EncryptionHeader(byte[] header, uint encodingKey, ReadOnlySpan<char> password)
+    {
+        if (password.Length > HeaderPasswordLength / sizeof(char))
+        {
+            throw new JetLimitationException("Jet4 passwords cannot exceed twenty UTF-16 characters.");
+        }
+
+        TransformHeaderMask(header);
+        try
+        {
+            Wu32(header, Constants.DatabaseHeader.EncodingKey, encodingKey);
+            WriteEmptyHeaderPassword(header, DatabaseFormat.Jet4Mdb);
+            Span<byte> bytes = stackalloc byte[HeaderPasswordLength];
+            bytes.Clear();
+            _ = Encoding.Unicode.GetBytes(password, bytes);
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                header[Constants.DatabaseHeader.Password + i] ^= bytes[i];
+            }
+
+            CryptographicOperations.ZeroMemory(bytes);
+        }
+        finally
+        {
+            TransformHeaderMask(header);
+        }
+    }
+
+    private static bool NativeJet4PasswordMatches(byte[] header, ReadOnlySpan<char> password)
+    {
+        byte[] unmasked = (byte[])header.Clone();
+        Span<byte> stored = stackalloc byte[HeaderPasswordNormalizedLength];
+        Span<byte> supplied = stackalloc byte[HeaderPasswordNormalizedLength];
+        Span<byte> pattern = stackalloc byte[4];
+        try
+        {
+            TransformHeaderMask(unmasked);
+            _ = TryGetEmptyPasswordPattern(unmasked, pattern);
+            stored.Clear();
+            Span<byte> bytes = stored.Slice(HeaderPasswordLengthPrefixLength, HeaderPasswordLength);
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                bytes[i] = (byte)(unmasked[Constants.DatabaseHeader.Password + i] ^ pattern[i % pattern.Length]);
+            }
+
+            int length = bytes.Length;
+            for (int i = 0; i < bytes.Length; i += sizeof(char))
+            {
+                if (bytes[i] == 0 && bytes[i + 1] == 0)
+                {
+                    length = i;
+                    bytes[i..].Clear();
+                    break;
+                }
+            }
+
+            Wu32(stored, 0, (uint)length);
+            NormalizeSuppliedHeaderPassword(password, supplied);
+            return CryptographicOperations.FixedTimeEquals(stored, supplied);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(unmasked);
+            CryptographicOperations.ZeroMemory(stored);
+            CryptographicOperations.ZeroMemory(supplied);
         }
     }
 
@@ -1354,5 +1384,4 @@ internal static class EncryptionManager
             : uint.MaxValue;
         Wu32(destination, 0, passwordByteLength);
     }
-
 }

@@ -82,7 +82,7 @@ internal sealed class ColumnPropertyBlock
         }
 
         bool isJet3 = magic == MagicKkd;
-        Encoding stringEncoding = Encoding.GetEncoding(
+        var stringEncoding = Encoding.GetEncoding(
             isJet3 ? format.CodePage : Encoding.Unicode.CodePage,
             EncoderFallback.ExceptionFallback,
             DecoderFallback.ExceptionFallback);

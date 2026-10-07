@@ -248,7 +248,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
         }
 
         await AssertDroppedAndUnlinkedAsync(stream, Parent, droppedPage, Child);
-        await AssertPartnerWritableAsync(stream, dropParent: true);
+        await AssertPartnerWritableAsync(stream, parentDropped: true);
         await using AccessReader reader = await OpenReaderAsync(stream);
         Assert.DoesNotContain(await reader.ListRelationshipsAsync(Ct), r => r.Name == RelationshipName);
     }

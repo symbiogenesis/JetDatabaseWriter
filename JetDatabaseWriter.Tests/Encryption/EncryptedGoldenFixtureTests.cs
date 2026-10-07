@@ -23,11 +23,10 @@ using Xunit;
 /// the open path cannot change a decrypted byte unnoticed.
 /// </para>
 /// <para>
-/// The five fixtures under <c>Databases/Encrypted/</c> were written once, at
+/// The four fixtures under <c>Databases/Encrypted/</c> were written once, at
 /// <c>af1ca4d</c>, and are frozen: never regenerate them, or every digest
 /// below changes with the new creation date. Each started as a database the
-/// writer created, a Jet4 <c>.mdb</c> for <see cref="GoldenFixture.Jet4Rc4"/>
-/// and an ACE <c>.accdb</c> for the other four, holding table <c>T</c>
+/// writer created, all ACE <c>.accdb</c> files, holding table <c>T</c>
 /// (<c>Id</c> Long, <c>Body</c> Memo) with three rows, the second a
 /// 20,480-character Memo stored on LVAL pages. Each was then encrypted by
 /// <c>AccessWriter.EncryptAsync</c> with the password
@@ -55,20 +54,17 @@ public sealed class EncryptedGoldenFixtureTests
         /// <summary>Jet3Test.mdb with the Jet3 page XOR mask and flag, built by the test.</summary>
         Jet3Xor = 0,
 
-        /// <summary><c>Databases/Encrypted/Jet4Rc4.mdb</c>.</summary>
-        Jet4Rc4 = 1,
-
         /// <summary><c>Databases/Encrypted/AccdbLegacyPassword.accdb</c>.</summary>
-        AccdbLegacyPassword = 2,
+        AccdbLegacyPassword = 1,
 
         /// <summary><c>Databases/Encrypted/AccdbAgile.accdb</c>, flat Agile.</summary>
-        AccdbAgile = 4,
+        AccdbAgile = 2,
 
         /// <summary><c>Databases/Encrypted/AccdbAgileCfb.accdb</c>.</summary>
-        AccdbAgileCfb = 5,
+        AccdbAgileCfb = 3,
 
         /// <summary><c>Databases/Encrypted/AccdbStandard.accdb</c>.</summary>
-        AccdbStandard = 6,
+        AccdbStandard = 4,
     }
 
     /// <summary>Gets every fixture.</summary>
@@ -201,7 +197,6 @@ public sealed class EncryptedGoldenFixtureTests
     private static string FixturePath(GoldenFixture fixture) => fixture switch
     {
         GoldenFixture.Jet3Xor => throw new ArgumentException("Jet3 XOR is built by the test, not stored.", nameof(fixture)),
-        GoldenFixture.Jet4Rc4 => TestDatabases.EncryptedJet4Rc4,
         GoldenFixture.AccdbLegacyPassword => TestDatabases.EncryptedAccdbLegacyPassword,
         GoldenFixture.AccdbAgile => TestDatabases.EncryptedAccdbAgile,
         GoldenFixture.AccdbAgileCfb => TestDatabases.EncryptedAccdbAgileCfb,
@@ -220,7 +215,6 @@ public sealed class EncryptedGoldenFixtureTests
     private static AccessEncryptionFormat ExpectedFormat(GoldenFixture fixture) => fixture switch
     {
         GoldenFixture.Jet3Xor => AccessEncryptionFormat.None,
-        GoldenFixture.Jet4Rc4 => AccessEncryptionFormat.Jet4Rc4,
         GoldenFixture.AccdbLegacyPassword => AccessEncryptionFormat.AccdbLegacyPassword,
         GoldenFixture.AccdbAgile => AccessEncryptionFormat.AccdbAgile,
         GoldenFixture.AccdbAgileCfb => AccessEncryptionFormat.AccdbAgileCfb,
@@ -231,7 +225,6 @@ public sealed class EncryptedGoldenFixtureTests
     private static (string PlaintextSha256, string[] PageSha256) Recorded(GoldenFixture fixture) => fixture switch
     {
         GoldenFixture.Jet3Xor => (Golden.Jet3PlaintextSha256, Golden.Jet3PageSha256),
-        GoldenFixture.Jet4Rc4 => (Golden.Jet4PlaintextSha256, Golden.Jet4PageSha256),
         GoldenFixture.AccdbLegacyPassword or GoldenFixture.AccdbAgile
             or GoldenFixture.AccdbAgileCfb or GoldenFixture.AccdbStandard => (Golden.AcePlaintextSha256, Golden.AcePageSha256),
         _ => throw new ArgumentOutOfRangeException(nameof(fixture), fixture, null),
@@ -255,9 +248,6 @@ public sealed class EncryptedGoldenFixtureTests
     {
         /// <summary>SHA-256 of Jet3Test.mdb, which the Jet3 XOR fixture decrypts to.</summary>
         internal const string Jet3PlaintextSha256 = "4E3863F433E0FDD47B703EA6307C287A1534D942835AA729CE621A2628C08123";
-
-        /// <summary>SHA-256 of the writer-created Jet4 source of Jet4Rc4.mdb.</summary>
-        internal const string Jet4PlaintextSha256 = "A2C3E1D3270D2927F1735CC546391BC7334329F6A61166D83B4826CB9E42DB11";
 
         /// <summary>SHA-256 of the writer-created ACE source of the four ACE fixtures.</summary>
         internal const string AcePlaintextSha256 = "D62DB73FBEB8ECA886FC05922A959050C6DD7CCA1863EECC9C2DB10DE7A37494";
@@ -323,26 +313,6 @@ public sealed class EncryptedGoldenFixtureTests
             "F3DC2365ED731167395F96EDE0B9121EC55C42E060DA47E0658F4F968B9B32EC",
             "23F9FF448CB453259D9746819120BEED053DFE6B2F7C88A8A0BD4AC9A11D485A",
             "6641D26903D9A738662E6ADF1B4BA50353A908EFDBFCEAAFDF6B6A8C24582046",
-        ];
-
-        /// <summary>SHA-256 of the Jet4 source's pages 1 to 15.</summary>
-        internal static readonly string[] Jet4PageSha256 =
-        [
-            "53B5C9703F8957BD658A112A960A7FEC43BC19C5246E019124BBD9687D72585E",
-            "723F0B110718ADC9CCE58124F094859A3C4701EA53CA232A15C212D8E03D7EAB",
-            "5D805D163ADED823445E8D5F7412877356D97D85F2E05C7FD51641C29872ACBB",
-            "E02D032690AAA1839830B2CE1D3F83874ADD3E9C35EC69E7668718E925CB250A",
-            "081B65BA70A199D5271EE528D918C3D679F7236A73BF0AD7E1DEFEB29BD64D9B",
-            "77E85183A72B41A8679C6EC115F32367BA8750AF8DD114E0BFDF0DFB1C44DBB5",
-            "8331AE966EFB2DA284075F9FDA34123208D72755BE66A1360713EA4A945DF27B",
-            "32086650628B9FCC35F3CE851EC0563FF2C15AAF79674FAA1CA94FCE4CA7684B",
-            "FBCC4FE19277F5A1097F332E3686BF9043EC51217CAD5CC0A41D6A09B7D37F03",
-            "9DF7B3F5F8E4E74C1F60FA2B3100410268344D1800694C7C8774877E90040F0F",
-            "BE709F24297754C38802758303A429906E50B7A1AF0C849185F54A26314A9548",
-            "80C8AF7331984DB6F300FD64FBF0DF75C88582716554A6887DA69093DDF0488A",
-            "D73A77BB532764937287D2D38B2196C6252BE6BF368ABCFCFDF40915A58B0F9C",
-            "260949EE25499BDE448AB78D572F988C90353F3DC5FF19CB66C43ECBB68EAAA2",
-            "D0CF8DE7282AC40DEA707D00D35C0AD35C9C05B8A73DC26ED8A9CCE36C4DA60E",
         ];
 
         /// <summary>SHA-256 of the ACE source's pages 1 to 41.</summary>

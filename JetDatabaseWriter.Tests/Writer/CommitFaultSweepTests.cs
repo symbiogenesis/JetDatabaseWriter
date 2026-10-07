@@ -29,24 +29,26 @@ public class CommitFaultSweepTests
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, true)]
     public async Task CommitFaults_RestoreOriginalImage(DatabaseFormat format, AccessEncryptionFormat encryption, bool automatic)
     {
+        string? password = encryption == AccessEncryptionFormat.None ? null : "Native123";
         byte[] baseline;
         await using (var initial = new MemoryStream())
         {
-            await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(initial, format, Options(false, null), leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+            if (encryption == AccessEncryptionFormat.Jet4Rc4)
             {
+                byte[] native = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), TestContext.Current.CancellationToken);
+                await initial.WriteAsync(native, TestContext.Current.CancellationToken);
+                initial.Position = 0;
+                await using AccessWriter creator = await AccessWriter.OpenAsync(initial, Options(false, password), leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
                 await creator.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Text", typeof(string), 200)], TestContext.Current.CancellationToken);
             }
-
-            if (encryption != AccessEncryptionFormat.None)
+            else
             {
-                initial.Position = 0;
-                await AccessWriter.EncryptAsync(initial, "secret".AsMemory(), encryption, TestContext.Current.CancellationToken);
+                await using AccessWriter creator = await AccessWriter.CreateDatabaseAsync(initial, format, Options(false, null), leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+                await creator.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Text", typeof(string), 200)], TestContext.Current.CancellationToken);
             }
 
             baseline = initial.ToArray();
         }
-
-        string? password = encryption == AccessEncryptionFormat.None ? null : "secret";
         for (int fault = 0; ; fault++)
         {
             await using var stream = new WriteFaultStream();

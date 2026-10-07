@@ -50,6 +50,7 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">The catalog identity or matching stored property value is malformed or unreadable.</exception>
     internal async ValueTask<ColumnPropertyBlock?> ReadLvPropForTableAsync(long tdefPage, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

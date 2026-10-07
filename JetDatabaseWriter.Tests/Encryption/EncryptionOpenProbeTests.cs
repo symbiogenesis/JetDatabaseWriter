@@ -62,7 +62,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         var data = new TheoryData<AccessEncryptionFormat, bool>();
         foreach (AccessEncryptionFormat format in new[]
         {
-            AccessEncryptionFormat.Jet4Rc4,
             AccessEncryptionFormat.AccdbLegacyPassword,
             AccessEncryptionFormat.AccdbAgileCfb,
             AccessEncryptionFormat.AccdbStandard,
@@ -98,8 +97,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Ace, AccessEncryptionFormat.None)]
     [InlineData(AdventureWorks, AccessEncryptionFormat.None)]
     [InlineData(Northwind, AccessEncryptionFormat.None)]
-    [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
-    [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     public async Task ReaderOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {
@@ -122,8 +119,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Jet3, AccessEncryptionFormat.None)]
     [InlineData(Jet4, AccessEncryptionFormat.None)]
     [InlineData(Ace, AccessEncryptionFormat.None)]
-    [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
-    [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     public async Task WriterOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {
@@ -131,7 +126,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         await using MemoryStream backing = await this.BuildDatabaseAsync(source, encryption, ct);
 
         // Page 0 is read once; the header and the flat-Agile probe share it.
-        long maxBytes = Constants.PageSizes.Jet4;
+        const long maxBytes = Constants.PageSizes.Jet4;
         await using var counting = new CountingStream(backing);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, WriterOptions(encryption), leaveOpen: true, ct))
         {
@@ -276,8 +271,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Jet3, AccessEncryptionFormat.None)]
     [InlineData(Jet4, AccessEncryptionFormat.None)]
     [InlineData(Ace, AccessEncryptionFormat.None)]
-    [InlineData(AdventureWorks, AccessEncryptionFormat.Jet4Rc4)]
-    [InlineData(Jet4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbAgileCfb)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbStandard)]
@@ -300,7 +293,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     }
 
     [Theory]
-    [InlineData(AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(AccessEncryptionFormat.AccdbLegacyPassword)]
     [InlineData(AccessEncryptionFormat.AccdbAgileCfb)]
     public async Task WriterOpen_PathOverload_WrongPassword_LeavesFileAndLockUnchanged(AccessEncryptionFormat encryption)

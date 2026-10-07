@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Interfaces;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Defines a column for use with <see cref="IAccessSchema.CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, System.Threading.CancellationToken)"/>.
@@ -510,6 +511,9 @@ public sealed record ColumnDefinition
     /// written into the column descriptor's <c>col_type</c> byte.
     /// </summary>
     public byte CalculatedResultType { get; init; }
+
+    /// <summary>Gets the native column storage descriptor retained during a schema rewrite.</summary>
+    internal ColumnInfo? SourceColumn { get; init; }
 
     /// <summary>
     /// Returns a copy of this definition with only <see cref="Name"/> changed.

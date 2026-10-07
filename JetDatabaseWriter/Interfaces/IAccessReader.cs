@@ -414,4 +414,10 @@ public interface IAccessReader : IAccessBase
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of string arrays.</returns>
     public IAsyncEnumerable<string[]> RowsAsStrings(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads a table's persisted validation expression and message.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The table rule, or null when no rule is stored.</returns>
+    public ValueTask<TableValidationRule?> GetTableValidationRuleAsync(string tableName, CancellationToken cancellationToken = default);
 }

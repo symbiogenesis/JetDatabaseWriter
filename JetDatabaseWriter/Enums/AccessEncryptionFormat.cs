@@ -12,18 +12,7 @@ public enum AccessEncryptionFormat
     /// <summary>The database is unencrypted.</summary>
     None = 0,
 
-    /// <summary>
-    /// The library's Jet4 RC4 page encryption for Jet4 <c>.mdb</c> files. Password
-    /// XOR-verified in the header password area at <c>0x42</c>, encryption flag
-    /// <c>0x02</c> or <c>0x03</c> in raw header byte <c>0x62</c>, RC4 database
-    /// key at <c>0x3E</c>, per-page RC4 with key <c>MD5(dbKey ‖ pageNumber)[..4]</c>.
-    /// Byte <c>0x62</c> lies inside the password area, which Access masks and,
-    /// on a file without a password, fills with a pattern derived from the
-    /// creation date, so the flag is detected only when the area holds a password.
-    /// This scheme has not been checked against files Access encrypted, and
-    /// mdbtools and Jackcess describe Jet4 encryption differently, so Access may
-    /// not open its output and Access-encrypted files may not open with it.
-    /// </summary>
+    /// <summary>Native Jet4 RC4 page encryption: the unmasked four-byte encoding key XOR the little-endian page number. Password protection uses the creation-date-masked UTF-16 header field independently of page encryption.</summary>
     Jet4Rc4 = 1,
 
     /// <summary>
@@ -45,7 +34,7 @@ public enum AccessEncryptionFormat
     /// <see cref="System.NotSupportedException"/>; use <see cref="AccdbAgileCfb"/>
     /// for encrypted files the writer must open.
     /// </summary>
-    AccdbAgile = 4,
+    AccdbAgile = 3,
 
     /// <summary>
     /// Office 2007 (ECMA-376) "Standard" encryption used by Access 2007
@@ -54,7 +43,7 @@ public enum AccessEncryptionFormat
     /// and <c>EncryptedPackage</c> (AES-128-CBC with zero IV of the inner
     /// ACCDB).
     /// </summary>
-    AccdbStandard = 5,
+    AccdbStandard = 4,
 
     /// <summary>
     /// Office Crypto API ECMA-376 "Agile" encryption in a CFB v4 compound
@@ -62,5 +51,5 @@ public enum AccessEncryptionFormat
     /// <c>EncryptedPackage</c> streams; the encrypted package contains the
     /// inner clean ACCDB image.
     /// </summary>
-    AccdbAgileCfb = 6,
+    AccdbAgileCfb = 5,
 }

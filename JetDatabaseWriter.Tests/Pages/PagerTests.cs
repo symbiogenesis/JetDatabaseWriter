@@ -20,7 +20,7 @@ using Xunit;
 /// journal is attached, and returns to the file's bytes on rollback; and a
 /// page cache over the writer's file must not cache. That the reader's graph
 /// holds no pager is checked in <see cref="Architecture.ServiceGraphTests"/>.
-/// Each case runs on writer-created Jet3, Jet4 and ACCDB databases .
+/// Each case runs on writer-created Jet3, Jet4 and ACCDB databases.
 /// </summary>
 public sealed class PagerTests
 {
@@ -201,8 +201,8 @@ public sealed class PagerTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task BeginTransaction_WhileActive_KeepsExistingMessage(DatabaseFormat format)
     {
-        await using MemoryStream stream = await CreateDatabaseAsync(format, encrypted: false);
-        await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
+        await using MemoryStream stream = await CreateDatabaseAsync(format);
+        await using WriterHarness harness = await OpenAsync(stream );
 
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
         JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(
@@ -221,8 +221,8 @@ public sealed class PagerTests
     [Fact]
     public async Task JournalGate_AttachTwice_Throws_AndDisposeReleasesTheGate()
     {
-        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, encrypted: false);
-        await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
+        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
+        await using WriterHarness harness = await OpenAsync(stream );
         Pager pager = harness.Pager;
 
         using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(Ct))
@@ -245,8 +245,8 @@ public sealed class PagerTests
     [Fact]
     public async Task ReaderPageCache_OverPager_RejectsPositiveCapacity()
     {
-        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, encrypted: false);
-        await using WriterHarness writer = await OpenAsync(stream, encrypted: false);
+        await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
+        await using WriterHarness writer = await OpenAsync(stream );
 
         ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 1));
         Assert.Equal("capacity", ex.ParamName);

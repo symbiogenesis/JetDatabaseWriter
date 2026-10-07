@@ -464,6 +464,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         CancellationToken cancellationToken = default)
         => EncryptionManager.DecryptAsync(stream, oldPassword, cancellationToken);
 
+    /// <summary>Sets or removes a table validation rule after checking every existing row.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="rule">The new rule, or null to remove it and its validation message.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The asynchronous operation.</returns>
+    public ValueTask SetTableValidationRuleAsync(string tableName, TableValidationRule? rule, CancellationToken cancellationToken = default)
+        => this.RunAutoCommitAsync(_ => this.services.Schema.SetTableValidationRuleAsync(tableName, rule, cancellationToken), cancellationToken);
+
     /// <inheritdoc/>
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default)
         => this.CreateTableAsync(tableName, columns, indexes: [], cancellationToken);

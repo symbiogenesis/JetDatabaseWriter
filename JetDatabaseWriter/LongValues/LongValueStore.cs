@@ -53,13 +53,13 @@ internal static class LongValueStore
 
     internal static int RowIndex(uint lvalDp) => (int)(lvalDp & 0xFF);
 
-    internal static byte[] BuildSinglePageBuffer(ReadOnlySpan<byte> payload, uint token, int pageSize, LvalPageLayout layout, bool packRowsAtEnd)
+    internal static byte[] BuildSinglePageBuffer(ReadOnlySpan<byte> payload, uint token, int pageSize, LvalPageLayout layout)
     {
         byte[] page = ArrayPool<byte>.Shared.Rent(pageSize);
         Array.Clear(page, 0, pageSize);
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        int rowStart = packRowsAtEnd || layout.PackRowsAtEnd ? pageSize - payload.Length : layout.MinRowStart;
+        int rowStart = pageSize - payload.Length;
         WriteLvalPageHeader(page, layout, token, rowStart);
         payload.CopyTo(page.AsSpan(rowStart, payload.Length));
         return page;
@@ -72,14 +72,13 @@ internal static class LongValueStore
         uint nextDp,
         uint token,
         int pageSize,
-        LvalPageLayout layout,
-        bool packRowsAtEnd)
+        LvalPageLayout layout)
     {
         byte[] page = ArrayPool<byte>.Shared.Rent(pageSize);
         Array.Clear(page, 0, pageSize);
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
-        int rowStart = packRowsAtEnd || layout.PackRowsAtEnd ? pageSize - (length + 4) : layout.MinRowStart;
+        int rowStart = pageSize - (length + 4);
         WriteLvalPageHeader(page, layout, token, rowStart);
         Wi32(page, rowStart, unchecked((int)nextDp));
         data.Slice(offset, length).CopyTo(page.AsSpan(rowStart + 4, length));

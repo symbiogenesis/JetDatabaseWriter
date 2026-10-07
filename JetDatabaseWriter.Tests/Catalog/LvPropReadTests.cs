@@ -465,34 +465,37 @@ public sealed class LvPropReadTests
         ColumnInfo nameColumn = Assert.IsType<ColumnInfo>(catalog.FindColumn("Name"));
         ColumnInfo propertyColumn = Assert.IsType<ColumnInfo>(catalog.FindColumn("LvProp"));
         bool found = false;
-        await harness.Database.OwnedPages.ForEachLiveTableRowAsync(2, async (row, token) =>
-        {
-            string name = ScalarColumnReader.DecodeSimpleColumnValue(harness.Database.Format, row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn);
-            if (!string.Equals(name, tableName, StringComparison.Ordinal))
+        await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
+            2,
+            async (row, token) =>
             {
-                return true;
-            }
+                string name = ScalarColumnReader.DecodeSimpleColumnValue(harness.Database.Format, row.Page, row.Location.RowStart, row.Location.RowSize, nameColumn);
+                if (!string.Equals(name, tableName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
 
-            Assert.True(RowDecodePlan.TryParseRowLayout(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, catalog.HasVarColumns, out RowLayout layout));
-            ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, propertyColumn);
-            Assert.Equal(ColumnSliceKind.Var, slice.Kind);
-            byte[] patched = (byte[])row.Page.Clone();
-            int start = row.Location.RowStart + slice.DataStart;
-            if (breakChain)
-            {
-                Assert.NotEqual(0x80, patched[start + 3] & 0xC0);
-                patched.AsSpan(start + 4, 4).Fill(0xFF);
-            }
-            else
-            {
-                Assert.Equal(0x80, patched[start + 3] & 0xC0);
-                patched[start + 12] ^= 0x01;
-            }
+                Assert.True(RowDecodePlan.TryParseRowLayout(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, catalog.HasVarColumns, out RowLayout layout));
+                ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, propertyColumn);
+                Assert.Equal(ColumnSliceKind.Var, slice.Kind);
+                byte[] patched = (byte[])row.Page.Clone();
+                int start = row.Location.RowStart + slice.DataStart;
+                if (breakChain)
+                {
+                    Assert.NotEqual(0x80, patched[start + 3] & 0xC0);
+                    patched.AsSpan(start + 4, 4).Fill(0xFF);
+                }
+                else
+                {
+                    Assert.Equal(0x80, patched[start + 3] & 0xC0);
+                    patched[start + 12] ^= 0x01;
+                }
 
-            await harness.Pager.WritePageAsync(row.Location.DataPageNumber, patched, token);
-            found = true;
-            return false;
-        }, Ct);
+                await harness.Pager.WritePageAsync(row.Location.DataPageNumber, patched, token);
+                found = true;
+                return false;
+            },
+            Ct);
         Assert.True(found);
         await harness.Pager.FlushAsync(toDisk: false, Ct);
     }

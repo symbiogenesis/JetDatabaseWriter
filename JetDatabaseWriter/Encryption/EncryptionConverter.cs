@@ -70,6 +70,7 @@ internal static class EncryptionConverter
     /// <param name="password">The password.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="UnauthorizedAccessException">Thrown when an encrypted flat Agile database is detected and no password was supplied.</exception>
+    /// <exception cref="InvalidDataException">The compound file does not contain a supported encrypted package.</exception>
     public static async ValueTask<(byte[] Plaintext, AccessEncryptionFormat SourceFormat)> ReadDecryptedAsync(
         Stream source,
         ReadOnlyMemory<char> password,
@@ -148,8 +149,6 @@ internal static class EncryptionConverter
         }
 
         DatabaseFormat fmt = JetFormat.DetectFormat(plaintext);
-        int pageSize = fmt == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
-
         return targetFormat switch
         {
             AccessEncryptionFormat.None => (byte[])plaintext.Clone(),
@@ -166,7 +165,7 @@ internal static class EncryptionConverter
             AccessEncryptionFormat.AccdbStandard or
             AccessEncryptionFormat.AccdbAgileCfb when targetPassword.IsEmpty
                 => throw new ArgumentException("A non-empty password is required to apply encryption.", nameof(targetPassword)),
-            AccessEncryptionFormat.Jet4Rc4 => BuildJet4Rc4(plaintext, pageSize, targetPassword.Span),
+            AccessEncryptionFormat.Jet4Rc4 => throw new NotSupportedException("Creating or changing a Jet4 database password requires native system security metadata that is not supported. Existing native encrypted databases can be read and updated with their original password."),
             AccessEncryptionFormat.AccdbLegacyPassword => BuildAccdbLegacy(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbStandard => BuildAccdbStandard(plaintext, targetPassword.Span),
@@ -177,6 +176,7 @@ internal static class EncryptionConverter
 
     /// <summary>Detects the on-disk encryption format of <paramref name="rawFile"/> without modifying it.</summary>
     /// <param name="rawFile">The raw file.</param>
+    /// <exception cref="InvalidDataException">The compound-file header is malformed.</exception>
     public static AccessEncryptionFormat Detect(byte[] rawFile)
     {
         if (rawFile == null || rawFile.Length < HeaderLength)
@@ -266,30 +266,6 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildJet4Rc4(byte[] plaintext, int pageSize, ReadOnlySpan<char> password)
-    {
-        byte[] result = (byte[])plaintext.Clone();
-
-        // Generate a random 32-bit RC4 db key.
-        byte[] dbKeyBytes = new byte[4];
-        RandomNumberGenerator.Fill(dbKeyBytes);
-        uint dbKey = Ru32(dbKeyBytes, 0);
-
-        Buffer.BlockCopy(dbKeyBytes, 0, result, 0x3E, 4);
-        CryptographicOperations.ZeroMemory(dbKeyBytes);
-        EncodeJet4StylePassword(result, password, useAccdbLegacyMask: false);
-
-        // The 40-byte password area at 0x42 overlaps the encryption flag at
-        // 0x62 (offset 32 inside the area), so the flag MUST be written last
-        // — after the password encoding — to match the layout produced by
-        // Microsoft Access.
-        result[0x62] = 0x03;
-
-        using var keys = new Jet4Rc4PageCodec(dbKey);
-        EncryptAllPages(result, pageSize, keys);
-        return result;
-    }
-
     private static byte[] BuildAccdbLegacy(byte[] plaintext, ReadOnlySpan<char> password)
     {
         byte[] result = (byte[])plaintext.Clone();
@@ -332,21 +308,6 @@ internal static class EncryptionConverter
         Buffer.BlockCopy(encryptionInfo, 0, padded, 0, encryptionInfo.Length);
         Array.Fill(padded, (byte)' ', encryptionInfo.Length, padded.Length - encryptionInfo.Length);
         return padded;
-    }
-
-    private static void EncryptAllPages(byte[] db, int pageSize, IPageCodec keys)
-    {
-        if (!keys.HasEncryption)
-        {
-            return;
-        }
-
-        long pages = db.Length / pageSize;
-        for (long page = 1; page < pages; page++)
-        {
-            int offset = (int)(page * pageSize);
-            keys.Encode(db, offset, page, pageSize);
-        }
     }
 
     /// <summary>
@@ -443,12 +404,14 @@ internal static class EncryptionConverter
         // there counts only when the area holds a password.
         byte flag = header[0x62];
 
-        // 0x02 / 0x03 = RC4 page encryption.
-        if (fmt == DatabaseFormat.Jet4Mdb && flag is 0x02 or 0x03 && EncryptionManager.HasHeaderPassword(header, fmt))
+        if (fmt == DatabaseFormat.Jet4Mdb)
         {
-            return AccessEncryptionFormat.Jet4Rc4;
+            byte[] unmasked = (byte[])header.Clone();
+            EncryptionManager.TransformHeaderMask(unmasked);
+            uint encodingKey = Ru32(unmasked, Constants.DatabaseHeader.EncodingKey);
+            CryptographicOperations.ZeroMemory(unmasked);
+            return encodingKey != 0 ? AccessEncryptionFormat.Jet4Rc4 : AccessEncryptionFormat.None;
         }
-
         if (fmt == DatabaseFormat.AceAccdb && flag == 0x07 && EncryptionManager.HasHeaderPassword(header, fmt))
         {
             return AccessEncryptionFormat.AccdbLegacyPassword;

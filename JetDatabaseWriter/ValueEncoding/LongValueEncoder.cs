@@ -201,7 +201,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         }
 
         byte[] data = format.EncodeText(text, compress);
-        byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0, packRowsAtEnd: true).ConfigureAwait(false);
+        byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0).ConfigureAwait(false);
         return new PreEncodedLongValue(header);
     }
 
@@ -215,13 +215,11 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// <param name="data">The data bytes or values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="lvalTokenOverride">The token to store instead of the payload hash; ignored on Jet3, which stores none.</param>
-    /// <param name="packRowsAtEnd">Whether to write each row at the end of its page on Jet4/ACE too; Jet3 always does.</param>
     /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the 24-bit JET LVAL length limit.</exception>
     private async ValueTask<byte[]> EncodeAsLvalChainAsync(
         byte[] data,
         CancellationToken cancellationToken,
-        uint? lvalTokenOverride = null,
-        bool packRowsAtEnd = false)
+        uint? lvalTokenOverride = null)
     {
         ThrowIfLongerThanLvalLimit(data);
         int pgSz = format.PageSize;
@@ -239,7 +237,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
 
         if (data.Length <= singleRowMax)
         {
-            byte[] page = LongValueStore.BuildSinglePageBuffer(data, lvalToken, pgSz, layout, packRowsAtEnd);
+            byte[] page = LongValueStore.BuildSinglePageBuffer(data, lvalToken, pgSz, layout);
             try
             {
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
@@ -262,7 +260,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             cancellationToken.ThrowIfCancellationRequested();
             int chunkStart = i * chainRowMax;
             int chunkLen = Math.Min(chainRowMax, data.Length - chunkStart);
-            byte[] page = LongValueStore.BuildChainedPageBuffer(data, chunkStart, chunkLen, nextDp, lvalToken, pgSz, layout, packRowsAtEnd);
+            byte[] page = LongValueStore.BuildChainedPageBuffer(data, chunkStart, chunkLen, nextDp, lvalToken, pgSz, layout);
             try
             {
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);

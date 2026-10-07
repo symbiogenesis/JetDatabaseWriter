@@ -99,6 +99,28 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             ColumnDefinition definition = columns[i];
             ColumnType type = ValidateColumnForFormat(definition, format, nameof(columns));
 
+            if (definition.SourceColumn is { } source)
+            {
+                ColumnInfo preserved = source with
+                {
+                    Name = definition.Name,
+                    ColNum = i,
+                    VarIdx = source.IsFixed ? 0 : nextVarIndex,
+                    FixedOff = source.IsFixed ? fixedOffset : 0,
+                };
+                descriptors.Add(preserved);
+                if (source.IsFixed)
+                {
+                    fixedOffset += source.Type == TextType ? source.Size : GetFixedSize(source.Type);
+                }
+                else
+                {
+                    nextVarIndex++;
+                }
+
+                continue;
+            }
+
             bool isCalculated = definition.IsCalculated;
             bool variable = isCalculated || definition.ForceVariableLengthStorage || IsAlwaysVariableLength(type);
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
@@ -319,6 +341,24 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 {
                     page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
                 }
+            }
+
+            if (col.RawDescriptor.Count != 0)
+            {
+                if (col.RawDescriptor.Count != format.ColumnDescriptor.Size)
+                {
+                    throw new NotSupportedException("The source column descriptor does not match the database format's descriptor width.");
+                }
+
+                for (int byteIndex = 0; byteIndex < col.RawDescriptor.Count; byteIndex++)
+                {
+                    page[o + byteIndex] = col.RawDescriptor[byteIndex];
+                }
+
+                Wu16(page, o + format.ColumnDescriptor.NumOff, col.ColNum);
+                Wu16(page, o + format.ColumnDescriptor.VarOff, col.VarIdx);
+                Wu16(page, o + format.ColumnDescriptor.FixedOff, col.FixedOff);
+                Wu16(page, o + (jet4 ? 9 : 5), col.ColNum);
             }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : format.EncodeAnsiText(col.Name);

@@ -287,6 +287,13 @@ public sealed class AccessReader : AccessBase, IAccessReader
         CancellationToken cancellationToken = default)
         => this.services.Tables.RowsAsStrings(tableName, progress, cancellationToken);
 
+    /// <summary>Reads a table's persisted validation expression and message.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The table rule, or null when no rule is stored.</returns>
+    public ValueTask<TableValidationRule?> GetTableValidationRuleAsync(string tableName, CancellationToken cancellationToken = default)
+        => this.services.Schema.GetTableValidationRuleAsync(tableName, cancellationToken);
+
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
         => this.services.Schema.GetColumnMetadataAsync(tableName, cancellationToken);

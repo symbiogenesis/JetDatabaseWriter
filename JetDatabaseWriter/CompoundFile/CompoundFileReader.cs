@@ -38,10 +38,14 @@ internal static class CompoundFileReader
     public static async ValueTask<Dictionary<string, byte[]>> ReadStreamsAsync(Stream stream, CancellationToken cancellationToken, int maxBytes = 256 * 1024 * 1024)
     {
         Guard.NotNull(stream, nameof(stream));
+#if NET8_0_OR_GREATER
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
+#else
         if (maxBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(maxBytes));
         }
+#endif
 
         if (stream.Length > maxBytes)
         {
@@ -59,7 +63,7 @@ internal static class CompoundFileReader
             byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, cancellationToken).ConfigureAwait(false);
             byte[] miniStream = await ReadMiniStreamAsync(stream, directory, hdr, fat, cancellationToken).ConfigureAwait(false);
 
-            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, cancellationToken, maxBytes).ConfigureAwait(false);
+            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, maxBytes, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -261,8 +265,8 @@ internal static class CompoundFileReader
         CfbHeader hdr,
         uint[] fat,
         uint[] miniFat,
-        CancellationToken cancellationToken,
-        int maxBytes)
+        int maxBytes,
+        CancellationToken cancellationToken)
     {
         int dirCount = directory.Length / Constants.CompoundFile.DirEntrySize;
         long aggregateBytes = (long)directory.Length + miniStream.Length + ((long)fat.Length * 4) + ((long)miniFat.Length * 4);

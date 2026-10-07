@@ -74,9 +74,21 @@ internal static class LinkedTableManager
     /// </summary>
     /// <param name="options">The options.</param>
     /// <param name="hostDatabasePath">The host database path.</param>
+    /// <param name="traversal">The ancestry of a linked read.</param>
+    /// <param name="password">The explicitly resolved linked-source password.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The depth limit is negative.</exception>
     internal static AccessReaderOptions CreateLinkedSourceOpenOptions(
         AccessReaderOptions options,
-        string hostDatabasePath) => new()
+        string hostDatabasePath,
+        LinkedSourceTraversal? traversal = null,
+        ReadOnlyMemory<char> password = default)
+    {
+        if (options.LinkedSourceMaxDepth < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Linked-source depth cannot be negative.");
+        }
+
+        return new()
         {
             PageCacheSize = options.PageCacheSize,
             DiagnosticsEnabled = options.DiagnosticsEnabled,
@@ -90,7 +102,7 @@ internal static class LinkedTableManager
             MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,
-            Password = options.Password,
+            Password = password,
             UseLockFile = options.UseLockFile,
             LockFileUserName = options.LockFileUserName,
             LockFileMachineName = options.LockFileMachineName,
@@ -98,12 +110,16 @@ internal static class LinkedTableManager
             LockTimeoutMilliseconds = options.LockTimeoutMilliseconds,
             LinkedSourcePathAllowlist = NormalizeAllowlist(options.LinkedSourcePathAllowlist, hostDatabasePath),
             LinkedSourcePathValidator = options.LinkedSourcePathValidator,
+            LinkedSourceMaxDepth = options.LinkedSourceMaxDepth,
+            LinkedSourcePasswordResolver = options.LinkedSourcePasswordResolver,
+            LinkedSourceTraversal = traversal ?? options.LinkedSourceTraversal,
             LinkedTextMaxRecordLength = options.LinkedTextMaxRecordLength,
             LinkedTextMaxFieldLength = options.LinkedTextMaxFieldLength,
             LinkedTextMaxColumnCount = options.LinkedTextMaxColumnCount,
             LinkedTextMaxSourceFileBytes = options.LinkedTextMaxSourceFileBytes,
             LinkedTextMaxMaterializedRows = options.LinkedTextMaxMaterializedRows,
         };
+    }
 
     /// <summary>
     /// Enumerates every linked table (Access-file, ODBC, or text) defined in
@@ -206,8 +222,10 @@ internal static class LinkedTableManager
     {
         ThrowIfUnsupportedLinkedRead(link);
 
-        AccessReaderOptions linkedOptions = policy.OpenOptions;
         string resolvedPath = ResolveLinkedSourcePath(policy, link);
+        LinkedSourceTraversal traversal = ExtendLinkedTraversal(policy, link, resolvedPath);
+        ReadOnlyMemory<char> password = policy.OpenOptions.LinkedSourcePasswordResolver?.Invoke(link with { }, resolvedPath) ?? default;
+        AccessReaderOptions linkedOptions = CreateLinkedSourceOpenOptions(policy.OpenOptions, policy.HostDatabasePath, traversal, password);
 
         if (!File.Exists(resolvedPath))
         {
@@ -535,6 +553,41 @@ internal static class LinkedTableManager
         }
 
         return copy;
+    }
+
+    /// <summary>Refuses cycles and excessive recursion before touching the next source.</summary>
+    /// <param name="policy">The inherited linked-source policy.</param>
+    /// <param name="link">The next linked table.</param>
+    /// <param name="resolvedPath">The authorized source path.</param>
+    /// <returns>The new immutable ancestry.</returns>
+    /// <exception cref="InvalidDataException">The read contains a cycle or exceeds its depth limit.</exception>
+    private static LinkedSourceTraversal ExtendLinkedTraversal(LinkedSourcePolicy policy, LinkedTableInfo link, string resolvedPath)
+    {
+        LinkedSourceTraversal? previous = policy.OpenOptions.LinkedSourceTraversal;
+        int depth = previous?.Depth ?? 0;
+        if (depth >= policy.OpenOptions.LinkedSourceMaxDepth)
+        {
+            throw new InvalidDataException($"Linked table '{link.Name}' exceeds the linked-source depth limit ({policy.OpenOptions.LinkedSourceMaxDepth}).");
+        }
+
+        var ancestors = previous is null ? new List<KeyValuePair<string, string>>() : new List<KeyValuePair<string, string>>(previous.Ancestors);
+        if (!string.IsNullOrEmpty(policy.HostDatabasePath))
+        {
+            ancestors.Add(new KeyValuePair<string, string>(Path.GetFullPath(policy.HostDatabasePath), link.Name));
+        }
+
+        StringComparison pathComparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (KeyValuePair<string, string> ancestor in ancestors)
+        {
+            if (string.Equals(ancestor.Key, resolvedPath, pathComparison)
+                && string.Equals(ancestor.Value, link.SourceObjectName, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException($"Linked table '{link.Name}' contains a linked-source cycle at '{resolvedPath}' table '{link.SourceObjectName}'.");
+            }
+        }
+
+        ancestors.Add(new KeyValuePair<string, string>(resolvedPath, link.SourceObjectName));
+        return new LinkedSourceTraversal(depth + 1, ancestors);
     }
 
     /// <summary>
@@ -906,10 +959,13 @@ internal static class LinkedTableManager
 
     private static string ResolvePath(string path, string baseDirectory, string context)
     {
+        ThrowIfUnsafeWindowsPath(path, context);
         try
         {
             string fullBaseDirectory = Path.GetFullPath(baseDirectory);
-            return Path.GetFullPath(path, fullBaseDirectory);
+            string fullPath = Path.GetFullPath(path, fullBaseDirectory);
+            ThrowIfUnsafeWindowsPath(fullPath, context);
+            return fullPath;
         }
         catch (Exception ex) when (
             ex is ArgumentException or
@@ -919,6 +975,50 @@ internal static class LinkedTableManager
             throw new UnauthorizedAccessException(
                 $"Invalid path in {context}: '{path}'.",
                 ex);
+        }
+    }
+
+    /// <summary>Rejects Windows device namespaces and ambiguous drive-relative sources.</summary>
+    /// <param name="path">The path supplied by database metadata or caller policy.</param>
+    /// <param name="context">The failure context.</param>
+    /// <exception cref="UnauthorizedAccessException">The path can address a device or has ambiguous Windows semantics.</exception>
+    private static void ThrowIfUnsafeWindowsPath(string path, string context)
+    {
+        string devicePath = path.Replace('/', '\\');
+        if (devicePath.StartsWith("\\\\?\\", StringComparison.Ordinal)
+            || devicePath.StartsWith("\\\\.\\", StringComparison.Ordinal)
+            || devicePath.StartsWith("\\??\\", StringComparison.Ordinal)
+            || (path.Length >= 2 && path[1] == ':' && (path.Length == 2 || (path[2] != '\\' && path[2] != '/'))))
+        {
+            throw new UnauthorizedAccessException($"Invalid device or drive-relative path in {context}: '{path}'.");
+        }
+
+        if (Path.DirectorySeparatorChar != '\\')
+        {
+            return;
+        }
+
+        string withoutDrive = path.Length >= 2 && path[1] == ':' ? path[2..] : path;
+        foreach (string segment in withoutDrive.Split(PathSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment is "." or "..")
+            {
+                continue;
+            }
+
+            string stem = segment.Split('.')[0];
+            bool reserved = stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
+                || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase)
+                || stem.Equals("AUX", StringComparison.OrdinalIgnoreCase)
+                || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase)
+                || stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase)
+                || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase)
+                || (stem.Length == 4 && stem[3] is >= '1' and <= '9'
+                    && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)));
+            if (reserved || segment.IndexOf(':') >= 0 || segment.EndsWith(".", StringComparison.Ordinal) || segment.EndsWith(" ", StringComparison.Ordinal))
+            {
+                throw new UnauthorizedAccessException($"Invalid device, alternate stream or aliased path in {context}: '{path}'.");
+            }
         }
     }
 
@@ -937,7 +1037,10 @@ internal static class LinkedTableManager
         }
 
         string directoryToCheck = targetIsDirectory ? fullPath : Path.GetDirectoryName(fullPath) ?? fullTrustedDirectory;
-        CheckExistingDirectoryForReparsePoint(fullTrustedDirectory, context);
+        for (string? ancestor = fullTrustedDirectory; ancestor != null; ancestor = Path.GetDirectoryName(ancestor))
+        {
+            CheckExistingDirectoryForReparsePoint(ancestor, context);
+        }
 
         string relativeDirectory = Path.GetRelativePath(fullTrustedDirectory, directoryToCheck);
         if (!string.Equals(relativeDirectory, ".", StringComparison.Ordinal))

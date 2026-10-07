@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tables;
 
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -9,6 +10,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -46,6 +48,23 @@ internal sealed class SchemaReader(
     TableReader tables,
     AsyncReentrantOperationGate operations)
 {
+    /// <summary>Reads the empty-name table validation property target.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The table rule or absence.</returns>
+    /// <exception cref="JetObjectNotFoundException">The table does not exist.</exception>
+    internal async ValueTask<TableValidationRule?> GetTableValidationRuleAsync(string tableName, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        ResolvedTable table = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false)
+            ?? throw new JetObjectNotFoundException(JetErrorCode.TableNotFound, $"Table '{tableName}' was not found.", nameof(tableName));
+        ColumnPropertyBlock? properties = await catalog.ReadLvPropForTableAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        ColumnPropertyTarget? target = properties?.FindTableTarget();
+        string? expression = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format);
+        return string.IsNullOrWhiteSpace(expression) ? null : new TableValidationRule(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format));
+    }
+
     /// <summary>Returns the names of all user tables in the database.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<IReadOnlyList<string>> ListTablesAsync(CancellationToken cancellationToken)

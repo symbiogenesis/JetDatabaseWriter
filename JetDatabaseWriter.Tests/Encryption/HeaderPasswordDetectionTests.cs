@@ -77,7 +77,6 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
             var data = new TheoryData<DatabaseFormat, AccessEncryptionFormat, WriteMode>();
             foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
-                data.Add(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, mode);
                 data.Add(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword, mode);
             }
 
@@ -119,8 +118,6 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet4Mdb, null, AccessEncryptionFormat.Jet4Rc4)]
-    [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(DatabaseFormat.AceAccdb, null, AccessEncryptionFormat.AccdbAgile)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword, AccessEncryptionFormat.AccdbLegacyPassword)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, AccessEncryptionFormat.AccdbAgile)]
@@ -267,10 +264,10 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
 
         await AssertUnencryptedAndOpensAsync(path, tables);
 
-        await AccessWriter.EncryptAsync(path, FirstPassword.AsMemory(), options: NoLockOptions, cancellationToken: Ct);
-        Assert.Equal(AccessEncryptionFormat.Jet4Rc4, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
-        await AssertRefusedAsync(path, password: null);
-        Assert.Equal(tables, await ListTablesAsync(path, FirstPassword));
+        byte[] original = await File.ReadAllBytesAsync(path, Ct);
+        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await AccessWriter.EncryptAsync(path, FirstPassword.AsMemory(), options: NoLockOptions, cancellationToken: Ct));
+        Assert.Equal(original, await File.ReadAllBytesAsync(path, Ct));
     }
 
     [Theory]
@@ -338,7 +335,6 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword)]
     public async Task HasHeaderPassword_LibraryEncryptedDatabase_ReturnsTrue(DatabaseFormat format, AccessEncryptionFormat encryption)
     {

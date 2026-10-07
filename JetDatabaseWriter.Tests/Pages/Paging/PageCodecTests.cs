@@ -7,14 +7,14 @@ using Xunit;
 /// <summary>Characterizes page cipher bytes and page-store/cache ownership.</summary>
 public sealed class PageCodecTests
 {
-    /// <summary>Pins the legacy RC4 page-key derivation and stream bytes.</summary>
+    /// <summary>Pins native Jet RC4 encoding-key XOR page-number stream bytes.</summary>
     [Fact]
     public void Jet4_RecordedVector()
     {
         using var codec = new Jet4Rc4PageCodec(0x12345678);
         byte[] page = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         codec.Encode(page, 0, 7, page.Length);
-        Assert.Equal("759D1298FE6A97217A760F40B0E6BA52", Convert.ToHexString(page));
+        Assert.Equal("C8220B25A404F94DFE920996B12C9BBA", Convert.ToHexString(page));
         codec.Decode(page, 0, 7, page.Length);
         Assert.Equal(new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 }, page);
     }

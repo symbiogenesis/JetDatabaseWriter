@@ -39,8 +39,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <c>MSysRelationships</c>). A renamed column's new name is written into the
 /// calculated expressions, validation rules and defaults that name it. A
 /// column that a relationship uses as a key column, or that another column's
-/// expression names, cannot be dropped, and a table that any relationship
-/// names cannot be dropped either, as in Microsoft Access. New table, column
+/// expression names, cannot be dropped, and enforced relationships to another table
+/// block a table drop. New table, column
 /// and index names must follow the Access naming rules
 /// (<see cref="AccessObjectName"/>); names the table already carries are
 /// kept as they are. Dropped tables return their data, LVAL, index,
@@ -82,6 +82,66 @@ internal sealed class TableSchemaEditor(
     TableSnapshotReader snapshots,
     AutoNumberMaintainer autoNumbers)
 {
+    /// <summary>Changes only the table rule properties after validating existing rows.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="rule">The proposed rule or removal.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetOperationException">The catalog lacks one matching table row or required fields.</exception>
+    internal async ValueTask SetTableValidationRuleAsync(string tableName, TableValidationRule? rule, CancellationToken cancellationToken)
+    {
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ColumnPropertyBlock? properties = await snapshots.ReadLvPropBlockAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        ColumnPropertyBlockBuilder builder = properties is null ? new ColumnPropertyBlockBuilder() : ColumnPropertyBlockBuilder.FromBlock(properties);
+        ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
+        target.Entries.RemoveAll(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase));
+        if (rule != null)
+        {
+            Guard.NotNullOrEmpty(rule.Expression, nameof(rule));
+            var candidate = new TableValidationConstraint(rule.Expression, rule.ValidationText) { Plan = CalculatedExpressionPlan.Parse(rule.Expression) };
+            foreach (LocatedRow row in await snapshots.ReadRowsAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
+            {
+                await constraints.ValidateTableRuleAsync(tableName, table.Definition, row.Values, candidate, cancellationToken).ConfigureAwait(false);
+            }
+
+            target.AddText(Constants.ColumnPropertyNames.ValidationRule, rule.Expression, format);
+            if (rule.ValidationText != null)
+            {
+                target.AddText(Constants.ColumnPropertyNames.ValidationText, rule.ValidationText, format);
+            }
+        }
+
+        byte[]? blob = builder.ToBytes(format);
+        TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        int nameIndex = objects.FindColumnIndex("Name");
+        int idIndex = objects.FindColumnIndex("Id");
+        int propertyIndex = objects.FindColumnIndex("LvProp");
+        if (nameIndex < 0 || idIndex < 0 || propertyIndex < 0)
+        {
+            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, "MSysObjects lacks table property fields.");
+        }
+
+        List<LocatedRow> matches = (await snapshots.ReadRowsAsync(2, cancellationToken).ConfigureAwait(false)).FindAll(row =>
+            string.Equals(row.Values[nameIndex] as string, tableName, StringComparison.OrdinalIgnoreCase)
+            && Convert.ToInt64(row.Values[idIndex], System.Globalization.CultureInfo.InvariantCulture) == table.Entry.TDefPage);
+        if (matches.Count != 1)
+        {
+            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, $"Table '{tableName}' has {matches.Count} matching catalog rows.");
+        }
+
+        LocatedRow original = matches[0];
+        object[] replacement = (object[])original.Values.Clone();
+        replacement[propertyIndex] = blob ?? (object)DBNull.Value;
+        _ = tableRows.EncodeRow(objects, replacement);
+        await catalogWriter.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
+        await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, objects, CancellationToken.None).ConfigureAwait(false);
+        await tableRows.InsertRowDataAsync(2, objects, replacement, updateTDefRowCount: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
+        await indexMaintainer.MaintainIndexesAsync(2, objects, Constants.SystemTableNames.Objects, CancellationToken.None).ConfigureAwait(false);
+        catalog.Invalidate();
+        constraints.InvalidateTableRule(tableName);
+    }
+
     /// <summary>
     /// Public CreateTable entry point: checks the arguments before any catalog
     /// I/O, in this order: the table name and the argument lists, including
@@ -777,6 +837,54 @@ internal sealed class TableSchemaEditor(
         }
     }
 
+    /// <summary>Preserves a table rule's field dependencies through a schema rewrite.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="properties">The original properties.</param>
+    /// <param name="existing">The original columns.</param>
+    /// <param name="mapColumnName">The column projection.</param>
+    /// <returns>The projected properties.</returns>
+    /// <exception cref="JetOperationException">The rewrite drops a field used by the table rule.</exception>
+    private ColumnPropertyBlock? ProjectTableRuleReferences(string tableName, ColumnPropertyBlock? properties, IReadOnlyList<ColumnDefinition> existing, Func<string, string?> mapColumnName)
+    {
+        string? expression = properties?.FindTableTarget()?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format);
+        if (expression is null)
+        {
+            return properties;
+        }
+
+        string projected = expression;
+        foreach (ColumnDefinition column in existing)
+        {
+            if (!ExpressionFieldReferences.References(expression, column.Name, tableName))
+            {
+                continue;
+            }
+
+            if (mapColumnName(column.Name) is not { } newName)
+            {
+                throw new JetOperationException(JetErrorCode.ColumnReferencedByExpression, $"Cannot drop column '{column.Name}' from table '{tableName}': its table validation rule ('{expression}') names it.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+            }
+
+            projected = ExpressionFieldReferences.Rename(projected, column.Name, newName, tableName)!;
+        }
+
+        if (string.Equals(projected, expression, StringComparison.Ordinal))
+        {
+            return properties;
+        }
+
+        _ = CalculatedExpressionPlan.Parse(projected);
+        ColumnPropertyBlockBuilder builder = ColumnPropertyBlockBuilder.FromBlock(properties!);
+        ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
+        int entryIndex = target.Entries.FindIndex(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase));
+        ColumnPropertyEntryBuilder entry = target.Entries[entryIndex];
+        target.AddText(entry.Name, projected, format);
+        ColumnPropertyEntryBuilder replacement = target.Entries[target.Entries.Count - 1];
+        entry.Value = replacement.Value;
+        target.Entries.RemoveAt(target.Entries.Count - 1);
+        return ColumnPropertyBlock.Parse(builder.ToBytes(format), format);
+    }
+
     /// <summary>
     /// Rebuilds <paramref name="tableName"/> into a temporary copy with the
     /// projected schema, copies every row, and swaps the copy in. The table's
@@ -873,6 +981,7 @@ internal sealed class TableSchemaEditor(
 
         // Project the stored properties onto the new columns, and serialize them,
         // before anything is written: the rebuilt table's catalog row carries them.
+        originalProperties = this.ProjectTableRuleReferences(tableName, originalProperties, existingDefs, mapColumnName);
         ColumnPropertyBlock persistedProperties =
             PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format);
         byte[]? persistedLvProp = persistedProperties.ToBytes(format);
@@ -1253,8 +1362,8 @@ internal sealed class TableSchemaEditor(
     {
         // A calculated column is projected from its result type, which can differ
         // from its descriptor type in Access-authored tables (a Memo result in a
-        // Text descriptor, a Currency result in a Double one); the rebuilt
-        // descriptor then carries the result type, as the writer's own do.
+        // Text descriptor, a Currency result in a Double one). The
+        // public declaration uses the result type; SourceColumn retains native storage.
         ColumnType valueType = ResolveValueType(column);
         bool sizedByDescriptor = !column.IsCalculated || valueType == column.Type;
         ColumnDefinition baseDef;
@@ -1283,6 +1392,7 @@ internal sealed class TableSchemaEditor(
                 {
                     IsAttachment = true,
                     ComplexId = column.Misc,
+                    SourceColumn = column,
                 };
             case ComplexType:
                 // Access stores all complex parent descriptors as the generic
@@ -1294,6 +1404,7 @@ internal sealed class TableSchemaEditor(
                 {
                     IsMultiValue = true,
                     ComplexId = column.Misc,
+                    SourceColumn = column,
                 };
             case BooleanType:
             case ByteType:
@@ -1374,7 +1485,7 @@ internal sealed class TableSchemaEditor(
             };
         }
 
-        return def;
+        return def with { SourceColumn = column };
     }
 
     /// <summary>
@@ -1404,7 +1515,7 @@ internal sealed class TableSchemaEditor(
 
         if (!rewriting)
         {
-            // No MSysRelationships row names the table (DropTableAsync refused
+            // No MSysRelationships row names the table (DropTableAsync removed or refused
             // otherwise), but its TDEF can still hold FK entries that earlier
             // builds left behind. Remove the partner entries that name it
             // while its TDEF is intact, so none is left naming a freed page

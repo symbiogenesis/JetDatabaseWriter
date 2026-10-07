@@ -219,7 +219,7 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
 
                     for (int columnIndex = 0; columnIndex < td.Columns.Count; columnIndex++)
                     {
-                        if ((mask is null || mask[columnIndex])
+                        if ((mask?[columnIndex] != false)
                             && RowDecodePlan.ResolveColumnSlice(format.RowFields, page, rb.RowStart, rb.RowSize, layout, td.Columns[columnIndex]).Kind == ColumnSliceKind.Empty)
                         {
                             throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A matching catalog row's selected value is unreadable.", new JetErrorInfo { PageNumber = pageNumber, ColumnName = td.Columns[columnIndex].Name });

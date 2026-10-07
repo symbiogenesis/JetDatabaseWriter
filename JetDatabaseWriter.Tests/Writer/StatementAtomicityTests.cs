@@ -88,31 +88,32 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
         Assert.Equal(300, await writer.InsertRowsAsync("T", Enumerable.Range(1, 300).Select(id => new object?[] { id }), Ct));
     }
 
-    /// <summary>Default commit undo restores ciphertext, including partially overwritten pages.</summary>
-    /// <param name="format">The database format.</param>
-    /// <param name="encryption">The supported page encryption.</param>
-    /// <returns>The test completion.</returns>
-    [Theory]
-    [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4)]
-    public async Task EncryptedDefaultStatement_RestoresCiphertext(DatabaseFormat format, AccessEncryptionFormat encryption)
+    /// <summary>Default commit undo restores native Jet ciphertext, including partially overwritten pages.</summary>
+    [Fact]
+    public async Task EncryptedDefaultStatement_RestoresCiphertext()
     {
-        byte[] plaintext = await this.CreateSourceAsync(format);
+        byte[] fixture = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), Ct);
         await using var encrypted = new MemoryStream();
-        await encrypted.WriteAsync(plaintext, Ct);
+        await encrypted.WriteAsync(fixture, Ct);
         encrypted.Position = 0;
-        await AccessWriter.EncryptAsync(encrypted, "secret".AsMemory(), encryption, Ct);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(encrypted, new AccessWriterOptions("Native123") { UseLockFile = false }, leaveOpen: true, Ct))
+        {
+            await writer.DropTableAsync("T", Ct);
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("Note", typeof(string))], Ct);
+            _ = await writer.InsertRowsAsync("T", Enumerable.Range(1, 8).Select(id => new object?[] { id, new string('a', 35000) }), Ct);
+        }
+
         byte[] original = encrypted.ToArray();
         await using WriteFaultStream baseline = Copy(original);
-        await using (AccessWriter writer = await OpenAsync(baseline, "secret"))
+        await using (AccessWriter writer = await OpenAsync(baseline, "Native123"))
         {
             await MutateAsync(writer, "Update");
         }
 
         byte[] completed = baseline.ToArray();
-        await AssertFaultAsync(original, completed, "Update", stream => stream.FailDuringWrite(1), "secret");
-        await AssertFaultAsync(original, completed, "Update", stream => stream.FailOnFlush(1), "secret");
+        await AssertFaultAsync(original, completed, "Update", stream => stream.FailDuringWrite(1), "Native123");
+        await AssertFaultAsync(original, completed, "Update", stream => stream.FailOnFlush(1), "Native123");
     }
-
     /// <summary>Cancellation before final replay cannot leave a detached transaction active when early undo fails.</summary>
     [Fact]
     public async Task CancellationBeforeFinalReplay_UndoFailureFaultsWriter()

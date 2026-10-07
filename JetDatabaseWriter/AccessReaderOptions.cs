@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Relationships;
 
 /// <summary>
 /// Configuration options for opening a JET database with <see cref="AccessReader"/>.
@@ -90,6 +91,16 @@ public sealed class AccessReaderOptions : AccessOptions
     /// </summary>
     public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; init; }
 
+    /// <summary>Gets the maximum number of successive Access linked-source opens. Default: 32; zero disables Access read-through.</summary>
+    public int LinkedSourceMaxDepth { get; init; } = 32;
+
+    /// <summary>
+    /// Gets an optional password provider for an authorized Access linked source.
+    /// The callback receives a detached link and its resolved absolute path after path authorization.
+    /// The host database password is never forwarded automatically. Returned memory must remain unchanged until the linked read completes.
+    /// </summary>
+    public Func<LinkedTableInfo, string, ReadOnlyMemory<char>>? LinkedSourcePasswordResolver { get; init; }
+
     /// <summary>
     /// Gets the maximum number of characters accepted in a single linked text/CSV record.
     /// Default: <c>1048576</c> characters.
@@ -119,6 +130,9 @@ public sealed class AccessReaderOptions : AccessOptions
     /// Streaming row APIs and row-count scans are not capped by this option.
     /// </summary>
     public uint? LinkedTextMaxMaterializedRows { get; init; }
+
+    /// <summary>Gets the immutable ancestry inherited by an internal linked reader.</summary>
+    internal LinkedSourceTraversal? LinkedSourceTraversal { get; init; }
 
     /// <summary>
     /// Returns whether a reader opened with these options reads its pages

@@ -7,16 +7,13 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Pins the writer's handling of a field that a calculated column uses to
-/// what Microsoft Access does: <c>RenameColumnAsync</c> rewrites the
-/// expression to the new name and <c>DropColumnAsync</c> refuses the drop.
-/// Neither choice has been checked against Access on this project's build
-/// hosts, which have no Access install, so these tests skip there.
+/// Checks native calculated-field behavior and the writer's preservation of valid dependencies.
 /// </summary>
 [Trait("Category", "RequiresMicrosoftAccess")]
 public sealed class DaoCalculatedColumnRenameTests
@@ -24,17 +21,15 @@ public sealed class DaoCalculatedColumnRenameTests
     private static readonly TimeSpan DaoTimeout = TimeSpan.FromMinutes(3);
 
     /// <summary>
-    /// DAO renames, then deletes, a field a calculated column uses. The writer
-    /// assumes Access rewrites the expression on the rename and refuses the
-    /// delete; if Access does otherwise, the rename-expressions design in
-    /// <c>TableSchemaEditor.ProjectExpressionReferences</c> needs revisiting.
+    /// DAO leaves unresolved dependencies after rename and deletion. The writer
+    /// rewrites dependencies on rename and refuses a drop that would invalidate them.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
-    public async Task DaoRenameOrDeleteOfFieldUsedByCalculatedColumn_MatchesWriterBehaviour()
+    public async Task DaoRenameOrDeleteOfFieldUsedByCalculatedColumn_WriterPreservesValidDependencies()
     {
         await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.CalculatedColumnRename");
         string dbPath = session.CreateDatabasePath("calc_rename");
@@ -50,6 +45,14 @@ public sealed class DaoCalculatedColumnRenameTests
                 $field.Expression = '[Score]*2'
                 $tdf.Fields.Append($field)
                 $field = $null
+
+                $db.Execute('CREATE TABLE [WriterCalc] ([Id] LONG, [Score] LONG)')
+                $writerTdf = $db.TableDefs('WriterCalc')
+                $writerField = $writerTdf.CreateField('Doubled', 4)
+                $writerField.Expression = '[Score]*2'
+                $writerTdf.Fields.Append($writerField)
+                $writerField = $null
+                $writerTdf = $null
 
                 $sourceName = 'Score'
                 try {
@@ -77,12 +80,23 @@ public sealed class DaoCalculatedColumnRenameTests
             DaoTimeout);
 
         Assert.True(result.ExitCode == 0, $"DAO script failed (exit={result.ExitCode}).\nstdout: {result.StdOut}\nstderr: {result.StdErr}");
-        Assert.True(
-            result.StdOut.Contains("RENAME_OK EXPR=[Points]*2", StringComparison.Ordinal),
-            $"Access did not rename the field inside the calculated expression the way RenameColumnAsync does; revisit the rename-expressions design.\nstdout: {result.StdOut}");
-        Assert.True(
-            result.StdOut.Contains("DELETE_REJECTED=", StringComparison.Ordinal),
-            $"Access deleted a field a calculated column uses, which DropColumnAsync refuses; revisit the rename-expressions design.\nstdout: {result.StdOut}");
+        Assert.Contains("RENAME_OK EXPR=[Score]*2", result.StdOut, StringComparison.Ordinal);
+        Assert.Contains("DELETE_OK", result.StdOut, StringComparison.Ordinal);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(dbPath, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
+        {
+            await writer.RenameColumnAsync("WriterCalc", "Score", "Points", TestContext.Current.CancellationToken);
+        }
+
+        byte[] before = await File.ReadAllBytesAsync(dbPath, TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(dbPath, new AccessWriterOptions { UseLockFile = false }, TestContext.Current.CancellationToken))
+        {
+            JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropColumnAsync("WriterCalc", "Points", TestContext.Current.CancellationToken));
+            Assert.Equal(JetErrorCode.ColumnReferencedByExpression, failure.ErrorCode);
+        }
+
+        Assert.Equal(before, await File.ReadAllBytesAsync(dbPath, TestContext.Current.CancellationToken));
+        await using AccessReader reader = await AccessReader.OpenAsync(dbPath, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
+        Assert.Equal("[Points]*2", Assert.Single(await reader.GetColumnMetadataAsync("WriterCalc", TestContext.Current.CancellationToken), column => column.Name == "Doubled").CalculationExpression);
     }
 
     /// <summary>
@@ -106,6 +120,21 @@ public sealed class DaoCalculatedColumnRenameTests
         }
 
         File.SetAttributes(session.SourcePath, File.GetAttributes(session.SourcePath) & ~FileAttributes.ReadOnly);
+        AccessRoundTripEnvironment.CompactResult original = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            """
+            $rs = $db.OpenRecordset('Table1')
+            try {
+                $iterated = 0
+                while (!$rs.EOF) { $iterated++; $rs.MoveNext() }
+                Write-Output "ITERATED=$iterated"
+                Write-Output "DECLARED=$($rs.RecordCount)"
+            } finally { $rs.Close() }
+            """,
+            DaoTimeout);
+        Assert.True(original.ExitCode == 0, $"DAO original read failed: {original.StdOut}\n{original.StdErr}");
+        Assert.Contains("ITERATED=4", original.StdOut, StringComparison.Ordinal);
+        Assert.Contains("DECLARED=3", original.StdOut, StringComparison.Ordinal);
 
         await using (AccessWriter writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
         {
