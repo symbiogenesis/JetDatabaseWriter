@@ -11,7 +11,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues.Models;
-using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
@@ -123,7 +122,9 @@ public sealed class MixedOleTypedScanTests
     {
         await using MemoryStream original = await CreateAsync(format);
         byte[] bytes = original.ToArray();
-        int offset = FindDescriptor(bytes, corruption == 2 ? 12_000 : corruption == 3 ? 23 : 600, corruption == 2 ? (byte)0 : corruption == 3 ? (byte)0x80 : (byte)0x40);
+        int length = corruption switch { 2 => 12_000, 3 => 23, _ => 600 };
+        byte storageMode = corruption switch { 2 => 0, 3 => 0x80, _ => 0x40 };
+        int offset = FindDescriptor(bytes, length, storageMode);
         Assert.True(LongValueDescriptor.TryRead(bytes.AsSpan(offset), out LongValueDescriptor descriptor));
         if (corruption == 0)
         {
@@ -139,7 +140,7 @@ public sealed class MixedOleTypedScanTests
         }
         else
         {
-            JetFormat profile = JetFormat.ForNewDatabase(format);
+            var profile = JetFormat.ForNewDatabase(format);
             int pageStart = checked((int)(descriptor.FirstDp >> 8) * profile.PageSize);
             int row = checked((int)(descriptor.FirstDp & 0xFF));
             int rowStart = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(pageStart + profile.DataPage.RowsStart + (row * 2))) & Constants.DataPage.RowOffsetMask;
@@ -177,7 +178,8 @@ public sealed class MixedOleTypedScanTests
                 Assert.Equal(expected[i].SortOrder, actual[i].SortOrder);
             }
 
-            Assert.Null(actual[corruption == 2 ? 4 : corruption == 3 ? 2 : 3].Filter);
+            int corruptRow = corruption switch { 2 => 4, 3 => 2, _ => 3 };
+            Assert.Null(actual[corruptRow].Filter);
             listener.Flush();
             Assert.Contains("column 'Filter' is unreadable and was returned as a missing value", messages.ToString(), StringComparison.Ordinal);
         }
@@ -199,9 +201,14 @@ public sealed class MixedOleTypedScanTests
     [InlineData(DatabaseFormat.AceAccdb, OverflowRowLayout.TwoHop)]
     public async Task HybridScan_OverflowRows_PreservePositionAndStoredBytes(DatabaseFormat format, OverflowRowLayout layout)
     {
-        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, "Playlists", 100, primaryKey: false,
+        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(
+            format,
+            "Playlists",
+            100,
+            primaryKey: false,
             [new("Filter", typeof(byte[])), new("SortOrder", typeof(byte[])), new("Notes", typeof(string))],
-            id => [Payload(id % 2 == 0 ? 600 : 23), Payload(id % 2 == 0 ? 9000 : 31), new string('n', 4096)], Ct);
+            id => [Payload(id % 2 == 0 ? 600 : 23), Payload(id % 2 == 0 ? 9000 : 31), new string('n', 4096)],
+            Ct);
         List<PlaylistRow> expected;
         await using (var original = new MemoryStream(bytes, writable: false))
         await using (AccessReader reader = await OpenAsync(original, 0))
@@ -239,7 +246,7 @@ public sealed class MixedOleTypedScanTests
         int pageSize = JetFormat.ForNewDatabase(format).PageSize;
         await using var stream = new FaultingMemoryStream(bytes);
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0, PageReadOptimizationMode = PageReadOptimizationMode.Disabled, StrictParsing = strict }, leaveOpen: true, cancellationToken: Ct);
-        stream.FailureOffset = checked((long)(descriptor.FirstDp >> 8) * pageSize);
+        stream.FailureOffset = checked((descriptor.FirstDp >> 8) * pageSize);
         IOException failure = await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.RowsWithHybridOle<PlaylistRow>("Playlists", cancellationToken: Ct)));
         Assert.Same(stream.Failure, failure);
     }
@@ -268,12 +275,10 @@ public sealed class MixedOleTypedScanTests
     [InlineData(MoneyType)]
     [InlineData(NumericType)]
     public void HybridPlan_UnsupportedScalarLayouts_UseProjectionFallback(ColumnType scalarType)
-    {
-        Assert.Null(DirectRowDecoderBuilder.TryBuildHybrid<DecimalPlaylistRow>(
+        => Assert.Null(DirectRowDecoderBuilder.TryBuildHybrid<DecimalPlaylistRow>(
             ["Id", "Filter"],
             [new() { Name = "Id", Type = scalarType, Flags = scalarType == NumericType ? Constants.ColumnDescriptorFlags.Fixed : (byte)0 }, new() { Name = "Filter", Type = OleType }],
             [scalarType == LongIntegerType ? typeof(int) : typeof(decimal), typeof(byte[])]));
-    }
 
     [Fact]
     public async Task HybridScan_UnsupportedBoundMemo_UsesCompleteProjectionFallback()
@@ -369,25 +374,29 @@ public sealed class MixedOleTypedScanTests
         var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))
         {
-            await writer.CreateTableAsync("Playlists",
-            [
-                new("Id", typeof(int)),
-                new("Name", typeof(string), 100),
-                new("Filter", typeof(byte[])),
-                new("SortOrder", typeof(byte[])),
-                new("Notes", typeof(string)),
-            ], Ct);
-            await writer.InsertRowsAsync("Playlists",
-            [
-                [1, "Static", DBNull.Value, DBNull.Value, new string('n', 4096)],
-                [2, "Empty", Array.Empty<byte>(), Array.Empty<byte>(), new string('n', 4096)],
-                [3, "Inline", Payload(23), Payload(31), new string('n', 4096)],
-                [4, "Single", Payload(600), Payload(700), new string('n', 4096)],
-                [5, "Chained", Payload(12_000), Payload(13_000), new string('n', 4096)],
-                [6, "Mixed", Payload(45), Payload(10_000), new string('n', 4096)],
-                [7, "Sort only", DBNull.Value, Payload(4096), new string('n', 4096)],
-                [8, "Deleted", Payload(700), Payload(900), new string('n', 4096)],
-            ], Ct);
+            await writer.CreateTableAsync(
+                "Playlists",
+                [
+                    new("Id", typeof(int)),
+                    new("Name", typeof(string), 100),
+                    new("Filter", typeof(byte[])),
+                    new("SortOrder", typeof(byte[])),
+                    new("Notes", typeof(string)),
+                ],
+                Ct);
+            await writer.InsertRowsAsync(
+                "Playlists",
+                [
+                    [1, "Static", DBNull.Value, DBNull.Value, new string('n', 4096)],
+                    [2, "Empty", Array.Empty<byte>(), Array.Empty<byte>(), new string('n', 4096)],
+                    [3, "Inline", Payload(23), Payload(31), new string('n', 4096)],
+                    [4, "Single", Payload(600), Payload(700), new string('n', 4096)],
+                    [5, "Chained", Payload(12_000), Payload(13_000), new string('n', 4096)],
+                    [6, "Mixed", Payload(45), Payload(10_000), new string('n', 4096)],
+                    [7, "Sort only", DBNull.Value, Payload(4096), new string('n', 4096)],
+                    [8, "Deleted", Payload(700), Payload(900), new string('n', 4096)],
+                ],
+                Ct);
             Assert.Equal(1, await writer.DeleteRowsAsync("Playlists", "Id", 8, Ct));
         }
 
@@ -402,7 +411,7 @@ public sealed class MixedOleTypedScanTests
 
     private static byte[] Payload(int length)
     {
-        var bytes = new byte[length];
+        byte[] bytes = new byte[length];
         for (int i = 0; i < length; i++)
         {
             bytes[i] = unchecked((byte)((i * 37) ^ (i >> 8)));
@@ -460,7 +469,7 @@ public sealed class MixedOleTypedScanTests
             cancellationToken.ThrowIfCancellationRequested();
             this.CheckFailure();
             cancellationToken.ThrowIfCancellationRequested();
-            return await base.ReadAsync(buffer, offset, count, cancellationToken);
+            return await base.ReadAsync(buffer.AsMemory(offset, count), cancellationToken);
         }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
@@ -505,11 +514,13 @@ public sealed class MixedOleTypedScanTests
     [SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Projection preserves stored OLE bytes.")]
     private sealed class ThrowingRow
     {
+#pragma warning disable CA1822 // The mapper requires an instance setter whose deliberate exception must propagate.
         public int Id
         {
             get => 0;
             set => throw new ArgumentException("The projection setter rejected the value.");
         }
+#pragma warning restore CA1822
 
         public byte[]? Filter { get; set; }
     }
@@ -517,7 +528,9 @@ public sealed class MixedOleTypedScanTests
     [SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Projection preserves stored OLE bytes.")]
     private sealed class SetterOrderRow
     {
+#pragma warning disable IDE0032 // This deliberately non-auto setter checks projection column assignment order.
         private string? name;
+#pragma warning restore IDE0032
 
         public int Id { get; set; }
 

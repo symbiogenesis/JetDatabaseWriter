@@ -13,7 +13,7 @@ public sealed class SnapshotPlaylistRow
 
     public bool IsDynamic { get; set; }
 
-#pragma warning disable CA1819 // Rows<T> maps the exact OLE payload to a byte[] property.
+#pragma warning disable CA1819 // Rows<T> maps exact opaque OLE arrays retained by the snapshot consumer.
     public byte[]? Filter { get; set; }
 
     public byte[]? SortOrder { get; set; }

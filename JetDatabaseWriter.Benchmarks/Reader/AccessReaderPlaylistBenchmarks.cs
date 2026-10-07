@@ -57,7 +57,7 @@ public class AccessReaderPlaylistBenchmarks
     /// <returns>Every playlist in stored order, with exact definition bytes.</returns>
     /// <exception cref="InvalidOperationException">Setup has not opened the reader.</exception>
     [Benchmark]
-    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."), hybrid: true);
+    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."), hybrid: false);
 
     private static async Task<List<SnapshotPlaylistRow>> ScanAsync(AccessReader source, bool hybrid)
     {
@@ -146,16 +146,16 @@ public class AccessReaderPlaylistBenchmarks
             {
                 await writer.CreateTableAsync(
                     TableName,
-                [
-                    new("Id", typeof(int)),
-                    new("Name", typeof(string), 100),
-                    new("ParentId", typeof(int)),
-                    new("Position", typeof(int)),
-                    new("IsDynamic", typeof(bool)),
-                    new("Filter", typeof(byte[])),
-                    new("SortOrder", typeof(byte[])),
-                    new("Notes", typeof(string)),
-                ]).ConfigureAwait(false);
+                    [
+                        new("Id", typeof(int)),
+                        new("Name", typeof(string), 100),
+                        new("ParentId", typeof(int)),
+                        new("Position", typeof(int)),
+                        new("IsDynamic", typeof(bool)),
+                        new("Filter", typeof(byte[])),
+                        new("SortOrder", typeof(byte[])),
+                        new("Notes", typeof(string)),
+                    ]).ConfigureAwait(false);
                 var rows = new List<object[]>(RowCount);
                 string notes = new('N', 4096);
                 for (int id = 0; id < RowCount; id++)

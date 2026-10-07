@@ -52,7 +52,7 @@ internal sealed class HybridRowDecodePlan<T>(
             try
             {
                 bytes = slice.DataLen == 0
-                    ? Array.Empty<byte>()
+                    ? []
                     : await longValues.ReadLongValueRawBytesAsync(page, rowStart + slice.DataStart, slice.DataLen, cancellationToken).ConfigureAwait(false);
             }
             catch (InvalidDataException exception)

@@ -990,7 +990,7 @@ internal sealed class TableReader(
         [EnumeratorCancellation] CancellationToken cancellationToken)
         where T : class, new()
     {
-        var oleSlices = hybridPlan is null ? Array.Empty<ColumnSlice>() : new ColumnSlice[hybridPlan.OleColumnCount];
+        ColumnSlice[] oleSlices = hybridPlan is null ? [] : new ColumnSlice[hybridPlan.OleColumnCount];
         long rowCount = 0;
         IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         var decodePlan = RowDecodePlan.CreateTyped(td, wantedColumns: null, rows.StrictParsing);
