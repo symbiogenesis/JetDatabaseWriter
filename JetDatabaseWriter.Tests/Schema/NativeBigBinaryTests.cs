@@ -56,14 +56,17 @@ public sealed class NativeBigBinaryTests
         var expected = new List<byte[]>();
         await using (ReaderHarness harness = await ReaderHarness.OpenAsync(fixture, cancellationToken: ct))
         {
-            CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("MSysAccessObjects", ct));
-            TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
+            DatabaseFile database = harness.Database;
+            var catalogRows = new CatalogRowReader(database.Format, database.TableDefs, database.OwnedPages);
+            long tdefPage = await catalogRows.FindSystemTableTdefPageAsync("MSysAccessObjects", ct);
+            Assert.True(tdefPage > 0);
+            TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(tdefPage, ct));
             ColumnInfo column = Assert.Single(definition.Columns, c => c.Type == NativeType);
             Assert.Equal("Data", column.Name);
             Assert.Equal(NativeWidth, column.Size);
             Assert.True(column.IsFixed);
             await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
-                entry.TDefPage,
+                tdefPage,
                 (row, _) =>
                 {
                     int offset = row.Location.RowStart + harness.Database.Format.RowFields.NumCols + column.FixedOff;

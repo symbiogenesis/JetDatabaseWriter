@@ -175,7 +175,7 @@ internal sealed class JetFormat
     /// </summary>
     internal bool SupportsNumeric { get; }
 
-    /// <summary>Gets a value indicating whether the format supports native fixed BIGBINARY columns: Jet4 only.</summary>
+    /// <summary>Gets a value indicating whether the format has the fixed 3992-byte BIGBINARY system-table type: Jet4 only.</summary>
     internal bool SupportsBigBinary { get; }
 
     /// <summary>Gets a value indicating whether security identities use the header-derived Jet4 SID mask.</summary>
