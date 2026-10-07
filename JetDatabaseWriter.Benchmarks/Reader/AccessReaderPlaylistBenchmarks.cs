@@ -10,16 +10,6 @@ using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.TestSupport;
 
-/// <summary>Definition distribution in a retained playlist snapshot.</summary>
-public enum PlaylistDefinitionShape
-{
-    /// <summary>Mostly null definitions, including occasional sort-only playlists.</summary>
-    Sparse,
-
-    /// <summary>Every playlist retains a 4 KiB sort definition; every seventh also retains a filter.</summary>
-    LargeSortOnly,
-}
-
 /// <summary>
 /// Retains the consumed metadata and exact OLE arrays in one typed scan. Notes
 /// are intentionally unbound. Setup checks every row and byte and reports cold
@@ -38,6 +28,7 @@ public class AccessReaderPlaylistBenchmarks
     public PlaylistDefinitionShape Shape { get; set; }
 
     /// <summary>Creates the fixture and verifies the complete consumer contract.</summary>
+    /// <returns>A task that completes after fixture validation.</returns>
     [GlobalSetup]
     public async Task Setup()
     {
@@ -47,8 +38,8 @@ public class AccessReaderPlaylistBenchmarks
         List<SnapshotPlaylistRow> snapshot = await this.TypedScan().ConfigureAwait(false);
         this.Verify(snapshot);
 
-        using FileStream file = File.OpenRead(this.databasePath);
-        using var trace = new PageTraceStream(file);
+        await using FileStream file = File.OpenRead(this.databasePath);
+        await using var trace = new PageTraceStream(file);
         await using AccessReader measured = await AccessReader.OpenAsync(trace, leaveOpen: true).ConfigureAwait(false);
         trace.Reset();
         List<SnapshotPlaylistRow> cold = await ScanAsync(measured).ConfigureAwait(false);
@@ -59,6 +50,7 @@ public class AccessReaderPlaylistBenchmarks
     }
 
     /// <summary>Disposes the primed reader.</summary>
+    /// <returns>A task that completes after disposing the reader.</returns>
     [GlobalCleanup]
     public async Task Cleanup()
     {
@@ -70,6 +62,7 @@ public class AccessReaderPlaylistBenchmarks
 
     /// <summary>Retains one complete metadata/definition snapshot from the primed reader.</summary>
     /// <returns>Every playlist in stored order, with exact definition bytes.</returns>
+    /// <exception cref="InvalidOperationException">Setup has not opened the reader.</exception>
     [Benchmark]
     public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."));
 
@@ -86,7 +79,7 @@ public class AccessReaderPlaylistBenchmarks
 
     private static byte[] Payload(int id, int length)
     {
-        var bytes = new byte[length];
+        byte[] bytes = new byte[length];
         for (int index = 0; index < bytes.Length; index++)
         {
             bytes[index] = (byte)((id + (index * 17)) & 255);
@@ -145,7 +138,8 @@ public class AccessReaderPlaylistBenchmarks
         {
             await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(building, DatabaseFormat.AceAccdb).ConfigureAwait(false))
             {
-                await writer.CreateTableAsync(TableName,
+                await writer.CreateTableAsync(
+                    TableName,
                 [
                     new("Id", typeof(int)),
                     new("Name", typeof(string), 100),
@@ -174,24 +168,4 @@ public class AccessReaderPlaylistBenchmarks
             File.Delete(building);
         }
     }
-}
-
-/// <summary>The exact metadata and opaque definitions retained by the snapshot consumer.</summary>
-public sealed class SnapshotPlaylistRow
-{
-    public int Id { get; set; }
-
-    public string? Name { get; set; }
-
-    public int ParentId { get; set; }
-
-    public int Position { get; set; }
-
-    public bool IsDynamic { get; set; }
-
-#pragma warning disable CA1819 // Rows<T> maps the exact OLE payload to a byte[] property.
-    public byte[]? Filter { get; set; }
-
-    public byte[]? SortOrder { get; set; }
-#pragma warning restore CA1819
 }
