@@ -12,6 +12,7 @@ using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -74,7 +75,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
             TableDef flatDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(flatPage, "<flat>", Ct);
             ColumnInfo foreignKey = Assert.IsType<ColumnInfo>(flatDef.FindColumn("_Files"));
             RowLocation row = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(flatPage, Ct));
-            byte[] page = await harness.Database.Pages.ReadPageCopyAsync(row.DataPageNumber, Ct);
+            byte[] page = await harness.Pager.ReadPageCopyAsync(row.DataPageNumber, Ct);
             int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(harness.Database.Format.ReadRowColumnCount(page, row.RowStart));
             JetTypeInfo.SetNullMaskBit(page.AsSpan(row.RowStart + row.RowSize - nullMaskSize, nullMaskSize), foreignKey.ColNum, reference.HasValue);
             BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + foreignKey.FixedOff, 4), reference ?? 0);
@@ -162,7 +163,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(complexPage, "MSysComplexColumns", Ct);
             ColumnInfo idColumn = Assert.IsType<ColumnInfo>(definition.FindColumn("ComplexID"));
             RowLocation row = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(complexPage, Ct));
-            byte[] page = await harness.Database.Pages.ReadPageCopyAsync(row.DataPageNumber, Ct);
+            byte[] page = await harness.Pager.ReadPageCopyAsync(row.DataPageNumber, Ct);
             int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(harness.Database.Format.ReadRowColumnCount(page, row.RowStart));
             JetTypeInfo.SetNullMaskBit(page.AsSpan(row.RowStart + row.RowSize - nullMaskSize, nullMaskSize), idColumn.ColNum, reference.HasValue);
             BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + idColumn.FixedOff, 4), reference ?? 0);
@@ -222,7 +223,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
     {
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
-        byte[] page = await harness.Database.Pages.ReadPageCopyAsync(tdefPage, Ct);
+        byte[] page = await harness.Pager.ReadPageCopyAsync(tdefPage, Ct);
         byte[] oldBytes = Encoding.Unicode.GetBytes(oldName);
         byte[] newBytes = Encoding.Unicode.GetBytes(newName);
         Assert.Equal(oldBytes.Length, newBytes.Length);

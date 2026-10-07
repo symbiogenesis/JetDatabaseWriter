@@ -44,7 +44,8 @@ public sealed class NativeJet4CatalogSecurityTests
             TestContext.Current.CancellationToken);
         string[] actual = await ReadSecurityAsync(reader);
         string nativeCatalog = await ReadNativeSecurityCatalogAsync();
-        Assert.True(expected.SequenceEqual(actual),
+        Assert.True(
+            expected.SequenceEqual(actual),
             $"Native permissions:\n{string.Join("\n", expected)}\nWriter permissions:\n{string.Join("\n", actual)}\nNative catalog:\n{nativeCatalog}");
     }
 
@@ -56,12 +57,19 @@ public sealed class NativeJet4CatalogSecurityTests
             TestContext.Current.CancellationToken);
         using DataTable objects = await reader.ReadDataTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
         using DataTable permissions = await reader.ReadDataTableAsync("MSysACEs", cancellationToken: TestContext.Current.CancellationToken);
-        string[] owners = objects.AsEnumerable().Select(row => string.Concat(
-            "OBJECT:", row["Id"], ":", row["Name"], ":",
+        string[] owners = objects.AsEnumerable().Select(row => string.Format(
+            CultureInfo.InvariantCulture,
+            "OBJECT:{0}:{1}:{2}",
+            row["Id"],
+            row["Name"],
             row["Owner"] is byte[] owner ? Convert.ToHexString(owner) : "NULL")).ToArray();
-        string[] aces = permissions.AsEnumerable().Select(row => string.Concat(
-            "ACE:", row["ObjectId"], ":", Convert.ToHexString(Assert.IsType<byte[]>(row["SID"])),
-            ":", row["ACM"], ":", row["FInheritable"])).ToArray();
+        string[] aces = permissions.AsEnumerable().Select(row => string.Format(
+            CultureInfo.InvariantCulture,
+            "ACE:{0}:{1}:{2}:{3}",
+            row["ObjectId"],
+            Convert.ToHexString(Assert.IsType<byte[]>(row["SID"])),
+            row["ACM"],
+            row["FInheritable"])).ToArray();
         return string.Join("\n", owners.Concat(aces));
     }
 

@@ -132,7 +132,7 @@ public sealed class TableDefReaderTests
                 ColumnMetadata expected = metadata[i];
                 Assert.Equal(i, expected.Ordinal);
                 Assert.Equal(expected.IsFixedLength, column.IsFixed);
-                if (!column.IsCalculated && !expected.IsHyperlink && column.Type is not (ComplexType))
+                if (!column.IsCalculated && !expected.IsHyperlink && column.Type is not ComplexType)
                 {
                     Assert.True(
                         expected.TypeName == JetTypeInfo.GetTypeDisplayName(column.Type),

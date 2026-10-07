@@ -11,6 +11,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -544,7 +545,7 @@ public sealed class ComplexColumnsWriterTests
         await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken))
         {
             long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
-            byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
+            byte[] tdef = await harness.Pager.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
             System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(tdef.AsSpan(ComplexColumnTestSupport.AutoNumberOffset, 4), counter);
             await harness.Pager.WritePageAsync(page, tdef, TestContext.Current.CancellationToken);
         }
@@ -569,7 +570,8 @@ public sealed class ComplexColumnsWriterTests
         }
 
         Assert.Equal(baseline, ms.ToArray());
-        Assert.Equal([1, 2], await ReadComplexIdsAsync(ms, "Docs"));
+        int[] ids = await ReadComplexIdsAsync(ms, "Docs");
+        Assert.Equal([1, 2], ids);
         Assert.Equal(counter, await ReadComplexIdCounterAsync(ms));
     }
 
@@ -589,7 +591,8 @@ public sealed class ComplexColumnsWriterTests
                 await writer.CreateTableAsync("Docs", [new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }], TestContext.Current.CancellationToken));
         }
 
-        Assert.Equal([int.MaxValue], await ReadComplexIdsAsync(ms, "Docs"));
+        int[] ids = await ReadComplexIdsAsync(ms, "Docs");
+        Assert.Equal([int.MaxValue], ids);
         Assert.Equal(int.MaxValue, await ReadComplexIdCounterAsync(ms));
     }
 
@@ -660,7 +663,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
-        byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
+        byte[] tdef = await harness.Pager.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
         System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(tdef.AsSpan(ComplexColumnTestSupport.AutoNumberOffset, 4), counter);
         await harness.Pager.WritePageAsync(page, tdef, TestContext.Current.CancellationToken);
     }

@@ -159,6 +159,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
             Assert.Equal(1, count);
         }
     }
+
     private static ColumnDefinition[] ColumnsFor(DatabaseFormat format)
     {
         var columns = new List<ColumnDefinition>

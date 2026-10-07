@@ -24,7 +24,7 @@ using Xunit;
 /// <summary>Native Jet4 BIGBINARY payloads are fixed binary bytes rather than complex references.</summary>
 public sealed class NativeBigBinaryTests
 {
-    private const ColumnType NativeType = (ColumnType)0x11;
+    private const ColumnType NativeType = ColumnType.BigBinaryType;
     private const int NativeWidth = 3992;
 
     [Fact]

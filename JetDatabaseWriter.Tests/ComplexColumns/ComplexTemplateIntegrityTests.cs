@@ -20,6 +20,21 @@ using static JetDatabaseWriter.Tests.ComplexColumns.ComplexColumnTestSupport;
 /// <summary>Refuses complex-column creation when required native template metadata is missing.</summary>
 public sealed class ComplexTemplateIntegrityTests
 {
+    /// <summary>Gets write modes and malformed native template cases.</summary>
+    public static TheoryData<WriteMode, string> TemplateDamageCases()
+    {
+        var cases = new TheoryData<WriteMode, string>();
+        foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
+        {
+            foreach (string damage in new[] { "Unreadable", "OutOfFile", "WrongShape" })
+            {
+                cases.Add(mode, damage);
+            }
+        }
+
+        return cases;
+    }
+
     /// <summary>A missing template never becomes a zero catalog reference or changes the database.</summary>
     /// <param name="mode">The write mode.</param>
     [Theory]
@@ -46,21 +61,6 @@ public sealed class ComplexTemplateIntegrityTests
         }
 
         Assert.Equal(bytes, stream.ToArray());
-    }
-
-    /// <summary>Gets write modes and malformed native template cases.</summary>
-    public static TheoryData<WriteMode, string> TemplateDamageCases()
-    {
-        var cases = new TheoryData<WriteMode, string>();
-        foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
-        {
-            foreach (string damage in new[] { "Unreadable", "OutOfFile", "WrongShape" })
-            {
-                cases.Add(mode, damage);
-            }
-        }
-
-        return cases;
     }
 
     [Theory]
@@ -108,7 +108,7 @@ public sealed class ComplexTemplateIntegrityTests
         else if (damage == "WrongShape")
         {
             int realIndexCount = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(templateOffset + database.Format.TDef.NumRealIdx, 4));
-            int firstColumnOffset = templateOffset + database.Format.TDef.BlockEnd + realIndexCount * database.Format.TDef.RealIdxEntrySz;
+            int firstColumnOffset = templateOffset + database.Format.TDef.BlockEnd + (realIndexCount * database.Format.TDef.RealIdxEntrySz);
             bytes[firstColumnOffset + database.Format.ColumnDescriptor.TypeOff] = (byte)ColumnType.LongIntegerType;
         }
         else
@@ -117,7 +117,7 @@ public sealed class ComplexTemplateIntegrityTests
             byte[] page = await reader.ReadPageCopyAsync(template.PageNumber, Ct);
             RowBound row = DataPageRows.EnumerateLiveRowBounds(database.Format, page).Single(bound => bound.RowIndex == template.RowIndex);
             int idOffset = checked((int)(template.PageNumber * database.Format.PageSize)) + row.RowStart + database.Format.RowFields.NumCols + idColumn.FixedOff;
-            BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(idOffset, 4), bytes.Length / database.Format.PageSize + 10);
+            BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(idOffset, 4), (bytes.Length / database.Format.PageSize) + 10);
         }
     }
 

@@ -934,7 +934,6 @@ internal sealed class ConstraintRegistry(
             JetFormat? propertyFormat = properties?.Format;
             string? calculationExpression = PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat!));
 
-
             // Access gives AutoNumber, calculated and complex columns no default; a stray
             // DefaultValue property on one must not stop the column generating its value.
             bool takesDefault = !isComplex && !isAutoIncrement && !col.IsCalculated;

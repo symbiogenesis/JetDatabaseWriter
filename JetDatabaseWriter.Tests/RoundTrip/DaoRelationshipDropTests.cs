@@ -54,17 +54,15 @@ public sealed class DaoRelationshipDropTests
         }
 
         File.Copy(session.SourcePath, Path.Combine(session.WorkDir, "before-delete.accdb"));
-        AccessRoundTripEnvironment.CompactResult preflight = session.RunDaoDatabaseScript(
-            session.SourcePath,
-            """
+        const string preflightScript = """
             foreach ($name in @('DaoDtParent', 'DaoDtChild')) {
                 $tdf = $db.TableDefs($name)
                 Write-Output "TABLE=$name FIELDS=$($tdf.Fields.Count) INDEXES=$($tdf.Indexes.Count)"
                 $rs = $db.OpenRecordset($name, 2)
                 try { Write-Output "READ=$name OK" } finally { $rs.Close() }
             }
-            """,
-            DaoTimeout);
+            """;
+        AccessRoundTripEnvironment.CompactResult preflight = session.RunDaoDatabaseScript(session.SourcePath, preflightScript, DaoTimeout);
         Assert.True(preflight.ExitCode == 0, $"DAO pre-delete failed: {preflight.StdOut}\n{preflight.StdErr}");
         Assert.Contains("TABLE=DaoDtParent FIELDS=1 INDEXES=1", preflight.StdOut, StringComparison.Ordinal);
         Assert.Contains("TABLE=DaoDtChild FIELDS=2 INDEXES=1", preflight.StdOut, StringComparison.Ordinal);
