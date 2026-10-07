@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.TestSupport;
 
 /// <summary>
@@ -32,11 +33,18 @@ public class AccessReaderPlaylistBenchmarks
     [GlobalSetup]
     public async Task Setup()
     {
-        this.databasePath = Path.Combine(Path.GetTempPath(), $"jdw-playlists-v3-{this.Shape}.accdb");
+        this.databasePath = Path.Combine(Path.GetTempPath(), $"jdw-playlists-v4-{this.Shape}.accdb");
         await this.EnsureDatabaseAsync().ConfigureAwait(false);
         this.reader = await AccessReader.OpenAsync(this.databasePath).ConfigureAwait(false);
+        await VerifySchemaAsync(this.reader).ConfigureAwait(false);
         List<SnapshotPlaylistRow> snapshot = await this.TypedScan().ConfigureAwait(false);
         this.Verify(snapshot);
+
+        List<SnapshotPlaylistRow> fallback = await ScanAsync(this.reader, hybrid: false).ConfigureAwait(false);
+        List<SnapshotPlaylistRow> candidate = await ScanAsync(this.reader, hybrid: true).ConfigureAwait(false);
+        this.Verify(fallback);
+        this.Verify(candidate);
+        VerifyOrder(fallback, candidate);
 
         await this.ReportIoAsync(hybrid: false).ConfigureAwait(false);
         await this.ReportIoAsync(hybrid: true).ConfigureAwait(false);
@@ -57,7 +65,7 @@ public class AccessReaderPlaylistBenchmarks
     /// <returns>Every playlist in stored order, with exact definition bytes.</returns>
     /// <exception cref="InvalidOperationException">Setup has not opened the reader.</exception>
     [Benchmark]
-    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."), hybrid: true);
+    public Task<List<SnapshotPlaylistRow>> TypedScan() => ScanAsync(this.reader ?? throw new InvalidOperationException("Setup has not opened the reader."), hybrid: false);
 
     private static async Task<List<SnapshotPlaylistRow>> ScanAsync(AccessReader source, bool hybrid)
     {
@@ -68,6 +76,25 @@ public class AccessReaderPlaylistBenchmarks
         }
 
         return rows;
+    }
+
+    private static async Task VerifySchemaAsync(AccessReader source)
+    {
+        IReadOnlyList<ColumnMetadata> columns = await source.GetColumnMetadataAsync(TableName).ConfigureAwait(false);
+        foreach (ColumnMetadata column in columns)
+        {
+            string expectedType = column.Name switch
+            {
+                "CreationDate" or "ArtistSort" or "Title" => "Text",
+                "Notes" => "Memo",
+                "Filter" or "SortOrder" => "OLE Object",
+                _ => column.TypeName,
+            };
+            if (column.TypeName != expectedType)
+            {
+                throw new InvalidOperationException($"Fixture column {column.Name}: actual type={column.TypeName}, expected type={expectedType}.");
+            }
+        }
     }
 
     private static byte[] Payload(int id, int length)
@@ -81,7 +108,31 @@ public class AccessReaderPlaylistBenchmarks
         return bytes;
     }
 
-    private static string Name(int id) => "Playlist " + id.ToString(CultureInfo.InvariantCulture);
+    private static SnapshotPlaylistRow Metadata(int id) => new()
+    {
+        PlaylistID = id,
+        CreationDate = id % 13 == 0 ? null : "2026-09-" + ((id % 28) + 1).ToString("D2", CultureInfo.InvariantCulture),
+        Favorite = id % 5 == 0,
+        ArtistSort = id % 11 == 0 ? null : "Artist " + (id % 347).ToString(CultureInfo.InvariantCulture),
+        Title = "Playlist " + id.ToString(CultureInfo.InvariantCulture),
+        Random = id % 3 == 0,
+        Max = id % 17 == 0 ? null : id % 500,
+        Shuffle = id % 4 == 0,
+        Reload = id % 6 == 0,
+        PlayingTime = id % 19 == 0 ? null : id * 123,
+        NumberOfTracks = id % 23 == 0 ? null : (short)(id % 1000),
+    };
+
+    private static void VerifyOrder(List<SnapshotPlaylistRow> fallback, List<SnapshotPlaylistRow> candidate)
+    {
+        for (int position = 0; position < fallback.Count; position++)
+        {
+            if (fallback[position].PlaylistID != candidate[position].PlaylistID)
+            {
+                throw new InvalidOperationException($"Stored row order differs at position {position}: fallback PlaylistID={fallback[position].PlaylistID}, hybrid PlaylistID={candidate[position].PlaylistID}.");
+            }
+        }
+    }
 
     private static bool Equal(byte[]? actual, byte[]? expected) => actual is null
         ? expected is null
@@ -103,18 +154,53 @@ public class AccessReaderPlaylistBenchmarks
     {
         if (rows.Count != RowCount)
         {
-            throw new InvalidOperationException($"Expected {RowCount} playlists; got {rows.Count}.");
+            throw new InvalidOperationException($"Expected {RowCount} playlists; got {rows.Count} ({this.Shape}).");
         }
 
-        for (int id = 0; id < RowCount; id++)
+        var seen = new HashSet<int>();
+        for (int position = 0; position < rows.Count; position++)
         {
-            SnapshotPlaylistRow row = rows[id];
-            (byte[]? filter, byte[]? sort) = this.Definitions(id);
-            if (row.Id != id || row.Name != Name(id) || row.ParentId != id / 100 || row.Position != id % 100
-                || row.IsDynamic != (filter is not null || sort is not null)
-                || !Equal(row.Filter, filter) || !Equal(row.SortOrder, sort))
+            SnapshotPlaylistRow actual = rows[position];
+            int id = actual.PlaylistID;
+            if (id < 0 || id >= RowCount || !seen.Add(id))
             {
-                throw new InvalidOperationException($"Playlist metadata or exact definition bytes differ at row {id} ({this.Shape}).");
+                throw new InvalidOperationException($"Invalid or duplicate PlaylistID {id} at stored position {position} ({this.Shape}).");
+            }
+
+            SnapshotPlaylistRow expected = Metadata(id);
+            (byte[]? filter, byte[]? sort) = this.Definitions(id);
+            var differences = new List<string>();
+            Check(nameof(actual.CreationDate), actual.CreationDate, expected.CreationDate);
+            Check(nameof(actual.Favorite), actual.Favorite, expected.Favorite);
+            Check(nameof(actual.ArtistSort), actual.ArtistSort, expected.ArtistSort);
+            Check(nameof(actual.Title), actual.Title, expected.Title);
+            Check(nameof(actual.Random), actual.Random, expected.Random);
+            Check(nameof(actual.Max), actual.Max, expected.Max);
+            Check(nameof(actual.Shuffle), actual.Shuffle, expected.Shuffle);
+            Check(nameof(actual.Reload), actual.Reload, expected.Reload);
+            Check(nameof(actual.PlayingTime), actual.PlayingTime, expected.PlayingTime);
+            Check(nameof(actual.NumberOfTracks), actual.NumberOfTracks, expected.NumberOfTracks);
+            CheckBytes(nameof(actual.Filter), actual.Filter, filter);
+            CheckBytes(nameof(actual.SortOrder), actual.SortOrder, sort);
+            if (differences.Count != 0)
+            {
+                throw new InvalidOperationException($"PlaylistID={id}, stored position={position}, shape={this.Shape}: {string.Join("; ", differences)}");
+            }
+
+            void Check<T>(string field, T value, T wanted)
+            {
+                if (!EqualityComparer<T>.Default.Equals(value, wanted))
+                {
+                    differences.Add($"{field}: actual={((object?)value ?? "<null>")}, expected={((object?)wanted ?? "<null>")}");
+                }
+            }
+
+            void CheckBytes(string field, byte[]? value, byte[]? wanted)
+            {
+                if (!Equal(value, wanted))
+                {
+                    differences.Add($"{field}: actualLength={value?.Length.ToString(CultureInfo.InvariantCulture) ?? "null"}, expectedLength={wanted?.Length.ToString(CultureInfo.InvariantCulture) ?? "null"}, exactBytes=false");
+                }
             }
         }
     }
@@ -147,13 +233,19 @@ public class AccessReaderPlaylistBenchmarks
                 await writer.CreateTableAsync(
                     TableName,
                     [
-                        new("Id", typeof(int)),
-                        new("Name", typeof(string), 100),
-                        new("ParentId", typeof(int)),
-                        new("Position", typeof(int)),
-                        new("IsDynamic", typeof(bool)),
+                        new("PlaylistID", typeof(int)),
+                        new("CreationDate", typeof(string), 40),
+                        new("Favorite", typeof(bool)),
+                        new("ArtistSort", typeof(string), 100),
+                        new("Title", typeof(string), 100),
                         new("Filter", typeof(byte[])),
                         new("SortOrder", typeof(byte[])),
+                        new("Random", typeof(bool)),
+                        new("Max", typeof(int)),
+                        new("Shuffle", typeof(bool)),
+                        new("Reload", typeof(bool)),
+                        new("PlayingTime", typeof(int)),
+                        new("NumberOfTracks", typeof(short)),
                         new("Notes", typeof(string)),
                     ]).ConfigureAwait(false);
                 var rows = new List<object[]>(RowCount);
@@ -161,7 +253,8 @@ public class AccessReaderPlaylistBenchmarks
                 for (int id = 0; id < RowCount; id++)
                 {
                     (byte[]? filter, byte[]? sort) = this.Definitions(id);
-                    rows.Add([id, Name(id), id / 100, id % 100, filter is not null || sort is not null, filter!, sort!, notes]);
+                    SnapshotPlaylistRow row = Metadata(id);
+                    rows.Add([id, row.CreationDate!, row.Favorite!, row.ArtistSort!, row.Title!, filter!, sort!, row.Random!, row.Max!, row.Shuffle!, row.Reload!, row.PlayingTime!, row.NumberOfTracks!, notes]);
                 }
 
                 await writer.InsertRowsAsync(TableName, rows).ConfigureAwait(false);
