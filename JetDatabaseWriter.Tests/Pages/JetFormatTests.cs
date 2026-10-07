@@ -77,8 +77,8 @@ public sealed class JetFormatTests
     /// <param name="expectedTrueFlags">The profile's flags that are true, in name order.</param>
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb, "IsJet3 SupportsIndexSeeks")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "LegacyNumericIndexKeys SupportsBigBinary SupportsIndexSeeks SupportsNumeric UsesHeaderMaskedSecuritySids WritesTDefFormatMagic WritesTDefFreeSpace")]
-    [InlineData(DatabaseFormat.AceAccdb, "SupportsBigInt SupportsCalculatedColumns SupportsComplexColumns SupportsDateTimeExtended SupportsIndexSeeks SupportsNumeric WritesTDefFormatMagic WritesTDefFreeSpace")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "LegacyNumericIndexKeys SupportsBigBinary SupportsCoreCatalogTables SupportsIndexSeeks SupportsNumeric UsesHeaderMaskedSecuritySids WritesTDefFormatMagic WritesTDefFreeSpace")]
+    [InlineData(DatabaseFormat.AceAccdb, "SupportsBigInt SupportsCalculatedColumns SupportsComplexColumns SupportsCoreCatalogTables SupportsDateTimeExtended SupportsIndexSeeks SupportsNumeric WritesTDefFormatMagic WritesTDefFreeSpace")]
     public void CapabilityFlags_MatchFormat(DatabaseFormat kind, string expectedTrueFlags)
         => Assert.Equal(expectedTrueFlags, TrueFlags(JetFormat.ForNewDatabase(kind)));
 

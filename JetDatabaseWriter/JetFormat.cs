@@ -178,6 +178,9 @@ internal sealed class JetFormat
     /// <summary>Gets a value indicating whether the format has the fixed 3992-byte BIGBINARY system-table type: Jet4 only.</summary>
     internal bool SupportsBigBinary { get; }
 
+    /// <summary>Gets a value indicating whether native core catalog tables are required during creation.</summary>
+    internal bool SupportsCoreCatalogTables => !this.IsJet3;
+
     /// <summary>Gets a value indicating whether security identities use the header-derived Jet4 SID mask.</summary>
     internal bool UsesHeaderMaskedSecuritySids => this.Kind == DatabaseFormat.Jet4Mdb;
 

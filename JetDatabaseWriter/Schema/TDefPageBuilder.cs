@@ -695,7 +695,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     /// The bootstrap image contains three pages (page size varies by format):
     /// page 0 (header), page 1 (global usage map), and page 2 (MSysObjects TDEF).
     /// The <see cref="AccessWriter.CreateDatabaseAsync(string, DatabaseFormat, AccessWriterOptions?, System.Threading.CancellationToken)"/> overloads add
-    /// ACCDB system tables after opening this minimal image.
+    /// Jet4/ACE system tables and security metadata after opening this minimal image.
     /// </summary>
     /// <param name="format">Target on-disk format.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="format"/> is not a defined format.</exception>

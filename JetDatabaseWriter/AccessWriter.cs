@@ -741,9 +741,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => this.services.Transactions.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
-    /// Completes a freshly written empty database: reserves the core ACCDB
+    /// Completes a freshly written empty database: reserves the core Jet4/ACE
     /// system-table TDEF slots, bootstraps the <c>MSysObjects</c> indexes, and
-    /// scaffolds the remaining full-catalog system tables.
+    /// scaffolds native catalog system tables and security metadata.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask InitializeFreshDatabaseAsync(CancellationToken cancellationToken)

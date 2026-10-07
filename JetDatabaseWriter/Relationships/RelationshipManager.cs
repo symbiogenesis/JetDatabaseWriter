@@ -105,6 +105,8 @@ internal sealed class RelationshipManager(
         Guard.ThrowIfDisposed(this.pager.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
+        await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
+
         // Validate referenced user tables exist and load their definitions.
         ResolvedTable primaryTable = await this.tableCatalog.ResolveRequiredTableAsync(relationship.PrimaryTable, cancellationToken).ConfigureAwait(false);
         ResolvedTable foreignTable = await this.tableCatalog.ResolveRequiredTableAsync(relationship.ForeignTable, cancellationToken).ConfigureAwait(false);
@@ -1087,6 +1089,8 @@ internal sealed class RelationshipManager(
             return newIndexNumbers;
         }
 
+        await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
+
         int[][] columnNumbers = new int[state.FkEntries.Count][];
         for (int i = 0; i < state.FkEntries.Count; i++)
         {
@@ -1194,6 +1198,8 @@ internal sealed class RelationshipManager(
         {
             return;
         }
+
+        await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
 
         foreach (FkLogicalIndexSnapshot entry in state.FkEntries)
         {
@@ -1603,6 +1609,8 @@ internal sealed class RelationshipManager(
     /// <returns>A task representing the asynchronous operation.</returns>
     internal async ValueTask RemovePartnerLinksAsync(long tdefPage, CancellationToken cancellationToken)
     {
+        await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
+
         LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
             tdefPage,
             this.format.PageSize,
@@ -1794,6 +1802,8 @@ internal sealed class RelationshipManager(
         Guard.ThrowIfDisposed(this.pager.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
+        await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
+
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)
         {
@@ -1889,6 +1899,8 @@ internal sealed class RelationshipManager(
         {
             return; // No-op; matches Microsoft Access' designer behaviour.
         }
+
+        await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
 
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);
         if (msysRelTdefPage <= 0)

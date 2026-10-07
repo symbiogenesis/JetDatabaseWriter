@@ -90,6 +90,7 @@ internal sealed class TableSchemaEditor(
     internal async ValueTask SetTableValidationRuleAsync(string tableName, TableValidationRule? rule, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ColumnPropertyBlock? properties = await snapshots.ReadLvPropBlockAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         ConstraintRegistry.ValidatePersistedConstraintProperties(tableName, properties);
@@ -227,6 +228,7 @@ internal sealed class TableSchemaEditor(
         Guard.NotNull(indexes, nameof(indexes));
         pager.ThrowIfDisposedOrCancelled(cancellationToken);
         await catalogArtifacts.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
+        await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
 
         if (columns.Count == 0)
         {
@@ -333,6 +335,7 @@ internal sealed class TableSchemaEditor(
         }
 
         await catalogArtifacts.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
+        await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
         foreach (string relationshipName in relationshipNames)
         {
             await relationships.DropRelationshipAsync(relationshipName, cancellationToken).ConfigureAwait(false);
@@ -441,6 +444,7 @@ internal sealed class TableSchemaEditor(
         // checked), and goes through the rewrite like any rename.
         if (string.Equals(oldColumnName, newColumnName, StringComparison.OrdinalIgnoreCase))
         {
+            await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
             ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             int current = table.Definition.FindColumnIndex(oldColumnName);
             if (current < 0)
@@ -929,6 +933,7 @@ internal sealed class TableSchemaEditor(
         Func<string, string?> mapColumnName,
         CancellationToken cancellationToken)
     {
+        await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         CatalogEntry entry = table.Entry;
         TableDef tableDef = table.Definition;
@@ -1008,6 +1013,10 @@ internal sealed class TableSchemaEditor(
         RelationshipRewriteState relationshipState =
             await relationships.CaptureForRewriteAsync(tableName, entry.TDefPage, tableDef, cancellationToken).ConfigureAwait(false);
         RelationshipManager.EnsureKeyColumnsSurvive(relationshipState, mapColumnName);
+        if (!relationshipState.IsEmpty)
+        {
+            await catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
+        }
 
         // Refuse, before anything is written, a table with an index the writer
         // cannot maintain: the projection below could only drop such an index,

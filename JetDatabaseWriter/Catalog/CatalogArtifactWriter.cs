@@ -71,6 +71,12 @@ internal sealed class CatalogArtifactWriter(
             new("LvExtra", typeof(byte[])) { DescriptorFlagsOverride = 0x12 },
         ];
 
+    /// <summary>Checks native security metadata before a catalog mutation allocates or deletes objects.</summary>
+    /// <param name="relationships">Whether to use the relationships container.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask ThrowIfNativeSecurityUnmaintainableAsync(bool relationships, CancellationToken cancellationToken)
+        => catalogWriter.ThrowIfNativeSecurityUnmaintainableAsync(relationships, cancellationToken);
+
     private static bool ShouldEmitAceRows(CatalogTableArtifact tableArtifact)
         => tableArtifact.EmitAceRows ?? !IsSystemCatalogFlags(tableArtifact.CatalogFlags);
 
@@ -83,15 +89,14 @@ internal sealed class CatalogArtifactWriter(
         => catalogWriter.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken);
 
     /// <summary>
-    /// Reserves the contiguous TDEF slots for the core ACCDB system tables
+    /// Reserves the contiguous TDEF slots for the core Jet4/ACE system tables
     /// (<c>MSysACEs</c>, <c>MSysQueries</c>, <c>MSysRelationships</c>) of a
     /// freshly created database. Returns 0 when no slots are needed:
-    /// the writer scaffolds these tables only on ACCDB, with the complex-column
-    /// catalog (<see cref="JetFormat.SupportsComplexColumns"/>).
+    /// Jet3 does not use this core catalog scaffold.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(CancellationToken cancellationToken)
-        => format.SupportsComplexColumns
+        => format.SupportsCoreCatalogTables
             ? pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken)
             : new ValueTask<long>(0L);
 
@@ -189,8 +194,26 @@ internal sealed class CatalogArtifactWriter(
 
         foreach (CatalogTableArtifact artifact in plan.TableArtifacts)
         {
+            if (ShouldEmitAceRows(artifact))
+            {
+                await catalogWriter.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
+            }
+
             TableDef definition = TDefPageBuilder.BuildTableDefinition(artifact.Columns, format);
             _ = IndexHelpers.ResolveIndexes(artifact.Indexes, definition);
+        }
+
+        foreach (CatalogObjectArtifact artifact in plan.CatalogObjects)
+        {
+            if (artifact.AcePolicy != CatalogObjectAcePolicy.None)
+            {
+                await catalogWriter.ThrowIfNativeSecurityUnmaintainableAsync(artifact.AcePolicy == CatalogObjectAcePolicy.RelationshipObject, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (plan.CatalogReplacements.Count > 0 || plan.CatalogDeletions.Count > 0)
+        {
+            await catalogWriter.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
         }
 
         long[] tablePages = new long[plan.TableArtifacts.Count];
@@ -370,6 +393,7 @@ internal sealed class CatalogArtifactWriter(
             tdefPageNumber,
             lvProp,
             tableArtifact.CatalogFlags,
+            tableArtifact.Owner,
             cancellationToken).ConfigureAwait(false);
 
         // DAO Compact & Repair requires every user table to have ACE

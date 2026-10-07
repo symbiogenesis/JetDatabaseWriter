@@ -73,8 +73,9 @@ internal sealed class CatalogWriter(
     /// <param name="tdefPageNumber">The TDEF page number.</param>
     /// <param name="lvProp">The LvProp payload.</param>
     /// <param name="catalogFlags">The catalog flags.</param>
+    /// <param name="owner">An explicit native bootstrap system owner.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, CancellationToken cancellationToken = default)
+    internal async ValueTask InsertCatalogEntryAsync(string tableName, long tdefPageNumber, byte[]? lvProp, uint catalogFlags, byte[]? owner = null, CancellationToken cancellationToken = default)
     {
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
@@ -90,7 +91,7 @@ internal sealed class CatalogWriter(
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
-        msys.SetValueByName(values, "Owner", await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false) ?? Constants.SystemObjects.DefaultOwnerBlob);
+        msys.SetValueByName(values, "Owner", owner ?? (format.UsesHeaderMaskedSecuritySids ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false) : Constants.SystemObjects.DefaultOwnerBlob));
         if (lvProp is not null)
         {
             msys.SetValueByName(values, "LvProp", lvProp);
@@ -110,6 +111,11 @@ internal sealed class CatalogWriter(
     /// <returns>The inserted <c>MSysObjects.Id</c> value.</returns>
     internal async ValueTask<int> InsertCatalogObjectAsync(CatalogObjectArtifact artifact, CancellationToken cancellationToken = default)
     {
+        if (artifact.AcePolicy != CatalogObjectAcePolicy.None)
+        {
+            await this.ThrowIfNativeSecurityUnmaintainableAsync(artifact.AcePolicy == CatalogObjectAcePolicy.RelationshipObject, cancellationToken).ConfigureAwait(false);
+        }
+
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         await this.EnsureCatalogContainerNameAvailableAsync(msys, artifact.ParentId, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
@@ -131,7 +137,9 @@ internal sealed class CatalogWriter(
 
         if (artifact.Owner is not null && msys.FindColumn("Owner") is not null)
         {
-            msys.SetValueByName(values, "Owner", artifact.Owner);
+            msys.SetValueByName(values, "Owner", format.UsesHeaderMaskedSecuritySids && artifact.AcePolicy != CatalogObjectAcePolicy.None
+                ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false)
+                : artifact.Owner);
         }
 
         if (artifact.LvProp is not null && msys.FindColumn("LvProp") is not null)
@@ -269,68 +277,88 @@ internal sealed class CatalogWriter(
         return encoded ?? value;
     }
 
-    private async ValueTask<byte[]?> ReadDatabaseOwnerAsync(CancellationToken cancellationToken)
-    {
-        if (!format.UsesHeaderMaskedSecuritySids)
-        {
-            return null;
-        }
+    /// <summary>Reads the unique native database owner without synthesizing security metadata.</summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The encoded database owner.</returns>
+    /// <exception cref="JetCorruptDataException">The native database security owner is missing or malformed.</exception>
+    private ValueTask<byte[]> ReadDatabaseOwnerAsync(CancellationToken cancellationToken) => this.ReadCatalogSecurityObjectAsync("MSysDb", Constants.SystemObjects.DatabaseObjectId, 2, cancellationToken);
 
+    /// <summary>Validates one uniquely named native catalog security object.</summary>
+    /// <param name="objectName">The required object name.</param>
+    /// <param name="objectId">The required object identifier.</param>
+    /// <param name="objectType">The required catalog type.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The encoded object owner.</returns>
+    /// <exception cref="JetCorruptDataException">The object identity or owner is absent, duplicated, or malformed.</exception>
+    private async ValueTask<byte[]> ReadCatalogSecurityObjectAsync(string objectName, int objectId, int objectType, CancellationToken cancellationToken)
+    {
         TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         ColumnInfo? nameColumn = objects.FindColumn("Name");
         ColumnInfo? ownerColumn = objects.FindColumn("Owner");
         if (nameColumn is null || ownerColumn is null)
         {
-            return null;
+            throw new JetCorruptDataException("MSysObjects has no database security owner columns.");
         }
 
+        ColumnInfo idColumn = objects.FindColumn("Id") ?? throw new JetCorruptDataException("MSysObjects has no security object identifier column.");
+        ColumnInfo typeColumn = objects.FindColumn("Type") ?? throw new JetCorruptDataException("MSysObjects has no security object type column.");
         byte[]? owner = null;
+        int matches = 0;
         await ownedPages.ForEachLiveTableRowAsync(
             2,
             (row, _) =>
             {
                 RowLocation location = row.Location;
                 string name = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, nameColumn);
-                if (!string.Equals(name, "MSysDb", StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(name, objectName, StringComparison.OrdinalIgnoreCase))
                 {
                     return new ValueTask<bool>(true);
                 }
 
+                if (++matches != 1)
+                {
+                    throw new JetCorruptDataException($"MSysObjects contains duplicate {objectName} security objects.");
+                }
+
+                if (!CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, idColumn), out int id)
+                    || id != objectId
+                    || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, typeColumn), out int type) || type != objectType)
+                {
+                    throw new JetCorruptDataException($"{objectName} has an invalid security object identity.");
+                }
+
                 string value = ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, ownerColumn);
                 owner = value.Length == 0 ? null : ParseHexBytes(value);
-                return new ValueTask<bool>(false);
+                return new ValueTask<bool>(true);
             },
             cancellationToken).ConfigureAwait(false);
-        return owner;
+        return owner is { Length: > 0 }
+            ? owner
+            : throw new JetCorruptDataException($"MSysObjects has no valid {objectName} security owner.");
     }
 
     /// <summary>Inherits native Jet4 container permissions and resolves the masked owner placeholder.</summary>
-    /// <param name="objectId">The new object identifier.</param>
     /// <param name="relationships">Whether to inherit relationship-container permissions.</param>
     /// <param name="acesTdefPage">The permissions table page.</param>
     /// <param name="acesDef">The permissions table definition.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>Whether native permissions were inherited.</returns>
+    /// <returns>The validated and remapped native permissions.</returns>
     /// <exception cref="JetCorruptDataException">Required security metadata is malformed.</exception>
     /// <exception cref="NotSupportedException">The container has no inheritable permissions.</exception>
-    private async ValueTask<bool> TryInsertInheritedJet4AcesAsync(
-        int objectId,
+    private async ValueTask<(byte[] Sid, int Acm)[]> ReadInheritedJet4PermissionsAsync(
         bool relationships,
         long acesTdefPage,
         TableDef acesDef,
         CancellationToken cancellationToken)
     {
-        byte[]? owner = await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false);
-        if (owner is null)
-        {
-            return false;
-        }
+        byte[] owner = await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false);
 
         ColumnInfo objectColumn = acesDef.FindColumn("ObjectId") ?? throw new JetCorruptDataException("MSysACEs has no ObjectId column.");
         ColumnInfo sidColumn = acesDef.FindColumn("SID") ?? throw new JetCorruptDataException("MSysACEs has no SID column.");
         ColumnInfo acmColumn = acesDef.FindColumn("ACM") ?? throw new JetCorruptDataException("MSysACEs has no ACM column.");
         ColumnInfo inheritColumn = acesDef.FindColumn("FInheritable") ?? throw new JetCorruptDataException("MSysACEs has no FInheritable column.");
         int parentId = relationships ? Constants.SystemObjects.RelationshipsParentId : Constants.SystemObjects.TablesParentId;
+        _ = await this.ReadCatalogSecurityObjectAsync(relationships ? "Relationships" : "Tables", parentId, 3, cancellationToken).ConfigureAwait(false);
         var inherited = new List<(byte[] Sid, int Acm)>();
         await ownedPages.ForEachLiveTableRowAsync(
             acesTdefPage,
@@ -339,15 +367,34 @@ internal sealed class CatalogWriter(
                 RowLocation location = row.Location;
                 string Decode(ColumnInfo column) => ScalarColumnReader.DecodeSimpleColumnValue(format, row.Page, location.RowStart, location.RowSize, column);
 
-                if (CatalogValueReader.TryParseInt32(Decode(objectColumn), out int id) && id == parentId
-                    && string.Equals(Decode(inheritColumn), "True", StringComparison.Ordinal))
+                if (!CatalogValueReader.TryParseInt32(Decode(objectColumn), out int id))
                 {
-                    if (!CatalogValueReader.TryParseInt32(Decode(acmColumn), out int acm))
+                    throw new JetCorruptDataException("MSysACEs contains an invalid object identifier.");
+                }
+
+                if (id == parentId)
+                {
+                    string inherit = Decode(inheritColumn);
+                    if (inherit is not ("True" or "False"))
                     {
-                        throw new JetCorruptDataException("An inherited MSysACEs entry has an invalid permission mask.");
+                        throw new JetCorruptDataException("A container MSysACEs entry has an invalid inheritance flag.");
                     }
 
-                    inherited.Add((ParseHexBytes(Decode(sidColumn)), acm));
+                    if (!CatalogValueReader.TryParseInt32(Decode(acmColumn), out int acm))
+                    {
+                        throw new JetCorruptDataException("A container MSysACEs entry has an invalid permission mask.");
+                    }
+
+                    byte[] sid = ParseHexBytes(Decode(sidColumn));
+                    if (sid.Length == 0)
+                    {
+                        throw new JetCorruptDataException("A container MSysACEs entry has no security identity.");
+                    }
+
+                    if (inherit == "True")
+                    {
+                        inherited.Add((sid, acm));
+                    }
                 }
 
                 return new ValueTask<bool>(true);
@@ -369,19 +416,50 @@ internal sealed class CatalogWriter(
             ArrayPool<byte>.Shared.Return(header);
         }
 
-        foreach ((byte[] sid, int acm) in inherited)
+        var identities = new HashSet<string>(StringComparer.Ordinal);
+        for (int index = 0; index < inherited.Count; index++)
         {
-            object[] values = acesDef.CreateNullValueRow();
-            acesDef.SetValueByName(values, "ObjectId", objectId);
-            acesDef.SetValueByName(values, "SID", sid.AsSpan().SequenceEqual(placeholder) ? owner : sid);
-            acesDef.SetValueByName(values, "ACM", acm);
-            acesDef.SetValueByName(values, "FInheritable", false);
-            await indexes.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+            (byte[] sid, int acm) = inherited[index];
+            byte[] mappedSid = sid.AsSpan().SequenceEqual(placeholder) ? owner : sid;
+            if (!identities.Add(BitConverter.ToString(mappedSid)))
+            {
+                throw new JetCorruptDataException("Native inherited permissions contain duplicate security identities after owner remapping.");
+            }
+
+            inherited[index] = (mappedSid, acm);
         }
 
-        return true;
+        return inherited.ToArray();
     }
 
+    /// <summary>Validates native security metadata before allocating or changing catalog artifacts.</summary>
+    /// <param name="relationships">Whether to use the relationships container.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">The native permissions table is absent or malformed.</exception>
+    internal async ValueTask ThrowIfNativeSecurityUnmaintainableAsync(bool relationships, CancellationToken cancellationToken)
+    {
+        if (!format.UsesHeaderMaskedSecuritySids)
+        {
+            return;
+        }
+
+        long page = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        if (page <= 0)
+        {
+            throw new JetCorruptDataException("The native Jet4 permissions table is absent.");
+        }
+
+        _ = await this.ReadCatalogSecurityObjectAsync(Constants.SystemTableNames.Aces, checked((int)page), 1, cancellationToken).ConfigureAwait(false);
+        TableDef definition = await tableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        _ = await this.ReadInheritedJet4PermissionsAsync(relationships, page, definition, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Writes permissions for a catalog object using its native container policy.</summary>
+    /// <param name="objectId">The object identifier.</param>
+    /// <param name="useRestrictedOwnerAcm">Whether the non-Jet4 owner permissions are restricted.</param>
+    /// <param name="useRelationshipGroupAcm">Whether to use relationship-container permissions.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetCorruptDataException">The native permissions table is absent.</exception>
     private async ValueTask InsertAceRowsForCatalogObjectAsync(
         int objectId,
         bool useRestrictedOwnerAcm,
@@ -391,13 +469,28 @@ internal sealed class CatalogWriter(
         long acesTdefPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
         {
+            if (format.UsesHeaderMaskedSecuritySids)
+            {
+                throw new JetCorruptDataException("The native Jet4 permissions table is absent.");
+            }
+
             return;
         }
 
         TableDef acesDef = await tableDefs.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        if (format.UsesHeaderMaskedSecuritySids
-            && await this.TryInsertInheritedJet4AcesAsync(objectId, useRelationshipGroupAcm, acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false))
+        if (format.UsesHeaderMaskedSecuritySids)
         {
+            (byte[] Sid, int Acm)[] inherited = await this.ReadInheritedJet4PermissionsAsync(useRelationshipGroupAcm, acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
+            foreach ((byte[] sid, int acm) in inherited)
+            {
+                object[] values = acesDef.CreateNullValueRow();
+                acesDef.SetValueByName(values, "ObjectId", objectId);
+                acesDef.SetValueByName(values, "SID", sid);
+                acesDef.SetValueByName(values, "ACM", acm);
+                acesDef.SetValueByName(values, "FInheritable", false);
+                await indexes.InsertSystemRowAndMaintainAsync(acesTdefPage, acesDef, Constants.SystemTableNames.Aces, values, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+
             return;
         }
 
@@ -514,6 +607,8 @@ internal sealed class CatalogWriter(
         string? missingMessage,
         CancellationToken cancellationToken)
     {
+        await this.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
+
         UserTableCatalogDeletionResult deleted = await this.DeleteUserTableCatalogRowsAsync(
             existingName,
             tdefPage,
@@ -531,7 +626,7 @@ internal sealed class CatalogWriter(
             replacementTdefPage,
             lvProp,
             deleted.FirstCatalogFlags,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken: cancellationToken).ConfigureAwait(false);
         catalog.Invalidate();
         return replacementTdefPage;
     }

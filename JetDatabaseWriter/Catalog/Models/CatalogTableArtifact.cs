@@ -35,4 +35,7 @@ internal sealed record CatalogTableArtifact(
     /// included, so properties the writer does not model survive the rebuild.
     /// </summary>
     public ColumnPropertyBlock? PersistedProperties { get; init; }
+
+    /// <summary>Gets the explicitly encoded owner for a native bootstrap system table.</summary>
+    public byte[]? Owner { get; init; }
 }
