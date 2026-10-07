@@ -35,7 +35,7 @@ displaytext '#' address '#' subaddress '#' screentip
 | `ColumnMetadata.IsHyperlink` | Reflects the bit observed on disk. |
 | `ColumnMetadata.ClrType` | `typeof(Hyperlink)` for hyperlink columns; `typeof(string)` for plain MEMO. |
 | `ColumnMetadata.TypeName` | `"Hyperlink"` for hyperlink columns; `"Memo"` for plain MEMO. |
-| `ReadDataTableAsync` | `DataColumn.DataType = typeof(Hyperlink)` for flagged columns; cell values are `Hyperlink` instances. |
+| `ReadTableAsync` | `DataColumn.DataType = typeof(Hyperlink)` for flagged columns; cell values are `Hyperlink` instances. |
 | `Rows`, `Rows<T>`, `ReadTableAsync<T>` | Yield `Hyperlink` for flagged columns. POCO mapping accepts either a `Hyperlink` property or a `string` property — `RowMapper` handles the bidirectional conversion. |
 | `RowsAsStrings`, `ReadTableAsStringsAsync` | Unchanged: yield the raw `#`-delimited form so consumers that explicitly opted into the string surface do not see a behaviour change. |
 | Writer encoding | `Convert.ToString(value, InvariantCulture)` invokes `Hyperlink.ToString()` to produce the canonical encoded form before MEMO compression / LVAL emission. Plain `string` values pass through verbatim. |

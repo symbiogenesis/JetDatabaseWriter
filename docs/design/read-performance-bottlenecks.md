@@ -51,7 +51,7 @@ guidance below to produce new evidence before changing the core reader.
 Treat this as the stable read-path architecture unless new profiling or
 release-quality benchmark results justify reopening a specific area.
 
-- `Rows()`, `Rows<T>()`, and `ReadDataTableAsync()` decode through the typed
+- `Rows()`, `Rows<T>()`, and `ReadTableAsync()` decode through the typed
   crack path. `CrackRowTypedAsync` calls `TryCrackRowSync` /
   `TryCrackRowSyncIntoBuffer`, which delegate layout preflight and typed
   fixed/variable slice decoding to `RowDecodePlan`, fill `object?[]` buffers
@@ -127,7 +127,7 @@ git history) and are not reproduced here.
 |---|---|---|
 | LVAL/MEMO decode | `Decode_Memo_Untyped` is 99.4 ms / 31.2 MB; `Decode_Memo_Typed` is 130.3 ms / 31.1 MB; `Decode_Memo_DataTable` is 179.1 ms / 31.7 MB. | Allocation is materially lower than the historical 146-147 MB MEMO rows. No more LVAL allocation work is justified without a new profile. |
 | Text decode | `Decode_Text_Untyped` is 14.3 ms / 4.6 MB, `Decode_Text_Typed` is 17.7 ms / 4.3 MB, and `Decode_Text_AsStrings` is 12.8 ms / 4.8 MB. | The `string.Create` and Latin-1 changes achieved the intended allocation reduction. No further text decode change is pending. |
-| DataTable strategies | Public numeric `ReadDataTableAsync` is 21.9 ms / 10.9 MB; `Rows.Add(object?[])` and `LoadDataRow` are about 21.4 ms but allocate 13.2 MB. Text alternatives are close: public 15.7 ms, `Rows.Add(object?[])` 13.7 ms, `LoadDataRow` 14.9 ms. | Keep production on the current `NewRow` path with `BeginLoadData` and `MinimumCapacity`; alternatives are not enough better to trade away conservative semantics. |
+| DataTable strategies | Public numeric `ReadTableAsync` is 21.9 ms / 10.9 MB; `Rows.Add(object?[])` and `LoadDataRow` are about 21.4 ms but allocate 13.2 MB. Text alternatives are close: public 15.7 ms, `Rows.Add(object?[])` 13.7 ms, `LoadDataRow` 14.9 ms. | Keep production on the current `NewRow` path with `BeginLoadData` and `MinimumCapacity`; alternatives are not enough better to trade away conservative semantics. |
 | Owned-page discovery | Recognized per-table usage maps are about 2.3 ms for cold first-row/full-scan; forced whole-file fallback is about 15.7-15.8 ms on the same large-file shape. | Recognized maps avoid the O(total file pages) cold-start path. Keep the whole-file scan as a safety fallback for unfamiliar or invalid maps. |
 | Table-scan read-ahead | Warm full scans improve when page-read optimization is enabled: numeric 10.5 ms to 8.7 ms, text 8.8 ms to 6.9 ms, wide 19.0 ms to 16.8 ms. Cold first-row latency does not improve. | Keep the one-page read-ahead as an automatic but narrowly guarded throughput benefit with opt-out; do not add tunable depth or LVAL-heavy read-ahead now. |
 | Read-ahead eligibility (2026-10-02, Arm64, .NET 10.0.12, in-process ShortRun, two interleaved before/after runs) | Warm `Auto` scans of the 25K-row numeric table: page cache disabled 9.9-10.3 ms before, 8.6-8.7 ms after read-ahead was allowed; 2-page cache 10.4-10.5 ms before, 8.7-8.9 ms after; 256-page cache unchanged at 8.8-9.0 ms. A 5,000-row MEMO table (62-73 ms) and a 2,000-row single-page OLE table (22.5-26 ms) moved by less than the run-to-run noise when read-ahead was allowed, at every cache size. | Allow read-ahead at any page-cache size, including none. Keep MEMO, OLE, complex and attachment tables sequential: the cache-ownership hazard behind that exclusion is gone, but it measured no gain. |
@@ -317,7 +317,7 @@ row-state and null-handling semantics.
 
 Primary code path:
 
-- `AccessReader.ReadDataTableAsync`
+- `AccessReader.ReadTableAsync`
 - `DataTable.NewRow()`
 - Per-cell assignment through `DataRow`
 - `DataTable.Rows.Add(newRow)`
@@ -454,7 +454,7 @@ Primary code path:
 - `PageFile.ReadPageAsync`
 - `TableReader.EnumerateTableScanPagesAsync`
 - Every table scan in `TableReader`: `Rows()`, `Rows<T>()`, `RowsAsStrings`,
-  `ReadDataTableAsync`, `ReadTableAsync<T>`, `ReadTableAsStringsAsync`,
+  `ReadTableAsync`, `ReadTableAsync<T>`, `ReadTableAsStringsAsync`,
   `ReadFirstTableAsStringsAsync`, and `GetRealRowCountAsync`
 
 ### 7. Page I/O handle
@@ -613,7 +613,7 @@ a DTO of scalar columns reads only the table's own data pages. Index seeks and
 
 ### Avoid `DataTable` in hot paths
 
-`ReadDataTableAsync`, `ReadAllTablesAsync`, and string-typed `DataTable` APIs
+`ReadTableAsync`, `ReadAllTablesAsync`, and string-typed `DataTable` APIs
 are convenience and compatibility APIs. They fully materialize rows, allocate
 `DataRow` instances, and assign every cell through `DataRow` machinery. Keep
 them for UI binding, previews, exports, and compatibility layers; use streaming
@@ -707,7 +707,7 @@ real workload before changing the core decoder again. Useful comparisons:
 - `Rows<T>()` two-phase MEMO/OLE filtering versus full-row long-value decode.
 - Default options versus larger `PageCacheSize` plus explicit
   `PageReadOptimizationMode.Enabled`.
-- Streaming APIs versus `ReadDataTableAsync` only when full materialization is
+- Streaming APIs versus `ReadTableAsync` only when full materialization is
   truly required.
 
 ## Non-goals without new evidence

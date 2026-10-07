@@ -418,7 +418,7 @@ POCO mapping accepts either a `Hyperlink` property or a plain `string` property 
 
 ### OLE Object columns
 
-An OLE Object column reads as `byte[]` holding the value's stored bytes, from every read API: `Rows`, `ReadTableAsync`, `ReadDataTableAsync`, `Rows<T>`, `ReadTableAsync<T>`, `Query<T>`, `FromIndex` and `SeekRowsAsync`. That is what DAO, ADO and Jackcess return. A value your code wrote comes back byte for byte. An object Microsoft Access inserted (a file dropped into the field, a Word document, a linked file) keeps Access's OLE header and the OLE object stream around it; `OleObjectValue` unwraps it on request:
+An OLE Object column reads as `byte[]` holding the value's stored bytes, from every read API: `Rows`, `ReadTableAsync`, `Rows<T>`, `ReadTableAsync<T>`, `Query<T>`, `FromIndex` and `SeekRowsAsync`. That is what DAO, ADO and Jackcess return. A value your code wrote comes back byte for byte. An object Microsoft Access inserted (a file dropped into the field, a Word document, a linked file) keeps Access's OLE header and the OLE object stream around it; `OleObjectValue` unwraps it on request:
 
 ```csharp
 await foreach (Employee e in reader.Rows<Employee>("Employees"))

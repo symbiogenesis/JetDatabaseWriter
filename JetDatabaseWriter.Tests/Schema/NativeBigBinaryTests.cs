@@ -33,6 +33,7 @@ public sealed class NativeBigBinaryTests
     public async Task AccessAuthoredBigBinary_CatalogVisibilityAdapter_ReadsEveryStoredByteThroughPublicApis()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
+
         // Public readers resolve user tables only. Adapt catalog visibility in a copy;
         // native table definitions and payload pages remain byte-for-byte unchanged.
         byte[] original = await File.ReadAllBytesAsync(TestDatabases.TestV2000, ct);
