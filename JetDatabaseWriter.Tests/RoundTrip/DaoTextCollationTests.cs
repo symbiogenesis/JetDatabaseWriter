@@ -10,7 +10,7 @@ using Xunit;
 
 /// <summary>Compares persisted text rules with Microsoft's Access engine.</summary>
 [Trait("Category", "RequiresMicrosoftAccess")]
-public sealed class DaoTextCollationTests
+public sealed class DaoTextCollationTests(ITestOutputHelper output)
 {
     [Fact(
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
@@ -76,7 +76,7 @@ public sealed class DaoTextCollationTests
             $$"""
             $db = $engine.CreateDatabase({{literal}}, ';LANGID=0x0409;CP=1252;COUNTRY=0')
             try {
-                $values = @('é', 'a!', 'a', 'a ')
+                $values = @([string][char]0x00E9, 'a!', 'a', 'a ')
                 $bounds = @('z', 'a?', 'a ', 'a')
                 for ($i = 0; $i -lt $values.Count; $i++) {
                     $table = "TextRules$i"
@@ -111,8 +111,9 @@ public sealed class DaoTextCollationTests
                 await writer.InsertRowAsync($"TextRules{index}", [index, pairs[index][0]], TestContext.Current.CancellationToken);
                 accepted = true;
             }
-            catch (ArgumentException)
+            catch (ArgumentException ex)
             {
+                output.WriteLine($"Writer rejected TextRules{index}: {ex}");
                 accepted = false;
             }
 

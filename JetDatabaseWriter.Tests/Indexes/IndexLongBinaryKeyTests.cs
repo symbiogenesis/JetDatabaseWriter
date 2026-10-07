@@ -105,7 +105,7 @@ public sealed class IndexLongBinaryKeyTests
         {
             Assert.Contains(
                 dt.Rows.Cast<DataRow>(),
-                row => expected.SequenceEqual((byte[])row["Bin"]));
+                row => expected.Concat(new byte[255 - expected.Length]).SequenceEqual((byte[])row["Bin"]));
         }
     }
 
@@ -155,7 +155,7 @@ public sealed class IndexLongBinaryKeyTests
         {
             Assert.Contains(
                 dt.Rows.Cast<DataRow>(),
-                row => expected.SequenceEqual((byte[])row["Bin"]));
+                row => expected.Concat(new byte[255 - expected.Length]).SequenceEqual((byte[])row["Bin"]));
         }
     }
 

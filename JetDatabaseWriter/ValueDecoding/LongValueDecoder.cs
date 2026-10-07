@@ -92,6 +92,13 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
             throw new InvalidDataException($"the long-value descriptor is {len} byte(s), shorter than the {Constants.LongValue.HeaderSize}-byte header");
         }
 
+        if (descriptor.StorageMode is not Constants.LongValue.InlineStorageMode
+            and not Constants.LongValue.SinglePageStorageMode
+            and not Constants.LongValue.ChainedStorageMode)
+        {
+            throw new InvalidDataException($"the long-value storage mode 0x{descriptor.StorageMode:X2} is reserved");
+        }
+
         this.ValidateStoredLength(descriptor.Length);
 
         if (descriptor.Length <= 0)

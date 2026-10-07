@@ -4,6 +4,7 @@ using System;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
@@ -30,9 +31,9 @@ internal sealed class ReaderServices : IDisposable
     {
         Guard.NotNull(options, nameof(options));
 
-        if (options.MaxLongValueBytes is <= 0 or > 0xFFFFFF)
+        if (options.MaxLongValueBytes is <= 0 or > LongValueDescriptor.MaxLength)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), "MaxLongValueBytes must be between 1 and 16,777,215.");
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxLongValueBytes must be between 1 and 1,073,741,823.");
         }
 
         if (options.MaxAttachmentContentBytes <= 0)

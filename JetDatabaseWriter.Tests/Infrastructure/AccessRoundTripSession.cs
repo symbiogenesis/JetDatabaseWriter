@@ -230,6 +230,17 @@ internal sealed class AccessRoundTripSession : IAsyncDisposable
         {
             if (Directory.Exists(this.WorkDir))
             {
+                string? artifactRoot = Environment.GetEnvironmentVariable("JETDATABASEWRITER_DAO_ARTIFACTS");
+                if (!string.IsNullOrWhiteSpace(artifactRoot))
+                {
+                    string destination = Path.Combine(artifactRoot, Path.GetFileName(this.WorkDir));
+                    Directory.CreateDirectory(destination);
+                    foreach (string file in Directory.EnumerateFiles(this.WorkDir))
+                    {
+                        File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: false);
+                    }
+                }
+
                 Directory.Delete(this.WorkDir, recursive: true);
             }
         }

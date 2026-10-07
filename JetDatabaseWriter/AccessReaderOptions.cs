@@ -31,8 +31,9 @@ public sealed class AccessReaderOptions : AccessOptions
 
     /// <summary>
     /// Gets the maximum stored byte length read for one MEMO or OLE value.
-    /// Default: 16,777,215, the native 24-bit long-value descriptor limit.
-    /// Set a smaller positive value to limit memory used by individual values.
+    /// Default: 16,777,215 bytes. The caller may set a positive budget up to the
+    /// native 30-bit descriptor maximum of 1,073,741,823 bytes. Larger budgets
+    /// permit correspondingly larger allocations for individual values.
     /// </summary>
     public int MaxLongValueBytes { get; init; } = 0xFFFFFF;
 

@@ -469,7 +469,8 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
         Assert.Equal(baseline, ms.ToArray());
         RawTable docs = await ReadRawTableAsync(ms, "Docs");
-        Assert.Equal(["1|1|", "2|2|6", "3|3|3", "4|3|3", "5|5|5"],
+        Assert.Equal(
+            ["1|1|", "2|2|6", "3|3|3", "4|3|3", "5|5|5"],
             docs.Rows.Select(r => $"{r[0]}|{Slot(docs, r, "Files")}|{Slot(docs, r, "Tags")}"));
     }
 

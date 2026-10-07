@@ -430,9 +430,10 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("ParentId", typeof(int)),
                     new ColumnDefinition("Notes", typeof(string)),
+                    new ColumnDefinition("Padding", typeof(byte[]), 255),
                 ],
                 Ct);
-            object[][] rows = [.. Enumerable.Range(1, 200).Select(id => new object[] { id, id == 1 ? 1 : 2, new string('n', 100) })];
+            object[][] rows = [.. Enumerable.Range(1, 200).Select(id => new object[] { id, id == 1 ? 1 : 2, new string('n', 100), new byte[255] })];
             Assert.Equal(200, await writer.InsertRowsAsync("M", rows, Ct));
             await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_M_P", "P", "Id", "M", "ParentId"), Ct);
         }
@@ -488,9 +489,10 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
                     new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true },
                     new ColumnDefinition("ParentId", typeof(int)),
                     new ColumnDefinition("Notes", typeof(string)),
+                    new ColumnDefinition("Padding", typeof(byte[]), 255),
                 ],
                 Ct);
-            object[][] rows = [.. Enumerable.Range(1, 200).Select(id => new object[] { id, id == 1 ? 1 : 2, new string('n', 100) })];
+            object[][] rows = [.. Enumerable.Range(1, 200).Select(id => new object[] { id, id == 1 ? 1 : 2, new string('n', 100), new byte[255] })];
             Assert.Equal(200, await writer.InsertRowsAsync("M", rows, Ct));
             await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_M_P", "P", "Id", "M", "ParentId"), Ct);
         }

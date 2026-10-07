@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.LongValues.Models;
 
 using System;
 using System.Buffers.Binary;
-using JetDatabaseWriter.Schema;
 
 /// <summary>
 /// Parsed 12-byte JET long-value descriptor stored in MEMO/OLE row bodies.
@@ -13,6 +12,9 @@ using JetDatabaseWriter.Schema;
 /// <param name="Token">The token.</param>
 internal readonly record struct LongValueDescriptor(int Length, byte StorageMode, uint FirstDp, uint Token)
 {
+    /// <summary>The maximum native length; the upper two bits of the length word select storage mode.</summary>
+    internal const int MaxLength = 0x3FFFFFFF;
+
     public bool IsInline => this.StorageMode == Constants.LongValue.InlineStorageMode;
 
     public bool IsSinglePage => this.StorageMode == Constants.LongValue.SinglePageStorageMode;
@@ -37,7 +39,7 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
             return false;
         }
 
-        int length = source[0] | (source[1] << 8) | (source[2] << 16);
+        int length = BinaryPrimitives.ReadInt32LittleEndian(source) & MaxLength;
         byte storageMode = (byte)(source[3] & Constants.LongValue.StorageModeMask);
         uint firstDp = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(4, 4));
         uint token = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(8, 4));
@@ -59,8 +61,13 @@ internal readonly record struct LongValueDescriptor(int Length, byte StorageMode
             throw new ArgumentException("The destination span is too small for a long-value descriptor.", nameof(destination));
         }
 
-        JetTypeInfo.WriteUInt24(destination, 0, this.Length);
-        destination[3] = this.StorageMode;
+        if (this.Length is < 0 or > MaxLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(this.Length), "The native long-value length must fit its 30-bit field.");
+        }
+
+        uint lengthWithFlags = checked((uint)this.Length) | ((uint)this.StorageMode << 24);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination, lengthWithFlags);
         BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(4, 4), this.FirstDp);
         BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(8, 4), this.Token);
     }

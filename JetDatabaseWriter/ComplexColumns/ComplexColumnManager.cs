@@ -81,16 +81,13 @@ internal sealed class ComplexColumnManager(
     /// tables, plus <c>MSysComplexColumns</c> and the per-kind
     /// <c>MSysComplexType_*</c> templates. ACCDB only
     /// (<see cref="JetFormat.SupportsComplexColumns"/>) — Jet3/Jet4
-    /// <c>.mdb</c> scaffolds skip these tables. Skipped on the slim
-    /// 9-column legacy catalog schema because that mode targets
-    /// backward-compatible byte hashing and must not introduce additional pages.
+    /// <c>.mdb</c> scaffolds skip these tables.
     /// </summary>
-    /// <param name="fullCatalogSchema">The full catalog schema.</param>
     /// <param name="coreSystemTableStartPage">The core system table start page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public async ValueTask ScaffoldSystemTablesAsync(bool fullCatalogSchema, long coreSystemTableStartPage, CancellationToken cancellationToken)
+    public async ValueTask ScaffoldSystemTablesAsync(long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
-        if (!this.format.SupportsComplexColumns || !fullCatalogSchema)
+        if (!this.format.SupportsComplexColumns)
         {
             return;
         }
@@ -533,9 +530,8 @@ internal sealed class ComplexColumnManager(
     /// <remarks>
     /// Emits the hidden flat-table schema, including the FK back-reference,
     /// per-kind value columns, Access-style scalar PK, and the known supporting
-    /// indexes. Full-catalog ACCDB databases also point <c>ComplexTypeObjectID</c>
-    /// at the matching <c>MSysComplexType_*</c> template; slim-catalog databases
-    /// keep <c>0</c> for byte-hash compatibility.
+    /// indexes. ACCDB databases point <c>ComplexTypeObjectID</c>
+    /// at the matching <c>MSysComplexType_*</c> template.
     /// </remarks>
     public async ValueTask EmitComplexColumnArtifactsAsync(
         string parentTableName,
@@ -568,10 +564,7 @@ internal sealed class ComplexColumnManager(
             // resolve the matching MSysComplexType_* template id so the
             // MSysComplexColumns row points at the canonical type-template table
             // instead of carrying the placeholder 0. Templates are scaffolded by
-            // CreateDatabaseAsync and always present in Access-authored files; the
-            // lookup only falls back to 0 for slim-catalog ACCDBs
-            // (WriteFullCatalogSchema = false), which intentionally skip system
-            // tables for byte-hash backward compatibility.
+            // CreateDatabaseAsync for both catalog layouts.
             string? templateName = ResolveComplexTypeTemplateName(col);
             int templateId = templateName is null
                 ? 0

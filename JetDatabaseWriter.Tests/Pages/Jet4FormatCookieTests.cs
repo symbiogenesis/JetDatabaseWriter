@@ -244,11 +244,11 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // §4  MSysObjects catalog row — LvProp placeholder
+    // §4  MSysObjects catalog row — absent LvProp
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task CreateTable_CatalogRow_LvPropPlaceholderForNoProperties_Is12Bytes()
+    public async Task CreateTable_CatalogRow_NoProperties_HasNullLvProp()
     {
         MemoryStream ms = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, this.ct);
 
@@ -276,11 +276,7 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
         }
 
         Assert.NotNull(userRow);
-        object lvPropVal = userRow["LvProp"];
-        Assert.False(lvPropVal is DBNull, "LvProp should not be NULL on user-table catalog rows.");
-
-        byte[] lvProp = (byte[])lvPropVal;
-        Assert.Equal(12, lvProp.Length);
+        Assert.IsType<DBNull>(userRow["LvProp"]);
     }
 
     // ═══════════════════════════════════════════════════════════════════

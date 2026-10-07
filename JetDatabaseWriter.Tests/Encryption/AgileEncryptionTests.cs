@@ -84,6 +84,7 @@ public sealed class AgileEncryptionTests
         (byte[] info, byte[] package) = AgileEncryptionFixtureBuilder.BuildStreams(parameters, new byte[256], "primitive password");
         Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.Decrypt(info, package, "wrong"));
     }
+
     [Fact]
     public void Agile_Decrypt_NullEncryptionInfo_ThrowsArgumentNullException() => Assert.Throws<ArgumentNullException>(
             () => OfficeCryptoAgile.Decrypt(null!, new byte[64], "pw"));

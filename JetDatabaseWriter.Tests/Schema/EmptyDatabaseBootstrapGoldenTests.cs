@@ -15,12 +15,9 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Pins the bytes the writer authors for a new database and for a new table,
-/// as SHA-256 hashes captured on main before the wave-2 core split, with wave
-/// 1 included. The refactors that move format knowledge, page I/O and TDEF
-/// parsing must leave these bytes unchanged. A later change that alters them
-/// on purpose updates the one hash it changes and names the changed bytes in
-/// its commit.
+/// Pins the bytes the writer authors for a new database and its tables.
+/// Deliberate format corrections update the affected hashes and describe
+/// the changed descriptors or page references in the fixing commit.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -68,9 +65,9 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "F622EC30B3810C08029732707404BB0EFE2EB480646B16EB147E759D1E139A98")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "9763A6A440BD89F28D7C43FC76149DA0D0B39EE847B25733FACD8600718C7DC9")]
-    [InlineData(DatabaseFormat.AceAccdb, "F2D690BFBF470FE48C2C09AA32BF4BC87BE667217B526FB3208F7143707F0AC7")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "2ABF6DDF372074E1699935BAD4CEB9D3268FBE65D42F3D857D486CE33A5347A9")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "4521FC99139287FA48ABAA81F9020EB71C1B5D02DD17FB9371FA27F03DDD19A0")]
+    [InlineData(DatabaseFormat.AceAccdb, "BD66FD614A3FAA28011A6EC6644E6F54E2D9C8130E4354A7F80455F8C6AB50C7")]
     public async Task CreateTable_EveryAuthorableTypeAndTwoTextIndexes_TDefMatchesGoldenHash(DatabaseFormat format, string expectedSha256)
     {
         await using MemoryStream stream = await CreateGoldenTableAsync(format);
@@ -84,8 +81,8 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData("Files", "3CE2A501E5BB8EAAA2914F6C63541D67BEA34F8FF458443E6B5B2E6B5A134211")]
-    [InlineData("Tags", "0827A884DE991779260A344AE8FE5F5921EE87D3D7D18C6DFD61EF27267AD441")]
+    [InlineData("Files", "28D0925A7E9B4A4075FB6B61EEA99DCC1D49664F7BC7E49AF88D1628EC7FFFBF")]
+    [InlineData("Tags", "BEA5FE793536EFE2ABF9633E5AB53A560A7A4603EA89BB6E773755C113A0C6F5")]
     public async Task CreateTable_AccdbComplexColumn_FlatTableTDefMatchesGoldenHash(string column, string expectedSha256)
     {
         await using MemoryStream stream = await CreateGoldenTableAsync(DatabaseFormat.AceAccdb);

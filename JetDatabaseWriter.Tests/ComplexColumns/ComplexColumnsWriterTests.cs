@@ -98,7 +98,7 @@ public sealed class ComplexColumnsWriterTests
     }
 
     [Fact]
-    public async Task CreateDatabaseAsync_AceAccdb_SlimCatalog_DoesNotEmitMSysComplexColumns()
+    public async Task CreateDatabaseAsync_AceAccdb_SlimCatalog_EmitsMSysComplexColumns()
     {
         var ms = new MemoryStream();
         var options = new AccessWriterOptions { WriteFullCatalogSchema = false };
@@ -110,7 +110,7 @@ public sealed class ComplexColumnsWriterTests
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
-        Assert.Empty(meta);
+        Assert.NotEmpty(meta);
     }
 
     // ── ColumnDefinition declaration surface ───────────────────────────────────
@@ -401,11 +401,13 @@ public sealed class ComplexColumnsWriterTests
         }
     }
 
-    [Fact]
-    public async Task CreateTableAsync_AttachmentColumn_C10_ComplexTypeObjectIdIsNonZero()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateTableAsync_AttachmentColumn_C10_ComplexTypeObjectIdIsNonZero(bool fullCatalogSchema)
     {
         var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, new AccessWriterOptions { WriteFullCatalogSchema = fullCatalogSchema }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Documents",

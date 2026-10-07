@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.LongValues;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -487,8 +489,24 @@ public sealed class LvPropReadTests
                 }
                 else
                 {
-                    Assert.Equal(0x80, patched[start + 3] & 0xC0);
-                    patched[start + 12] ^= 0x01;
+                    Assert.True(LongValueDescriptor.TryRead(patched.AsSpan(start, slice.DataLen), out LongValueDescriptor descriptor));
+                    if (descriptor.IsInline)
+                    {
+                        patched[start + Constants.LongValue.HeaderSize] ^= 0x01;
+                    }
+                    else
+                    {
+                        using var pages = new ReaderPageCache(harness.Database.Format, harness.Database.Pages, capacity: 0);
+                        var decoder = new LongValueDecoder(harness.Database.Format, pages);
+                        LvalRowLocation location = await decoder.LocateLvalRowAsync(descriptor.FirstDp, token);
+                        Assert.False(location.Failed, location.Error);
+                        int prefixLength = descriptor.IsSinglePage ? 0 : sizeof(uint);
+                        Assert.True(location.Size >= prefixLength + sizeof(uint));
+                        byte[] payloadPage = (byte[])location.Page.Clone();
+                        payloadPage[location.Start + prefixLength] ^= 0x01;
+                        await harness.Pager.WritePageAsync(LongValueStore.PageNumber(descriptor.FirstDp), payloadPage, token);
+                    }
+
                 }
 
                 await harness.Pager.WritePageAsync(row.Location.DataPageNumber, patched, token);

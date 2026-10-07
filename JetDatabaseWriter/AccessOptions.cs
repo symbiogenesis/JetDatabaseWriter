@@ -37,14 +37,6 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     public int MaxEncryptionSpinCount { get; init; } = 1_000_000;
 
     /// <summary>
-    /// Gets the byte budget for an encrypted compound container's physical file
-    /// and aggregate decoded streams. Default: 256 MiB. Increase explicitly for
-    /// larger trusted containers. This applies to compound packages; native flat
-    /// databases use page storage rather than this container budget.
-    /// </summary>
-    public int MaxEncryptionContainerBytes { get; init; } = 256 * 1024 * 1024;
-
-    /// <summary>
     /// Gets the maximum Agile XML descriptor size in bytes, excluding its
     /// eight-byte version header. Default: 1 MiB. Must be positive.
     /// </summary>

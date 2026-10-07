@@ -34,15 +34,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="options">The writer options; supplies the secure-erase policy for released LVAL rows.</param>
 internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAllocator pageAllocator, AccessWriterOptions options)
 {
-    /// <summary>Throws when <paramref name="data"/> is too long for an LVAL descriptor's 24-bit length.</summary>
+    /// <summary>Throws when <paramref name="data"/> is too long for an supported writer payload limit.</summary>
     /// <param name="data">The long value's payload.</param>
-    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the 24-bit JET LVAL length limit.</exception>
+    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the supported writer LVAL payload limit.</exception>
     private static void ThrowIfLongerThanLvalLimit(byte[] data)
     {
         if (data.Length > Constants.LongValue.MaxPayloadBytes)
         {
             throw new JetLimitationException(
-                $"Long value is {data.Length} bytes, which exceeds the JET 24-bit LVAL length limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
+                $"Long value is {data.Length} bytes, which exceeds the supported writer LVAL payload limit of {Constants.LongValue.MaxPayloadBytes} bytes.");
         }
     }
 
@@ -60,7 +60,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// <param name="tableDef">The table def.</param>
     /// <param name="values">The values.</param>
     /// <returns><paramref name="values"/>, or a clone with the pending sentinels.</returns>
-    /// <exception cref="JetLimitationException">Thrown when a payload exceeds the 24-bit JET LVAL length limit.</exception>
+    /// <exception cref="JetLimitationException">Thrown when a payload exceeds the supported writer LVAL payload limit.</exception>
     internal object[] PrepareLongValues(TableDef tableDef, object[] values)
     {
         object[]? result = null;
@@ -215,7 +215,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// <param name="data">The data bytes or values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="lvalTokenOverride">The token to store instead of the payload hash; ignored on Jet3, which stores none.</param>
-    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the 24-bit JET LVAL length limit.</exception>
+    /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the supported writer LVAL payload limit.</exception>
     private async ValueTask<byte[]> EncodeAsLvalChainAsync(
         byte[] data,
         CancellationToken cancellationToken,

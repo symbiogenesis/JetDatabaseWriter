@@ -109,7 +109,7 @@ public sealed class LvalFormAssertionTests
     {
         stream.Position = 0;
         await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
-        var entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken));
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken));
         DataPageLayout layout = harness.Database.Format.DataPage;
         var modes = new List<byte>();
         for (long pageNumber = 1; pageNumber < harness.Database.Pages.PageCount; pageNumber++)

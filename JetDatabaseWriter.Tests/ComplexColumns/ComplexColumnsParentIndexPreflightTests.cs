@@ -35,6 +35,7 @@ public sealed class ComplexColumnsParentIndexPreflightTests
         {
             await writer.InsertRowAsync("Table1", new RowValues { ["id"] = "preflight-row" }, Ct);
         }
+
         string columnName = attachment ? "attach-data" : "multi-value-data";
         int realIndexNumber;
         await using (AccessReader reader = await OpenReaderAsync(stream))

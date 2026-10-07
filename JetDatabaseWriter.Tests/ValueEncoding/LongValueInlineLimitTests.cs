@@ -1,11 +1,9 @@
 namespace JetDatabaseWriter.Tests.ValueEncoding;
 
-using System;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueEncoding;
@@ -33,8 +31,7 @@ public sealed class LongValueInlineLimitTests
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         var encoder = new LongValueEncoder(harness.Database.Format, harness.Pager, harness.Services.PageAllocator, new AccessWriterOptions());
         var definition = new TableDef { Columns = [new ColumnInfo { Name = "Value", Type = columnType }] };
-        int[] payloadSizes = [64, 66];
-        foreach (int payloadSize in payloadSizes)
+        foreach (int payloadSize in new[] { 64, 66 })
         {
             object value = columnType == ColumnType.MemoType
                 ? new string('A', databaseFormat == DatabaseFormat.Jet3Mdb ? payloadSize : payloadSize / 2)
@@ -44,7 +41,7 @@ public sealed class LongValueInlineLimitTests
             object[] planned = encoder.PrepareLongValues(definition, values);
             if (payloadSize > 64)
             {
-                var pending = Assert.IsType<PreEncodedLongValue>(planned[0]);
+                PreEncodedLongValue pending = Assert.IsType<PreEncodedLongValue>(planned[0]);
                 Assert.Equal(payloadSize, pending.PendingPayload!.Length);
                 Assert.NotSame(values, planned);
             }

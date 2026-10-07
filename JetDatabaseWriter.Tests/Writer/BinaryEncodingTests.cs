@@ -47,13 +47,13 @@ public sealed class BinaryEncodingTests
         DataTable table = await reader.ReadDataTableAsync("T", cancellationToken: Ct);
         Assert.Equal(2, table.Rows.Count);
         DataRow original = Assert.Single(table.AsEnumerable(), row => row.Field<int>("Id") == 1);
-        var expectedOriginal = new byte[20];
+        byte[] expectedOriginal = new byte[20];
         expectedOriginal[0] = 255;
         expectedOriginal[1] = 128;
         Assert.Equal(expectedOriginal, original.Field<byte[]>("B"));
         Assert.Equal("original", original.Field<string>("Memo"));
         DataRow inserted = Assert.Single(table.AsEnumerable(), row => row.Field<int>("Id") == 2);
-        var expectedInserted = new byte[20];
+        byte[] expectedInserted = new byte[20];
         expectedInserted[0] = 0xE9;
         expectedInserted[1] = 0x80;
         expectedInserted[2] = 0x3F;

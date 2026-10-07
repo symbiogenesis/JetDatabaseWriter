@@ -197,8 +197,8 @@ internal static class EmittedPageInvariantAssert
     /// Checks the one-row LVAL pages the writer emits. On Jet3 they match Access
     /// 97: the row is packed at the end of the page and starts no lower than 12,
     /// right after the one-entry row-offset table, and bytes 8-11 hold the row
-    /// count and offset, so there is no token. On Jet4/ACE the row starts at 20,
-    /// leaving 4 bytes of free space, and bytes 8-11 carry the writer's token.
+    /// count and offset, so there is no token. Jet4/ACE also pack rows at the end,
+    /// with a minimum start of 20, and bytes 8-11 carry the writer's token.
     /// </summary>
     /// <param name="page">The page bytes.</param>
     /// <param name="pageNumber">The page number, for messages.</param>
@@ -218,8 +218,9 @@ internal static class EmittedPageInvariantAssert
             return;
         }
 
-        Assert.Equal(20, rowSlot.Start);
-        Assert.Equal(4, ReadUInt16(page, 2));
+        Assert.True(rowSlot.Start >= 20, Message(pageNumber, $"LVAL row starts at {rowSlot.Start}, inside the page header."));
+        Assert.Equal(pageSize - 1, rowSlot.End);
+        Assert.Equal(rowSlot.Start - 16, ReadUInt16(page, 2));
 
         uint token = ReadUInt32(page, 8);
         Assert.True(token != 0, Message(pageNumber, "LVAL token must be non-zero."));

@@ -152,11 +152,11 @@ public sealed class Jet3LongValueTests
     }
 
     [Fact]
-    public async Task InsertInTransaction_RolledBack_LeavesNoRowsOrLvalPages()
+    public async Task InsertInTransaction_RolledBack_PreservesOriginalImageAndLeavesNoRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateDatabaseAsync(ct);
-        long lengthBefore = ms.Length;
+        byte[] before = ms.ToArray();
 
         await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct))
         {
@@ -165,8 +165,7 @@ public sealed class Jet3LongValueTests
             await transaction.RollbackAsync(ct);
         }
 
-        Assert.Equal(lengthBefore, ms.Length);
-        Assert.Equal(0, CountLvalPages(ms.ToArray()));
+        Assert.Equal(before, ms.ToArray());
 
         ms.Position = 0;
         await using AccessReader reader = await OpenReaderAsync(ms, ct);
@@ -584,21 +583,6 @@ public sealed class Jet3LongValueTests
         nextDp = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(start, 4));
         Array.Clear(page, start, 4);
         return page;
-    }
-
-    private static int CountLvalPages(byte[] file)
-    {
-        int count = 0;
-        for (int page = 1; page < file.Length / Jet3PageSize; page++)
-        {
-            ReadOnlySpan<byte> bytes = file.AsSpan(page * Jet3PageSize, Jet3PageSize);
-            if (bytes[0] == 0x01 && bytes.Slice(4, 4).SequenceEqual("LVAL"u8))
-            {
-                count++;
-            }
-        }
-
-        return count;
     }
 
     private static string Sha256(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));

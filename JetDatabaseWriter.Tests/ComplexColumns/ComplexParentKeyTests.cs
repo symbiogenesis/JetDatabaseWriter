@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.ComplexColumns;
-using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema.Models;
@@ -23,16 +22,17 @@ public sealed class ComplexParentKeyTests
     [InlineData("date")]
     public async Task AddMultiValueItem_TargetsTypedParentIdentity(string kind)
     {
-        (ColumnDefinition column, object first, object second) = kind switch
+        (ColumnDefinition Column, object First, object Second) values = kind switch
         {
-            "binary" => ((ColumnDefinition, object, object))(new("Key", typeof(byte[])), (byte[])[1], (byte[])[2]),
-            "memo" => ((ColumnDefinition, object, object))(new("Key", typeof(string)), new string('x', 600) + "one", new string('x', 600) + "two"),
-            "null-empty" => ((ColumnDefinition, object, object))(new("Key", typeof(string), 32), DBNull.Value, string.Empty),
-            "guid" => ((ColumnDefinition, object, object))(new("Key", typeof(Guid)), Guid.Parse("00000000-0000-0000-0000-000000000001"), Guid.Parse("00000000-0000-0000-0000-000000000002")),
-            "decimal" => ((ColumnDefinition, object, object))(new("Key", typeof(decimal)), 1.25m, 1.5m),
-            "date" => ((ColumnDefinition, object, object))(new("Key", typeof(DateTime)), new DateTime(2026, 1, 1, 0, 0, 1), new DateTime(2026, 1, 1, 0, 0, 2)),
+            "binary" => (new("Key", typeof(byte[]), 4), (byte[])[1], (byte[])[2]),
+            "memo" => (new("Key", typeof(string)), new string('x', 600) + "one", new string('x', 600) + "two"),
+            "null-empty" => (new("Key", typeof(string), 32), DBNull.Value, string.Empty),
+            "guid" => (new("Key", typeof(Guid)), Guid.Parse("00000000-0000-0000-0000-000000000001"), Guid.Parse("00000000-0000-0000-0000-000000000002")),
+            "decimal" => (new("Key", typeof(decimal)), 1.25m, 1.5m),
+            "date" => (new("Key", typeof(DateTime)), new DateTime(2026, 1, 1, 0, 0, 1), new DateTime(2026, 1, 1, 0, 0, 2)),
             _ => throw new ArgumentException("Unknown test case.", nameof(kind)),
         };
+        var (column, first, second) = values;
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: Ct))
         {
@@ -52,7 +52,7 @@ public sealed class ComplexParentKeyTests
     [Fact]
     public void ParentBinaryComparison_PadsOnlyNativeFixedColumns()
     {
-        var fixedColumn = new ColumnInfo { Name = "Key", Type = ColumnType.BinaryType, Flags = 1, Size = 4 };
+        ColumnInfo fixedColumn = new { Name = "Key", Type = ColumnType.BinaryType, Flags = 1, Size = 4 };
         var variableColumn = fixedColumn with { Flags = 0 };
         JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         Assert.Equal(
@@ -68,7 +68,7 @@ public sealed class ComplexParentKeyTests
     {
         await using var stream = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: Ct);
-        await writer.CreateTableAsync("Parents", [new("Key", typeof(byte[])), new("Items", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(string) }], Ct);
+        await writer.CreateTableAsync("Parents", [new("Key", typeof(byte[]), 4), new("Items", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(string) }], Ct);
         await writer.InsertRowAsync("Parents", [(byte[])[1], DBNull.Value], Ct);
         byte[] baseline = stream.ToArray();
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(async () =>

@@ -503,28 +503,16 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 npos += nameBytes.Length;
             }
 
-            // DAO writes a single 0xFFFF "no usage-map / no-such-page" sentinel
-            // immediately after the last index name. Required for OpenRecordset.
-            if (jet4 && numIdx > 0)
-            {
-                Wu16(page, npos, 0xFFFF);
-                npos += 2;
-            }
-
-            // H48 (round-trip-openrecordset-hypothesis.md §3): DAO-authored
-            // RT_Customers TDEFs reserve 8 trailing zero bytes after the FFFF
-            // sentinel and include them in tdef_len. Empirically the page bytes
-            // there are already zero (BuildTDefPagesWithIndexOffsets's logical
-            // buffer is zero-initialised); we just need to advance namePos so
-            // the tdef_len/freeSpace calculations below count those 8 bytes.
-            if (jet4 && numIdx > 0)
-            {
-                npos += 8;
-            }
-
             namePos = npos;
         }
 
+        // Native Jet4/ACE tables terminate the metadata even without indexes.
+        // The sentinel and eight reserved bytes belong to the declared TDEF length.
+        if (jet4)
+        {
+            Wu16(page, namePos, ushort.MaxValue);
+            namePos += 10;
+        }
         Wi32(page, 8, Math.Max(0, namePos - 8));
         if (formatMagic)
         {

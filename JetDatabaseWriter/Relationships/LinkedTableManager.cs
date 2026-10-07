@@ -96,7 +96,6 @@ internal static class LinkedTableManager
             ValidateOnOpen = options.ValidateOnOpen,
             StrictParsing = options.StrictParsing,
             MaxEncryptionSpinCount = options.MaxEncryptionSpinCount,
-            MaxEncryptionContainerBytes = options.MaxEncryptionContainerBytes,
             MaxEncryptionInfoBytes = options.MaxEncryptionInfoBytes,
             MaxLongValueBytes = options.MaxLongValueBytes,
             MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,

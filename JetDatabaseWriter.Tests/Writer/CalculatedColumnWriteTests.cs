@@ -53,7 +53,7 @@ public sealed class CalculatedColumnWriteTests
         object[] planned = encoder.PrepareLongValues(definition, values);
         if (spills)
         {
-            var pending = Assert.IsType<PreEncodedLongValue>(planned[0]);
+            PreEncodedLongValue pending = Assert.IsType<PreEncodedLongValue>(planned[0]);
             Assert.Equal(65, pending.PendingPayload!.Length);
             Assert.NotSame(values, planned);
         }

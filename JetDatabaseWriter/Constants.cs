@@ -1003,10 +1003,9 @@ internal static class Constants
         public const int MaxInlineBytes = 64;
 
         /// <summary>
-        /// Maximum payload size for a MEMO / OLE / Attachment value. The on-disk
-        /// LVAL header dedicates a 24-bit field to the total length, so values
-        /// strictly larger than 16,777,215 bytes cannot be addressed regardless
-        /// of the chosen storage form (inline / single-page / chained).
+        /// Maximum payload size currently emitted by the writer. This bounded
+        /// implementation limit is smaller than the native descriptor's 30-bit
+        /// length field; larger native values can be read with an explicit budget.
         /// </summary>
         public const int MaxPayloadBytes = (1 << 24) - 1;
 
