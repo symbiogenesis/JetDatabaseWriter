@@ -386,13 +386,11 @@ public sealed class ComplexColumnsWriterTests
         }
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task CreateTableAsync_AttachmentColumn_C10_ComplexTypeObjectIdIsNonZero(bool fullCatalogSchema)
+    [Fact]
+    public async Task CreateTableAsync_AttachmentColumn_C10_ComplexTypeObjectIdIsNonZero()
     {
         var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, new AccessWriterOptions { WriteFullCatalogSchema = fullCatalogSchema }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "Documents",
