@@ -140,8 +140,8 @@ internal sealed class AutoNumberMaintainer(JetFormat format, TableDefReader tabl
     /// not a TDEF.
     /// </summary>
     /// <remarks>
-    /// The counter alone is not enough: releases before it was maintained left
-    /// it at 0, and another tool can store explicit values without raising it.
+    /// Explicit values stored by another tool can exceed the persisted counter.
+    /// Consult existing values as well so a new AutoNumber cannot reuse an ID.
     /// The index key is read without the row it points at, so a row a reader
     /// cannot decode still counts.
     /// </remarks>

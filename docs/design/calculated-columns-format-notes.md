@@ -99,10 +99,10 @@ calculated column. Both readers and writers resolve a `TableSchema` through
 Each caller-owned layout projects `ResultType` without changing the cached
 image. Catalog invalidation or a changed structural image forces resolution
 again. A schema rewrite (`AddColumnAsync`, `DropColumnAsync`,
-`RenameColumnAsync`) projects each calculated column from its result type, so
-the rebuilt descriptor carries the result type, as the writer's own tables do.
-Rows that earlier builds of this library inserted into or updated in such
-tables were encoded by the descriptor type and are not repaired.
+`RenameColumnAsync`) preserves each surviving native descriptor and its result
+type property; the cached payload codec continues to follow `ResultType`.
+Malformed cached values are decoded under the selected fault policy; writes
+do not reinterpret or repair payloads encoded with the wrong result type.
 
 Access also gives each long-value column of an ACCDB table, `AllNames`
 included, its own owned-pages and free-space usage maps. In `Table1` these are

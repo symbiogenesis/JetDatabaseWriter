@@ -76,7 +76,7 @@ internal sealed class ComplexColumnManager(
     private readonly TableCatalog catalog = catalog;
 
     /// <summary>
-    /// scaffold mandatory full-catalog ACCDB system tables: the core
+    /// Scaffolds mandatory ACCDB system tables: the core
     /// <c>MSysACEs</c>, <c>MSysQueries</c>, and <c>MSysRelationships</c>
     /// tables, plus <c>MSysComplexColumns</c> and the per-kind
     /// <c>MSysComplexType_*</c> templates. ACCDB only
@@ -530,8 +530,8 @@ internal sealed class ComplexColumnManager(
     /// <remarks>
     /// Emits the hidden flat-table schema, including the FK back-reference,
     /// per-kind value columns, Access-style scalar PK, and the known supporting
-    /// indexes. ACCDB databases point <c>ComplexTypeObjectID</c>
-    /// at the matching <c>MSysComplexType_*</c> template.
+    /// indexes. <c>ComplexTypeObjectID</c> points at the matching native
+    /// <c>MSysComplexType_*</c> template; missing required metadata is refused.
     /// </remarks>
     public async ValueTask EmitComplexColumnArtifactsAsync(
         string parentTableName,
@@ -544,6 +544,19 @@ internal sealed class ComplexColumnManager(
         {
             ComplexColumnAllocation alloc = allocations[i];
             ColumnDefinition col = columns[alloc.ColumnIndex];
+
+            string templateName = ResolveComplexTypeTemplateName(col)
+                ?? throw new NotSupportedException($"Column '{parentTableName}.{col.Name}' has no supported native complex type template.");
+            long templatePage = await catalogRows.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
+            if (templatePage <= 0)
+            {
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptComplexColumn,
+                    $"Required complex type template '{templateName}' is missing for '{parentTableName}.{col.Name}'.",
+                    new JetErrorInfo { TableName = parentTableName, ColumnName = col.Name, ObjectName = templateName });
+            }
+
+            int templateId = checked((int)templatePage);
 
             string flatTableName = BuildFlatTableName(col.Name);
             (ColumnDefinition[]? flatCols, IndexDefinition[]? flatIndexes) =
@@ -560,15 +573,6 @@ internal sealed class ComplexColumnManager(
                     []),
                 cancellationToken).ConfigureAwait(false);
             long flatTdefPage = flatTablePages[0];
-
-            // resolve the matching MSysComplexType_* template id so the
-            // MSysComplexColumns row points at the canonical type-template table
-            // instead of carrying the placeholder 0. Templates are scaffolded by
-            // CreateDatabaseAsync for both catalog layouts.
-            string? templateName = ResolveComplexTypeTemplateName(col);
-            int templateId = templateName is null
-                ? 0
-                : (int)await catalogRows.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
 
             await this.InsertMSysComplexColumnsRowAsync(
                 col.Name,
@@ -890,8 +894,7 @@ internal sealed class ComplexColumnManager(
         // Refuse unsupported parent index metadata before writing an item.
         await indexes.ThrowIfIndexesUnmaintainableAsync(parentEntry.TDefPage, parentDef, tableName, cancellationToken).ConfigureAwait(false);
 
-        // Read the parent row's per-row complex reference from its slot;
-        // allocate one when the slot is null.
+        // Require an existing valid parent reference before inserting an item.
         int conceptualTableId = await this.ReadRequiredComplexReferenceAsync(
             tableName,
             parentLocation,
