@@ -14,6 +14,10 @@ the Access-authored fixtures in `JetDatabaseWriter.Tests/Databases`.
 
 Stored MEMO/OLE payload lengths are exact. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw InvalidDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.
 
+Mixed scalar/OLE typed scans use the same row-layout and column-slice validation as projected rows. The compiled hybrid plan assigns scalar auto-properties and records only bound OLE slices. Each enumerator owns its slice array; cached plans contain no mutable row state. The scan retains the data or resolved overflow page through every awaited LVAL read, and resolves all bound OLE byte arrays before yielding the target. Arrays contain the stored bytes without OLE unwrapping or content interpretation; null and empty remain distinct.
+
+Unreadable OLE payloads use `LongValueReadPolicy`: strict scans throw a column-named `InvalidDataException`, while lenient scans report the existing trace diagnostic and leave that property at its default. Cancellation, storage I/O failures and resource-limit refusals propagate. Hybrid eligibility excludes custom setters (whose order and exceptions are observable), Numeric columns, primitive scalar values stored in variable slots, and the existing unsupported calculated/MEMO/complex/hyperlink bindings. These keep the projection-aware fallback. Scalar-only projections retain their direct decoder.
+
 ## Row-offset slots
 
 After the page header, a data page holds a table of 16-bit row-offset slots,

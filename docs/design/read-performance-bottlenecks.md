@@ -3,7 +3,7 @@
 Status: closed; retained as archived baseline and caller guidance
 Date: 2026-05-20
 Closed: 2026-05-31
-Last updated: 2026-10-05
+Last updated: 2026-10-07
 
 This note is closed. It records the read-performance baseline for
 `AccessReader`, the caller guidance that falls out of the measurements, and the
@@ -253,6 +253,86 @@ The additional frame copies increase allocations, particularly during bulk
 writes. This baseline supports the physical-read reduction; it does not show a
 uniform throughput or allocation improvement. Capacity zero remains available
 for workloads where frame maintenance outweighs repeated-read savings.
+
+## Mixed scalar and OLE typed scans (2026-10-07)
+
+Typed table scans select a compiled plan from the bound JET column types and
+CLR property mappings. The scalar decoder remains first; a hybrid plan adds
+asynchronous resolution of bound OLE `byte[]` properties through the existing
+exact long-value reader. Each row is complete before it is returned. The plan
+has no table names, application models, payload signatures or definition
+parsers. Other mappings keep the general projection decoder.
+
+Parity regressions cover Jet3, Jet4 and ACE on both library target frameworks:
+nullable scalars, Currency, DateTime, GUID, bounded Text, Binary, lossless
+numeric widening, null/empty/inline/single-page/chained OLE, overflow and deleted
+rows, strict/lenient corrupt payloads, diagnostics, real I/O failures, resource
+budgets, cancellation and abandoned enumeration. Custom setters and Numeric
+retain the general mapper's assignment and failure semantics. These are
+library-generated fixtures and targeted corruptions, not new native Access
+interoperability evidence.
+
+The retained-snapshot benchmarks are workload evidence for this general engine
+path. They use 20,017 rows, bounded scalar metadata and an unbound 4 KiB Memo
+column. Sparse definitions contain 37-byte filters every seventh row and
+120-byte sort definitions every tenth row. The large case retains a 4 KiB sort
+definition in every row plus the same sparse filters: 82,095,452 payload bytes
+(78.29 MiB). Setup verifies all metadata, exact payload bytes, complete unique
+row identities and matching stored row order before timing. A separate cold
+stream trace records physical page reads without instrumenting the timed scan.
+
+[Controlled hosted run 37586625782](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/37586625782)
+completed successfully with the default adaptive BenchmarkDotNet job. Baseline
+`ee1fbcdd448e4771467919c6018c5014ca4865ca` used the public projection fallback;
+head `f96c7cb5343b8b8a48beec185f0737eefc15da96` selected the candidate hybrid
+plan. Both retained the same data. The six phases ran baseline, head, head,
+baseline, head, head on one Windows 11 hosted runner (AMD EPYC 9V74, two physical
+cores/four logical processors, .NET SDK 10.0.401, .NET 10.0.12, BenchmarkDotNet
+0.15.8). Each phase used fresh benchmark processes. Every result had a valid
+mean and allocation measurement.
+
+Times below are milliseconds, mean ± BenchmarkDotNet Error (half the 99.9%
+confidence interval). Ratios are hybrid / fallback.
+
+| Workload | Order | Fallback | Hybrid | Ratio | Allocated MiB, fallback → hybrid |
+|---|---|---:|---:|---:|---:|
+| Sparse definitions | Baseline first | 36.878 ± 0.691 | 26.982 ± 0.334 | 0.73 | 16.47 → 14.99 |
+| Sparse definitions | Head first | 34.091 ± 0.631 | 27.101 ± 0.508 | 0.79 | 16.47 → 14.99 |
+| Large sort definitions | Baseline first | 279.730 ± 5.340 | 273.628 ± 5.103 | 0.98 | 483.67 → 481.64 |
+| Large sort definitions | Head first | 290.823 ± 5.780 | 283.529 ± 5.630 | 0.97 | 483.67 → 481.64 |
+| Scalar-only numeric control | Baseline first | 8.873 ± 0.123 | 8.519 ± 0.128 | 0.96 | 4.87 → 4.87 |
+| Scalar-only numeric control | Head first | 8.757 ± 0.090 | 8.675 ± 0.071 | 0.99 | 4.87 → 4.87 |
+
+| Identical-head control | First | Second | Second / first |
+|---|---:|---:|---:|
+| Sparse definitions | 27.501 ± 0.274 | 27.605 ± 0.370 | 1.00 |
+| Large sort definitions | 271.761 ± 5.250 | 286.403 ± 5.870 | 1.05 |
+| Scalar-only numeric | 8.766 ± 0.154 | 8.691 ± 0.057 | 0.99 |
+
+The sparse gain is 20.5–26.8%, beyond both error intervals and the identical-head
+variation, with about 9% lower allocation. Large definitions show no regression;
+their 2–3% apparent gain is smaller than the 5.4% identical-head variation and
+is not claimed as a speedup. Scalar-only allocation is unchanged, and its
+small timing differences do not establish an improvement. These controls bound
+this run's interpretation; they do not resolve all historical hosted-run noise.
+
+Cold stream measurements were identical for fallback and hybrid:
+
+| Workload | Retained definition bytes | Page reads | Bytes read | Unique pages |
+|---|---:|---:|---:|---:|
+| Sparse definitions | 346,060 | 2,948 | 12,075,008 | 2,483 |
+| Large sort definitions | 82,095,452 | 41,089 | 168,300,544 | 40,570 |
+
+Both paths returned all 20,017 rows and left the Notes column unbound. The
+optimization reduces scalar mapping work; it does not reduce the bytes required
+to materialize the bound definitions or perform another payload scan.
+
+The MediaLibrary owner can adopt the reader revision and repeat alternating
+Release full-snapshot benchmarks with exact metadata/payload parity on large
+synthetic catalogs. Its bundled sample remains read-only. Engine measurements
+do not establish application-wide speedups; the pinned [consumer requirement](https://github.com/boomer57/MediaLibrary/blob/92d886b72de5eeb16bc6c719cfe0db87acc492de/TODO.md#performance-p2)
+and [decoder research](https://github.com/boomer57/MediaLibrary/blob/92d886b72de5eeb16bc6c719cfe0db87acc492de/docs/catraxx-decoder-research.md)
+define that separate adoption check.
 
 ## Historical baseline
 
@@ -602,10 +682,14 @@ same decoder. The reader can emit a direct page-to-POCO decoder for primitive pr
 which avoids per-row `object?[]` allocation and primitive boxing. This is the
 best available path for wide tables when the caller does not need every column.
 
-The direct path applies when bound properties match the source CLR types and no
-bound column requires calculated-column, MEMO/OLE, Binary, Complex/Attachment,
-or Hyperlink handling. When the direct path cannot apply, the fallback still
-uses the projection-aware typed crack path. On a table with Attachment or
+The scalar direct path applies to supported natural CLR types and lossless
+numeric widenings, including Binary. A hybrid plan also accepts bound OLE
+`byte[]` properties: it assigns scalars directly and resolves exact long values
+before yielding, without an object-array row or scalar boxing. It requires
+auto-property setters and keeps Numeric, variable-slot primitives,
+calculated, bound MEMO, Complex/Attachment and Hyperlink mappings on the
+projection-aware fallback. Both typed table-scan APIs select this plan; index
+seek decoding is unchanged. On a table with Attachment or
 multi-value columns, both paths leave the complex columns the DTO does not bind
 alone: their flat tables and attachment data are neither loaded nor decoded, so
 a DTO of scalar columns reads only the table's own data pages. Index seeks and

@@ -70,7 +70,7 @@ public class AccessReaderPlaylistBenchmarks
     private static async Task<List<SnapshotPlaylistRow>> ScanAsync(AccessReader source, bool hybrid)
     {
         var rows = new List<SnapshotPlaylistRow>(RowCount);
-        await foreach (SnapshotPlaylistRow row in (hybrid ? source.ReadPrivateField<ReaderServices>("services").Tables.RowsWithDecoder<SnapshotPlaylistRow>(TableName, enableHybridOle: true, forceProjection: false, progress: null, cancellationToken: default) : source.Rows<SnapshotPlaylistRow>(TableName)).ConfigureAwait(false))
+        await foreach (SnapshotPlaylistRow row in (hybrid ? source.Rows<SnapshotPlaylistRow>(TableName) : source.ReadPrivateField<ReaderServices>("services").Tables.RowsWithDecoder<SnapshotPlaylistRow>(TableName, forceProjection: true, progress: null, cancellationToken: default)).ConfigureAwait(false))
         {
             rows.Add(row);
         }

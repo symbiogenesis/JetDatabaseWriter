@@ -17,13 +17,11 @@ using JetDatabaseWriter.ValueDecoding.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
-/// Builds <see cref="DirectRowDecoder{T}"/> delegates for the
-/// <see cref="AccessReader.Rows{T}(string, IProgress{long}?, System.Threading.CancellationToken)"/>
-/// fast path. The builder inspects the bound
-/// columns and refuses (returns <see langword="null"/>) when any column
-/// requires the slow path — calculated columns, Memo/Ole LVAL chains,
-/// Complex/Attachment, or any property typed as
-/// <see cref="Hyperlink"/>.
+/// Builds compiled typed-row delegates for
+/// <see cref="AccessReader.Rows{T}(string, IProgress{long}?, System.Threading.CancellationToken)"/>.
+/// Scalar plans accept directly readable bound columns; hybrid plans also
+/// resolve bound OLE byte arrays asynchronously. Unsupported mappings return
+/// <see langword="null"/> so the caller retains projection decoding.
 /// </summary>
 internal static class DirectRowDecoderBuilder
 {

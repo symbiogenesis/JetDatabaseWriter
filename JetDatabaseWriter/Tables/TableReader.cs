@@ -247,18 +247,16 @@ internal sealed class TableReader(
         IProgress<long>? progress,
         CancellationToken cancellationToken)
         where T : class, new()
-        => this.RowsWithDecoder<T>(tableName, enableHybridOle: false, forceProjection: false, progress, cancellationToken);
+        => this.RowsWithDecoder<T>(tableName, forceProjection: false, progress, cancellationToken);
 
     /// <summary>Streams mapped rows with an enumeration-local decoder selection.</summary>
     /// <typeparam name="T">The mapped row type.</typeparam>
     /// <param name="tableName">The table name.</param>
-    /// <param name="enableHybridOle">Whether to try scalar/OLE decoding.</param>
     /// <param name="forceProjection">Whether to use the projection mapper for comparison.</param>
     /// <param name="progress">The progress sink.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     internal async IAsyncEnumerable<T> RowsWithDecoder<T>(
         string tableName,
-        bool enableHybridOle,
         bool forceProjection,
         IProgress<long>? progress,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -280,7 +278,7 @@ internal sealed class TableReader(
             yield break;
         }
 
-        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, enableHybridOle, forceProjection, progress, cancellationToken).ConfigureAwait(false))
+        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, forceProjection, progress, cancellationToken).ConfigureAwait(false))
         {
             yield return item;
         }
@@ -377,7 +375,7 @@ internal sealed class TableReader(
             return items;
         }
 
-        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, enableHybridOle: false, forceProjection: false, progress: null, cancellationToken).ConfigureAwait(false))
+        await foreach (T item in this.EnumerateMappedRowsAsync<T>(tableName, resolved, forceProjection: false, progress: null, cancellationToken).ConfigureAwait(false))
         {
             items.Add(item);
             if (IsRowLimitReached(items.Count, maxRows))
@@ -728,14 +726,12 @@ internal sealed class TableReader(
     /// <typeparam name="T">The mapped row type.</typeparam>
     /// <param name="tableName">The table name, used to load complex-column data.</param>
     /// <param name="resolved">The resolved table.</param>
-    /// <param name="enableHybridOle">Whether to try scalar/OLE decoding.</param>
     /// <param name="forceProjection">Whether to bypass generated decoders.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
     private IAsyncEnumerable<T> EnumerateMappedRowsAsync<T>(
         string tableName,
         ResolvedTable resolved,
-        bool enableHybridOle,
         bool forceProjection,
         IProgress<long>? progress,
         CancellationToken cancellationToken)
@@ -764,7 +760,7 @@ internal sealed class TableReader(
             return this.EnumerateDirectRowsAsync(entry, td, directDecoder, hybridPlan: null, progress, cancellationToken);
         }
 
-        if (enableHybridOle && !forceProjection && DirectRowDecoderBuilder.TryBuildHybrid<T>(td) is { } hybridPlan)
+        if (!forceProjection && DirectRowDecoderBuilder.TryBuildHybrid<T>(td) is { } hybridPlan)
         {
             return this.EnumerateDirectRowsAsync<T>(entry, td, directDecoder: null, hybridPlan, progress, cancellationToken);
         }

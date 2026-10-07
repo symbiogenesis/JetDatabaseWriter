@@ -189,7 +189,9 @@ public sealed class MixedOleScalarTypeTests
 
     private static IAsyncEnumerable<T> Rows<T>(AccessReader reader, bool hybrid)
         where T : class, new()
-        => reader.ReadPrivateField<ReaderServices>("services").Tables.RowsWithDecoder<T>("Values", enableHybridOle: hybrid, forceProjection: !hybrid, progress: null, cancellationToken: Ct);
+        => hybrid
+            ? reader.Rows<T>("Values", cancellationToken: Ct)
+            : reader.ReadPrivateField<ReaderServices>("services").Tables.RowsWithDecoder<T>("Values", forceProjection: true, progress: null, cancellationToken: Ct);
 
     private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
     {
