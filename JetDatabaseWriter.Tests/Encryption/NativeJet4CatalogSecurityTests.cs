@@ -74,6 +74,30 @@ public sealed class NativeJet4CatalogSecurityTests
     }
 
     [Fact]
+    public async Task ExplicitInheritedOwner_TakesPrecedenceOverOwnerPlaceholder()
+    {
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(await File.ReadAllBytesAsync(TestDatabases.TestV2003, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        stream.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Coalesced", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        using DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: TestContext.Current.CancellationToken);
+        byte[] owner = Assert.IsType<byte[]>(Assert.Single(objects.Select("Name = 'MSysDb'"))["Owner"]);
+        DataRow table = Assert.Single(objects.Select("Name = 'Coalesced'"));
+        using DataTable permissions = await reader.ReadTableAsync("MSysACEs", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow inheritedOwner = Assert.Single(permissions.Select("ObjectId = 251658241 AND FInheritable = True"), row => ((byte[])row["SID"]).SequenceEqual(owner));
+        DataRow createdOwner = Assert.Single(permissions.Select($"ObjectId = {table["Id"]}"), row => ((byte[])row["SID"]).SequenceEqual(owner));
+        Assert.Equal(0xFFEFF, (int)inheritedOwner["ACM"]);
+        Assert.Equal(inheritedOwner["ACM"], createdOwner["ACM"]);
+        Assert.False((bool)createdOwner["FInheritable"]);
+    }
+
+    [Fact]
     public void ShortHeader_RefusesSidDerivation()
         => Assert.Throws<JetCorruptDataException>(() => Jet4SecuritySid.GetOwnerPlaceholder(
             JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb), new byte[0x91]));
@@ -81,7 +105,7 @@ public sealed class NativeJet4CatalogSecurityTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task InvalidInheritedPermissions_DirectDdl_LeavesOriginalImage(bool allInheritable)
+    public async Task InvalidInheritedPermissions_DirectDdl_LeavesOriginalImage(bool duplicateIdentity)
     {
         await using var stream = new MemoryStream(await File.ReadAllBytesAsync(
             Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"),
@@ -92,6 +116,7 @@ public sealed class NativeJet4CatalogSecurityTests
             long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysACEs", TestContext.Current.CancellationToken);
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, "MSysACEs", TestContext.Current.CancellationToken);
             ColumnInfo inherit = Assert.IsType<ColumnInfo>(definition.FindColumn("FInheritable"));
+            ColumnInfo sidColumn = Assert.IsType<ColumnInfo>(definition.FindColumn("SID"));
             var changed = new Dictionary<long, byte[]>();
             await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
                 page,
@@ -110,9 +135,19 @@ public sealed class NativeJet4CatalogSecurityTests
                         changed.Add(row.Location.PageNumber, bytes);
                     }
 
+                    if (duplicateIdentity)
+                    {
+                        JetDatabaseWriter.ValueDecoding.Models.ColumnSlice sidSlice = RowDecodePlan.ResolveColumnSlice(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, sidColumn);
+                        if (sidSlice.DataLen == 2 && row.Page[row.Location.RowStart + sidSlice.DataStart] == 0xFB && row.Page[row.Location.RowStart + sidSlice.DataStart + 1] == 0x7E)
+                        {
+                            bytes[row.Location.RowStart + sidSlice.DataStart] = 0xFA;
+                            bytes[row.Location.RowStart + sidSlice.DataStart + 1] = 0x7B;
+                        }
+                    }
+
                     int offset = row.Location.RowStart + layout.NullMaskPos + (inherit.ColNum / 8);
                     int mask = 1 << (inherit.ColNum % 8);
-                    bytes[offset] = (byte)(allInheritable ? bytes[offset] | mask : bytes[offset] & ~mask);
+                    bytes[offset] = (byte)(duplicateIdentity ? bytes[offset] | mask : bytes[offset] & ~mask);
                     return new ValueTask<bool>(true);
                 },
                 TestContext.Current.CancellationToken);
@@ -129,7 +164,7 @@ public sealed class NativeJet4CatalogSecurityTests
             leaveOpen: true,
             TestContext.Current.CancellationToken))
         {
-            if (allInheritable)
+            if (duplicateIdentity)
             {
                 await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.CreateTableAsync(
                     "Rejected", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken));

@@ -8,12 +8,25 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Fresh Jet4 databases include native catalog ownership and inherited permissions.</summary>
 public sealed class Jet4NativeBootstrapTests
 {
+    [Fact]
+    public async Task FreshJet4_HeaderUserSlots_MatchNativeAvailabilityFlags()
+    {
+        byte[] native = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"), TestContext.Current.CancellationToken);
+        byte[] created = TDefPageBuilder.BuildEmptyDatabase(DatabaseFormat.Jet4Mdb);
+        for (int offset = 0xE01; offset < 4096; offset += 2)
+        {
+            Assert.Equal(1, native[offset]);
+            Assert.Equal(native[offset], created[offset]);
+        }
+    }
+
     [Fact]
     public async Task FreshJet4_CreatesNativeSecurityAndCoreSystemTables()
     {

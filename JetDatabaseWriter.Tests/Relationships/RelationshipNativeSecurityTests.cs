@@ -11,6 +11,7 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 /// <summary>Relationship DDL refuses unsafe native security before changing any page.</summary>
@@ -107,6 +108,7 @@ public sealed class RelationshipNativeSecurityTests
         TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, table, TestContext.Current.CancellationToken);
         ColumnInfo target = Assert.IsType<ColumnInfo>(definition.FindColumn(table == "MSysObjects" ? "Owner" : "FInheritable"));
         ColumnInfo? name = definition.FindColumn("Name");
+        ColumnInfo? sidColumn = definition.FindColumn("SID");
         var changed = new Dictionary<long, byte[]>();
         int count = 0;
         await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
@@ -128,6 +130,17 @@ public sealed class RelationshipNativeSecurityTests
                 {
                     bytes = row.Page.AsSpan(0, harness.Database.Format.PageSize).ToArray();
                     changed.Add(row.Location.PageNumber, bytes);
+                }
+
+                if (corruption == "duplicate-sid")
+                {
+                    ColumnSlice sidSlice = RowDecodePlan.ResolveColumnSlice(harness.Database.Format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, layout, Assert.IsType<ColumnInfo>(sidColumn));
+                    int sidOffset = row.Location.RowStart + sidSlice.DataStart;
+                    if (sidSlice.DataLen == 2 && row.Page[sidOffset] == 0xFB && row.Page[sidOffset + 1] == 0x7E)
+                    {
+                        bytes[sidOffset] = 0xFA;
+                        bytes[sidOffset + 1] = 0x7B;
+                    }
                 }
 
                 int offset = row.Location.RowStart + layout.NullMaskPos + (target.ColNum / 8);

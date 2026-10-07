@@ -38,6 +38,14 @@ owner from `MSysDb`, and preserves inherited principal bytes and permission
 masks. The fixture unmasks Admin to `0301`, Users to `0201`, and the system
 owner to `0203`; fixed stored identities from another header are not plaintext
 principals.
+
+An independent DAO creation in the Access-authored `testV2003.mdb` fixture
+confirms that an explicit inheritable owner SID takes precedence over the owner
+placeholder. Its Tables container holds placeholder E4A6 with mask 0xF00FE and
+owner E4A3 with mask 0xFFEFF; DAO emits one owner entry with 0xFFEFF. The masks
+are not combined. Distinct stored identities may therefore legitimately
+converge when the placeholder is resolved.
+
 The regression pins the fixture's placeholder and checks that deriving it does
 not modify page zero. Workgroup variants still require separate native evidence.
 

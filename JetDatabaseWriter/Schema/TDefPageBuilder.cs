@@ -725,6 +725,16 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             WriteJet4AceHeaderDefaults(db);
         }
 
+        if (profile.UsesHeaderMaskedSecuritySids)
+        {
+            // Jet4 page zero has 256 two-byte user slots. The second byte marks
+            // an available slot; zeroing every slot makes DAO report all users active.
+            for (int offset = 0xE01; offset < pgSz; offset += 2)
+            {
+                db[offset] = 1;
+            }
+        }
+
         EncryptionManager.TransformHeaderMask(db, format);
         return db;
     }

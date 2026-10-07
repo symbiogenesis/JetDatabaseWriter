@@ -361,6 +361,7 @@ internal sealed class CatalogWriter(
         int parentId = relationships ? Constants.SystemObjects.RelationshipsParentId : Constants.SystemObjects.TablesParentId;
         _ = await this.ReadCatalogSecurityObjectAsync(relationships ? "Relationships" : "Tables", parentId, 3, cancellationToken).ConfigureAwait(false);
         var inherited = new List<(byte[] Sid, int Acm)>();
+        var storedIdentities = new HashSet<string>(StringComparer.Ordinal);
         await ownedPages.ForEachLiveTableRowAsync(
             acesTdefPage,
             (row, _) =>
@@ -394,6 +395,11 @@ internal sealed class CatalogWriter(
 
                     if (inherit == "True")
                     {
+                        if (!storedIdentities.Add(BitConverter.ToString(sid)))
+                        {
+                            throw new JetCorruptDataException("Native inherited container permissions contain duplicate stored security identities.");
+                        }
+
                         inherited.Add((sid, acm));
                     }
                 }
@@ -417,20 +423,26 @@ internal sealed class CatalogWriter(
             ArrayPool<byte>.Shared.Return(header);
         }
 
-        var identities = new HashSet<string>(StringComparer.Ordinal);
-        for (int index = 0; index < inherited.Count; index++)
+        // Native Access uses the explicit inheritable owner entry when present;
+        // the owner placeholder supplies permissions only when no such entry exists.
+        bool explicitOwner = inherited.Exists(entry => entry.Sid.AsSpan().SequenceEqual(owner));
+        var resolved = new List<(byte[] Sid, int Acm)>(inherited.Count);
+        foreach ((byte[] sid, int acm) in inherited)
         {
-            (byte[] sid, int acm) = inherited[index];
-            byte[] mappedSid = sid.AsSpan().SequenceEqual(placeholder) ? owner : sid;
-            if (!identities.Add(BitConverter.ToString(mappedSid)))
+            if (sid.AsSpan().SequenceEqual(placeholder))
             {
-                throw new JetCorruptDataException("Native inherited permissions contain duplicate security identities after owner remapping.");
+                if (!explicitOwner)
+                {
+                    resolved.Add((owner, acm));
+                }
             }
-
-            inherited[index] = (mappedSid, acm);
+            else
+            {
+                resolved.Add((sid, acm));
+            }
         }
 
-        return inherited.ToArray();
+        return resolved.ToArray();
     }
 
     /// <summary>Validates native security metadata before allocating or changing catalog artifacts.</summary>
