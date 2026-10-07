@@ -120,8 +120,7 @@ public sealed class DaoCalculatedColumnRenameTests
         }
 
         File.SetAttributes(session.SourcePath, File.GetAttributes(session.SourcePath) & ~FileAttributes.ReadOnly);
-        AccessRoundTripEnvironment.CompactResult original = session.RunDaoDatabaseScript(
-            session.SourcePath,
+        const string originalScript =
             """
             $rs = $db.OpenRecordset('Table1')
             try {
@@ -130,8 +129,8 @@ public sealed class DaoCalculatedColumnRenameTests
                 Write-Output "ITERATED=$iterated"
                 Write-Output "DECLARED=$($rs.RecordCount)"
             } finally { $rs.Close() }
-            """,
-            DaoTimeout);
+            """;
+        AccessRoundTripEnvironment.CompactResult original = session.RunDaoDatabaseScript(session.SourcePath, originalScript, DaoTimeout);
         Assert.True(original.ExitCode == 0, $"DAO original read failed: {original.StdOut}\n{original.StdErr}");
         Assert.Contains("ITERATED=4", original.StdOut, StringComparison.Ordinal);
         Assert.Contains("DECLARED=3", original.StdOut, StringComparison.Ordinal);

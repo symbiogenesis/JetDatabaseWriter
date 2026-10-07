@@ -4,13 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading.Tasks;
 using JetDatabaseWriter.DelimitedText;
 using JetDatabaseWriter.Tests.Infrastructure;
-using SharpFuzz;
 using Xunit;
 
 /// <summary>
-/// SharpFuzz harness for the internal delimited text reader. Run as an explicit <c>Category=Fuzz</c> test.
+/// Process-isolated harness for the internal delimited text reader. Run as an explicit <c>Category=Fuzz</c> test.
 /// </summary>
 public sealed class DelimitedTextReaderFuzzTests
 {
@@ -29,15 +29,11 @@ public sealed class DelimitedTextReaderFuzzTests
         "MaxColumnCount");
 
     /// <summary>
-    /// Runs the SharpFuzz delimited text harness.
+    /// Runs one awaited delimited text fuzz input.
     /// </summary>
     [Trait("Category", "Fuzz")]
     [Fact(Explicit = true)]
-    public void FuzzDelimitedTextReader() => Fuzzer.Run(stream =>
-                                                  {
-                                                      byte[] fuzzedBytes = ReadAllBytes(stream);
-                                                      RunFuzzIteration(fuzzedBytes);
-                                                  });
+    public async Task FuzzDelimitedTextReader() => RunFuzzIteration(await FuzzInput.ReadAsync(TestContext.Current.CancellationToken));
 
     private static void RunFuzzIteration(byte[] fuzzedBytes)
     {
@@ -46,13 +42,6 @@ public sealed class DelimitedTextReaderFuzzTests
 
         TryParseRawInput(fuzzedBytes, delimiter);
         RoundTripGeneratedRows(random, delimiter);
-    }
-
-    private static byte[] ReadAllBytes(Stream stream)
-    {
-        using var memory = new MemoryStream();
-        stream.CopyTo(memory);
-        return memory.ToArray();
     }
 
     private static void TryParseRawInput(byte[] fuzzedBytes, char delimiter)

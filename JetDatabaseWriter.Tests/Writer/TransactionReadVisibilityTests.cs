@@ -284,7 +284,6 @@ public sealed class TransactionReadVisibilityTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbStandard)]
     public async Task EncryptedDatabase_TransactionReadsSeeTheirOwnWrites(DatabaseFormat format, AccessEncryptionFormat encryption)

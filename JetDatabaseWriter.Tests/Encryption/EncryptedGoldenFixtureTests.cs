@@ -23,7 +23,7 @@ using Xunit;
 /// the open path cannot change a decrypted byte unnoticed.
 /// </para>
 /// <para>
-/// The four fixtures under <c>Databases/Encrypted/</c> were written once, at
+/// The three fixtures under <c>Databases/Encrypted/</c> were written once, at
 /// <c>af1ca4d</c>, and are frozen: never regenerate them, or every digest
 /// below changes with the new creation date. Each started as a database the
 /// writer created, all ACE <c>.accdb</c> files, holding table <c>T</c>
@@ -38,7 +38,7 @@ using Xunit;
 /// <para>
 /// Every format decrypts to its source database: the recorded plaintext
 /// digest is the source file's, page 0 included, and every page from 1 on
-/// reads as the source's page. The four ACE formats therefore share one set
+/// reads as the source's page. The three ACE formats therefore share one set
 /// of digests.
 /// </para>
 /// </summary>
@@ -54,17 +54,14 @@ public sealed class EncryptedGoldenFixtureTests
         /// <summary>Jet3Test.mdb with the Jet3 page XOR mask and flag, built by the test.</summary>
         Jet3Xor = 0,
 
-        /// <summary><c>Databases/Encrypted/AccdbLegacyPassword.accdb</c>.</summary>
-        AccdbLegacyPassword = 1,
-
         /// <summary><c>Databases/Encrypted/AccdbAgile.accdb</c>, flat Agile.</summary>
-        AccdbAgile = 2,
+        AccdbAgile = 1,
 
         /// <summary><c>Databases/Encrypted/AccdbAgileCfb.accdb</c>.</summary>
-        AccdbAgileCfb = 3,
+        AccdbAgileCfb = 2,
 
         /// <summary><c>Databases/Encrypted/AccdbStandard.accdb</c>.</summary>
-        AccdbStandard = 4,
+        AccdbStandard = 3,
     }
 
     /// <summary>Gets every fixture.</summary>
@@ -197,7 +194,6 @@ public sealed class EncryptedGoldenFixtureTests
     private static string FixturePath(GoldenFixture fixture) => fixture switch
     {
         GoldenFixture.Jet3Xor => throw new ArgumentException("Jet3 XOR is built by the test, not stored.", nameof(fixture)),
-        GoldenFixture.AccdbLegacyPassword => TestDatabases.EncryptedAccdbLegacyPassword,
         GoldenFixture.AccdbAgile => TestDatabases.EncryptedAccdbAgile,
         GoldenFixture.AccdbAgileCfb => TestDatabases.EncryptedAccdbAgileCfb,
         GoldenFixture.AccdbStandard => TestDatabases.EncryptedAccdbStandard,
@@ -215,7 +211,6 @@ public sealed class EncryptedGoldenFixtureTests
     private static AccessEncryptionFormat ExpectedFormat(GoldenFixture fixture) => fixture switch
     {
         GoldenFixture.Jet3Xor => AccessEncryptionFormat.None,
-        GoldenFixture.AccdbLegacyPassword => AccessEncryptionFormat.AccdbLegacyPassword,
         GoldenFixture.AccdbAgile => AccessEncryptionFormat.AccdbAgile,
         GoldenFixture.AccdbAgileCfb => AccessEncryptionFormat.AccdbAgileCfb,
         GoldenFixture.AccdbStandard => AccessEncryptionFormat.AccdbStandard,
@@ -225,7 +220,7 @@ public sealed class EncryptedGoldenFixtureTests
     private static (string PlaintextSha256, string[] PageSha256) Recorded(GoldenFixture fixture) => fixture switch
     {
         GoldenFixture.Jet3Xor => (Golden.Jet3PlaintextSha256, Golden.Jet3PageSha256),
-        GoldenFixture.AccdbLegacyPassword or GoldenFixture.AccdbAgile
+        GoldenFixture.AccdbAgile
             or GoldenFixture.AccdbAgileCfb or GoldenFixture.AccdbStandard => (Golden.AcePlaintextSha256, Golden.AcePageSha256),
         _ => throw new ArgumentOutOfRangeException(nameof(fixture), fixture, null),
     };
@@ -249,7 +244,7 @@ public sealed class EncryptedGoldenFixtureTests
         /// <summary>SHA-256 of Jet3Test.mdb, which the Jet3 XOR fixture decrypts to.</summary>
         internal const string Jet3PlaintextSha256 = "4E3863F433E0FDD47B703EA6307C287A1534D942835AA729CE621A2628C08123";
 
-        /// <summary>SHA-256 of the writer-created ACE source of the four ACE fixtures.</summary>
+        /// <summary>SHA-256 of the writer-created ACE source of the three ACE fixtures.</summary>
         internal const string AcePlaintextSha256 = "D62DB73FBEB8ECA886FC05922A959050C6DD7CCA1863EECC9C2DB10DE7A37494";
 
         /// <summary>The rows of table T in every writer-created fixture, by Id.</summary>

@@ -400,6 +400,7 @@ public sealed class Jet3Jet4EncryptionTests(DatabaseCache db) : IClassFixture<Da
             Rc4Transform(data, page * pageSize, Math.Min(pageSize, data.Length - (page * pageSize)), key);
         }
     }
+
     /// <summary>In-place RC4 transform (encrypt/decrypt are the same operation).</summary>
     /// <param name="data">The data bytes or values.</param>
     /// <param name="offset">The offset.</param>

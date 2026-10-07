@@ -434,7 +434,7 @@ internal static class DaoBaselineProbe
         }
 
         AccessEncryptionFormat encryption = await AccessWriter.DetectEncryptionFormatAsync(reader.HostDatabasePath);
-        return encryption is AccessEncryptionFormat.None or AccessEncryptionFormat.AccdbLegacyPassword;
+        return encryption == AccessEncryptionFormat.None;
     }
 
     private static FileStream OpenPageReadStream(string path, int pageSize)

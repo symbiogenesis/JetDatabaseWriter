@@ -4,10 +4,14 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Schema.Models;
 
 internal static class RelationshipKeyBuilder
 {
-    public static string? Build(object?[] row, int[] columnIndexes)
+    public static string? Build(object?[] row, int[] columnIndexes, int[]? fixedBinaryLengths = null)
     {
         var sb = new StringBuilder();
         for (int i = 0; i < columnIndexes.Length; i++)
@@ -25,10 +29,29 @@ internal static class RelationshipKeyBuilder
             }
 
             sb.Append('|');
-            AppendNormalized(sb, v);
+            int fixedLength = fixedBinaryLengths is null ? 0 : fixedBinaryLengths[i];
+            object normalized = fixedLength > 0 || v is byte[] or ArraySegment<byte> or Memory<byte> or ReadOnlyMemory<byte>
+                ? IndexKeyEncoder.NormalizeFixedBinaryValue(v, fixedLength)!
+                : v;
+            AppendNormalized(sb, normalized);
         }
 
         return sb.ToString();
+    }
+
+    public static string? Build(object?[] row, int[] columnIndexes, TableDef definition)
+        => Build(row, columnIndexes, GetFixedBinaryLengths(definition, columnIndexes));
+
+    public static int[] GetFixedBinaryLengths(TableDef definition, int[] columnIndexes)
+    {
+        int[] lengths = new int[columnIndexes.Length];
+        for (int index = 0; index < lengths.Length; index++)
+        {
+            ColumnInfo column = definition.Columns[columnIndexes[index]];
+            lengths[index] = column.Type == ColumnType.BinaryType && column.IsFixed && !column.IsCalculated ? column.Size : 0;
+        }
+
+        return lengths;
     }
 
     public static List<object?[]> ProjectNonNullKeys(IReadOnlyList<object?[]> rows, int[] columnIndexes)
@@ -71,7 +94,7 @@ internal static class RelationshipKeyBuilder
         return projectedRows;
     }
 
-    public static HashSet<string> BuildSetFromProjectedKeys(IReadOnlyList<object?[]> keyRows)
+    public static HashSet<string> BuildSetFromProjectedKeys(IReadOnlyList<object?[]> keyRows, int[]? fixedBinaryLengths = null)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
         int[]? identity = null;
@@ -82,7 +105,7 @@ internal static class RelationshipKeyBuilder
                 identity = CreateIdentityOrdinals(keyRow.Length);
             }
 
-            string? key = Build(keyRow, identity);
+            string? key = Build(keyRow, identity, fixedBinaryLengths);
             if (key != null)
             {
                 _ = set.Add(key);
@@ -108,7 +131,8 @@ internal static class RelationshipKeyBuilder
         switch (value)
         {
             case string s:
-                sb.Append('S').Append(':').Append(s.ToUpperInvariant());
+                string normalized = s.ToUpperInvariant();
+                sb.Append('S').Append(':').Append(normalized.Length.ToString(CultureInfo.InvariantCulture)).Append(':').Append(normalized);
                 break;
             case Guid g:
                 sb.Append('G').Append(':').Append(g.ToString("N"));

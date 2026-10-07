@@ -67,7 +67,7 @@ internal static class OfficeCryptoAgile
     /// <summary>
     /// Returns true when the EncryptionInfo header indicates the ECMA-376
     /// "Standard" encryption variant (version 3.2 or 4.2). This format is
-    /// used by Office 2007 (Access 2007) password-encrypted .accdb files and
+    /// used by Office encrypted packages and
     /// is handled by <see cref="OfficeCryptoStandard"/>.
     /// </summary>
     /// <param name="encryptionInfo">The encryption info.</param>
@@ -369,6 +369,80 @@ internal static class OfficeCryptoAgile
         {
             OfficeCryptoPrimitives.ZeroIfNotNull(intermediateKey);
             CryptographicOperations.ZeroMemory(passwordUtf16);
+        }
+    }
+
+    /// <summary>Unlocks the original native Agile provider without reading any data pages.</summary>
+    /// <param name="headerPage">The encrypted page-zero bytes.</param>
+    /// <param name="password">The database password.</param>
+    /// <param name="maxSpinCount">The password hashing budget.</param>
+    /// <param name="maxDescriptorBytes">The descriptor byte budget.</param>
+    /// <exception cref="InvalidDataException">The native Agile descriptor is absent or malformed.</exception>
+    /// <exception cref="NotSupportedException">The native ACE provider is not Agile.</exception>
+    internal static NativeAgilePageCodec CreateFlatPageCodec(byte[] headerPage, ReadOnlySpan<char> password, int maxSpinCount, int maxDescriptorBytes)
+    {
+        if (!TryGetFlatEncryptionInfo(headerPage, out byte[] encryptionInfo))
+        {
+            throw new InvalidDataException("Native ACE encryption requires a complete page-zero descriptor.");
+        }
+
+        if (Ru16(encryptionInfo, 0) != 4 || Ru16(encryptionInfo, 2) != 4)
+        {
+            throw new NotSupportedException("The native ACE encryption provider is not supported.");
+        }
+
+        if (!IsAgileEncryptionInfo(encryptionInfo))
+        {
+            throw new InvalidDataException("The native Agile descriptor reserved flags are invalid.");
+        }
+
+        AgileDescriptor descriptor = ParseDescriptor(encryptionInfo, maxSpinCount, maxDescriptorBytes);
+        byte[] unmasked = GetUnmaskedHeaderPage(headerPage);
+        byte[] encodingKey = unmasked.AsSpan(Constants.AgileEncryption.FlatEncodingKeyOffset, sizeof(uint)).ToArray();
+        byte[] passwordUtf16 = PasswordToUtf16(password);
+        byte[]? dataKey = null;
+        try
+        {
+            dataKey = ResolvePassword(descriptor, passwordUtf16);
+            var codec = new NativeAgilePageCodec(dataKey, (byte[])descriptor.KeyDataSalt.Clone(), encodingKey);
+            dataKey = null;
+            return codec;
+        }
+        finally
+        {
+            OfficeCryptoPrimitives.ZeroIfNotNull(dataKey);
+            CryptographicOperations.ZeroMemory(passwordUtf16);
+        }
+    }
+
+    /// <summary>Transforms one native encrypted data page with its original key and page-specific IV.</summary>
+    /// <param name="data">The owned page buffer.</param>
+    /// <param name="offset">The page offset.</param>
+    /// <param name="pageNumber">The absolute page number.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="dataKey">The unlocked provider key.</param>
+    /// <param name="keyDataSalt">The native provider salt.</param>
+    /// <param name="encodingKey">The native encoding key.</param>
+    /// <param name="encrypt">Whether to encrypt.</param>
+    /// <exception cref="InvalidDataException">The page size is not the native ACE size.</exception>
+    internal static void TransformFlatPage(byte[] data, int offset, int pageNumber, int pageSize, byte[] dataKey, byte[] keyDataSalt, byte[] encodingKey, bool encrypt)
+    {
+        if (pageSize != Constants.PageSizes.Jet4)
+        {
+            throw new InvalidDataException("Native ACE encryption requires a complete 4096-byte page.");
+        }
+
+        byte[] input = data.AsSpan(offset, pageSize).ToArray();
+        byte[]? output = null;
+        try
+        {
+            output = AesCbcRaw(input, dataKey, FlatPageIv(keyDataSalt, encodingKey, pageNumber, Constants.AgileEncryption.BlockSize), encrypt);
+            output.CopyTo(data, offset);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(input);
+            OfficeCryptoPrimitives.ZeroIfNotNull(output);
         }
     }
 

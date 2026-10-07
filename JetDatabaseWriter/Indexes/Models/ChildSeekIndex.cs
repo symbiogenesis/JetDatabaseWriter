@@ -24,9 +24,11 @@ internal sealed record ChildSeekIndex(
 /// <param name="NumericScale">The numeric scale.</param>
 /// <param name="LegacyNumeric">The legacy numeric.</param>
 /// <param name="TextSortOrder">The text collation.</param>
+/// <param name="FixedBinaryLength">The fixed Binary width, or zero for variable storage.</param>
 internal readonly record struct ChildSeekKeyColumn(
     ColumnType ColumnType,
     bool Ascending,
     byte NumericScale,
     bool LegacyNumeric,
-    TextSortOrder TextSortOrder = default);
+    TextSortOrder TextSortOrder = default,
+    int FixedBinaryLength = 0);

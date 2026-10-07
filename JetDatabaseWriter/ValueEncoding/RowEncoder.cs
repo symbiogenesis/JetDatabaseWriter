@@ -327,7 +327,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// <exception cref="JetLimitationException">
     /// A Jet3 row would have more than 255 columns or variable columns, or 255
     /// variable columns with an EOD the jump table cannot encode, or a fixed Text value
-    /// exceeds its descriptor's encoded width.
+    /// exceeds its descriptor's encoded width, or a fixed Binary value exceeds its declared width.
     /// </exception>
     /// <exception cref="NotSupportedException">A fixed Text descriptor cannot hold whole encoded padding spaces.</exception>
     internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength)
@@ -341,7 +341,7 @@ internal sealed class RowEncoder(JetFormat format)
             numCols = Math.Max(numCols, col.ColNum + 1);
             if (col.IsFixed && col.Type != BooleanType)
             {
-                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + (col.Type == TextType ? col.Size : JetTypeInfo.GetFixedSize(col.Type)));
+                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + (col.Type is TextType or BinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type)));
             }
             else if (!col.IsFixed)
             {
@@ -361,6 +361,12 @@ internal sealed class RowEncoder(JetFormat format)
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnInfo column = tableDef.Columns[i];
+            if (column.IsFixed && column.Type == BinaryType && values[i] is { } binary && binary is not DBNull
+                && this.EncodeBinaryValue(binary, maxSize: 0) is { } bytes && bytes.Length > column.Size)
+            {
+                throw new JetLimitationException($"Fixed Binary column '{column.Name}' holds at most {column.Size} bytes; the value occupies {bytes.Length}.");
+            }
+
             if (column.IsFixed && column.Type == TextType && values[i] is { } value && value is not DBNull)
             {
                 string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
@@ -407,6 +413,18 @@ internal sealed class RowEncoder(JetFormat format)
                 continue;
             }
 
+            if (column.IsFixed && column.Type == BinaryType)
+            {
+                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
+                if (value is not DBNull && this.EncodeBinaryValue(value, maxSize: 0) is { } bytes)
+                {
+                    bytes.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
+                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
+                }
+
+                continue;
+            }
+
             if (column.IsFixed && column.Type == TextType)
             {
                 fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
@@ -420,6 +438,7 @@ internal sealed class RowEncoder(JetFormat format)
                     {
                         space.AsSpan().CopyTo(destination.Slice(offset, space.Length));
                     }
+
                     JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 

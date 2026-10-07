@@ -3,10 +3,13 @@ namespace JetDatabaseWriter.ValueDecoding;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
 /// Compiles a <see cref="RowCriteria"/> against a specific table's column layout
@@ -48,6 +51,12 @@ internal sealed class RowCriteriaEvaluator
                 throw new JetObjectNotFoundException(JetErrorCode.ColumnNotFound, $"Column '{predicate.ColumnName}' was not found in table '{tableName}'.", parameterName, new JetErrorInfo { TableName = tableName, ColumnName = predicate.ColumnName });
             }
 
+            ColumnInfo column = tableDef.Columns[columnIndex];
+            if (column.Type == Enums.ColumnType.BinaryType && column.IsFixed && !column.IsCalculated)
+            {
+                predicate = NormalizeBinaryPredicate(predicate, column.Size);
+            }
+
             compiled[i] = new CompiledPredicate(columnIndex, predicate);
         }
 
@@ -72,6 +81,25 @@ internal sealed class RowCriteriaEvaluator
         }
 
         return true;
+    }
+
+    private static ColumnPredicate NormalizeBinaryPredicate(ColumnPredicate predicate, int width)
+    {
+        object? operand = IndexKeyEncoder.NormalizeFixedBinaryValue(predicate.Operand, width);
+        object? upper = IndexKeyEncoder.NormalizeFixedBinaryValue(predicate.UpperOperand, width);
+        string name = predicate.ColumnName;
+        return predicate.Operator switch
+        {
+            ColumnPredicateOperator.Equal => ColumnPredicate.EqualTo(name, operand),
+            ColumnPredicateOperator.NotEqual => ColumnPredicate.NotEqualTo(name, operand),
+            ColumnPredicateOperator.GreaterThan => ColumnPredicate.GreaterThan(name, operand!),
+            ColumnPredicateOperator.GreaterThanOrEqual => ColumnPredicate.GreaterThanOrEqual(name, operand!),
+            ColumnPredicateOperator.LessThan => ColumnPredicate.LessThan(name, operand!),
+            ColumnPredicateOperator.LessThanOrEqual => ColumnPredicate.LessThanOrEqual(name, operand!),
+            ColumnPredicateOperator.Between => ColumnPredicate.Between(name, operand!, upper!),
+            ColumnPredicateOperator.In => ColumnPredicate.In(name, (predicate.Operands ?? []).Select(value => IndexKeyEncoder.NormalizeFixedBinaryValue(value, width))),
+            _ => predicate,
+        };
     }
 
     private static bool Evaluate(ColumnPredicate predicate, object? cellValue)
@@ -152,6 +180,12 @@ internal sealed class RowCriteriaEvaluator
     private static bool TryCompareCoerced(object left, object right, out int order)
     {
         order = 0;
+
+        if (left is byte[] leftBytes && right is byte[] rightBytes)
+        {
+            order = leftBytes.AsSpan().SequenceCompareTo(rightBytes);
+            return true;
+        }
 
         // Same-type IComparable is the common, exact path.
         if (left.GetType() == right.GetType() && left is IComparable sameTyped)

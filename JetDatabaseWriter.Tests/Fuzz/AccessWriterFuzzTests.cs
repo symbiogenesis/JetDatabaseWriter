@@ -9,12 +9,11 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
-using SharpFuzz;
 using Xunit;
 
 /// <summary>
-/// Fuzz test for AccessWriter. This test is designed to find crashes and robustness issues by exploring random combinations of options and data.
-/// It is NOT required for full code coverage and should be run as an explicit <c>Category=Fuzz</c> test because it is slow and non-deterministic.
+/// Fuzz test for AccessWriter. This test awaits one process-isolated input driving database mutations.
+/// It is NOT required for full code coverage and should be run as an explicit <c>Category=Fuzz</c> test because it performs a complete mutation iteration.
 /// For full coverage, prefer targeted unit tests that systematically exercise each feature and branch.
 /// </summary>
 /// <param name="output">The output.</param>
@@ -24,10 +23,13 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
 
     [Trait("Category", "Fuzz")]
     [Fact(Explicit = true)]
-    public void FuzzAccessWriter()
+    public async Task FuzzAccessWriter()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        Fuzzer.Run(async stream =>
+        await using var inputStream = new MemoryStream(await FuzzInput.ReadAsync(ct), writable: false);
+        await RunIterationAsync(inputStream);
+
+        async Task RunIterationAsync(Stream stream)
         {
             output.WriteLine($"--- Fuzzing iteration started at {DateTime.UtcNow:O} ---");
             byte[]? fuzzedBytes = null;
@@ -41,92 +43,54 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             }
             catch (IOException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
             catch (UnauthorizedAccessException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
             catch (InvalidDataException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
             catch (InvalidOperationException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
             catch (NotSupportedException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
             catch (ArgumentException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
             catch (FormatException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
-            }
-            catch (OverflowException ex)
-            {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
             catch (JetLimitationException ex)
             {
-                LogExpectedIterationException(output, fuzzedBytes, ex);
+                LogExpectedIterationException(output, ex);
             }
 
             output.WriteLine($"""
                 --- Fuzzing iteration completed at {DateTime.UtcNow:O} ---
 
                 """);
-        });
+        }
     }
 
-    private static void LogExpectedIterationException(ITestOutputHelper output, byte[]? fuzzedBytes, Exception ex)
+    private static void LogExpectedIterationException(ITestOutputHelper output, Exception ex)
     {
         output.WriteLine($"""
             [Fuzzing] Expected exception during fuzzing iteration: {ex.GetType().Name}
             {ex}
             """);
-
-        if (fuzzedBytes != null)
-        {
-            SaveCrashInput(output, fuzzedBytes);
-        }
     }
 
     private static void LogExpectedOperationException(ITestOutputHelper output, string operation, Exception ex) =>
         output.WriteLine($"[Fuzzing] Expected {operation} failure: {ex.GetType().Name}");
-
-    private static void SaveCrashInput(ITestOutputHelper output, byte[] fuzzedBytes)
-    {
-        try
-        {
-            string crashDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "Fuzz", "Crashes");
-            Directory.CreateDirectory(crashDir);
-            string fileName = $"crash_{DateTime.UtcNow:yyyyMMdd_HHmmssfff}.bin";
-            string filePath = Path.Combine(crashDir, fileName);
-            File.WriteAllBytes(filePath, fuzzedBytes);
-            output.WriteLine($"[Fuzzing] Saved crashing input to: {filePath}");
-        }
-        catch (IOException saveEx)
-        {
-            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
-        }
-        catch (UnauthorizedAccessException saveEx)
-        {
-            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
-        }
-        catch (NotSupportedException saveEx)
-        {
-            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
-        }
-        catch (ArgumentException saveEx)
-        {
-            output.WriteLine($"[Fuzzing] Failed to save expected-failure input: {saveEx}");
-        }
-    }
 
     private static async Task FuzzIterationAsync(ITestOutputHelper output, byte[]? fuzzedBytes, CancellationToken ct)
     {
@@ -200,10 +164,6 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         {
             LogExpectedOperationException(output, "round-trip read", ex);
         }
-        catch (OverflowException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
         catch (JetLimitationException ex)
         {
             LogExpectedOperationException(output, "round-trip read", ex);
@@ -262,10 +222,6 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
         {
             LogExpectedOperationException(output, "update", ex);
         }
-        catch (OverflowException ex)
-        {
-            LogExpectedOperationException(output, "update", ex);
-        }
         catch (JetLimitationException ex)
         {
             LogExpectedOperationException(output, "update", ex);
@@ -285,10 +241,6 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
             LogExpectedOperationException(output, "delete", ex);
         }
         catch (FormatException ex)
-        {
-            LogExpectedOperationException(output, "delete", ex);
-        }
-        catch (OverflowException ex)
         {
             LogExpectedOperationException(output, "delete", ex);
         }

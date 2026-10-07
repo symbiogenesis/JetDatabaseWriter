@@ -122,6 +122,12 @@ internal sealed class TableReader(
         }
     }
 
+    /// <summary>Refuses data execution for metadata-only linked sources.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask ThrowIfLinkedExecutionUnavailableAsync(string tableName, CancellationToken cancellationToken)
+        => linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken);
+
     /// <summary>
     /// Asynchronously returns up to <paramref name="maxRows"/> rows (as strings)
     /// from the first user table.
@@ -157,6 +163,7 @@ internal sealed class TableReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -211,6 +218,7 @@ internal sealed class TableReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -245,6 +253,7 @@ internal sealed class TableReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -275,6 +284,7 @@ internal sealed class TableReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -336,6 +346,7 @@ internal sealed class TableReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -376,6 +387,7 @@ internal sealed class TableReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -555,6 +567,7 @@ internal sealed class TableReader(
             tableName = tables[0].Name;
         }
 
+        await linked.ThrowIfOdbcExecutionAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {

@@ -202,7 +202,7 @@ public sealed class PagerTests
     public async Task BeginTransaction_WhileActive_KeepsExistingMessage(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateDatabaseAsync(format);
-        await using WriterHarness harness = await OpenAsync(stream );
+        await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
 
         JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
         JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(
@@ -222,7 +222,7 @@ public sealed class PagerTests
     public async Task JournalGate_AttachTwice_Throws_AndDisposeReleasesTheGate()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness harness = await OpenAsync(stream );
+        await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
         Pager pager = harness.Pager;
 
         using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(Ct))
@@ -246,7 +246,7 @@ public sealed class PagerTests
     public async Task ReaderPageCache_OverPager_RejectsPositiveCapacity()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness writer = await OpenAsync(stream );
+        await using WriterHarness writer = await OpenAsync(stream, encrypted: false);
 
         ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 1));
         Assert.Equal("capacity", ex.ParamName);

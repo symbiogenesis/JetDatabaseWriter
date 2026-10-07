@@ -658,6 +658,41 @@ public sealed class ConstraintRegistryTests
         _ = await registry.ApplyAsync("T", tableDef, [1], TestContext.Current.CancellationToken);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConflictingRepeatedConstraint_RefusesBeforeApplyingDefault(bool separateTargets)
+    {
+        var builder = new ColumnPropertyBlockBuilder();
+        ColumnPropertyTargetBuilder first = builder.GetOrAddTarget("Score");
+        first.AddText(Constants.ColumnPropertyNames.DefaultValue, "7", DatabaseFormat.AceAccdb);
+        first.AddText(Constants.ColumnPropertyNames.ValidationRule, ">= 0", DatabaseFormat.AceAccdb);
+        ColumnPropertyTargetBuilder second = first;
+        if (separateTargets)
+        {
+            second = new ColumnPropertyTargetBuilder { Name = "sCORE" };
+            builder.Targets.Add(second);
+        }
+
+        second.AddText("validationrule", "False", DatabaseFormat.AceAccdb);
+        ColumnPropertyBlock properties = ColumnPropertyBlock.Parse(builder.ToBytes(DatabaseFormat.AceAccdb), DatabaseFormat.AceAccdb)!;
+        ConstraintRegistry registry = RegistryWithProperties(properties);
+        object[] values = [DBNull.Value];
+        JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await registry.ApplyAsync("T", SingleColumnTable(ColumnType.LongIntegerType), values, TestContext.Current.CancellationToken));
+        Assert.Equal("T", failure.ErrorInfo.TableName);
+        Assert.Same(DBNull.Value, values[0]);
+    }
+
+    [Fact]
+    public async Task IdenticalRepeatedConstraint_RemainsUsable()
+    {
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties(
+            ("Score", Constants.ColumnPropertyNames.ValidationRule, ">= 0"),
+            ("Score", "validationrule", ">= 0")));
+        _ = await registry.ApplyAsync("T", SingleColumnTable(ColumnType.LongIntegerType), [1], TestContext.Current.CancellationToken);
+    }
+
     private static async Task AssertRuleAsync(string rule, ColumnType type, object? value, bool accepted)
     {
         TableDef tableDef = SingleColumnTable(type);

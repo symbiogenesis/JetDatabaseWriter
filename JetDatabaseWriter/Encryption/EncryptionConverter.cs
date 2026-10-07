@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -154,19 +153,16 @@ internal static class EncryptionConverter
             AccessEncryptionFormat.None => (byte[])plaintext.Clone(),
             AccessEncryptionFormat.Jet4Rc4 when fmt != DatabaseFormat.Jet4Mdb
                 => throw new NotSupportedException($"Target format {targetFormat} is only valid for Jet4 (.mdb) databases."),
-            AccessEncryptionFormat.AccdbLegacyPassword or
             AccessEncryptionFormat.AccdbAgile or
             AccessEncryptionFormat.AccdbStandard or
             AccessEncryptionFormat.AccdbAgileCfb when fmt != DatabaseFormat.AceAccdb
                 => throw new NotSupportedException($"Target format {targetFormat} is only valid for ACE (.accdb) databases."),
             AccessEncryptionFormat.Jet4Rc4 or
-            AccessEncryptionFormat.AccdbLegacyPassword or
             AccessEncryptionFormat.AccdbAgile or
             AccessEncryptionFormat.AccdbStandard or
             AccessEncryptionFormat.AccdbAgileCfb when targetPassword.IsEmpty
                 => throw new ArgumentException("A non-empty password is required to apply encryption.", nameof(targetPassword)),
             AccessEncryptionFormat.Jet4Rc4 => throw new NotSupportedException("Creating or changing a Jet4 database password requires native system security metadata that is not supported. Existing native encrypted databases can be read and updated with their original password."),
-            AccessEncryptionFormat.AccdbLegacyPassword => BuildAccdbLegacy(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbAgile => BuildAccdbAgile(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbStandard => BuildAccdbStandard(plaintext, targetPassword.Span),
             AccessEncryptionFormat.AccdbAgileCfb => BuildAccdbAgileCfb(plaintext, targetPassword.Span),
@@ -266,18 +262,6 @@ internal static class EncryptionConverter
         return result;
     }
 
-    private static byte[] BuildAccdbLegacy(byte[] plaintext, ReadOnlySpan<char> password)
-    {
-        byte[] result = (byte[])plaintext.Clone();
-        EncodeJet4StylePassword(result, password, useAccdbLegacyMask: true);
-
-        // Flag last — it overlaps the password area (see BuildJet4Rc4).
-        result[0x62] = 0x07;
-
-        // The legacy password scheme encrypts no pages.
-        return result;
-    }
-
     private static byte[] BuildAccdbAgile(byte[] plaintext, ReadOnlySpan<char> password) => OfficeCryptoAgile.EncryptFlatDatabase(plaintext, password);
 
     private static byte[] BuildAccdbAgileCfb(byte[] plaintext, ReadOnlySpan<char> password)
@@ -338,55 +322,6 @@ internal static class EncryptionConverter
         EncryptionManager.TransformHeaderMask(db);
     }
 
-    /// <summary>
-    /// Encodes <paramref name="password"/> into the 40-byte header password
-    /// area at offset <c>0x42</c>, using either the Jet4 XOR mask (Jet4 RC4).
-    /// The alternative is the ACCDB legacy password mask.
-    /// The encoding is the inverse of <see cref="EncryptionManager"/>'s
-    /// <c>DecodeJet4Password</c> / <c>DecodeAccdbPassword</c>.
-    /// </summary>
-    /// <param name="header">The header.</param>
-    /// <param name="password">The password.</param>
-    /// <param name="useAccdbLegacyMask">Whether to use the ACCDB legacy password mask instead of the Jet4 mask.</param>
-    /// <exception cref="JetLimitationException">Thrown when the password is too long for the fixed header password area.</exception>
-    private static void EncodeJet4StylePassword(byte[] header, ReadOnlySpan<char> password, bool useAccdbLegacyMask)
-    {
-        ReadOnlySpan<byte> mask = useAccdbLegacyMask
-            ? EncryptionManager.AccdbLegacyPasswordMaskForWrite
-            : EncryptionManager.Jet4PasswordMaskForWrite;
-
-        // The 40-byte password area at 0x42 overlaps the encryption flag at
-        // hdr[0x62] (offset 32 inside the area). The flag is rewritten after
-        // password encoding, so any password byte at offset 32 or later would
-        // be corrupted on read-back. Decoding stops at the first NUL char, so
-        // the password (UTF-16LE) plus its NUL terminator must fit in
-        // bytes 0..31 — i.e. at most 15 characters.
-        const int maxPasswordLength = 15;
-        if (password.Length > maxPasswordLength)
-        {
-            throw new JetLimitationException(
-                $"Password is too long for this database format: {password.Length} characters (maximum {maxPasswordLength}). " +
-                "The Jet4 RC4, ACCDB legacy password formats all store the password in a fixed " +
-                "40-byte header area whose 32nd byte is reused by the encryption flag, restricting the password to " +
-                $"{maxPasswordLength} UTF-16 characters. Use AccessEncryptionFormat.AccdbAgile or " +
-                "AccessEncryptionFormat.AccdbAgileCfb for longer passwords.");
-        }
-
-        Span<byte> padded = stackalloc byte[40];
-        if (!password.IsEmpty)
-        {
-            // Remaining bytes are already zero from stackalloc.
-            _ = System.Text.Encoding.Unicode.GetBytes(password, padded);
-        }
-
-        for (int i = 0; i < 40; i++)
-        {
-            header[0x42 + i] = (byte)(padded[i] ^ mask[i] ^ header[0x72 + (i % 4)]);
-        }
-
-        CryptographicOperations.ZeroMemory(padded);
-    }
-
     private static AccessEncryptionFormat DetectFlatFormat(byte[] header, DatabaseFormat fmt)
     {
         if (fmt == DatabaseFormat.AceAccdb && OfficeCryptoAgile.IsFlatAgileEncrypted(header))
@@ -399,11 +334,6 @@ internal static class EncryptionConverter
             return AccessEncryptionFormat.None;
         }
 
-        // Raw byte 0x62 is byte 32 of the masked header password area. On a
-        // file without a password it is a creation-date byte, so a flag value
-        // there counts only when the area holds a password.
-        byte flag = header[0x62];
-
         if (fmt == DatabaseFormat.Jet4Mdb)
         {
             byte[] unmasked = (byte[])header.Clone();
@@ -412,11 +342,6 @@ internal static class EncryptionConverter
             CryptographicOperations.ZeroMemory(unmasked);
             return encodingKey != 0 ? AccessEncryptionFormat.Jet4Rc4 : AccessEncryptionFormat.None;
         }
-        if (fmt == DatabaseFormat.AceAccdb && flag == 0x07 && EncryptionManager.HasHeaderPassword(header, fmt))
-        {
-            return AccessEncryptionFormat.AccdbLegacyPassword;
-        }
-
         return AccessEncryptionFormat.None;
     }
 

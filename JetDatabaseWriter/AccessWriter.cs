@@ -49,7 +49,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         bool outerEncryptedLeaveOpen = false,
         AccessEncryptionFormat outerEncryptedFormat = AccessEncryptionFormat.None,
         bool leaveOpen = false)
-        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize))
+        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options))
     {
         this.options = options;
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
@@ -85,7 +85,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// be opened for writing (read-only, or locked by another process) reports
     /// that error before any encryption or password error.
     /// </remarks>
-    /// <exception cref="NotSupportedException">Thrown when the file uses Access-native flat Agile encryption (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. The file is not modified.</exception>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. The file is not modified.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The file is not opened.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
@@ -110,7 +109,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
-    /// <exception cref="NotSupportedException">Thrown when the stream holds an Access-native flat Agile database (<see cref="AccessEncryptionFormat.AccdbAgile"/>), which the writer cannot edit in place. Nothing is written to the stream.</exception>
     /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. Nothing is written to the stream.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The stream is not read, written or disposed.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
@@ -127,14 +125,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             // One read of page 0 serves the header and the flat Agile probe.
             byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
             byte[] header = headerPage.AsSpan(0, Constants.DatabaseHeader.Length).ToArray();
-
-            // Access-native flat Agile encrypts every page with AES-CBC keyed
-            // from the descriptor in page 0. The page cipher has no writer
-            // path, so refuse before anything is written.
-            if (!EncryptionManager.IsCompoundFileEncrypted(header) && OfficeCryptoAgile.IsFlatAgileEncrypted(headerPage))
-            {
-                throw FlatAgileNotSupported();
-            }
 
             // Office Crypto API ("Agile") encrypted .accdb files are real OLE
             // compound documents (CFB) wrapping an EncryptedPackage stream.
@@ -171,7 +161,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             return new AccessWriter(
                 path,
                 stream,
-                header,
+                headerPage,
                 options,
                 leaveOpen: leaveOpen);
         }
@@ -768,13 +758,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     private static FileStream CreateStream(string path) =>
         PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
-
-    private static NotSupportedException FlatAgileNotSupported() => new(
-        "This .accdb file uses Access-native Agile encryption (AccessEncryptionFormat.AccdbAgile), " +
-        "which AccessWriter cannot edit in place. Open it with AccessReader to read it. To write to it, " +
-        "remove the encryption with AccessWriter.DecryptAsync, write to the decrypted file, then encrypt it " +
-        "again with AccessWriter.EncryptAsync. Files encrypted as AccessEncryptionFormat.AccdbAgileCfb can be " +
-        "opened for writing.");
 
     private ValueTask DisposeCoreAsync()
         => this.services.Transactions.IsFaulted

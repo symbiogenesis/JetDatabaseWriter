@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 
@@ -72,8 +73,8 @@ internal sealed class WriterHarness : IAsyncDisposable
         options ??= new AccessWriterOptions { UseLockFile = false };
         options.Validate();
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-        byte[] header = await PageFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-        var database = DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize);
+        byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
+        var database = DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options);
         try
         {
             pager.ByteRangeLock = options.CreateByteRangeLock(stream);

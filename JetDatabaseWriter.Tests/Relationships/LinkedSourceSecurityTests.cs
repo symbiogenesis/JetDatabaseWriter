@@ -60,6 +60,18 @@ public sealed class LinkedSourceSecurityTests
         Assert.Equal(0, passwordRequests);
     }
 
+    [Theory]
+    [InlineData("COM¹.accdb")]
+    [InlineData("LPT².accdb")]
+    [InlineData("COM³.accdb")]
+    public async Task LinkedSource_SuperscriptDeviceNames_RespectWindowsNamespaces(string fileName)
+    {
+        var policy = new LinkedSourcePolicy(new AccessReaderOptions(), Path.Combine(Path.GetTempPath(), "host.accdb"));
+        var link = new LinkedTableInfo { Name = "Device", Kind = LinkedTableKind.Access, SourcePath = Path.Combine(Path.GetTempPath(), fileName), SourceObjectName = "Data" };
+        Type expected = Path.DirectorySeparatorChar == '\\' ? typeof(UnauthorizedAccessException) : typeof(FileNotFoundException);
+        _ = await Assert.ThrowsAsync(expected, async () => await LinkedTableManager.OpenLinkedSourceAsync(policy, link, TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task LinkedSource_AllowlistNestedUnderSymlink_IsRefused()
     {

@@ -16,16 +16,6 @@ public enum AccessEncryptionFormat
     Jet4Rc4 = 1,
 
     /// <summary>
-    /// The library's ACCDB password-only protection, on every ACE version. Password
-    /// XOR-verified in the header password area at <c>0x42</c>, flag <c>0x07</c>
-    /// in raw header byte <c>0x62</c>, detected, as for <see cref="Jet4Rc4"/>,
-    /// only when the area holds a password; pages are not encrypted. No file
-    /// Access wrote is known to use it: its password mask was fitted to a
-    /// fixture that holds no password.
-    /// </summary>
-    AccdbLegacyPassword = 2,
-
-    /// <summary>
     /// Access-native ECMA-376 "Agile" encryption used by Access 2010 SP1+
     /// and Microsoft 365 (<c>.accdb</c>). The <c>EncryptionInfo</c> descriptor
     /// is embedded in page 0 and data pages are encrypted in place. This is the
@@ -34,16 +24,16 @@ public enum AccessEncryptionFormat
     /// <see cref="System.NotSupportedException"/>; use <see cref="AccdbAgileCfb"/>
     /// for encrypted files the writer must open.
     /// </summary>
-    AccdbAgile = 3,
+    AccdbAgile = 2,
 
     /// <summary>
-    /// Office 2007 (ECMA-376) "Standard" encryption used by Access 2007
-    /// (<c>.accdb</c>). The file is a real OLE Compound File containing
+    /// Office ECMA-376 "Standard" encryption wrapping an inner ACCDB image.
+    /// Native Access interoperability of this wrapper is unverified. The OLE compound file contains
     /// <c>EncryptionInfo</c> (binary descriptor: SHA-1 PBKDF, AES-128-CBC)
     /// and <c>EncryptedPackage</c> (AES-128-CBC with zero IV of the inner
     /// ACCDB).
     /// </summary>
-    AccdbStandard = 4,
+    AccdbStandard = 3,
 
     /// <summary>
     /// Office Crypto API ECMA-376 "Agile" encryption in a CFB v4 compound
@@ -51,5 +41,5 @@ public enum AccessEncryptionFormat
     /// <c>EncryptedPackage</c> streams; the encrypted package contains the
     /// inner clean ACCDB image.
     /// </summary>
-    AccdbAgileCfb = 5,
+    AccdbAgileCfb = 4,
 }

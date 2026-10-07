@@ -92,6 +92,7 @@ internal sealed class TableSchemaEditor(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         ResolvedTable table = await catalog.ResolveRequiredTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ColumnPropertyBlock? properties = await snapshots.ReadLvPropBlockAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        ConstraintRegistry.ValidatePersistedConstraintProperties(tableName, properties);
         ColumnPropertyBlockBuilder builder = properties is null ? new ColumnPropertyBlockBuilder() : ColumnPropertyBlockBuilder.FromBlock(properties);
         ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
         target.Entries.RemoveAll(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
@@ -874,12 +875,12 @@ internal sealed class TableSchemaEditor(
         }
 
         _ = CalculatedExpressionPlan.Parse(projected);
-        ColumnPropertyBlockBuilder builder = ColumnPropertyBlockBuilder.FromBlock(properties!);
+        var builder = ColumnPropertyBlockBuilder.FromBlock(properties!);
         ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
         int entryIndex = target.Entries.FindIndex(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase));
         ColumnPropertyEntryBuilder entry = target.Entries[entryIndex];
         target.AddText(entry.Name, projected, format);
-        ColumnPropertyEntryBuilder replacement = target.Entries[target.Entries.Count - 1];
+        ColumnPropertyEntryBuilder replacement = target.Entries[^1];
         entry.Value = replacement.Value;
         target.Entries.RemoveAt(target.Entries.Count - 1);
         return ColumnPropertyBlock.Parse(builder.ToBytes(format), format);
@@ -928,6 +929,7 @@ internal sealed class TableSchemaEditor(
         // properties the writer does not model are kept too.
         ColumnPropertyBlock? originalProperties =
             await snapshots.ReadLvPropBlockAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        ConstraintRegistry.ValidatePersistedConstraintProperties(tableName, originalProperties);
 
         var existingDefs = new List<ColumnDefinition>(tableDef.Columns.Count);
         for (int i = 0; i < tableDef.Columns.Count; i++)

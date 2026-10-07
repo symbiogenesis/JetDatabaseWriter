@@ -82,7 +82,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Stream stream,
         byte[] header,
         bool leaveOpen = false)
-        : base(DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen))
+        : base(DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options))
     {
         Guard.NotNull(options, nameof(options));
 
@@ -193,16 +193,16 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-            byte[] header = await PageFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
+            byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
 
             // Office Crypto API ("Agile") encryption: the file is a real OLE
             // compound document with EncryptionInfo + EncryptedPackage streams.
             // EncryptionManager handles detection, password verification, and
             // package decryption; on success we re-enter on the inner ACCDB
             // bytes.
-            byte[]? decryptedAgile = await EncryptionManager
-                .TryDecryptAgileCompoundFileAsync(stream, header, options.Password, EncryptionManager.ReaderPasswordOption, cancellationToken, options)
-                .ConfigureAwait(false);
+            byte[]? decryptedAgile = EncryptionManager.IsCompoundFileEncrypted(header)
+                ? await EncryptionManager.TryDecryptAgileCompoundFileAsync(stream, header, options.Password, EncryptionManager.ReaderPasswordOption, cancellationToken, options).ConfigureAwait(false)
+                : null;
             if (decryptedAgile != null)
             {
                 // We no longer need the source stream: dispose it unless the

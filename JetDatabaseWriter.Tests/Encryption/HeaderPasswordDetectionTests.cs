@@ -77,7 +77,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
             var data = new TheoryData<DatabaseFormat, AccessEncryptionFormat, WriteMode>();
             foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
             {
-                data.Add(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword, mode);
+                data.Add(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb, mode);
             }
 
             return data;
@@ -119,9 +119,8 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
 
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb, null, AccessEncryptionFormat.AccdbAgile)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword, AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, AccessEncryptionFormat.AccdbAgile)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgileCfb, AccessEncryptionFormat.AccdbAgileCfb)]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, AccessEncryptionFormat.AccdbAgile)]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbStandard, AccessEncryptionFormat.AccdbStandard)]
     public async Task EncryptAsync_WriterCreatedDatabase_RoundTrips(DatabaseFormat format, AccessEncryptionFormat? target, AccessEncryptionFormat expected)
     {
@@ -174,62 +173,6 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         await AssertRefusedAsync(path, password: null);
         Assert.Equal(["1|one", "2|two"], await ReadRowsAsync(path, FirstPassword));
     }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task AccdbLegacyPassword_WriterCreatedVersion2File_RequiresPassword(bool byPath)
-    {
-        // Writer-created .accdb files carry ACE version 2 in header byte 0x14,
-        // as Access 2007 files do; the password was enforced only from version 3.
-        string path = await this.CreateDatabaseWithRowAsync(DatabaseFormat.AceAccdb);
-        Assert.Equal(2, (await File.ReadAllBytesAsync(path, Ct))[0x14]);
-        await AccessWriter.EncryptAsync(path, FirstPassword.AsMemory(), AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, Ct);
-
-        foreach (string? password in new[] { null, "wrong" })
-        {
-            var readerOptions = new AccessReaderOptions { UseLockFile = false, Password = password.AsMemory() };
-            var writerOptions = new AccessWriterOptions { UseLockFile = false, Password = password.AsMemory() };
-            if (byPath)
-            {
-                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(path, readerOptions, Ct));
-                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessWriter.OpenAsync(path, writerOptions, Ct));
-            }
-            else
-            {
-                await using MemoryStream stream = await CopyToStreamAsync(path);
-                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, Ct));
-                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessWriter.OpenAsync(stream, writerOptions, leaveOpen: true, Ct));
-            }
-        }
-
-        var rightReader = new AccessReaderOptions { UseLockFile = false, Password = FirstPassword.AsMemory() };
-        var rightWriter = new AccessWriterOptions { UseLockFile = false, Password = FirstPassword.AsMemory() };
-        if (byPath)
-        {
-            await using (AccessWriter writer = await AccessWriter.OpenAsync(path, rightWriter, Ct))
-            {
-                await writer.InsertRowAsync(TableName, [2, "two"], Ct);
-            }
-
-            await using AccessReader reader = await AccessReader.OpenAsync(path, rightReader, Ct);
-            Assert.Equal(["1|one", "2|two"], await ReadRowsAsync(reader));
-        }
-        else
-        {
-            await using MemoryStream stream = await CopyToStreamAsync(path);
-            await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, rightWriter, leaveOpen: true, Ct))
-            {
-                await writer.InsertRowAsync(TableName, [2, "two"], Ct);
-            }
-
-            stream.Position = 0;
-            await using AccessReader reader = await AccessReader.OpenAsync(stream, rightReader, leaveOpen: true, Ct);
-            Assert.Equal(["1|one", "2|two"], await ReadRowsAsync(reader));
-        }
-    }
-
-    // ───── Access-authored databases ─────────────────────────────────
 
     [Theory]
     [MemberData(nameof(AccessAuthoredFixtures))]
@@ -334,18 +277,12 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         Assert.True(EncryptionManager.HasHeaderPassword(header, format));
     }
 
-    [Theory]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword)]
-    public async Task HasHeaderPassword_LibraryEncryptedDatabase_ReturnsTrue(DatabaseFormat format, AccessEncryptionFormat encryption)
+    [Fact]
+    public async Task HasHeaderPassword_NativeEncryptedDatabase_ReturnsTrue()
     {
-        string path = await this.CreateDatabaseWithRowAsync(format);
-        Assert.False(EncryptionManager.HasHeaderPassword(await ReadHeaderAsync(path), format));
-
-        await AccessWriter.EncryptAsync(path, FirstPassword.AsMemory(), encryption, NoLockOptions, Ct);
-
-        Assert.True(EncryptionManager.HasHeaderPassword(await ReadHeaderAsync(path), format));
+        byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), Ct);
+        Assert.True(EncryptionManager.HasHeaderPassword(bytes, DatabaseFormat.Jet4Mdb));
     }
-
     [Fact]
     public void HasHeaderPassword_CreationDateNotADayNumber_ReturnsTrueUnlessAreaIsZero()
     {

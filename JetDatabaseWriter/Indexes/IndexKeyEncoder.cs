@@ -99,6 +99,11 @@ internal static class IndexKeyEncoder
             return EncodeTextEntry(column.TextSortOrder, value, ascending);
         }
 
+        if (column.Type == BinaryType)
+        {
+            value = NormalizeFixedBinaryValue(value, column.IsFixed && !column.IsCalculated ? column.Size : 0);
+        }
+
         return column.Type == NumericType
             ? EncodeNumericEntryAtDeclaredScale(value, ascending, column.NumericScale, format.LegacyNumericIndexKeys)
             : EncodeEntry(column.Type, value, ascending);
@@ -388,6 +393,41 @@ internal static class IndexKeyEncoder
         ];
 
         return EncodeGeneralBinaryEntry(display, ascending);
+    }
+
+    /// <summary>Normalizes a binary key to the declared fixed width, or preserves a variable value.</summary>
+    /// <param name="value">The binary value.</param>
+    /// <param name="fixedLength">The fixed width, or zero for variable storage.</param>
+    /// <returns>The binary bytes, or the original null marker.</returns>
+    /// <exception cref="ArgumentException">The value cannot be coerced to binary bytes or exceeds the fixed width.</exception>
+    internal static object? NormalizeFixedBinaryValue(object? value, int fixedLength)
+    {
+        if (value is null or DBNull)
+        {
+            return value;
+        }
+
+        byte[] data = value switch
+        {
+            byte[] bytes => bytes,
+            ArraySegment<byte> segment => segment.ToArray(),
+            ReadOnlyMemory<byte> memory => memory.ToArray(),
+            Memory<byte> memory => memory.ToArray(),
+            _ => throw new ArgumentException($"Cannot coerce value of type {value.GetType().Name} to a Binary key.", nameof(value)),
+        };
+        if (fixedLength <= 0 || data.Length == fixedLength)
+        {
+            return data;
+        }
+
+        if (data.Length > fixedLength)
+        {
+            throw new ArgumentException($"Binary key occupies {data.Length} bytes but its fixed column holds {fixedLength}.", nameof(value));
+        }
+
+        byte[] padded = new byte[fixedLength];
+        data.AsSpan().CopyTo(padded);
+        return padded;
     }
 
     /// <summary>

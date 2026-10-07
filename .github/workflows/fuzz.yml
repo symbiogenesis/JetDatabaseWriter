@@ -1,0 +1,47 @@
+name: Adversarial fuzz
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: Cases per harness and target framework
+        default: '32'
+        required: true
+      seed:
+        description: Reproducible mutation seed
+        default: '20261006'
+        required: true
+permissions:
+  contents: read
+jobs:
+  fuzz:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tf: [net10.0, net8.0]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
+      - name: Restore
+        run: dotnet restore JetDatabaseWriter.Tests --locked-mode
+      - name: Build
+        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:RunAnalyzers=false
+      - name: Bounded process fuzz cases
+        shell: pwsh
+        env:
+          FUZZ_CASES: ${{ inputs.cases }}
+          FUZZ_SEED: ${{ inputs.seed }}
+        run: ./scripts/run-hosted-fuzz.ps1 -Runner JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/JetDatabaseWriter.Tests.exe -Cases ([int]$env:FUZZ_CASES) -Seed ([int]$env:FUZZ_SEED)
+      - name: Retain reproductions and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-${{ matrix.tf }}
+          path: artifacts/fuzz/
+          retention-days: 7

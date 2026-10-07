@@ -737,17 +737,12 @@ public sealed class LinkedTableTests : IDisposable
     public async Task LinkedTable_EncryptedSource_UsesExplicitSourcePassword()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        const string sourcePassword = "source-secret";
-        string sourcePath = await this.CreateTempAccdbDatabaseAsync("PasswordSource");
+        const string sourcePassword = "Native123";
+        string sourcePath = Path.Combine(Path.GetTempPath(), $"PasswordSource_{Guid.NewGuid():N}.mdb");
+        this.tempFiles.Add(sourcePath);
+        File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), sourcePath);
         string hostPath = await this.CreateTempAccdbDatabaseAsync("PasswordHost");
-        await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, new AccessWriterOptions { UseLockFile = false }, ct))
-        {
-            await writer.CreateTableAsync("Data", [new("Id", typeof(int))], ct);
-            await writer.InsertRowAsync("Data", [7], ct);
-        }
-
-        await AccessWriter.EncryptAsync(sourcePath, sourcePassword.AsMemory(), AccessEncryptionFormat.AccdbLegacyPassword, new AccessWriterOptions { UseLockFile = false }, ct);
-        await InjectLinkedTableEntryAsync(hostPath, "LinkedData", sourcePath, "Data", ct);
+        await InjectLinkedTableEntryAsync(hostPath, "LinkedData", sourcePath, "T", ct);
         int passwordRequests = 0;
         var options = new AccessReaderOptions("unrelated-host-password")
         {

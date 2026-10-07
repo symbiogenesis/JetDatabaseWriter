@@ -510,43 +510,6 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         await AssertEnforcementAndCascadeAsync(stream);
     }
 
-    [Theory]
-    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbLegacyPassword)]
-    public async Task SchemaRewrite_OfEncryptedDatabase_KeepsForeignKeyIndexes(DatabaseFormat format, AccessEncryptionFormat encryption)
-    {
-        const string password = "RwPa$$word1";
-        var options = new AccessWriterOptions { UseLockFile = false };
-        MemoryStream source = await this.CreateDatabaseAsync(format);
-        await using (AccessWriter writer = await OpenWriterAsync(source))
-        {
-            await CreateParentAndChildAsync(writer);
-        }
-
-        string path = Path.Combine(Path.GetTempPath(), $"RwEncrypted_{Guid.NewGuid():N}{(format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb")}");
-        try
-        {
-            await File.WriteAllBytesAsync(path, source.ToArray(), TestContext.Current.CancellationToken);
-            await AccessWriter.EncryptAsync(path, password.AsMemory(), encryption, options, TestContext.Current.CancellationToken);
-
-            var encryptedOptions = new AccessWriterOptions { UseLockFile = false, Password = password.AsMemory() };
-            await using (AccessWriter writer = await AccessWriter.OpenAsync(path, encryptedOptions, TestContext.Current.CancellationToken))
-            {
-                await writer.RenameColumnAsync(Child, "Note", "Note2", TestContext.Current.CancellationToken);
-                await writer.AddColumnAsync(Parent, new ColumnDefinition("Extra", typeof(int)), TestContext.Current.CancellationToken);
-            }
-
-            await AccessWriter.DecryptAsync(path, password.AsMemory(), options, TestContext.Current.CancellationToken);
-            await using var plain = new MemoryStream();
-            plain.Write(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
-            await AssertRelationshipLinkedAsync(plain, Parent, "Id", Child, "ParentId");
-            await AssertEnforcementAndCascadeAsync(plain);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
     [Fact]
     public async Task SchemaRewrite_OfNativeEncryptedJet4_KeepsRelationshipsAndEnforcement()
     {

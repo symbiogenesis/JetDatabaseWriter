@@ -135,7 +135,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
             await AccessWriter.EncryptAsync(
                 blockedPath,
                 FirstPasswordMemory,
-                AccessEncryptionFormat.AccdbLegacyPassword,
+                AccessEncryptionFormat.AccdbAgileCfb,
                 cancellationToken: ct));
 
         Assert.Equal(JetErrorCode.DatabaseInUse, error.ErrorCode);
@@ -152,35 +152,14 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
             RespectExistingLockFile = false,
         };
 
-        await AccessWriter.EncryptAsync(allowedPath, FirstPasswordMemory, AccessEncryptionFormat.AccdbLegacyPassword, options, ct);
+        await AccessWriter.EncryptAsync(allowedPath, FirstPasswordMemory, AccessEncryptionFormat.AccdbAgileCfb, options, ct);
 
-        Assert.Equal(AccessEncryptionFormat.AccdbLegacyPassword, await AccessWriter.DetectEncryptionFormatAsync(allowedPath, ct));
+        Assert.Equal(AccessEncryptionFormat.AccdbAgileCfb, await AccessWriter.DetectEncryptionFormatAsync(allowedPath, ct));
         Assert.False(File.Exists(allowedLockPath));
         await AssertOpenableAsync(allowedPath, FirstPassword, await ListTablesAsync(blockedPath, password: null));
     }
 
     // ───── Jet4 RC4 ──────────────────────────────────────────────────
-
-    [Fact]
-    public async Task EncryptDecrypt_AccdbLegacy_RoundTripsThroughChangePassword()
-    {
-        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
-        IReadOnlyList<string> originalTables = await ListTablesAsync(path, password: null);
-
-        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, TestContext.Current.CancellationToken);
-        Assert.Equal(AccessEncryptionFormat.AccdbLegacyPassword, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
-        await AssertOpenableAsync(path, FirstPassword, originalTables);
-
-        await AccessWriter.ChangePasswordAsync(path, FirstPasswordMemory, SecondPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken);
-        await AssertWrongPasswordAsync(path, FirstPassword);
-        await AssertOpenableAsync(path, SecondPassword, originalTables);
-
-        await AccessWriter.DecryptAsync(path, SecondPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken);
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
-        await AssertOpenableAsync(path, password: null, originalTables);
-    }
-
-    // ───── ACCDB Agile (Access-native flat layout) ──────────────
 
     [Fact]
     public async Task EncryptDecrypt_AccdbAgile_RoundTripsThroughChangePassword()
@@ -268,10 +247,9 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     /// <param name="source">"AdventureWorks", "Northwind", "WriterJet4" or "WriterAce".</param>
     /// <param name="format">The encryption to apply and remove.</param>
     [Theory]
-    [InlineData("Northwind", AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData("WriterAce", AccessEncryptionFormat.AccdbLegacyPassword)]
-    [InlineData("Northwind", AccessEncryptionFormat.AccdbAgile)]
     [InlineData("Northwind", AccessEncryptionFormat.AccdbAgileCfb)]
+    [InlineData("WriterAce", AccessEncryptionFormat.AccdbAgileCfb)]
+    [InlineData("Northwind", AccessEncryptionFormat.AccdbAgile)]
     [InlineData("Northwind", AccessEncryptionFormat.AccdbStandard)]
     public async Task DecryptAsync_RestoresAccessUnencryptedHeader(string source, AccessEncryptionFormat format)
     {
@@ -308,7 +286,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to replace a file another handle holds without FileShare.Delete.");
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbAgileCfb);
         byte[] original = await File.ReadAllBytesAsync(path, ct);
 
         IOException ex;
@@ -337,7 +315,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to rename a file over a read-only one.");
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbAgileCfb);
         byte[] original = await File.ReadAllBytesAsync(path, ct);
 
         IOException ex;
@@ -372,7 +350,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     public async Task ReplaceFileAtomic_WhenTempWriteCancelled_LeavesOriginalAndNoTempFile()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbAgileCfb);
         byte[] original = await File.ReadAllBytesAsync(path, ct);
         var cancelled = new CancellationToken(canceled: true);
 
@@ -398,7 +376,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to rename a file another handle holds without FileShare.Delete.");
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string tempPath = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        string tempPath = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbAgileCfb);
         string path = Path.Combine(Path.GetDirectoryName(tempPath)!, "Replaced.accdb");
         byte[] contents = await File.ReadAllBytesAsync(tempPath, ct);
 
@@ -426,7 +404,7 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     public async Task ChangePassword_WithOpenReader_LeavesOriginalIntact()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbLegacyPassword);
+        string path = this.CopyToNewDirectory(TestDatabases.EncryptedAccdbAgileCfb);
         byte[] original = await File.ReadAllBytesAsync(path, ct);
 
         Exception? failure;
@@ -463,7 +441,6 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     /// </summary>
     /// <param name="fixture">The frozen encrypted fixture to start from.</param>
     [Theory]
-    [InlineData(nameof(TestDatabases.EncryptedAccdbLegacyPassword))]
     [InlineData(nameof(TestDatabases.EncryptedAccdbAgileCfb))]
     public async Task ChangePassword_Success_LeavesNoTempFile(string fixture)
     {
@@ -480,12 +457,12 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     // ───── Cross-format re-encryption ────────────────────────────────
 
     [Fact]
-    public async Task ReEncrypt_AccdbLegacyToAgile_PreservesData()
+    public async Task ReEncrypt_AccdbAgileCfbToAgile_PreservesData()
     {
         string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
         IReadOnlyList<string> originalTables = await ListTablesAsync(path, password: null);
 
-        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, TestContext.Current.CancellationToken);
+        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, AccessEncryptionFormat.AccdbAgileCfb, NoLockOptions, TestContext.Current.CancellationToken);
         await AccessWriter.DecryptAsync(path, FirstPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken);
         await AccessWriter.EncryptAsync(path, SecondPasswordMemory, AccessEncryptionFormat.AccdbAgile, NoLockOptions, TestContext.Current.CancellationToken);
 
@@ -526,15 +503,13 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
     public async Task ChangePasswordAsync_WithWrongOldPassword_Throws()
     {
         string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
-        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, TestContext.Current.CancellationToken);
+        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, AccessEncryptionFormat.AccdbAgileCfb, NoLockOptions, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await AccessWriter.ChangePasswordAsync(path, "totally-wrong".AsMemory(), SecondPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken));
     }
 
     [Theory]
-    [InlineData(AccessEncryptionFormat.AccdbLegacyPassword, FirstPassword + "x")]
-    [InlineData(AccessEncryptionFormat.AccdbLegacyPassword, FirstPassword + "\0")]
     [InlineData(AccessEncryptionFormat.AccdbAgileCfb, FirstPassword + "x")]
     [InlineData(AccessEncryptionFormat.AccdbAgileCfb, FirstPassword + "\0")]
     public async Task HeaderPasswordFormats_OpenWithWrongPassword_ThrowsUnauthorizedAccessException(
@@ -644,22 +619,6 @@ public sealed class EncryptionMutationTests(DatabaseCache db) : IClassFixture<Da
         Assert.NotEmpty(originalMeta);
 
         await AccessWriter.EncryptAsync(path, FirstPasswordMemory, AccessEncryptionFormat.AccdbAgile, NoLockOptions, TestContext.Current.CancellationToken);
-        await AccessWriter.ChangePasswordAsync(path, FirstPasswordMemory, SecondPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken);
-        await AccessWriter.DecryptAsync(path, SecondPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken);
-
-        Dictionary<string, IReadOnlyList<ColumnMetadata>> afterMeta = await GetAllColumnMetadataAsync(path, password: null);
-        AssertColumnMetadataEqual(originalMeta, afterMeta);
-    }
-
-    [Fact]
-    public async Task EncryptDecrypt_AccdbLegacyPassword_PreservesColumnMetadata()
-    {
-        string path = await this.CloneAsync(TestDatabases.NorthwindTraders, ".accdb");
-
-        Dictionary<string, IReadOnlyList<ColumnMetadata>> originalMeta = await GetAllColumnMetadataAsync(path, password: null);
-        Assert.NotEmpty(originalMeta);
-
-        await AccessWriter.EncryptAsync(path, FirstPasswordMemory, AccessEncryptionFormat.AccdbLegacyPassword, NoLockOptions, TestContext.Current.CancellationToken);
         await AccessWriter.ChangePasswordAsync(path, FirstPasswordMemory, SecondPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken);
         await AccessWriter.DecryptAsync(path, SecondPasswordMemory, NoLockOptions, TestContext.Current.CancellationToken);
 

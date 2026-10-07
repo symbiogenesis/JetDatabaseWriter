@@ -22,6 +22,7 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
         ColumnType[] ColTypes,
         byte[] NumericScales,
         TextSortOrder[] TextSortOrders,
+        int[] FixedBinaryLengths,
         IReadOnlyList<bool> Ascending,
         bool LegacyNumeric);
 
@@ -73,7 +74,8 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
                     foreignRowIndexes[index],
                     core.Value.NumericScales[index],
                     core.Value.LegacyNumeric,
-                    core.Value.TextSortOrders[index]);
+                    core.Value.TextSortOrders[index],
+                    core.Value.FixedBinaryLengths[index]);
             }
 
             resolved = new ParentSeekIndex(core.Value.FirstDp, keyColumns);
@@ -115,7 +117,8 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
                     core.Value.Ascending[index],
                     core.Value.NumericScales[index],
                     core.Value.LegacyNumeric,
-                    core.Value.TextSortOrders[index]);
+                    core.Value.TextSortOrders[index],
+                    core.Value.FixedBinaryLengths[index]);
             }
 
             resolved = new ChildSeekIndex(core.Value.FirstDp, keyColumns);
@@ -149,6 +152,7 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
         var columnTypes = new ColumnType[columnNames.Count];
         byte[] numericScales = new byte[columnNames.Count];
         var textSortOrders = new TextSortOrder[columnNames.Count];
+        int[] fixedBinaryLengths = new int[columnNames.Count];
         for (int index = 0; index < columnNames.Count; index++)
         {
             int columnIndex = definition.FindColumnIndex(columnNames[index]);
@@ -161,6 +165,8 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
             columnTypes[index] = definition.Columns[columnIndex].Type;
             numericScales[index] = definition.Columns[columnIndex].NumericScale;
             textSortOrders[index] = definition.Columns[columnIndex].TextSortOrder;
+            ColumnInfo column = definition.Columns[columnIndex];
+            fixedBinaryLengths[index] = column.Type == BinaryType && column.IsFixed && !column.IsCalculated ? column.Size : 0;
             if (columnTypes[index] is TextType or MemoType && !textSortOrders[index].IsSupported)
             {
                 return null;
@@ -189,6 +195,7 @@ internal sealed class RelationshipSeekPlanner(JetFormat format, TableDefReader t
             columnTypes,
             numericScales,
             textSortOrders,
+            fixedBinaryLengths,
             hit.Value.AscendingFlags,
             format.LegacyNumericIndexKeys);
     }

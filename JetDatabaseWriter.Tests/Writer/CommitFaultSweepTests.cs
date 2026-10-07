@@ -49,6 +49,7 @@ public class CommitFaultSweepTests
 
             baseline = initial.ToArray();
         }
+
         for (int fault = 0; ; fault++)
         {
             await using var stream = new WriteFaultStream();

@@ -114,6 +114,7 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
         await AssertFaultAsync(original, completed, "Update", stream => stream.FailDuringWrite(1), "Native123");
         await AssertFaultAsync(original, completed, "Update", stream => stream.FailOnFlush(1), "Native123");
     }
+
     /// <summary>Cancellation before final replay cannot leave a detached transaction active when early undo fails.</summary>
     [Fact]
     public async Task CancellationBeforeFinalReplay_UndoFailureFaultsWriter()

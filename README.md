@@ -50,7 +50,7 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 
 ### Security
 
-> **✅ All 36 known relevant CVEs have been addressed.** Every identified attack surface — CFB/OLE compound file parsing, JET/ACE MDB/ACCDB format, and Office Agile Encryption — is mitigated in code and covered by regression tests. See [docs/cve-vulnerability-analysis.md](docs/cve-vulnerability-analysis.md) for the full threat model and test inventory.
+The parser enforces bounds on several page, long-value, attachment and encryption paths. Hostile-file auditing and fuzz coverage remain ongoing; the CVE review is a threat-model inventory, not proof that every attack surface is mitigated. See [the security work](docs/todo.md#s--hostile-file-parsing-and-schema-preservation) and [the vulnerability review](docs/cve-vulnerability-analysis.md).
 
 ---
 
@@ -66,9 +66,9 @@ Beyond functional tests, the codebase is validated by:
 - **Static analysis** — Roslyn .NET analyzers, Roslynator, StyleCop, and the `.editorconfig` code-style rules, all errors in the Release build of the library and the tests that CI runs on every push to main and every pull request
 - **Continuous integration** — [GitHub Actions](.github/workflows/ci.yml) builds the solution in Release and runs the test suite on .NET 10 and on .NET 8 (the `netstandard2.1` build) on Windows, on every push to main and every pull request; a release tag runs the same checks and publishes the package that run built only after it passes
 - **Reproducible builds** — deterministic compilation via [DotNet.ReproducibleBuilds](https://github.com/dotnet/reproducible-builds); identical source always produces identical binaries
-- **Access Compact & Repair round-trips** — writer-created tables, indexes, relationships, password-protected ACCDB output, and Northwind-hosted attachment/multi-value complex columns with chained-LVAL payloads are validated on Access-equipped Windows hosts.
+- **Access Compact & Repair checks** — DAO-guarded tests exercise tables, indexes, relationships and complex values. The [validation matrix](docs/design/writer-disk-format-validation-matrix.md) records the tested revision, native-engine results and unresolved gaps.
 - **Index key fixture parity** — long text/MEMO index keys with embedded line breaks are validated against Access-authored fixtures: Jet4 (V2000 / V2003 / V2007) is byte-exact, and V2010 ACE is byte-exact for the checked-in Access-authored `Table11` / `Table11_desc` long rows. The V2010 encoder also includes the DAO-derived 65-character contribution tables for the plain, auxiliary, row10, row11, and row12 long-row suffix contexts, with probe validation showing zero mismatches across the exported matrices and observed double-space sweeps. See [GeneralLegacyEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralLegacyEncoderFixtureTests.cs), [GeneralEncoderFixtureTests.cs](JetDatabaseWriter.Tests/Indexes/Collation/GeneralEncoderFixtureTests.cs), and [format-probe notes](docs/format-probe/format-probe-long-row-index-encoding.md).
-- **Fuzz testing** — random byte mutations and truncation matrices at every page boundary
+- **Fuzz testing** — an explicit hosted workflow runs deterministic corpus mutations and truncations with per-process time and memory limits; reproductions and logs are retained on failure
 - **Memory safety analysis** — control-flow and resource-leak detection via [InferSharp](https://github.com/microsoft/infersharp)
 
 ---
@@ -1035,10 +1035,10 @@ The items below are either **not yet implemented** or are important behavioral c
 - **Physical shrinking, initial database creation and encrypted-container rewrapping use separate lifecycles.** The statement rollback contract above does not make those operations crash-safe or make container replacement atomic.
 
 ### Encryption
-- **`AccessWriter` cannot open Access-native flat Agile (`AccessEncryptionFormat.AccdbAgile`) files.** `OpenAsync` throws `NotSupportedException` and leaves the file untouched. This is the format `EncryptAsync` picks by default for `.accdb`. Decrypt, edit, and re-encrypt, or use `AccessEncryptionFormat.AccdbAgileCfb` for files the writer must open. See [Encryption Support](#encryption-support).
+- **Native flat Agile pages use the normal reader/writer pager.** Microsoft-produced AES256-CBC/SHA512 fixture coverage does not establish every provider, generation or maintenance operation. See [Encryption Support](#encryption-support).
 
 ### Column defaults and validation rules
-- **Persisted `DefaultValue` and `ValidationRule` expressions run on the library's own expression engine.** An expression that uses syntax or a function the engine does not support (for example `DLookUp`) refuses the write before mutation. `GenGUID()` generates a GUID; `CurrentUser()` returns `Admin` for the currently supported session without workgroup authentication. Table-level (record) validation rules are not enforced, and a CLR `ValidationRule` delegate binds only the writer that created the table.
+- **Persisted `DefaultValue` and `ValidationRule` expressions run on the library's own expression engine.** An expression that uses syntax or a function the engine does not support (for example `DLookUp`) refuses the write before mutation. `GenGUID()` generates a GUID; `CurrentUser()` returns `Admin` for the currently supported session without workgroup authentication. Table-level (record) rules are enforced against complete post-update rows, and a CLR `ValidationRule` delegate binds only the writer that created the table.
 
 ### Table and row size
 - **A row must fit on one data page: 2,036 bytes on Jet3, 4,080 on Jet4 and ACE.** MEMO values over 1,024 bytes and OLE values over 256 bytes are stored on separate long-value pages and take 12 bytes in the row; shorter ones stay in the row while it fits. Microsoft Access also moves long values out of a row too long for a page. The writer moves the largest MEMO and byte-array OLE values first, until the row fits, so three 1,000-character MEMO values on Jet3, or five on Jet4 and ACE, are written; whether Access picks the same values is unchecked. An OLE value given as a string stays in the row. A row still too long with every such value moved, because of its other columns, its OLE strings or the 12-byte headers of many long values, throws `JetLimitationException` before anything is written, long-value pages included. An update that grows a row too far, one of its own rows or a dependent row its cascade rewrites, throws the same exception before it changes any row.

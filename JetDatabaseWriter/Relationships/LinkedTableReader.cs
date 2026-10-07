@@ -46,6 +46,19 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <summary>Discards the cached link list.</summary>
     internal void ClearCache() => this.links = null;
 
+    /// <summary>Refuses execution of ODBC links even when they have a local cached TDEF.</summary>
+    /// <param name="tableName">The requested table.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="NotSupportedException">ODBC execution is unavailable.</exception>
+    internal async ValueTask ThrowIfOdbcExecutionAsync(string tableName, CancellationToken cancellationToken)
+    {
+        LinkedTableInfo? link = await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        if (link?.Kind == LinkedTableKind.Odbc)
+        {
+            throw new NotSupportedException($"Linked ODBC table '{tableName}' exposes cached schema only; ODBC execution is unavailable.");
+        }
+    }
+
     /// <summary>Counts the rows of a linked table, or returns <see langword="null"/> when <paramref name="tableName"/> is not a link.</summary>
     /// <param name="tableName">The linked table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

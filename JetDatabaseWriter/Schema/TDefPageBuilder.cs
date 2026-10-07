@@ -111,7 +111,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 descriptors.Add(preserved);
                 if (source.IsFixed)
                 {
-                    fixedOffset += source.Type == TextType ? source.Size : GetFixedSize(source.Type);
+                    fixedOffset += source.Type is TextType or BinaryType ? source.Size : GetFixedSize(source.Type);
                 }
                 else
                 {
@@ -122,7 +122,12 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             }
 
             bool isCalculated = definition.IsCalculated;
-            bool variable = isCalculated || definition.ForceVariableLengthStorage || IsAlwaysVariableLength(type);
+            bool variable = isCalculated || definition.ForceVariableLengthStorage || (type != BinaryType && IsAlwaysVariableLength(type));
+            if (type is TextType or BinaryType && definition.DescriptorFlagsOverride is byte storageFlags)
+            {
+                variable = (storageFlags & Constants.ColumnDescriptorFlags.Fixed) == 0;
+            }
+
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
             int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
 
@@ -186,7 +191,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             }
             else
             {
-                fixedOffset += GetFixedSize(type);
+                fixedOffset += type is TextType or BinaryType ? size : GetFixedSize(type);
             }
         }
 

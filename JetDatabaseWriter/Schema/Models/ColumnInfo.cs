@@ -160,8 +160,8 @@ internal sealed record ColumnInfo
                 return true;
             }
 
-            // Text honors FLAG_FIXED, including Access-authored CHAR columns.
-            if (this.Type != TextType && JetTypeInfo.IsAlwaysVariableLength(this.Type))
+            // Text and Binary honor FLAG_FIXED, including native CHAR/BINARY columns.
+            if (this.Type is not TextType and not BinaryType && JetTypeInfo.IsAlwaysVariableLength(this.Type))
             {
                 return false;
             }

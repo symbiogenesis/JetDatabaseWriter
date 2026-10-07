@@ -18,9 +18,8 @@ using Xunit;
 /// <summary>
 /// Tests for the encryption probe that runs when a database is opened.
 /// Opening a reader or a writer must look only at page 0 to decide whether
-/// the file is Access-native flat Agile; the whole file is read only once
-/// flat Agile is actually detected. The writer cannot edit flat Agile in
-/// place, so it must refuse such a file before writing anything.
+/// the file uses native Agile encryption, then unlock its original provider
+/// without reading or rewriting the data pages.
 /// </summary>
 /// <param name="db">The database input.</param>
 public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<DatabaseCache>, IDisposable
@@ -62,7 +61,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         var data = new TheoryData<AccessEncryptionFormat, bool>();
         foreach (AccessEncryptionFormat format in new[]
         {
-            AccessEncryptionFormat.AccdbLegacyPassword,
             AccessEncryptionFormat.AccdbAgileCfb,
             AccessEncryptionFormat.AccdbStandard,
         })
@@ -97,7 +95,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Ace, AccessEncryptionFormat.None)]
     [InlineData(AdventureWorks, AccessEncryptionFormat.None)]
     [InlineData(Northwind, AccessEncryptionFormat.None)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     public async Task ReaderOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -119,7 +116,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Jet3, AccessEncryptionFormat.None)]
     [InlineData(Jet4, AccessEncryptionFormat.None)]
     [InlineData(Ace, AccessEncryptionFormat.None)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     public async Task WriterOpen_ReadsOnlyTheFirstPages(string source, AccessEncryptionFormat encryption)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
@@ -144,12 +140,14 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     }
 
     [Fact]
-    public async Task ReaderOpen_FlatAgile_StillDecryptsTheWholeFile()
+    public async Task ReaderOpen_FlatAgile_ReadsOnlyTheFirstPages()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream backing = await BuildLargeDatabaseAsync(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, ct);
 
-        await using AccessReader reader = await AccessReader.OpenAsync(backing, ReaderOptions(AccessEncryptionFormat.AccdbAgile), leaveOpen: true, ct);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await AccessReader.OpenAsync(counting, ReaderOptions(AccessEncryptionFormat.AccdbAgile), leaveOpen: true, ct);
+        Assert.True(counting.BytesRead <= MaxOpenBytes);
         Assert.Equal(3L, await CountRowsAsync(reader, ct));
     }
 
@@ -184,13 +182,12 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         Assert.False(OfficeCryptoAgile.IsFlatAgileEncrypted(file));
     }
 
-    // ───── Writer refuses flat Agile ─────────────────────────────────
+    // ───── Native Agile password verification and page ownership ─────
 
     [Theory]
-    [InlineData(Password)]
     [InlineData(null)]
     [InlineData("wrong-password")]
-    public async Task WriterOpen_FlatAgilePath_ThrowsNotSupportedAndLeavesFileUnchanged(string? password)
+    public async Task WriterOpen_FlatAgilePath_RejectsWrongPasswordAndLeavesFileUnchanged(string? password)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string path = await this.CreateFlatAgileFileAsync(ct);
@@ -198,10 +195,10 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         string lockPath = LockFileSlotWriter.GetLockFilePath(path);
 
         var options = new AccessWriterOptions { Password = password.AsMemory() };
-        NotSupportedException ex;
+        UnauthorizedAccessException ex;
         using (FileStreamFactory.OpenTracker opens = FileStreamFactory.TrackOpens())
         {
-            ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             {
                 await using AccessWriter writer = await AccessWriter.OpenAsync(path, options, ct);
             });
@@ -209,7 +206,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
             Assert.Equal(1, CountOpens(opens, path));
         }
 
-        Assert.Contains("Agile", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(before, await File.ReadAllBytesAsync(path, ct));
         Assert.False(File.Exists(lockPath), "The refused open left a lock file behind.");
 
@@ -221,7 +218,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task WriterOpen_FlatAgileStream_ThrowsNotSupportedAndLeavesStreamUnchanged(bool leaveOpen)
+    public async Task WriterOpen_FlatAgileStream_PreservesHeaderAndStreamOwnership(bool leaveOpen)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream source = await BuildLargeDatabaseAsync(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile, ct);
@@ -232,12 +229,11 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         backing.Position = 0;
         var counting = new CountingStream(backing);
 
-        NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(counting, WriterOptions(AccessEncryptionFormat.AccdbAgile), leaveOpen, ct))
         {
-            await using AccessWriter writer = await AccessWriter.OpenAsync(counting, WriterOptions(AccessEncryptionFormat.AccdbAgile), leaveOpen, ct);
-        });
+            Assert.Equal(0L, counting.BytesWritten);
+        }
 
-        Assert.Contains("Agile", ex.Message, StringComparison.Ordinal);
         Assert.Equal(0L, counting.BytesWritten);
         Assert.True(
             counting.BytesRead <= MaxOpenBytes,
@@ -257,7 +253,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         byte[] before = backing.ToArray();
 
         var options = new AccessWriterOptions { UseLockFile = false, Password = "wrong-password".AsMemory() };
-        _ = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
         {
             await using AccessWriter writer = await AccessWriter.OpenAsync(backing, options, leaveOpen: true, ct);
         });
@@ -271,7 +267,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     [InlineData(Jet3, AccessEncryptionFormat.None)]
     [InlineData(Jet4, AccessEncryptionFormat.None)]
     [InlineData(Ace, AccessEncryptionFormat.None)]
-    [InlineData(Ace, AccessEncryptionFormat.AccdbLegacyPassword)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbAgileCfb)]
     [InlineData(Ace, AccessEncryptionFormat.AccdbStandard)]
     public async Task WriterOpen_PathOverload_OpensDatabaseFileOnce(string source, AccessEncryptionFormat encryption)
@@ -293,7 +288,6 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
     }
 
     [Theory]
-    [InlineData(AccessEncryptionFormat.AccdbLegacyPassword)]
     [InlineData(AccessEncryptionFormat.AccdbAgileCfb)]
     public async Task WriterOpen_PathOverload_WrongPassword_LeavesFileAndLockUnchanged(AccessEncryptionFormat encryption)
     {

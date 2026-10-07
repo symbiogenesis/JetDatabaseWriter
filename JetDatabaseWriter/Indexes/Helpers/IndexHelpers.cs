@@ -506,7 +506,8 @@ internal static class IndexHelpers
                         col.Ascending,
                         col.NumericScale,
                         col.LegacyNumeric,
-                        col.TextSortOrder);
+                        col.TextSortOrder,
+                        col.FixedBinaryLength);
                 }
                 else
                 {
@@ -516,7 +517,8 @@ internal static class IndexHelpers
                         col.Ascending,
                         col.NumericScale,
                         col.LegacyNumeric,
-                        col.TextSortOrder);
+                        col.TextSortOrder,
+                        col.FixedBinaryLength);
                 }
 
                 total += pieces[i].Length;
@@ -578,7 +580,8 @@ internal static class IndexHelpers
                     col.Ascending,
                     col.NumericScale,
                     col.LegacyNumeric,
-                    col.TextSortOrder);
+                    col.TextSortOrder,
+                    col.FixedBinaryLength);
                 total += pieces[i].Length;
             }
         }
@@ -604,11 +607,17 @@ internal static class IndexHelpers
         bool ascending,
         byte numericScale,
         bool legacyNumeric,
-        JetDatabaseWriter.Indexes.Collation.TextSortOrder textSortOrder)
+        JetDatabaseWriter.Indexes.Collation.TextSortOrder textSortOrder,
+        int fixedBinaryLength)
     {
         if (columnType is TextType or MemoType)
         {
             return IndexKeyEncoder.EncodeTextEntry(textSortOrder, value, ascending);
+        }
+
+        if (columnType == BinaryType)
+        {
+            value = IndexKeyEncoder.NormalizeFixedBinaryValue(value, fixedBinaryLength);
         }
 
         return columnType == NumericType

@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>
@@ -76,8 +77,8 @@ internal sealed class ReaderHarness : IAsyncDisposable
     {
         options ??= new AccessReaderOptions { UseLockFile = false };
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
-        byte[] header = await PageFile.ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
-        var database = DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen);
+        byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
+        var database = DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options);
         try
         {
             return new ReaderHarness(database, new ReaderServices(database, options));
