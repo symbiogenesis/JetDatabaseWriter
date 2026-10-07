@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Pages.Paging;
 
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
@@ -95,6 +96,13 @@ public sealed class PagerReservationTests
         var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         await using var stream = new MemoryStream();
         stream.SetLength(format.PageSize * 3);
+        byte[] map = new byte[format.PageSize];
+        map[0] = Constants.PageTypes.Data;
+        map[1] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(map.AsSpan(format.DataPage.NumRows, 2), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(map.AsSpan(format.DataPage.RowsStart, 2), checked((ushort)(format.PageSize - Constants.UsageMap.RowSize)));
+        stream.Position = format.PageSize;
+        stream.Write(map);
 #pragma warning disable CA2000 // The awaited pager owns the codec.
         await using var pager = new Pager(stream, format.PageSize, new NoPageCodec(), true, typeof(AccessWriter), 0);
 #pragma warning restore CA2000

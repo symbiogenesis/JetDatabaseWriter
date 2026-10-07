@@ -90,6 +90,20 @@ public sealed class TextSortOrderTests
     }
 
     [Theory]
+    [InlineData(false, (byte)0, true)]
+    [InlineData(false, (byte)0, false)]
+    [InlineData(true, (byte)0, true)]
+    [InlineData(true, (byte)0, false)]
+    [InlineData(true, (byte)1, true)]
+    [InlineData(true, (byte)1, false)]
+    public void StoredTextIndexKeys_IgnoreTrailingSpaces(bool hasVersion, byte version, bool ascending)
+    {
+        var order = new TextSortOrder(0x0409, version, hasVersion);
+        Assert.Equal(IndexKeyEncoder.EncodeTextEntry(order, "a", ascending), IndexKeyEncoder.EncodeTextEntry(order, "a   ", ascending));
+        Assert.NotEqual(EncodeIndexComparison(order, "a", trimTrailingSpaces: false), EncodeIndexComparison(order, "a ", trimTrailingSpaces: false));
+    }
+
+    [Theory]
     [InlineData(false, (byte)0)]
     [InlineData(true, (byte)0)]
     [InlineData(true, (byte)1)]
@@ -108,7 +122,9 @@ public sealed class TextSortOrderTests
                     Math.Sign(IndexPageCodec.CompareKeyBytes(collation.EncodeComparisonKey(left), collation.EncodeComparisonKey(right))));
                 byte[] leftIndex = EncodeIndexComparison(order, left);
                 byte[] rightIndex = EncodeIndexComparison(order, right);
-                Assert.Equal(Math.Sign(IndexPageCodec.CompareKeyBytes(leftIndex, rightIndex)), Math.Sign(collation.Compare(left, right)));
+                int expected = Math.Sign(IndexPageCodec.CompareKeyBytes(leftIndex, rightIndex));
+                int actual = Math.Sign(collation.Compare(left, right));
+                Assert.True(expected == actual, $"Profile version={version}, hasVersion={hasVersion}, left=<{left}>, right=<{right}>, keys={Convert.ToHexString(leftIndex)}/{Convert.ToHexString(rightIndex)}, expected={expected}, actual={actual}.");
             }
         }
 

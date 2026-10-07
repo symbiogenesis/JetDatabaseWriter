@@ -168,6 +168,11 @@ internal static class GeneralLegacyTextIndexEncoder
             // V2010 / ACE: continuous encoding of up to 255 characters with
             // no chunk split. ApplyMaxEntryLength handles the byte cap.
             ReadOnlySpan<char> v2010Chars = text.AsSpan(0, Math.Min(text.Length, Constants.IndexTextEncoding.MaxTextIndexByteLength));
+            if (trimTrailingSpaces)
+            {
+                v2010Chars = v2010Chars.TrimEnd(' ');
+            }
+
             return EncodeSingleChunk(
                 text,
                 v2010Chars,

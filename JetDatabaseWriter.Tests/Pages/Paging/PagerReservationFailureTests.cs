@@ -1,5 +1,7 @@
 namespace JetDatabaseWriter.Tests.Pages.Paging;
 
+using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
@@ -22,6 +24,13 @@ public sealed class PagerReservationFailureTests
         var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         await using var stream = new WriteFaultStream();
         stream.SetLength(format.PageSize * 3L);
+        byte[] map = new byte[format.PageSize];
+        map[0] = Constants.PageTypes.Data;
+        map[1] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(map.AsSpan(format.DataPage.NumRows, 2), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(map.AsSpan(format.DataPage.RowsStart, 2), checked((ushort)(format.PageSize - Constants.UsageMap.RowSize)));
+        stream.Position = format.PageSize;
+        stream.Write(map);
 #pragma warning disable CA2000 // The awaited pager owns and disposes the codec.
         await using var pager = new Pager(stream, format.PageSize, new NoPageCodec(), true, typeof(AccessWriter), cacheSize);
 #pragma warning restore CA2000
@@ -30,7 +39,9 @@ public sealed class PagerReservationFailureTests
         byte[] initialized = new byte[format.PageSize];
         initialized[0] = Constants.PageTypes.Data;
         initialized[100] = 73;
-        stream.FailOnWrite(1);
+
+        // The allocation first marks its global-map bit used, then writes the initialized image.
+        stream.FailOnWrite(2);
 
         await Assert.ThrowsAsync<IOException>(() => allocator.AllocatePageAsync(initialized, TestContext.Current.CancellationToken).AsTask());
 

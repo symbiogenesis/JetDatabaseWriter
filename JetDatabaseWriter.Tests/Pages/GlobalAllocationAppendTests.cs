@@ -18,7 +18,7 @@ public sealed class GlobalAllocationAppendTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task Append_ClearsExistingFutureFreeBit(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         await using MemoryStream stream = CreateStream(format, 3, futureFree: true);
 #pragma warning disable CA2000 // The awaited pager owns its codec.
         await using var pager = new Pager(stream, format.PageSize, new NoPageCodec(), true, typeof(AccessWriter), 0);
@@ -37,8 +37,8 @@ public sealed class GlobalAllocationAppendTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task Append_BeyondInlineRange_PreservesContiguousReservationAndMarksBitmapUsed(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
-        int first = (Constants.UsageMap.RowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
+        var format = JetFormat.ForNewDatabase(kind);
+        const int first = (Constants.UsageMap.RowSize - Constants.UsageMap.InlineMapHeaderSize) * 8;
         await using MemoryStream stream = CreateStream(format, first, futureFree: false);
 #pragma warning disable CA2000 // The awaited pager owns its codec.
         await using var pager = new Pager(stream, format.PageSize, new NoPageCodec(), true, typeof(AccessWriter), 0);
@@ -82,7 +82,7 @@ public sealed class GlobalAllocationAppendTests
     [InlineData("wrong-type", true)]
     public async Task MalformedGlobalMap_RefusesBeforeReservationOrFreeing(string corruption, bool freeing)
     {
-        JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         await using MemoryStream stream = CreateStream(format, 3, futureFree: false);
         byte[] file = stream.ToArray();
         int root = format.PageSize;
@@ -152,7 +152,7 @@ public sealed class GlobalAllocationAppendTests
     [InlineData(true)]
     public async Task Append_InsufficientGlobalCoverage_RefusesBeforeWriting(bool bitmapOverflows)
     {
-        JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb);
         int pointerCount = bitmapOverflows ? 2 : 1;
         int capacity = pointerCount * UsageMap.PagesPerReferenceMapPage(format.PageSize);
         int pageCount = capacity - (bitmapOverflows ? 1 : 0);

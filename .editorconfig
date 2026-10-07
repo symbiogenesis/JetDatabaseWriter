@@ -13,6 +13,7 @@ root = true
 
 # All Files
 [*]
+end_of_line = crlf
 charset = utf-8
 indent_style = space
 indent_size = 4
