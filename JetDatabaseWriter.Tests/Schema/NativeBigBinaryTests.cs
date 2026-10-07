@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
@@ -10,7 +11,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -95,6 +98,88 @@ public sealed class NativeBigBinaryTests
         Assert.Equal(payload, Assert.IsType<byte[]>(row["Payload"]));
         Assert.Equal(7, row["Id"]);
         Assert.Equal(DBNull.Value, row["Extra"]);
+    }
+
+    [Theory]
+    [InlineData(WriteMode.Direct, false)]
+    [InlineData(WriteMode.Direct, true)]
+    [InlineData(WriteMode.AutoCommit, false)]
+    [InlineData(WriteMode.AutoCommit, true)]
+    [InlineData(WriteMode.ExplicitCommit, false)]
+    [InlineData(WriteMode.ExplicitCommit, true)]
+    public async Task NativeBigBinary_TruncatedSlotRefusesWriteBackWithoutChangingFile(WriteMode mode, bool schemaEdit)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        byte[] payload = Enumerable.Range(0, NativeWidth).Select(i => unchecked((byte)i)).ToArray();
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
+        {
+            await writer.CreateTableAsync("Samples", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Data", typeof(byte[]), NativeWidth) { ColumnTypeOverride = NativeType }], ct);
+            await writer.InsertRowAsync("Samples", [7, payload], ct);
+        }
+
+        stream.Position = 0;
+        RowLocation location;
+        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        {
+            CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Samples", ct));
+            location = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, ct));
+        }
+
+        Assert.False(location.IsOverflow);
+        Assert.Equal(0, location.RowIndex);
+        byte[] malformedRow = new byte[NativeWidth + 6];
+        BinaryPrimitives.WriteUInt16LittleEndian(malformedRow, 2);
+        BinaryPrimitives.WriteInt32LittleEndian(malformedRow.AsSpan(2), 7);
+        payload.AsSpan(0, NativeWidth - 1).CopyTo(malformedRow.AsSpan(6));
+        malformedRow[^1] = 3;
+        int pageStart = checked((int)(location.PageNumber * 4096));
+        byte[] file = stream.GetBuffer();
+        Assert.Equal(1, BinaryPrimitives.ReadUInt16LittleEndian(file.AsSpan(pageStart + 12, 2)));
+        file.AsSpan(pageStart + 16, 4096 - 16).Clear();
+        int rowStart = 4096 - malformedRow.Length;
+        malformedRow.CopyTo(file.AsSpan(pageStart + rowStart));
+        BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(pageStart + 14, 2), checked((ushort)rowStart));
+        BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(pageStart + 2, 2), checked((ushort)(rowStart - 16)));
+        byte[] before = stream.ToArray();
+
+        stream.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct))
+        {
+            using DataTable table = await reader.ReadDataTableAsync("Samples", cancellationToken: ct);
+            DataRow row = Assert.Single(table.AsEnumerable());
+            Assert.Equal(7, row["Id"]);
+            Assert.Equal(DBNull.Value, row["Data"]);
+        }
+
+        stream.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, WriteModes.WriterOptions(mode), leaveOpen: true, ct))
+        {
+            await WriteModes.RunAsync(
+                writer,
+                mode,
+                async () =>
+                {
+                    JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                    {
+                        if (schemaEdit)
+                        {
+                            await writer.AddColumnAsync("Samples", new ColumnDefinition("Extra", typeof(int)), ct);
+                        }
+                        else
+                        {
+                            await writer.UpdateRowsAsync("Samples", "Id", 7, new Dictionary<string, object?> { ["Id"] = 8 }, ct);
+                        }
+                    });
+                    Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+                    Assert.Equal("Data", failure.ErrorInfo.ColumnName);
+                    Assert.NotEmpty(Assert.IsType<string>(failure.ErrorInfo.Reason));
+                    Assert.Equal(before, stream.ToArray());
+                },
+                ct);
+        }
+
+        Assert.Equal(before, stream.ToArray());
     }
 
     [Fact]

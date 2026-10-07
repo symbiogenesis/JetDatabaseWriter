@@ -722,6 +722,14 @@ internal sealed class RowDecodePlan
         ref bool needsLongValue) => slice.Kind switch
         {
             ColumnSliceKind.Bool => BoxCache.Bool(slice.BoolValue),
+            ColumnSliceKind.Empty when this.PreservesLongValueBytes && column.Type == BigBinaryType => throw new JetCorruptDataException(
+                JetErrorCode.MalformedValue,
+                $"Column '{column.Name}' has an unreadable BIGBINARY payload and cannot be written back.",
+                new JetErrorInfo
+                {
+                    ColumnName = column.Name,
+                    Reason = "The native fixed BIGBINARY slot is malformed or truncated.",
+                }),
             ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
