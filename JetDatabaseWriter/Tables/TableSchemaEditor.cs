@@ -158,7 +158,7 @@ internal sealed class TableSchemaEditor(
     /// declared column, then each calculated expression's syntax and each
     /// default. Then it creates the table. <see cref="RewriteTableAsync"/>
     /// calls <see cref="CreateTableAsync(string, IReadOnlyList{ColumnDefinition}, IReadOnlyList{IndexDefinition}, ColumnPropertyBlock?, CancellationToken)"/> directly, so a table holding an
-    /// older expression, or a name an existing file already carries, can
+    /// stored expression, or a name an existing file already carries, can
     /// still be altered.
     /// </summary>
     /// <param name="tableName">The new table's name.</param>

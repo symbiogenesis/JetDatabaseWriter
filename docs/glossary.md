@@ -121,7 +121,7 @@ Acronyms, constants and unusual Access/JET terms used throughout this codebase, 
 | **ColumnTypes.MemoType** | Type Memo long-value text (0x0C) |
 | **ColumnTypes.GuidType** | Type GUID / REPID (0x0F) |
 | **ColumnTypes.NumericType** | Type Numeric/BCD (0x10) |
-| **ColumnTypes.AttachmentType** | Legacy/private attachment alias (0x11); Access-authored ACCDB files normally use `ColumnTypes.ComplexType` |
+| **ColumnType.BigBinaryType** | Native Jet4 BIGBINARY (0x11), a fixed 3992-byte payload used by `MSysAccessObjects.Data`; complex columns use 0x12 |
 | **ColumnTypes.ComplexType** | Type Complex (0x12) — multi-value/attachment |
 | **ColumnTypes.DateTimeExtendedType** | Type DateTime Extended (0x14) — Access 2019+ high-precision |
 | **OLE Automation date** | Date/time encoded as a floating-point day count used by Access and COM automation |
