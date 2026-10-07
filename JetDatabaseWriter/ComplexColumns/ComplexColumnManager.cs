@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -331,6 +332,57 @@ internal sealed class ComplexColumnManager(
         return null;
     }
 
+    /// <summary>Reads a native complex type template and validates its required column schema.</summary>
+    /// <param name="column">The complex column being declared.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The validated template's TDEF page.</returns>
+    /// <exception cref="NotSupportedException">The declared complex type has no native template.</exception>
+    /// <exception cref="JetCorruptDataException">The required template is missing, unreadable, outside the file, or has an invalid column schema.</exception>
+    private async ValueTask<long> ReadRequiredComplexTypeTemplateAsync(ColumnDefinition column, CancellationToken cancellationToken)
+    {
+        string templateName = ResolveComplexTypeTemplateName(column)
+            ?? throw new NotSupportedException($"Column '{column.Name}' has no supported native complex type template.");
+        long templatePage = await catalogRows.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
+        if (templatePage <= 0 || templatePage >= this.pager.PageCount)
+        {
+            throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage);
+        }
+
+        TableDef? template;
+        try
+        {
+            template = await this.tableDefs.ReadTableDefAsync(templatePage, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is IOException or ArgumentException or OverflowException)
+        {
+            throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage, error);
+        }
+
+        ColumnDefinition[] requiredColumns = ComplexTypeTemplates.First(t => t.Name == templateName).Columns;
+        if (template is null || template.Columns.Count != requiredColumns.Length)
+        {
+            throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage);
+        }
+
+        foreach (ColumnDefinition required in requiredColumns)
+        {
+            ColumnInfo? actual = template.FindColumn(required.Name);
+            if (actual is null || actual.Type != TypeCodeFromDefinition(required, nameof(column)) || actual.IsAutoNumber || actual.IsCalculated)
+            {
+                throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage);
+            }
+        }
+
+        return templatePage;
+    }
+
+    private static JetCorruptDataException InvalidComplexTypeTemplate(string columnName, string templateName, long templatePage, Exception? innerException = null)
+        => new(
+            JetErrorCode.CorruptComplexColumn,
+            $"Required complex type template '{templateName}' for '{columnName}' is missing, unreadable, or has an invalid column schema.",
+            new JetErrorInfo { ColumnName = columnName, ObjectName = templateName, PageNumber = templatePage > 0 ? templatePage : null },
+            innerException);
+
     /// <summary>
     /// scaffolds the nine <c>MSysComplexType_*</c> template tables
     /// (<c>UnsignedByte</c>, <c>Short</c>, <c>Long</c>, <c>IEEESingle</c>,
@@ -468,16 +520,7 @@ internal sealed class ComplexColumnManager(
 
         foreach (int columnIndex in indices)
         {
-            ColumnDefinition column = columns[columnIndex];
-            string templateName = ResolveComplexTypeTemplateName(column)
-                ?? throw new NotSupportedException($"Column '{column.Name}' has no supported native complex type template.");
-            if (await catalogRows.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false) <= 0)
-            {
-                throw new JetCorruptDataException(
-                    JetErrorCode.CorruptComplexColumn,
-                    $"Required complex type template '{templateName}' is missing for '{column.Name}'.",
-                    new JetErrorInfo { ColumnName = column.Name, ObjectName = templateName });
-            }
+            _ = await this.ReadRequiredComplexTypeTemplateAsync(columns[columnIndex], cancellationToken).ConfigureAwait(false);
         }
 
         int nextId = await this.GetNextComplexIdAsync(msysComplexPg, cancellationToken).ConfigureAwait(false);
@@ -579,17 +622,7 @@ internal sealed class ComplexColumnManager(
             ComplexColumnAllocation alloc = allocations[i];
             ColumnDefinition col = columns[alloc.ColumnIndex];
 
-            string templateName = ResolveComplexTypeTemplateName(col)
-                ?? throw new NotSupportedException($"Column '{parentTableName}.{col.Name}' has no supported native complex type template.");
-            long templatePage = await catalogRows.FindSystemTableTdefPageAsync(templateName, cancellationToken).ConfigureAwait(false);
-            if (templatePage <= 0)
-            {
-                throw new JetCorruptDataException(
-                    JetErrorCode.CorruptComplexColumn,
-                    $"Required complex type template '{templateName}' is missing for '{parentTableName}.{col.Name}'.",
-                    new JetErrorInfo { TableName = parentTableName, ColumnName = col.Name, ObjectName = templateName });
-            }
-
+            long templatePage = await this.ReadRequiredComplexTypeTemplateAsync(col, cancellationToken).ConfigureAwait(false);
             int templateId = checked((int)templatePage);
 
             string flatTableName = BuildFlatTableName(col.Name);
