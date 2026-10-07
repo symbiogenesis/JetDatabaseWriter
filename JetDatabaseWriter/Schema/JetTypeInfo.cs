@@ -451,9 +451,7 @@ internal static class JetTypeInfo
     /// <see cref="CurrencyScale"/> and at most
     /// <see cref="CurrencyIntegerDigits"/> integer digits. Every other
     /// type, and every type on Jet4 and ACCDB, is stored as declared. A
-    /// descriptor type carried over by a schema rewrite
-    /// (<see cref="ColumnDefinition.ColumnTypeOverride"/>) is kept, so a Jet3
-    /// Numeric column that an earlier build wrote stays Numeric.
+    /// Numeric descriptor override on Jet3 is refused because that engine has no Numeric type.
     /// </summary>
     /// <param name="definition">The column definition.</param>
     /// <param name="declaredType">The type <see cref="TypeCodeFromDefinition(ColumnDefinition, string)"/> returned for it.</param>
@@ -471,9 +469,14 @@ internal static class JetTypeInfo
 
         byte precision = ResolveNumericPrecision(definition, paramName);
         byte scale = ResolveNumericScale(definition, paramName);
-        if (format.SupportsNumeric || definition.ColumnTypeOverride is not null)
+        if (format.SupportsNumeric)
         {
             return NumericType;
+        }
+
+        if (definition.ColumnTypeOverride is not null)
+        {
+            throw new NotSupportedException($"Column '{definition.Name}': Jet3 (Access 97) does not support Numeric descriptors.");
         }
 
         int integerDigits = precision - scale;

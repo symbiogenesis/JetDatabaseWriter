@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
@@ -16,8 +17,17 @@ using JetDatabaseWriter.Pages.Models;
 /// </summary>
 /// <param name="format">The file's format profile: the page size, the data-page layout and the text codec.</param>
 /// <param name="pages">The reader's page cache, which LVAL pages are read through.</param>
-internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages)
+/// <param name="maxValueBytes">The maximum stored size of one value.</param>
+internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, int maxValueBytes = 0xFFFFFF)
 {
+    internal void ValidateStoredLength(int length)
+    {
+        if (length > maxValueBytes)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The long value declares {length} stored byte(s), exceeding the configured limit {maxValueBytes}.");
+        }
+    }
+
     internal ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
         int lvalPage = LongValueStore.PageNumber(lvalDp);
@@ -81,6 +91,8 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages)
         {
             throw new InvalidDataException($"the long-value descriptor is {len} byte(s), shorter than the {Constants.LongValue.HeaderSize}-byte header");
         }
+
+        this.ValidateStoredLength(descriptor.Length);
 
         if (descriptor.Length <= 0)
         {

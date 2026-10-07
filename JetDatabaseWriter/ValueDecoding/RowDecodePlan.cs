@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -205,13 +206,13 @@ internal sealed class RowDecodePlan
         if (col.IsFixed)
         {
             int start = rowFields.NumCols + col.FixedOff;
-            int sz = col.IsCalculated ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
+            int sz = col.IsCalculated || col.Type == TextType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
             if (sz == 0 || start + sz > rowSize)
             {
                 return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
             }
 
-            return new ColumnSlice(col.IsCalculated ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
+            return new ColumnSlice(col.IsCalculated || col.Type == TextType ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
         }
 
         if (col.VarIdx >= layout.VarLen)
@@ -276,7 +277,6 @@ internal sealed class RowDecodePlan
         int length,
         ColumnInfo column,
         LongValueDecoder longValueDecoder,
-        bool preserveBytes,
         ref bool needsLongValue)
     {
         bool isOle = column.Type == OleType;
@@ -285,19 +285,15 @@ internal sealed class RowDecodePlan
         {
             int valueLength = JetTypeInfo.ReadUInt24LittleEndian(page.AsSpan(start, 3));
             int valueStart = start + Constants.LongValue.HeaderSize;
-            int inlineLength = Math.Min(valueLength, page.Length - valueStart);
-            if (inlineLength <= 0)
+            longValueDecoder.ValidateStoredLength(valueLength);
+            if (valueLength > length - Constants.LongValue.HeaderSize)
             {
-                if (preserveBytes && valueLength > 0)
-                {
-                    // Let the exact long-value reader report the truncation.
-                    needsLongValue = true;
-                    return new LongValueRef(start, length, isOle);
-                }
-
-                return isOle ? Array.Empty<byte>() : string.Empty;
+                // Resolve the same fault policy as an external long value.
+                needsLongValue = true;
+                return new LongValueRef(start, length, isOle);
             }
 
+            int inlineLength = valueLength;
             // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
             return isOle
                 ? BinaryBuffer.CopySlice(page, valueStart, inlineLength)
@@ -620,6 +616,11 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
+        catch (InvalidDataException exception)
+        {
+            _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
+            return null!;
+        }
         catch (ArgumentException)
         {
             return string.Empty;
@@ -676,6 +677,11 @@ internal sealed class RowDecodePlan
         catch (JetLimitationException)
         {
             throw;
+        }
+        catch (InvalidDataException exception)
+        {
+            _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
+            return null!;
         }
         catch (ArgumentException)
         {
@@ -743,7 +749,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type is MemoType or OleType)
             {
-                return DecodeLongVariableValue(page, start, length, column, longValueDecoder, this.PreservesLongValueBytes, ref needsLongValue);
+                return DecodeLongVariableValue(page, start, length, column, longValueDecoder, ref needsLongValue);
             }
 
             if (column.Type == BooleanType)

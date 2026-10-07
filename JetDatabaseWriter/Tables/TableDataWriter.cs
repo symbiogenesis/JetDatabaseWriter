@@ -125,10 +125,8 @@ internal sealed class TableDataWriter(
     {
         foreach (int columnIndex in assignedColumns)
         {
-            // Complex columns carry the 0x07 marker in the flag byte, not real flag bits.
             ColumnInfo column = tableDef.Columns[columnIndex];
-            if (column.Type is not ColumnType.AttachmentType and not ColumnType.ComplexType
-                && (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0)
+            if (column.IsAutoNumber)
             {
                 return true;
             }

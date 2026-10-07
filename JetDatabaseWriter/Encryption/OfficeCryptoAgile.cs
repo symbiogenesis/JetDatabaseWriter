@@ -105,6 +105,7 @@ internal static class OfficeCryptoAgile
         }
 
         AgileDescriptor descriptor = ParseDescriptor(encryptionInfo);
+        ValidatePackageSize(descriptor, encryptedPackage);
         byte[] passwordUtf16 = PasswordToUtf16(password);
         byte[]? intermediateKey = null;
         try
@@ -372,12 +373,19 @@ internal static class OfficeCryptoAgile
 
     private static AgileDescriptor ParseDescriptor(byte[] encryptionInfo)
     {
+        const int maxDescriptorBytes = 1024 * 1024;
+        if (encryptionInfo.Length < 8 || encryptionInfo.Length - 8 > maxDescriptorBytes)
+        {
+            throw new InvalidDataException("Agile EncryptionInfo exceeds the supported XML descriptor size.");
+        }
+
         // Skip 8-byte header (version + flags), parse the trailing UTF-8 XML.
         string xml = Encoding.UTF8.GetString(encryptionInfo, 8, encryptionInfo.Length - 8);
 
         var settings = new XmlReaderSettings
         {
             DtdProcessing = DtdProcessing.Prohibit,
+            MaxCharactersInDocument = maxDescriptorBytes,
             XmlResolver = null,
             IgnoreComments = true,
             IgnoreWhitespace = true,
@@ -393,6 +401,11 @@ internal static class OfficeCryptoAgile
             if (reader.NodeType != XmlNodeType.Element)
             {
                 continue;
+            }
+
+            if (reader.Depth > 16)
+            {
+                throw new InvalidDataException("Agile EncryptionInfo XML exceeds the supported nesting depth.");
             }
 
             string local = reader.LocalName;
@@ -425,6 +438,7 @@ internal static class OfficeCryptoAgile
                 d.PasswordKeyBits = ReadIntAttr(reader, "keyBits");
                 d.PasswordHashSize = ReadIntAttr(reader, "hashSize");
                 d.PasswordCipherAlgorithm = reader.GetAttribute("cipherAlgorithm") ?? string.Empty;
+                d.PasswordCipherChaining = reader.GetAttribute("cipherChaining") ?? string.Empty;
                 d.PasswordHashAlgorithm = reader.GetAttribute("hashAlgorithm") ?? string.Empty;
                 d.PasswordSalt = ReadBase64Attr(reader, "saltValue");
                 d.EncryptedVerifierHashInput = ReadBase64Attr(reader, "encryptedVerifierHashInput");
@@ -454,6 +468,26 @@ internal static class OfficeCryptoAgile
                 $"Agile encryption cipher '{d.PasswordCipherAlgorithm}' / '{d.KeyDataCipherAlgorithm}' is not supported (only AES).");
         }
 
+        // MS-OFFCRYPTO 2.3.4.10 bounds spinCount to 10,000,000.
+        if (d.SpinCount is < 0 or > 10_000_000
+            || d.KeyDataKeyBits is not 128 and not 192 and not 256
+            || d.PasswordKeyBits is not 128 and not 192 and not 256
+            || d.KeyDataBlockSize != 16 || d.PasswordBlockSize != 16
+            || d.KeyDataHashSize != 64 || d.PasswordHashSize != 64
+            || d.KeyDataSaltSize is < 1 or > 65536 || d.PasswordSaltSize is < 1 or > 65536
+            || d.KeyDataSalt.Length != d.KeyDataSaltSize || d.PasswordSalt.Length != d.PasswordSaltSize
+            || d.EncryptedVerifierHashInput.Length != ((d.PasswordSaltSize + 15) / 16 * 16)
+            || d.EncryptedVerifierHashValue.Length != 64
+            || d.EncryptedKeyValue.Length != ((d.KeyDataKeyBits / 8 + 15) / 16 * 16))
+        {
+            throw new InvalidDataException("Agile EncryptionInfo contains inconsistent or unsupported cryptographic parameter sizes.");
+        }
+
+        if (!string.Equals(d.KeyDataCipherChaining, "ChainingModeCBC", StringComparison.Ordinal)
+            || !string.Equals(d.PasswordCipherChaining, "ChainingModeCBC", StringComparison.Ordinal))
+        {
+            throw new NotSupportedException("Only Agile AES CBC chaining is supported.");
+        }
         return d;
     }
 
@@ -582,6 +616,21 @@ internal static class OfficeCryptoAgile
     // EncryptedPackage decryption (4096-byte AES-CBC segments)
     // ════════════════════════════════════════════════════════════════
 
+    private static void ValidatePackageSize(AgileDescriptor descriptor, byte[] encryptedPackage)
+    {
+        if (encryptedPackage.Length < 8)
+        {
+            throw new InvalidDataException("EncryptedPackage stream is missing its size prefix.");
+        }
+
+        long size = Ri64(encryptedPackage, 0);
+        if (size is < 0 or > int.MaxValue
+            || (((size + descriptor.KeyDataBlockSize - 1) / descriptor.KeyDataBlockSize) * descriptor.KeyDataBlockSize) > encryptedPackage.Length - 8L)
+        {
+            throw new InvalidDataException("EncryptedPackage length cannot contain its declared plaintext size.");
+        }
+    }
+
     private static byte[] DecryptPackage(AgileDescriptor d, byte[] intermediateKey, byte[] encryptedPackage)
     {
         if (encryptedPackage.Length < 8)
@@ -597,6 +646,12 @@ internal static class OfficeCryptoAgile
         }
 
         int blockSize = d.KeyDataBlockSize;
+
+        long requiredCipherBytes = ((decryptedSize + blockSize - 1) / blockSize) * blockSize;
+        if (requiredCipherBytes > encryptedPackage.Length - 8L)
+        {
+            throw new InvalidDataException("EncryptedPackage length cannot contain its declared plaintext size.");
+        }
 
         byte[] result = new byte[decryptedSize];
         int writeOffset = 0;
@@ -1189,6 +1244,8 @@ internal static class OfficeCryptoAgile
         public int PasswordHashSize { get; set; }
 
         public string PasswordCipherAlgorithm { get; set; } = string.Empty;
+
+        public string PasswordCipherChaining { get; set; } = string.Empty;
 
         public string PasswordHashAlgorithm { get; set; } = string.Empty;
 

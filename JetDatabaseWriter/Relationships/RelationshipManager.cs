@@ -964,20 +964,12 @@ internal sealed class RelationshipManager(
     // before it writes anything, EmitFkEntriesForRewriteAsync on the copy
     // before the row copy (so the copy's single index rebuild fills the FK
     // leaves), and CompleteRewriteAsync once the copy has replaced the table.
-    // This works the same on every format. An FK entry whose partner does not
-    // link back to it, such as one naming the freed TDEF page of a table that
-    // earlier builds dropped without unlinking it, or one naming itself, is
-    // not captured, so the rewrite drops it rather than re-emitting a pointer
-    // at a freed or reused page.
+    // A rewrite refuses invalid partner links before creating the copy.
 
     /// <summary>
-    /// Captures the relationship state of <paramref name="tableName"/> before a
-    /// copy-and-swap schema rewrite: its FK logical-idx entries and the key
-    /// columns its <c>MSysRelationships</c> rows name. An FK entry whose
-    /// partner does not link back is left out, so the rewrite drops it instead
-    /// of carrying it over; see <see cref="PartnerLinksBackAsync"/>.
-    /// </summary>
-    /// <param name="tableName">The table about to be rewritten.</param>
+    /// Captures a table's FK logical indexes and catalog key columns before
+    /// a schema rewrite, refusing partner metadata that cannot be preserved.
+    /// </summary>    /// <param name="tableName">The table about to be rewritten.</param>
     /// <param name="tdefPage">The table's current TDEF page.</param>
     /// <param name="tableDef">The table's current definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -995,6 +987,10 @@ internal sealed class RelationshipManager(
                 || await this.PartnerLinksBackAsync(entry.RelTblPage, entry.RelIdxNum, tdefPage, entry.IndexNumber, cancellationToken).ConfigureAwait(false))
             {
                 fkEntries.Add(entry);
+            }
+            else
+            {
+                throw new JetOperationException(JetErrorCode.RelationshipTargetNotFound, $"Cannot rewrite table '{tableName}': foreign-key index '{entry.Name}' has an invalid partner link.", errorInfo: new JetErrorInfo { TableName = tableName, Reason = "Invalid foreign-key partner link" });
             }
         }
 
@@ -1298,10 +1294,7 @@ internal sealed class RelationshipManager(
     /// Returns <see langword="false"/> for a dangling entry: its partner page
     /// is out of range, freed, holds no parseable TDEF or holds a table
     /// without that entry, the partner names a different entry, or the entry
-    /// names itself. Earlier builds' <c>DropTableAsync</c> left such entries
-    /// naming the freed TDEF page of a dropped table, or the unrelated table
-    /// that took the page later, and their schema rewrites turned one into an
-    /// entry naming itself when the rebuilt copy took that page.
+    /// names itself.
     /// </summary>
     /// <param name="partnerTdefPage">The page the entry names (<c>rel_tbl_page</c>).</param>
     /// <param name="partnerIndexNumber">The partner entry the entry names (<c>rel_idx_num</c>).</param>

@@ -2,11 +2,11 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Buffers.Binary;
-using System.Text;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using Xunit;
@@ -67,11 +67,11 @@ public sealed class Jet3PropertyCodePageTests
             "T", [new ColumnDefinition("Id", typeof(int)) { Description = description }], TestContext.Current.CancellationToken));
         Assert.Equal(before, stream.ToArray());
     }
+
     [Fact]
     public void MissingHeaderCodePage_UsesWindows1252()
-    {
-        Assert.Equal(1252, CreateFormat(0).CodePage);
-    }
+        => Assert.Equal(1252, CreateFormat(0).CodePage);
+
     private static JetFormat CreateFormat(ushort codePage)
     {
         byte[] header = TDefPageBuilder.BuildEmptyDatabase(DatabaseFormat.Jet3Mdb, fullCatalogSchema: false);

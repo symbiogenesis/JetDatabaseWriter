@@ -99,13 +99,18 @@ internal static class LongValueStore
             return new LvalRowLocation([], 0, 0, $"invalid page {lvalPage}");
         }
 
+        if (pageSize <= 0 || page.Length < pageSize || dataPage.NumRows < 0 || dataPage.NumRows > pageSize - 2)
+        {
+            return new LvalRowLocation(page, 0, 0, "truncated LVAL page or invalid row-count offset");
+        }
+
         if (page[0] != Constants.PageTypes.Data)
         {
             return new LvalRowLocation(page, 0, 0, $"page {lvalPage} not data page");
         }
 
         int numRows = Ru16(page, dataPage.NumRows);
-        if (lvalRow >= numRows)
+        if (lvalRow < 0 || lvalRow >= numRows)
         {
             return new LvalRowLocation(page, 0, 0, $"row {lvalRow} >= numRows {numRows}");
         }
@@ -118,7 +123,7 @@ internal static class LongValueStore
                 continue;
             }
 
-            if (rowBound.RowStart == 0 || rowBound.RowStart >= pageSize)
+            if (rowBound.RowStart <= 0 || rowBound.RowSize < 0 || rowBound.RowStart >= pageSize || rowBound.RowSize > pageSize - rowBound.RowStart)
             {
                 return new LvalRowLocation(page, 0, 0, $"invalid rowStart {rowBound.RowStart}");
             }
@@ -141,7 +146,7 @@ internal static class LongValueStore
             return LvalChainResult.Failure("no chunks read");
         }
 
-        using var output = new MemoryStream();
+        await using var output = new MemoryStream();
         uint currentDp = firstLvalDp;
         SmallLvalDpSet seen = default;
         while (output.Length < maxLength)
@@ -171,11 +176,12 @@ internal static class LongValueStore
 
             currentDp = Ru32(location.Page, location.Start);
             int wantedData = Math.Min(location.Size - 4, maxLength - checked((int)output.Length));
-            output.Write(location.Page, location.Start + 4, wantedData);
+            await output.WriteAsync(location.Page.AsMemory(location.Start + 4, wantedData), cancellationToken).ConfigureAwait(false);
         }
 
         return LvalChainResult.Success(output.ToArray());
     }
+
     /// <summary>
     /// Releases every LVAL row of an external long value: the one row of a
     /// single-page value, or each row of a chain in order, stopping at a null

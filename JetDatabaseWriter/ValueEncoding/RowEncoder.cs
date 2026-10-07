@@ -339,7 +339,7 @@ internal sealed class RowEncoder(JetFormat format)
             numCols = Math.Max(numCols, col.ColNum + 1);
             if (col.IsFixed && col.Type != BooleanType)
             {
-                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + JetTypeInfo.GetFixedSize(col.Type));
+                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + (col.Type == TextType ? col.Size : JetTypeInfo.GetFixedSize(col.Type)));
             }
             else if (!col.IsFixed)
             {
@@ -354,6 +354,20 @@ internal sealed class RowEncoder(JetFormat format)
         {
             throw new JetLimitationException(
                 $"The row has {numCols} columns, {varLen} of them variable-length; a Jet3 (Access 97) row holds at most {Constants.TableDefinition.MaxJet3Columns}.");
+        }
+
+        for (int i = 0; i < tableDef.Columns.Count; i++)
+        {
+            ColumnInfo column = tableDef.Columns[i];
+            if (column.IsFixed && column.Type == TextType && values[i] is { } value && value is not DBNull)
+            {
+                string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+                int byteCount = format.PropertyTextEncoding.GetByteCount(text);
+                if (byteCount != column.Size)
+                {
+                    throw new NotSupportedException($"Fixed Text column '{column.Name}' requires exactly {column.Size} encoded bytes; padding behavior has not been verified for this format.");
+                }
+            }
         }
 
         // Use ArrayPool for the fixed-area workspace to avoid per-row heap allocation.
@@ -380,6 +394,19 @@ internal sealed class RowEncoder(JetFormat format)
             {
                 if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                 {
+                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
+                }
+
+                continue;
+            }
+
+            if (column.IsFixed && column.Type == TextType)
+            {
+                fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + column.Size);
+                if (value is not DBNull)
+                {
+                    string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+                    _ = format.PropertyTextEncoding.GetBytes(text.AsSpan(), fixedArea.AsSpan(column.FixedOff, column.Size));
                     JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 

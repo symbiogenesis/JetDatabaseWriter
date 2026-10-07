@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.ValueDecoding;
@@ -11,6 +12,18 @@ using Xunit;
 
 public sealed class LongValueCorruptionTests
 {
+    [Fact]
+    public async Task ExternalValue_RefusesConfiguredBudgetBeforePageRead()
+    {
+        byte[] descriptor = LongValueDescriptor.Chained(100, 256, 0).ToHeaderBytes();
+        var decoder = new LongValueDecoder(JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb), null!, maxValueBytes: 10);
+
+        JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await decoder.ReadLongValueBytesExactAsync(descriptor, 0, descriptor.Length, TestContext.Current.CancellationToken));
+
+        Assert.Equal(JetErrorCode.ValueTooLarge, failure.ErrorCode);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -438,37 +438,20 @@ public sealed class Jet3DecimalColumnTests
         Assert.Equal([12.34m, 12.35m], table.Rows.Cast<DataRow>().OrderBy(row => (int)row["Id"]).Select(row => (decimal)row["Amt"]));
     }
 
-    /// <summary>
-    /// A Jet3 Numeric column written by an earlier build (precision and scale
-    /// bytes zero) is left as it is: schema rewrites keep it Numeric, and its
-    /// values are unchanged.
-    /// </summary>
-    /// <returns>A task that represents the asynchronous operation.</returns>
+    /// <summary>An invalid Jet3 Numeric override is refused before schema mutation.</summary>
+    /// <returns>A task representing the asynchronous check.</returns>
     [Fact]
-    public async Task LegacyJet3NumericColumn_SurvivesSchemaRewrite()
+    public async Task Jet3NumericDescriptorOverride_IsRefusedWithoutWriting()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, ct);
-
-        await using (AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct))
-        {
-            // The internal override reproduces what earlier builds wrote for a decimal column.
-            await writer.CreateTableAsync(
-                TableName,
-                [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Legacy", typeof(decimal)) { ColumnTypeOverride = ColumnType.NumericType }],
-                ct);
-            await writer.InsertRowAsync(TableName, [1, 7m], ct);
-            await writer.AddColumnAsync(TableName, new ColumnDefinition("Note", typeof(string), maxLength: 20), ct);
-            await writer.RenameColumnAsync(TableName, "Legacy", "Old", ct);
-        }
-
-        ColumnInfo legacy = (await ReadColumnDescriptorsAsync(ms, ct))[1];
-        Assert.Equal(ColumnType.NumericType, legacy.Type);
-        Assert.Equal("Old", legacy.Name);
-
-        await using AccessReader reader = await OpenReaderAsync(ms, ct);
-        using DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: ct);
-        Assert.Equal(7m, Assert.Single(table.Rows.Cast<DataRow>())["Old"]);
+        await using AccessWriter writer = await OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, ct);
+        byte[] before = ms.ToArray();
+        await Assert.ThrowsAsync<NotSupportedException>(async () => await writer.CreateTableAsync(
+            TableName,
+            [new ColumnDefinition("Amt", typeof(decimal)) { ColumnTypeOverride = ColumnType.NumericType }],
+            ct));
+        Assert.Equal(before, ms.ToArray());
     }
 
     /// <summary>

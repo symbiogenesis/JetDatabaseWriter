@@ -341,7 +341,7 @@ internal static class RowMapper<T>
     /// <see cref="decimal"/> and enums, which cover every type an AutoNumber property can have.
     /// </summary>
     /// <param name="type">A non-nullable value type.</param>
-    private static bool CanCompareToDefault(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(decimal);
+    private static bool CanCompareToDefault(Type type) => type.IsPrimitive || type.IsEnum || type == typeof(decimal) || type == typeof(Guid);
 
     private static Dictionary<string, Accessor> BuildPropertyMap()
     {

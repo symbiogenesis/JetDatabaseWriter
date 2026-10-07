@@ -100,15 +100,15 @@ public sealed record ColumnDefinition
 
     /// <summary>
     /// Gets a value indicating whether this column auto-assigns a monotonically increasing
-    /// integer when an insert supplies null, <see cref="DBNull.Value"/> or
+    /// integer, or a fresh ReplicationID GUID, when an insert supplies null, <see cref="DBNull.Value"/> or
     /// <see cref="DbDefault.Value"/>, or leaves the column out. The next value
     /// is seeded on first use from the larger of the table's persisted AutoNumber counter
     /// and the largest existing value, plus one (<c>1</c> for a new table), and incremented
-    /// per insert. Only valid for <see cref="short"/> and <see cref="int"/> columns.
+    /// per insert. Valid for <see cref="short"/>, <see cref="int"/> and <see cref="Guid"/> columns.
     /// Unsupported types are rejected before anything is written.
     /// </summary>
     /// <remarks>
-    /// Persisted in the JET TDEF column-flag bit <c>FLAG_AUTO_LONG (0x04)</c>. The
+    /// Persisted in the JET TDEF column flags: integer <c>0x04</c> or GUID <c>0x40</c>. The
     /// auto-increment behaviour is restored when the database is reopened. The TDEF
     /// AutoNumber counter records the highest value inserted and is never lowered
     /// (AddColumn, DropColumn and RenameColumn carry it over to the rebuilt table), so

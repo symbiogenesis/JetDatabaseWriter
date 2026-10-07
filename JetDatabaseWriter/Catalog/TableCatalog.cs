@@ -201,12 +201,7 @@ internal sealed class TableCatalog(IPageSource pages, TableDefReader tableDefs, 
         TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
-            return new CatalogScanSummary(null, HasRequiredColumns: false, CatalogPageCount: 0, RowsScanned: 0, totalPages, []);
-        }
-
-        if (msys.FindColumn("Name") == null || msys.FindColumn("Type") == null)
-        {
-            return new CatalogScanSummary(msys, HasRequiredColumns: false, CatalogPageCount: 0, RowsScanned: 0, totalPages, []);
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
         }
 
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);

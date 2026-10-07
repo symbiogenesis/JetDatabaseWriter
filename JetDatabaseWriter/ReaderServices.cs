@@ -30,6 +30,16 @@ internal sealed class ReaderServices : IDisposable
     {
         Guard.NotNull(options, nameof(options));
 
+        if (options.MaxLongValueBytes <= 0 || options.MaxLongValueBytes > 0xFFFFFF)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxLongValueBytes must be between 1 and 16,777,215.");
+        }
+
+        if (options.MaxAttachmentContentBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentContentBytes must be positive.");
+        }
+
         db.OwnedPages.DiagnosticsEnabled = options.DiagnosticsEnabled;
 
         var linkedSources = new LinkedSourcePolicy(
@@ -41,13 +51,13 @@ internal sealed class ReaderServices : IDisposable
         TableDefReader tableDefs = db.TableDefs;
         this.PageCache = new ReaderPageCache(format, db.Pages, options.PageCacheSize);
 
-        var rows = new RowDecoder(db.Format, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache), options.StrictParsing);
+        var rows = new RowDecoder(db.Format, db.OwnedPages, this.PageCache, new LongValueDecoder(format, this.PageCache, options.MaxLongValueBytes), options.StrictParsing);
         var catalogRows = new CatalogRowReader(format, tableDefs, db.OwnedPages);
         var columnProperties = new ColumnPropertyReader(format, tableDefs, rows);
         this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows, columnProperties);
         this.Catalog = new CatalogReader(format, tableDefs, this.TableCatalog, catalogRows, rows);
 
-        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled);
+        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled, options.MaxAttachmentContentBytes);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);
         this.Tables = new TableReader(db.Format, db.Pages, tableDefs, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
         this.Indexes = new IndexRowReader(format, tableDefs, this.PageCache, rows, this.Catalog, complexColumns, this.Tables, this.Operations);

@@ -276,18 +276,13 @@ internal sealed class SchemaReader(
     }
 
     /// <summary>
-    /// Resolves a column's <c>IsNullable</c> from the persisted <c>Required</c>
-    /// LvProp property when present, falling back to the legacy writer-private
-    /// TDEF flag bit <c>0x08</c> for back-compat with files written by older
-    /// JetDatabaseWriter revisions. DAO/Access never emit <c>0x08</c> in the
-    /// flag byte, so the fallback reads as <c>true</c> (nullable) for any file
-    /// authored outside this library.
+    /// Resolves nullability from the persisted Required property and AutoNumber flags.
     /// </summary>
     /// <param name="col">The column descriptor.</param>
     /// <param name="target">Column property metadata read from <c>MSysObjects.LvProp</c>.</param>
     private static bool ResolveIsNullable(ColumnInfo col, ColumnPropertyTarget? target)
     {
-        if ((col.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0)
+        if (col.IsAutoNumber)
         {
             return false;
         }
@@ -298,7 +293,7 @@ internal sealed class SchemaReader(
             return !r;
         }
 
-        return (col.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0;
+        return true;
     }
 
     private static int? GetMetadataMaxLength(ColumnInfo col)

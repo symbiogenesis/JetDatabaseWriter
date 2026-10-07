@@ -337,10 +337,17 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
                 }
                 else
                 {
-                    // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
-                    buffer[i] = lvr.IsOle
-                        ? await longValues.ReadLongValueRawBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
-                        : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        // An OLE value is its stored bytes; OleObjectValue unwraps them on request.
+                        buffer[i] = lvr.IsOle
+                            ? await longValues.ReadLongValueRawBytesAsync(page, lvr.Start, lvr.Len, cancellationToken).ConfigureAwait(false)
+                            : await longValues.ReadLongValueAsync(page, lvr.Start, lvr.Len, isOle: false, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        buffer[i] = LongValueReadPolicy.MissingValue(decodePlan.GetColumnName(i), ex, strictParsing);
+                    }
                 }
             }
             else if (buffer[i] is CalculatedLongValueRef clvr)
@@ -413,7 +420,14 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
         }
         else
         {
-            raw = await longValues.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                raw = await longValues.ReadLongValueRawBytesAsync(page, reference.Start, reference.Len, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidDataException ex)
+            {
+                return LongValueReadPolicy.MissingValue(decodePlan.GetColumnName(columnIndex), ex, strictParsing);
+            }
         }
 
         byte[] payload = CalculatedColumnUtil.Unwrap(raw);

@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -79,7 +80,8 @@ internal static class AttachmentWrapper
     /// <param name="wrapped">The wrapped.</param>
     /// <param name="fileExtension">The file extension.</param>
     /// <param name="payload">The payload.</param>
-    public static bool TryDecode(byte[] wrapped, out string fileExtension, out byte[] payload)
+    /// <param name="maxContentBytes">The maximum uncompressed content size.</param>
+    public static bool TryDecode(byte[] wrapped, out string fileExtension, out byte[] payload, int maxContentBytes = 64 * 1024 * 1024)
     {
         fileExtension = string.Empty;
         payload = wrapped ?? [];
@@ -93,6 +95,11 @@ internal static class AttachmentWrapper
         if (typeFlag > 1 || dataLen == 0)
         {
             return false;
+        }
+
+        if (dataLen > maxContentBytes)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The attachment declares {dataLen} content byte(s), exceeding the configured limit {maxContentBytes}.");
         }
 
         int bodyLength = wrapped.Length - WrapperHeaderSize;
@@ -116,6 +123,7 @@ internal static class AttachmentWrapper
             && Adler32.Compute(content) == BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4))
             && TryParseContent(content, ref fileExtension, ref payload);
     }
+
     /// <summary>
     /// Returns <see langword="true"/> when Access deflates files with this
     /// extension, i.e. it is not one Access stores raw. Case-insensitive; an
@@ -246,6 +254,7 @@ internal static class AttachmentWrapper
         {
             throw new InvalidDataException("The attachment content exceeds its declared length.");
         }
+
         return output.ToArray();
     }
 }

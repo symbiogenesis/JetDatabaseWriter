@@ -125,5 +125,14 @@ jobs:
       - name: Build
         run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:RunAnalyzers=false
 
+      # The same binaries can run only the DAO-guarded methods on an Access host.
+      - name: Upload DAO test runner
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dao-test-runner-${{ matrix.tf }}
+          path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Test
         run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }}

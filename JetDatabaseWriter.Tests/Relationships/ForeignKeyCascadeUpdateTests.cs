@@ -102,6 +102,63 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         return data;
     }
 
+    /// <summary>ReplicationID AutoNumbers generate GUIDs after reopening and schema rewrites.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Insert_GuidAutoNumber_GeneratesAfterReopenAndRewrite(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("ReplicationIds", [new ColumnDefinition("Id", typeof(Guid)) { IsPrimaryKey = true, IsAutoIncrement = true }, new ColumnDefinition("Number", typeof(int))], Ct);
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", new[] { new GuidAutoNumberRow { Number = 1 } }, Ct));
+                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", new[] { new RowValues { ["Number"] = 2 } }, Ct));
+                await writer.RenameColumnAsync("ReplicationIds", "Number", "Value", Ct);
+                Assert.Equal(1, await writer.InsertRowsAsync("ReplicationIds", new[] { new RowValues { ["Value"] = 3 } }, Ct));
+            });
+        }
+
+        List<string> rows = await ForeignKeyTestDatabase.ReadRowsAsync(ms, "ReplicationIds");
+        Assert.Equal(3, rows.Count);
+        Guid[] ids = [.. rows.Select(row => Guid.Parse(row.Split('|')[0]))];
+        Assert.DoesNotContain(Guid.Empty, ids);
+        Assert.Equal(3, ids.Distinct().Count());
+        await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "ReplicationIds");
+    }
+
+    /// <summary>Unevaluable persisted rules refuse an insert before any database bytes change.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="mode">The write mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(FormatsAndModes))]
+    public async Task Insert_UnsupportedPersistedRule_ChangesNothing(DatabaseFormat format, WriteMode mode)
+    {
+        await using MemoryStream ms = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("RuleTable", [new ColumnDefinition("Id", typeof(int)) { ValidationRuleExpression = "UnknownRule([Id]) > 0" }], Ct);
+        }
+
+        byte[] before = ms.ToArray();
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+                _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowsAsync("RuleTable", [[1]], Ct)));
+        }
+
+        Assert.Equal(before, ms.ToArray());
+    }
+
     /// <summary>Primary-key changes reach grandchildren before any row is rewritten.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
@@ -136,6 +193,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
 
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C");
     }
+
     /// <summary>Primary-key changes reach grandchildren before any row is rewritten.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
@@ -173,6 +231,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
 
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "A", "B", "C");
     }
+
     /// <summary>A non-null cascading key refreshes the child's stored calculated result.</summary>
     /// <param name="mode">The write mode.</param>
     /// <returns>The asynchronous test.</returns>
@@ -492,21 +551,21 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         }
 
         BreakLongValuePage(ms, format);
-        List<string> memoRows = await ForeignKeyTestDatabase.ReadRowsAsync(ms, "M");
+        byte[] before = ms.ToArray();
 
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidDataException ex = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+                _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
                     await writer.UpdateRowsAsync("P", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 3 }, Ct));
-                Assert.Contains("column 'Body' of table 'M'", ex.Message, StringComparison.Ordinal);
             });
         }
 
         Assert.Equal(["1|one"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
         Assert.Equal(["1|1|a"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
-        Assert.Equal(memoRows, await ForeignKeyTestDatabase.ReadRowsAsync(ms, "M"));
+        Assert.Equal(before, ms.ToArray());
+        _ = await Assert.ThrowsAsync<InvalidDataException>(async () => await ForeignKeyTestDatabase.ReadRowsAsync(ms, "M"));
         long[] rowCounts = await ReadRowCountsAsync(ms, "P", "C", "M");
         Assert.Equal([1L, 1L, 1L], rowCounts);
     }
@@ -949,4 +1008,16 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         ms.Position = 0;
         return ms;
     }
+
+#pragma warning disable CA1812 // The generic row mapper accesses these properties through reflection.
+    /// <summary>A mapped row with an omitted GUID AutoNumber.</summary>
+    private sealed class GuidAutoNumberRow
+    {
+        /// <summary>Gets or sets the generated identifier.</summary>
+        public Guid Id { get; set; }
+
+        /// <summary>Gets or sets the supplied value.</summary>
+        public int Number { get; set; }
+    }
+#pragma warning restore CA1812
 }

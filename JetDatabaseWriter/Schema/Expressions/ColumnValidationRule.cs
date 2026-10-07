@@ -30,7 +30,7 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 internal sealed class ColumnValidationRule
 {
     /// <summary>
-    /// The rule for a column whose rule text this library cannot parse. It accepts every value.
+    /// The rule for a column whose rule text this library cannot parse. It cannot be evaluated.
     /// </summary>
     public static readonly ColumnValidationRule Unsupported = new(null);
 
@@ -101,27 +101,14 @@ internal sealed class ColumnValidationRule
     /// <summary>
     /// Evaluates the rule against the row behind <paramref name="context"/>. Returns
     /// <see langword="false"/> only when the rule is False. A rule that is True or Null,
-    /// an unsupported rule, and a rule whose evaluation fails all accept the value.
+    /// accept the value. Unsupported rules and evaluation failures throw.
     /// </summary>
     /// <param name="context">The evaluation context over the candidate row.</param>
     /// <returns>Whether the value is accepted.</returns>
     public bool Accepts(CalculatedExpressionEvaluationContext context)
-    {
-        if (this.root is null)
-        {
-            return true;
-        }
-
-        try
-        {
-            return this.root.Evaluate(context) != false;
-        }
-        catch (Exception ex) when (IsEvaluationFailure(ex))
-        {
-            return true;
-        }
-    }
-
+        => this.root is null
+            ? throw new NotSupportedException("The validation rule cannot be evaluated.")
+            : this.root.Evaluate(context) != false;
     private static List<Token> Tokenize(string rule)
     {
         var tokens = new List<Token>();

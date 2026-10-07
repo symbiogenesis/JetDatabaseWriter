@@ -6,6 +6,8 @@ This document captures the on-disk layout of the property blob stored in `MSysOb
 
 Property names, target names and Text/Memo values use the database header's ANSI code page on Jet3 and UTF-16LE on Jet4/ACE. Jet3 writes use strict encoding: an unrepresentable character refuses the operation rather than becoming a best-fit character or question mark. Header code page zero defaults to Windows-1252; an unsupported nonzero code page is refused, never repaired by assuming UTF-8. The cp1251 property tests exercise names, values and linked ODBC NameMap entries; Microsoft-produced non-1252 fixtures remain part of the interoperability corpus work.
 
+Stored defaults and column rules must evaluate successfully before a row can be written. Null is a successful default result, not an evaluation failure. Required comes from persisted properties; the old library-private TDEF 0x08 marker is not interpreted as Required. GUID AutoNumbers use the GUID-specific 0x40 flag; flags on other column types retain their own meanings.
+
 ## 1. Sources
 
 | Source | Confidence |

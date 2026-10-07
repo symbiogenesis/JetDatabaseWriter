@@ -113,8 +113,8 @@ internal sealed class ColumnDefaultValue
 
     /// <summary>
     /// Evaluates the default and converts it to <paramref name="clrType"/>. Returns
-    /// <see langword="false"/>, leaving the column null, when the expression is
-    /// unsupported, evaluates to Null, uses a function or name this library cannot
+    /// <see langword="false"/> when the expression is
+    /// unsupported, uses a function or name this library cannot
     /// evaluate, or yields a value that cannot be converted to the column's type
     /// (including a numeric literal too large for a Single column).
     /// </summary>
@@ -158,7 +158,7 @@ internal sealed class ColumnDefaultValue
             object raw = this.number?.ForOtherTypes ?? this.literal ?? this.plan!.Root.Evaluate(createContext(), this.plan);
             if (IsNull(raw))
             {
-                return false;
+                return true;
             }
 
             value = CoerceResult(raw, clrType);

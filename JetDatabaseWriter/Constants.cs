@@ -59,8 +59,8 @@ internal static class Constants
         /// <summary>AutoNumber column marker.</summary>
         public const byte AutoNumber = 0x04;
 
-        /// <summary>Legacy writer-private NOT NULL marker; retained only for back-compat reads.</summary>
-        public const byte LegacyNotNull = 0x08;
+        /// <summary>ReplicationID GUID AutoNumber column marker.</summary>
+        public const byte AutoNumberGuid = 0x40;
 
         /// <summary>Hyperlink marker used on MEMO columns.</summary>
         public const byte Hyperlink = 0x80;

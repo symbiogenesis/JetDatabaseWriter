@@ -30,7 +30,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalog">Resolves tables and locates <c>MSysComplexColumns</c> and the flat child tables.</param>
 /// <param name="rows">Decodes system-table rows as strings and flat-table rows as typed values.</param>
 /// <param name="diagnosticsEnabled">Whether suppressed best-effort failures are traced.</param>
-internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled)
+/// <param name="maxAttachmentContentBytes">The maximum uncompressed attachment content size.</param>
+internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024)
 {
     /// <summary>The <c>MSysComplexColumns</c> columns the descriptor join reads.</summary>
     private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
@@ -545,7 +546,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
             return flat == null ? ComplexColumnKind.Unknown : ClassifyFlatTable(flat.Definition, column.ColumnName);
         }
-        catch (InvalidDataException ex)
+        catch (InvalidDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(ClassifyFromFlatTableAsync), ex);
             return ComplexColumnKind.Unknown;
@@ -571,7 +572,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 elementType = valueIndex >= 0 ? flat.Definition.Columns[valueIndex].Type : null;
             }
         }
-        catch (InvalidDataException ex)
+        catch (InvalidDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(DescribeMultiValueTypeAsync), ex);
         }
@@ -672,7 +673,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             return matchedPage;
         }
-        catch (InvalidDataException ex)
+        catch (InvalidDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(GetComplexFlatTablePageAsync), ex);
         }
@@ -694,19 +695,15 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         {
             return await this.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
         }
-        catch (InvalidDataException ex)
+        catch (InvalidDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(TryGetComplexColumnsAsync), ex);
         }
-        catch (IndexOutOfRangeException ex)
+        catch (IndexOutOfRangeException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(TryGetComplexColumnsAsync), ex);
         }
-        catch (IOException ex)
-        {
-            this.TraceBestEffortFallback(nameof(TryGetComplexColumnsAsync), ex);
-        }
-        catch (OverflowException ex)
+        catch (OverflowException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(TryGetComplexColumnsAsync), ex);
         }
@@ -756,22 +753,17 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             return cells.Count > 0 ? cells : null;
         }
-        catch (InvalidDataException ex)
+        catch (InvalidDataException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
             return null;
         }
-        catch (IndexOutOfRangeException ex)
+        catch (IndexOutOfRangeException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
             return null;
         }
-        catch (IOException ex)
-        {
-            this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
-            return null;
-        }
-        catch (OverflowException ex)
+        catch (OverflowException ex) when (!rows.StrictParsing)
         {
             this.TraceBestEffortFallback(nameof(LoadColumnCellsAsync), ex);
             return null;
@@ -818,8 +810,13 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         {
             byte[] fileData = idxFileData >= 0 && row[idxFileData] is byte[] stored ? stored : [];
             string fileType = ReadStringOrNull(row, idxFileType) ?? string.Empty;
-            if (fileData.Length > 0 && AttachmentWrapper.TryDecode(fileData, out string wrappedType, out byte[] payload))
+            if (fileData.Length > 0)
             {
+                if (!AttachmentWrapper.TryDecode(fileData, out string wrappedType, out byte[] payload, maxAttachmentContentBytes))
+                {
+                    throw new InvalidDataException($"The attachment wrapper for complex column '{columnName}' is malformed.");
+                }
+
                 fileData = payload;
                 if (fileType.Length == 0)
                 {

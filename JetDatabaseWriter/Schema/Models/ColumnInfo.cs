@@ -96,12 +96,13 @@ internal sealed record ColumnInfo
     /// <summary>
     /// Gets a value indicating whether the column is an AutoNumber column whose insert
     /// generates the next value: <c>FLAG_AUTO_LONG</c>
-    /// (<see cref="Constants.ColumnDescriptorFlags.AutoNumber"/>) is set in <see cref="Flags"/>.
+    /// (<see cref="Constants.ColumnDescriptorFlags.AutoNumber"/>) or the GUID-specific
+    /// <see cref="Constants.ColumnDescriptorFlags.AutoNumberGuid"/> is set in <see cref="Flags"/>.
     /// Complex columns (<c>Attachment</c> / <c>Complex</c>) carry the magic <c>0x07</c>
     /// marker in that byte rather than flag bits, so they never count.
     /// </summary>
     public bool IsAutoNumber => this.Type is not AttachmentType and not ComplexType
-        && (this.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
+        && (this.Flags & (this.Type == GuidType ? Constants.ColumnDescriptorFlags.AutoNumberGuid : Constants.ColumnDescriptorFlags.AutoNumber)) != 0;
 
     public string Name { get; init; } = string.Empty;
 
@@ -147,7 +148,7 @@ internal sealed record ColumnInfo
     /// For most "inherently fixed" types (BOOL, LONG, DOUBLE, etc.) the bit is set,
     /// but Access system tables (e.g. complex-field flat tables) may store these
     /// types in the variable area with FLAG_FIXED cleared.
-    /// Variable-length types (TEXT, BINARY, MEMO, OLE) are always variable.
+    /// Text may be fixed-length; Binary, Memo and OLE remain variable.
     /// </summary>
     public bool IsFixed
     {
@@ -159,8 +160,8 @@ internal sealed record ColumnInfo
                 return true;
             }
 
-            // TEXT/BINARY/MEMO/OLE always live in the variable area.
-            if (JetTypeInfo.IsAlwaysVariableLength(this.Type))
+            // Text honors FLAG_FIXED, including Access-authored CHAR columns.
+            if (this.Type != TextType && JetTypeInfo.IsAlwaysVariableLength(this.Type))
             {
                 return false;
             }

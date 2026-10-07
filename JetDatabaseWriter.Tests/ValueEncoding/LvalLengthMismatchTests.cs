@@ -52,11 +52,10 @@ public sealed class LvalLengthMismatchTests
 
     /// <summary>
     /// When the LVAL header declares a length larger than the actual data on
-    /// the LVAL page, the reader should return only the available data (the
-    /// page size caps the read) without throwing.
+    /// the LVAL page, the reader refuses the truncated value.
     /// </summary>
     [Fact]
-    public async Task Ole_HeaderLengthLargerThanActual_ReturnsAvailableDataWithoutCrash()
+    public async Task Ole_HeaderLengthLargerThanActual_RejectsTruncatedValue()
     {
         byte[] payload = BuildPayload(PayloadSize);
         byte[] dbBytes = await WriteDatabaseWithOleAsync(payload);
@@ -68,14 +67,7 @@ public sealed class LvalLengthMismatchTests
         const int corruptedLen = 8000;
         WriteLvalLength(dbBytes, headerOffset, corruptedLen);
 
-        // Read back — should not throw; returns available data (capped by page content)
-        byte[] result = await ReadOleBlobAsync(dbBytes);
-
-        // Access-style LVAL pages do not carry a separate single-page payload length,
-        // so a corrupted oversized header is capped by the remaining page capacity.
-        int singlePageCapacity = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb).LvalPage.SinglePagePayloadCapacity(4096);
-        Assert.True(result.Length <= singlePageCapacity, $"Expected ≤ {singlePageCapacity} bytes, got {result.Length}.");
-        Assert.True(result.Length > 0, "Expected non-empty result.");
+        await Assert.ThrowsAsync<InvalidDataException>(() => ReadOleBlobAsync(dbBytes));
     }
 
     /// <summary>

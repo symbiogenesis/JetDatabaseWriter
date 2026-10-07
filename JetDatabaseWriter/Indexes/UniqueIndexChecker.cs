@@ -300,7 +300,8 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         int nullCount = IndexHelpers.CountNullKeyColumns(descriptor.KeyColumns, row);
         if (descriptor.IsRequired && nullCount != 0)
         {
-            throw JetErrors.Constraint(JetErrorCode.NotNullViolation,
+            throw JetErrors.Constraint(
+                JetErrorCode.NotNullViolation,
                 $"Index '{descriptor.Name}' on table '{tableName}' requires a value for every key column. The table is unchanged.",
                 new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
         }

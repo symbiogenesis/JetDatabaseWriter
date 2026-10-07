@@ -490,13 +490,13 @@ internal sealed class TableSchemaEditor(
         if (column.ClrType == typeof(byte) || column.ClrType == typeof(long))
         {
             throw new NotSupportedException(
-                $"Column '{column.Name}': IsAutoIncrement is only supported for Int16 and Int32; '{column.ClrType}' is not supported.");
+                $"Column '{column.Name}': IsAutoIncrement is only supported for Int16, Int32 and Guid; '{column.ClrType}' is not supported.");
         }
 
-        if (column.ClrType != typeof(short) && column.ClrType != typeof(int))
+        if (column.ClrType != typeof(short) && column.ClrType != typeof(int) && column.ClrType != typeof(Guid))
         {
             throw new ArgumentException(
-                $"Column '{column.Name}' is marked IsAutoIncrement=true but its CLR type '{column.ClrType}' is not an integer type.",
+                $"Column '{column.Name}' is marked IsAutoIncrement=true but its CLR type '{column.ClrType}' is not an integer or GUID type.",
                 paramName);
         }
     }
@@ -1314,12 +1314,12 @@ internal sealed class TableSchemaEditor(
         // wrote into the original column descriptor. Complex columns (Attachment /
         // Complex) return early above because their Flags byte is the magic 0x07
         // marker rather than real flag bits.
-        bool isAutoIncrement = (column.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
+        bool isAutoIncrement = column.IsAutoNumber;
         bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
             .GetBooleanValue(Constants.ColumnPropertyNames.Required);
         bool isNullable = !isAutoIncrement && (requiredFromLvProp is bool req
                 ? !req
-                : (column.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0);
+                : true);
 
         ColumnDefinition def = baseDef with
         {

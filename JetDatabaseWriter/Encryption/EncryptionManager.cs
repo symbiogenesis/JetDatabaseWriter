@@ -844,27 +844,12 @@ internal static class EncryptionManager
             return (null, AccessEncryptionFormat.None);
         }
 
-        Dictionary<string, byte[]>? streams = null;
-        try
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken).ConfigureAwait(false);
+        if (!streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo)
+            || !streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage))
         {
-            streams = await CompoundFileReader.ReadStreamsAsync(stream, cancellationToken).ConfigureAwait(false);
+            throw new InvalidDataException("The compound database is missing EncryptionInfo or EncryptedPackage.");
         }
-        catch (InvalidDataException)
-        {
-            // Not a real CFB — fall through.
-        }
-        catch (EndOfStreamException)
-        {
-            // Truncated/legacy CFB-magic file — fall through.
-        }
-
-        if (streams == null ||
-            !streams.TryGetValue("EncryptionInfo", out byte[]? encryptionInfo) ||
-            !streams.TryGetValue("EncryptedPackage", out byte[]? encryptedPackage))
-        {
-            return (null, AccessEncryptionFormat.None);
-        }
-
         if (OfficeCryptoAgile.IsStandardEncryptionInfo(encryptionInfo))
         {
             if (password.IsEmpty)
@@ -881,7 +866,7 @@ internal static class EncryptionManager
 
         if (!OfficeCryptoAgile.IsAgileEncryptionInfo(encryptionInfo))
         {
-            return (null, AccessEncryptionFormat.None);
+            throw new NotSupportedException("The compound database EncryptionInfo format is not supported.");
         }
 
         if (password.IsEmpty)

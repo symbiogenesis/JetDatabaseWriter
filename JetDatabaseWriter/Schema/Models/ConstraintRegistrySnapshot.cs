@@ -10,7 +10,9 @@ using System.Collections.Generic;
 /// rolls back.
 /// </summary>
 /// <param name="Tables">Each registered table's constraint list, keyed by table name.</param>
+/// <param name="TableRules">Each cached table validation rule, or known absence.</param>
 /// <param name="AutoCounters">Each AutoNumber constraint and its next auto-increment value.</param>
 internal sealed record ConstraintRegistrySnapshot(
     IReadOnlyDictionary<string, List<ColumnConstraint>> Tables,
-    IReadOnlyList<(ColumnConstraint Constraint, long? NextAutoValue)> AutoCounters);
+    IReadOnlyList<(ColumnConstraint Constraint, long? NextAutoValue)> AutoCounters,
+    IReadOnlyDictionary<string, TableValidationConstraint?> TableRules);

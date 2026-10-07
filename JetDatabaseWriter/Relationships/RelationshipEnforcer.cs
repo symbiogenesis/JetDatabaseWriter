@@ -855,13 +855,13 @@ internal sealed class RelationshipEnforcer(
 
                 continue;
             }
+
             List<LocatedRow> dependents = await this.FindDependentRowsAsync(rel, childTable, fkIdx, parentPkRows, ctx, cancellationToken).ConfigureAwait(false);
             _ = dependents.RemoveAll(row => cascaded.Contains((row.Location.PageNumber, row.Location.RowIndex)));
             if (dependents.Count == 0)
             {
                 continue;
             }
-
 
             _ = dependents.RemoveAll(row => ownRows.Contains((row.Location.PageNumber, row.Location.RowIndex)));
             if (dependents.Count == 0)

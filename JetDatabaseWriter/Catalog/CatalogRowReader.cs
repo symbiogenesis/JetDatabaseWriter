@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -36,9 +37,9 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
         ColumnInfo? nameColumn = msys.FindColumn("Name");
         ColumnInfo? typeColumn = msys.FindColumn("Type");
         ColumnInfo? flagsColumn = msys.FindColumn("Flags");
-        if (nameColumn == null || typeColumn == null)
+        if (idColumn == null || nameColumn == null || typeColumn == null || flagsColumn == null)
         {
-            return [];
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects is missing a required Id, Name, Type or Flags column.");
         }
 
         var result = new List<CatalogRow>();
@@ -119,7 +120,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
         TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys == null)
         {
-            return 0;
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
         }
 
         List<CatalogRow> rows = await this.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);

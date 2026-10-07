@@ -90,6 +90,10 @@ internal static class CompoundFileReader
                 $"CFB major version {majorVersion} does not match sector shift {sectorShift}.");
         }
 
+        if (miniSectorShift != 6)
+        {
+            throw new InvalidDataException($"Unsupported CFB mini-sector shift: {miniSectorShift}.");
+        }
         return new CfbHeader(
             SectorSize: 1 << sectorShift,
             MiniSectorSize: 1 << miniSectorShift,
@@ -209,6 +213,11 @@ internal static class CompoundFileReader
         uint[] fat,
         CancellationToken cancellationToken)
     {
+        if (directory.Length < Constants.CompoundFile.DirEntrySize)
+        {
+            throw new InvalidDataException("CFB directory has no complete root entry.");
+        }
+
         // Root entry holds the start sector + size of the mini stream.
         uint rootStart = BinaryPrimitives.ReadUInt32LittleEndian(directory.AsSpan(0x74));
 
@@ -282,7 +291,7 @@ internal static class CompoundFileReader
             // Pass the exact size so the chain readers can size the
             // destination buffer precisely and avoid a tail Array.Resize.
             streams[name] = size < hdr.MiniStreamCutoff
-                ? ReadMiniChain(miniStream, startSector, hdr.MiniSectorSize, miniFat, size)
+                ? ReadMiniChain(miniStream, startSector, hdr.MiniSectorSize, miniFat, size, cancellationToken)
                 : await ReadChainAsync(stream, startSector, hdr.SectorSize, fat, cancellationToken, size).ConfigureAwait(false);
         }
 
@@ -293,7 +302,11 @@ internal static class CompoundFileReader
     {
         // Header occupies the first sector position (512 bytes for v3, padded
         // to 4096 for v4); sector index 0 begins immediately after that.
-        long offset = (sectorIndex + 1) * sectorSize;
+        long offset = ((long)sectorIndex + 1) * sectorSize;
+        if (offset > stream.Length - sectorSize)
+        {
+            throw new InvalidDataException("CFB sector points beyond the physical file.");
+        }
         _ = stream.Seek(offset, SeekOrigin.Begin);
         await stream.ReadExactlyAsync(buffer.AsMemory(0, sectorSize), cancellationToken).ConfigureAwait(false);
     }
@@ -310,7 +323,7 @@ internal static class CompoundFileReader
         // buffer can be sized exactly. This avoids both per-sector array
         // allocations and a final List<byte[]> → byte[] block-copy pass,
         // and (when exactSize is supplied) skips the trailing Array.Resize.
-        int chainLength = WalkChainLength(startSector, fat, "FAT");
+        int chainLength = WalkChainLength(startSector, fat, "FAT", (stream.Length / sectorSize) - 1, cancellationToken);
         byte[] result = AllocateChainBuffer(chainLength, sectorSize, exactSize);
 
         uint sector = startSector;
@@ -341,11 +354,11 @@ internal static class CompoundFileReader
         return result;
     }
 
-    private static byte[] ReadMiniChain(byte[] miniStream, uint startSector, int miniSectorSize, uint[] miniFat, long exactSize = -1)
+    private static byte[] ReadMiniChain(byte[] miniStream, uint startSector, int miniSectorSize, uint[] miniFat, long exactSize, CancellationToken cancellationToken)
     {
         // Pre-walk the mini-FAT to count the chain so we can size the
         // result buffer exactly and skip the intermediate index list.
-        int chainLength = WalkChainLength(startSector, miniFat, "mini-FAT");
+        int chainLength = WalkChainLength(startSector, miniFat, "mini-FAT", miniStream.Length / miniSectorSize, cancellationToken);
         byte[] result = AllocateChainBuffer(chainLength, miniSectorSize, exactSize);
 
         uint sector = startSector;
@@ -358,7 +371,7 @@ internal static class CompoundFileReader
             int remaining = result.Length - dstOffset;
             (uint runStart, int runSectors, uint next) = CoalesceRun(sector, miniFat, miniSectorSize, remaining);
 
-            long offset = runStart * miniSectorSize;
+            long offset = (long)runStart * miniSectorSize;
             long runBytes = (long)runSectors * miniSectorSize;
             if (offset + runBytes > miniStream.Length)
             {
@@ -394,7 +407,7 @@ internal static class CompoundFileReader
         uint runStart = sector;
         int runSectors = 1;
         uint next = fat[sector];
-        int maxRunSectors = (remaining + sectorSize - 1) / sectorSize;
+        int maxRunSectors = checked((int)(((long)remaining + sectorSize - 1) / sectorSize));
         while (runSectors < maxRunSectors && next == sector + 1 && next < fat.Length)
         {
             sector = next;
@@ -413,28 +426,30 @@ internal static class CompoundFileReader
     /// <param name="startSector">The start sector.</param>
     /// <param name="fat">The FAT sector table.</param>
     /// <param name="fatKind">The fat kind.</param>
+    /// <param name="physicalSectorCount">The number of sectors physically present.</param>
+    /// <param name="cancellationToken">A token used to cancel traversal.</param>
     /// <exception cref="InvalidDataException">Thrown when the sector chain points outside the FAT or exceeds the expected length.</exception>
-    private static int WalkChainLength(uint startSector, uint[] fat, string fatKind)
+    private static int WalkChainLength(uint startSector, uint[] fat, string fatKind, long physicalSectorCount, CancellationToken cancellationToken)
     {
         int count = 0;
-        int safety = 0;
-        int limit = fat.Length + 16;
+        var visited = new HashSet<uint>();
         uint cur = startSector;
         while (cur is not Constants.CompoundFile.EndOfChain
             and not Constants.CompoundFile.FreeSect)
         {
-            if (cur >= fat.Length)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (cur >= fat.Length || cur >= physicalSectorCount)
             {
                 throw new InvalidDataException($"CFB {fatKind} sector index {cur} exceeds {fatKind} length {fat.Length}.");
             }
 
+            if (!visited.Add(cur))
+            {
+                throw new InvalidDataException($"CFB {fatKind} chain contains a cycle.");
+            }
+
             count++;
             cur = fat[cur];
-
-            if (++safety > limit)
-            {
-                throw new InvalidDataException($"CFB {fatKind} chain loops or exceeds expected length.");
-            }
         }
 
         return count;
@@ -452,7 +467,13 @@ internal static class CompoundFileReader
     private static byte[] AllocateChainBuffer(int chainLength, int sectorSize, long exactSize)
     {
         long capacity = (long)chainLength * sectorSize;
-        int length = exactSize >= 0 && exactSize < capacity ? (int)exactSize : (int)capacity;
+        long logicalLength = exactSize >= 0 ? exactSize : capacity;
+        if (logicalLength > capacity || logicalLength > int.MaxValue)
+        {
+            throw new InvalidDataException("CFB stream length exceeds its chain capacity or supported buffer size.");
+        }
+
+        int length = checked((int)logicalLength);
         return new byte[length];
     }
 

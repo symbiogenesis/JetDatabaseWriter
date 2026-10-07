@@ -32,7 +32,7 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// registry needs to hydrate from the persisted column properties (e.g. the
 /// <c>Required</c> Boolean that backs <c>IsNullable</c>). May return <c>null</c>
 /// when the table has no property block. Optional — if not supplied, hydration
-/// falls back to the legacy TDEF flag bit only.
+/// reads AutoNumber flags and assumes non-AutoNumber columns are nullable.
 /// </param>
 /// <param name="readUsedAutoNumberHighWater">
 /// Delegate that returns the largest AutoNumber value a table (by name, with
@@ -60,6 +60,8 @@ internal sealed class ConstraintRegistry(
     private readonly Dictionary<string, List<ColumnConstraint>> constraints =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly Dictionary<string, TableValidationConstraint?> tableRules = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Rewinds each auto-increment counter listed in <paramref name="checkpoints"/>
     /// back to the value it held before <see cref="ApplyAsync"/>
@@ -83,6 +85,7 @@ internal sealed class ConstraintRegistry(
 
     public void Register(string tableName, IReadOnlyList<ColumnDefinition> defs)
     {
+        this.tableRules.Remove(tableName);
         var list = new List<ColumnConstraint>(defs.Count);
         bool anyConstraint = false;
         foreach (ColumnDefinition def in defs)
@@ -90,10 +93,10 @@ internal sealed class ConstraintRegistry(
             ColumnConstraint c = ToConstraint(def);
             anyConstraint |= c.HasAnyConstraint;
 
-            if (c.IsAutoIncrement && !IsIntegralType(c.ClrType))
+            if (c.IsAutoIncrement && !IsIntegralType(c.ClrType) && c.ClrType != typeof(Guid))
             {
                 throw new ArgumentException(
-                    $"Column '{c.Name}' is marked IsAutoIncrement=true but its CLR type '{c.ClrType}' is not an integer type.",
+                    $"Column '{c.Name}' is marked IsAutoIncrement=true but its CLR type '{c.ClrType}' is not an integer or GUID type.",
                     nameof(defs));
             }
 
@@ -104,7 +107,7 @@ internal sealed class ConstraintRegistry(
                 // emit yet. Reject up-front so callers get a typed signal instead of a corrupt
                 // schema on first insert.
                 throw new NotSupportedException(
-                    $"Column '{c.Name}': IsAutoIncrement is only supported for Int16 and Int32; '{c.ClrType}' is not supported.");
+                    $"Column '{c.Name}': IsAutoIncrement is only supported for Int16, Int32 and Guid; '{c.ClrType}' is not supported.");
             }
 
             list.Add(c);
@@ -120,10 +123,20 @@ internal sealed class ConstraintRegistry(
         }
     }
 
-    public void Unregister(string tableName) => this.constraints.Remove(tableName);
+    public void Unregister(string tableName)
+    {
+        this.constraints.Remove(tableName);
+        this.tableRules.Remove(tableName);
+    }
 
     public void Rename(string oldName, string newName)
     {
+        if (this.tableRules.TryGetValue(oldName, out TableValidationConstraint? rule))
+        {
+            this.tableRules.Remove(oldName);
+            this.tableRules[newName] = rule;
+        }
+
         if (this.constraints.TryGetValue(oldName, out List<ColumnConstraint>? list))
         {
             this.constraints.Remove(oldName);
@@ -162,7 +175,7 @@ internal sealed class ConstraintRegistry(
             }
         }
 
-        return new ConstraintRegistrySnapshot(tables, autoCounters);
+        return new ConstraintRegistrySnapshot(tables, autoCounters, new Dictionary<string, TableValidationConstraint?>(this.tableRules, StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -175,6 +188,12 @@ internal sealed class ConstraintRegistry(
     /// <param name="snapshot">A snapshot from <see cref="CaptureSnapshot"/>.</param>
     internal void Restore(ConstraintRegistrySnapshot snapshot)
     {
+        this.tableRules.Clear();
+        foreach (KeyValuePair<string, TableValidationConstraint?> entry in snapshot.TableRules)
+        {
+            this.tableRules.Add(entry.Key, entry.Value);
+        }
+
         this.constraints.Clear();
         foreach (KeyValuePair<string, List<ColumnConstraint>> entry in snapshot.Tables)
         {
@@ -220,17 +239,15 @@ internal sealed class ConstraintRegistry(
         string tableName, TableDef tableDef, object[] values, CancellationToken cancellationToken)
     {
         // Replace DbDefault before anything else, so the sentinel never reaches
-        // the encoder, the unique checks or an expression, even when the
-        // bail-out below skips the constraints.
+        // the encoder, the unique checks or an expression.
         bool[]? requestsDefault = TakeDefaultRequests(values);
 
         List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
 
-        // The constraint list is positionally aligned with the columns at registration time.
-        // Add/Drop/Rename re-registers, so the count must match. Defensive bail-out otherwise.
+        // Metadata is aligned by column identity; a wrong-width row is always refused.
         if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
         {
-            return null;
+            throw new ArgumentException($"Table '{tableName}' requires {tableDef.Columns.Count} values, but the row has {values.Length}.", nameof(values));
         }
 
         List<(ColumnConstraint Constraint, long? PreviousValue)>? checkpoints = null;
@@ -288,16 +305,28 @@ internal sealed class ConstraintRegistry(
                         out object evaluated))
                     {
                         value = evaluated;
-                        isNull = false;
+                        isNull = evaluated is DBNull;
+                    }
+                    else
+                    {
+                        throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, $"Default expression '{c.DefaultValueExpression}' for column '{c.Name}' on table '{tableName}' cannot be evaluated for the column type.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                     }
                 }
 
                 if (isNull && c.IsAutoIncrement)
                 {
-                    long? previous = c.NextAutoValue;
-                    long next = await this.GetNextAutoValueAsync(tableName, tableDef, c, i, cancellationToken).ConfigureAwait(false);
-                    (checkpoints ??= new List<(ColumnConstraint, long?)>(1)).Add((c, previous));
-                    value = ConvertIntegral(next, c.ClrType);
+                    if (c.ClrType == typeof(Guid))
+                    {
+                        value = Guid.NewGuid();
+                    }
+                    else
+                    {
+                        long? previous = c.NextAutoValue;
+                        long next = await this.GetNextAutoValueAsync(tableName, tableDef, c, i, cancellationToken).ConfigureAwait(false);
+                        (checkpoints ??= new List<(ColumnConstraint, long?)>(1)).Add((c, previous));
+                        value = ConvertIntegral(next, c.ClrType);
+                    }
+
                     isNull = false;
                 }
 
@@ -317,6 +346,7 @@ internal sealed class ConstraintRegistry(
             CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: false, tableName, textCollation);
             ValidateCalculatedResults(tableName, list, values);
             CheckValidationRuleExpressions(tableName, tableDef, list, values, assignedColumns: null, textCollation);
+            await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -360,7 +390,7 @@ internal sealed class ConstraintRegistry(
         List<ColumnConstraint> list = await this.GetOrHydrateAsync(tableName, tableDef, cancellationToken).ConfigureAwait(false);
         if (list.Count != tableDef.Columns.Count || values.Length != tableDef.Columns.Count)
         {
-            return;
+            throw new ArgumentException($"Table '{tableName}' requires {tableDef.Columns.Count} values, but the row has {values.Length}.", nameof(values));
         }
 
         var assigned = new List<int>(assignedColumns);
@@ -393,6 +423,7 @@ internal sealed class ConstraintRegistry(
         CalculatedExpressionEvaluator.Apply(tableDef, list, values, force: true, tableName, textCollation);
         ValidateCalculatedResults(tableName, list, values);
         CheckValidationRuleExpressions(tableName, tableDef, list, values, assigned, textCollation);
+        await this.CheckTableValidationRuleAsync(tableName, tableDef, list, values, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -567,7 +598,7 @@ internal sealed class ConstraintRegistry(
     /// Evaluates the persisted <see cref="ColumnConstraint.ValidationRuleExpression"/> of each
     /// non-calculated column in <paramref name="assignedColumns"/> (every column when
     /// <see langword="null"/>) against the finished row. A rule this library cannot parse or
-    /// evaluate is not enforced; see <see cref="ColumnValidationRule"/>.
+    /// evaluate refuses the operation before mutation; see <see cref="ColumnValidationRule"/>.
     /// </summary>
     /// <param name="tableName">The table name, for error messages.</param>
     /// <param name="tableDef">The table definition.</param>
@@ -586,34 +617,89 @@ internal sealed class ConstraintRegistry(
         JetDatabaseWriter.Indexes.Collation.JetTextCollation? textCollation)
     {
         CalculatedExpressionEvaluationContext? context = null;
-        int count = assignedColumns?.Count ?? constraints.Count;
-        for (int n = 0; n < count; n++)
+        for (int i = 0; i < constraints.Count; i++)
         {
-            int i = assignedColumns?[n] ?? n;
             ColumnConstraint c = constraints[i];
-            if (c.ValidationRuleExpression is null || c.IsCalculated)
+            if (c.ValidationRuleExpression is null || (assignedColumns != null && !c.IsCalculated && !assignedColumns.Contains(i)))
             {
                 continue;
             }
 
             ColumnValidationRule rule = c.ValidationRulePlan ??= ColumnValidationRule.Compile(c.ValidationRuleExpression, c.Name);
-            if (!rule.IsSupported)
-            {
-                continue;
-            }
-
             context ??= new CalculatedExpressionEvaluationContext(tableDef, constraints, values, force: false, tableName, textCollation);
-            if (rule.Accepts(context))
+            try
             {
-                continue;
+                if (rule.Accepts(context))
+                {
+                    continue;
+                }
             }
-
+            catch (Exception ex) when (ColumnValidationRule.IsEvaluationFailure(ex))
+            {
+                throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, $"Validation rule '{c.ValidationRuleExpression}' for column '{c.Name}' on table '{tableName}' cannot be evaluated.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+            }
             object value = values[i];
             string shown = value is null or DBNull ? "Null" : "'" + Convert.ToString(value, CultureInfo.InvariantCulture) + "'";
             string message = $"Validation rule '{c.ValidationRuleExpression}' for column '{c.Name}' on table '{tableName}' rejected value {shown}.";
             throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, string.IsNullOrEmpty(c.ValidationText) ? message : message + " " + c.ValidationText, new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
         }
     }
+
+    /// <summary>Checks the persisted table rule against the complete candidate row.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="tableDef">The table definition.</param>
+    /// <param name="columns">The column constraints.</param>
+    /// <param name="values">The complete candidate row.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    private async ValueTask CheckTableValidationRuleAsync(string tableName, TableDef tableDef, List<ColumnConstraint> columns, object[] values, CancellationToken cancellationToken)
+    {
+        if (!this.tableRules.TryGetValue(tableName, out TableValidationConstraint? rule))
+        {
+            ColumnPropertyBlock? properties = readLvPropForTable is null ? null : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
+            this.CacheTableValidationRule(tableName, properties);
+            rule = this.tableRules[tableName];
+        }
+
+        if (rule is null)
+        {
+            return;
+        }
+
+        try
+        {
+            rule.Plan ??= CalculatedExpressionPlan.Parse(rule.Expression);
+            var context = new CalculatedExpressionEvaluationContext(tableDef, columns, values, force: false, tableName, textCollation);
+            object result = rule.Plan.Root.Evaluate(context, rule.Plan);
+            if (CalculatedExpressionCoercion.IsNull(result) || CalculatedExpressionCoercion.ToBoolean(result))
+            {
+                return;
+            }
+        }
+        catch (Exception ex) when (ColumnValidationRule.IsEvaluationFailure(ex))
+        {
+            throw TableRuleFailure(tableName, rule, "cannot be evaluated");
+        }
+
+        throw TableRuleFailure(tableName, rule, "rejected the row");
+    }
+
+    /// <summary>Remembers the rule or its absence without relying on property block order.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="properties">The readable persisted properties, or absence.</param>
+    private void CacheTableValidationRule(string tableName, ColumnPropertyBlock? properties)
+    {
+        ColumnPropertyTarget? target = properties?.FindTableTarget();
+        string? expression = NullIfBlank(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties!.Format));
+        this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties!.Format));
+    }
+
+    /// <summary>Builds a contextual table-rule refusal.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="rule">The persisted rule.</param>
+    /// <param name="reason">The failure reason.</param>
+    /// <returns>The contextual validation failure.</returns>
+    private static JetValidationRuleException TableRuleFailure(string tableName, TableValidationConstraint rule, string reason)
+        => JetErrors.Validation(JetErrorCode.TableValidationRuleViolation, $"Table validation rule '{rule.Expression}' on table '{tableName}' {reason}. {rule.ValidationText}", new JetErrorInfo { TableName = tableName, Reason = reason });
 
     private static void ValidateCalculatedResults(string tableName, List<ColumnConstraint> constraints, object[] values)
     {
@@ -683,11 +769,20 @@ internal sealed class ConstraintRegistry(
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
     {
-        if (this.constraints.TryGetValue(tableName, out List<ColumnConstraint>? list) && list != null)
+        this.constraints.TryGetValue(tableName, out List<ColumnConstraint>? list);
+        if (list != null && list.Count == tableDef.Columns.Count)
         {
-            return list;
-        }
+            bool aligned = true;
+            for (int index = 0; index < list.Count; index++)
+            {
+                aligned &= string.Equals(list[index].Name, tableDef.Columns[index].Name, StringComparison.OrdinalIgnoreCase);
+            }
 
+            if (aligned)
+            {
+                return list;
+            }
+        }
         // The table may have been created by an earlier writer instance (or by Access
         // itself). Hydrate the registry from the persisted column flags and LvProp so
         // NOT NULL, AutoIncrement, and calculated-column expressions still take effect
@@ -695,15 +790,28 @@ internal sealed class ConstraintRegistry(
         ColumnPropertyBlock? props = readLvPropForTable is null
             ? null
             : await readLvPropForTable(tableName, cancellationToken).ConfigureAwait(false);
-        return this.HydrateFromTableDef(tableName, tableDef, props);
+        List<ColumnConstraint> hydrated = this.HydrateFromTableDef(tableName, tableDef, props);
+        if (list != null)
+        {
+            for (int index = 0; index < hydrated.Count; index++)
+            {
+                ColumnConstraint current = hydrated[index];
+                ColumnConstraint? registered = list.Find(candidate => string.Equals(candidate.Name, current.Name, StringComparison.OrdinalIgnoreCase) && candidate.ClrType == current.ClrType);
+                if (registered != null)
+                {
+                    hydrated[index] = registered;
+                }
+            }
+        }
+
+        return hydrated;
     }
 
     /// <summary>
     /// Rebuilds a per-column constraint list from the persisted TDEF column flags
     /// and (when supplied) the table's <c>MSysObjects.LvProp</c> property block.
     /// IsNullable comes from the LvProp <c>Required</c> Boolean when present
-    /// (DAO/Access wire format), falling back to the legacy writer-private TDEF
-    /// flag bit <c>0x08</c>. <c>FLAG_AUTO_LONG (0x04)</c> is restored from the
+    /// (DAO/Access wire format). Integer and GUID AutoNumber flags are restored from the
     /// TDEF descriptor. The LvProp <c>DefaultValue</c>, <c>ValidationRule</c> and
     /// <c>ValidationText</c> properties become the persisted default and rule
     /// expressions. The CLR <see cref="ColumnConstraint.DefaultValue"/> and
@@ -716,20 +824,20 @@ internal sealed class ConstraintRegistry(
     /// <param name="properties">The properties.</param>
     private List<ColumnConstraint> HydrateFromTableDef(string tableName, TableDef tableDef, ColumnPropertyBlock? properties = null)
     {
+        this.CacheTableValidationRule(tableName, properties);
         var list = new List<ColumnConstraint>(tableDef.Columns.Count);
         foreach (ColumnInfo col in tableDef.Columns)
         {
             ColumnPropertyTarget? propertyTarget = properties?.FindTarget(col.Name);
 
             // Complex columns (Attachment / Complex) carry a magic Flags = 0x07
-            // marker rather than real flag bits; do not interpret 0x02 / 0x04 / 0x08 here.
+            // marker rather than real flag bits.
             // Bit 0x02 is now always set by the writer for DAO compatibility (Jackcess
             // UNKNOWN_FF_FLAG_MASK), so it can no longer carry IsNullable. IsNullable
-            // is sourced from MSysObjects.LvProp's Required Boolean (DAO wire format),
-            // falling back to the legacy 0x08 bit only when LvProp is absent.
+            // is sourced from MSysObjects.LvProp's Required Boolean (DAO wire format).
             bool isComplex = col.Type is AttachmentType or ComplexType;
             bool isNullable;
-            bool isAutoIncrement = !isComplex && (col.Flags & Constants.ColumnDescriptorFlags.AutoNumber) != 0;
+            bool isAutoIncrement = col.IsAutoNumber;
             if (isComplex)
             {
                 isNullable = true;
@@ -741,7 +849,7 @@ internal sealed class ConstraintRegistry(
             else
             {
                 bool? required = propertyTarget?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
-                isNullable = required is bool r ? !r : (col.Flags & Constants.ColumnDescriptorFlags.LegacyNotNull) == 0;
+                isNullable = required is not true;
             }
 
             ColumnType calculatedResultType = ResolveCalculatedResultType(col, propertyTarget);

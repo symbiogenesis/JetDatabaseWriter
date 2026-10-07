@@ -129,13 +129,13 @@ public sealed class ConstraintRegistryTests
     [InlineData("DLookUp(\"Id\",\"Other\") > 0")]
     [InlineData(">= And")]
     [InlineData("((>0)")]
-    public async Task ApplyAsync_ValidationRuleThisLibraryCannotEvaluate_IsNotEnforced(string rule)
+    public async Task ApplyAsync_ValidationRuleThisLibraryCannotEvaluate_IsRefused(string rule)
     {
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.ValidationRule, rule)));
         object[] values = [-1];
 
-        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
 
         Assert.Equal(-1, values[0]);
     }
@@ -248,18 +248,17 @@ public sealed class ConstraintRegistryTests
     }
 
     /// <summary>
-    /// A Single default too large for a float produces no default. It used to store
-    /// positive infinity.
+    /// A Single default too large for a float refuses insertion.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task ApplyAsync_SingleDefaultOutOfRange_LeavesNull()
+    public async Task ApplyAsync_SingleDefaultOutOfRange_IsRefused()
     {
         TableDef tableDef = SingleColumnTable(ColumnType.FloatType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "1E+39")));
         object[] values = [DbDefault.Value];
 
-        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
 
         Assert.Equal(DBNull.Value, values[0]);
     }
@@ -401,12 +400,11 @@ public sealed class ConstraintRegistryTests
 
     /// <summary>
     /// <see cref="DbDefault"/> never reaches the row encoder: it becomes
-    /// <see cref="DBNull"/> even when the registry skips the table because its
-    /// constraint list does not line up with the table definition.
+    /// the surviving column's default after stale metadata is aligned by name.
     /// </summary>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Fact]
-    public async Task ApplyAsync_DbDefault_IsReplacedWhenConstraintsAreSkipped()
+    public async Task ApplyAsync_StaleConstraints_AreRebuiltByColumnIdentity()
     {
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
         var registry = new ConstraintRegistry();
@@ -415,22 +413,75 @@ public sealed class ConstraintRegistryTests
 
         Assert.Null(await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
 
+        Assert.Equal(7, values[0]);
+    }
+
+    /// <summary>A supported Null default remains Null rather than an evaluation failure.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_NullDefault_IsAccepted()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "Null")));
+        object[] values = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
         Assert.Equal(DBNull.Value, values[0]);
     }
 
+    /// <summary>GenGUID produces a fresh GUID each time the stored default is evaluated.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_GenGuidDefault_GeneratesDistinctValues()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.GuidType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "GenGUID()")));
+        object[] first = [DbDefault.Value];
+        object[] second = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", tableDef, first, TestContext.Current.CancellationToken);
+        _ = await registry.ApplyAsync("T", tableDef, second, TestContext.Current.CancellationToken);
+        Assert.NotEqual(Guid.Empty, Assert.IsType<Guid>(first[0]));
+        Assert.NotEqual(first[0], second[0]);
+    }
+
+    /// <summary>The unauthenticated Access session uses the Admin account.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_CurrentUserDefault_IsAdmin()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.TextType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "CurrentUser()")));
+        object[] values = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+        Assert.Equal("Admin", values[0]);
+    }
+
+    /// <summary>A row with the wrong width cannot bypass persisted constraints.</summary>
+    /// <param name="width">The supplied row width.</param>
+    /// <returns>The asynchronous test.</returns>
     [Theory]
-    [InlineData("=CurrentUser()")]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task ApplyAsync_WrongRowArity_IsRefused(int width)
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        var registry = new ConstraintRegistry();
+        object[] values = new object[width];
+        _ = await Assert.ThrowsAsync<ArgumentException>(async () => await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<ArgumentException>(async () => await registry.ApplyUpdateAsync("T", tableDef, values, [0], TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
     [InlineData("GenUniqueID()")]
     [InlineData("\"unterminated")]
     [InlineData("\"text\"")]
-    public async Task ApplyAsync_DefaultValueThisLibraryCannotEvaluate_LeavesNull(string expression)
+    public async Task ApplyAsync_DefaultValueThisLibraryCannotEvaluate_IsRefused(string expression)
     {
-        // "text" cannot become a Long Integer, so it is skipped like an unknown function.
+        // "text" cannot become a Long Integer, so insertion must be refused.
         TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
         ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, expression)));
         object[] values = [DbDefault.Value];
 
-        _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
 
         Assert.Equal(DBNull.Value, values[0]);
     }
@@ -493,6 +544,12 @@ public sealed class ConstraintRegistryTests
         registry.Register("T", [testCase.Column]);
         object[] values = [DbDefault.Value];
 
+        if (testCase.Expected is DBNull)
+        {
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
+            return;
+        }
+
         _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
 
         Assert.Equal(testCase.Expected, values[0]);
@@ -518,6 +575,87 @@ public sealed class ConstraintRegistryTests
 
         await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
             await registry.ApplyUpdateAsync("T", tableDef, [-5, 1], [0], TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>Table rules use the empty-name target regardless of its position.</summary>
+    /// <param name="rule">The table rule.</param>
+    /// <param name="accepted">Whether the candidate passes.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [InlineData("[Score] > 0", false)]
+    [InlineData("Null", true)]
+    [InlineData("True", true)]
+    [InlineData("False", false)]
+    [InlineData("UnknownFunction([Score])", false)]
+    public async Task ApplyAsync_TableValidationRule_IsEnforced(string rule, bool accepted)
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties(
+            ("Score", Constants.ColumnPropertyNames.Description, "column first"),
+            (string.Empty, Constants.ColumnPropertyNames.ValidationRule, rule),
+            (string.Empty, Constants.ColumnPropertyNames.ValidationText, "table validation message")));
+        object[] values = [-1];
+        if (accepted)
+        {
+            _ = await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken);
+        }
+        else
+        {
+            JetValidationRuleException ex = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+                await registry.ApplyAsync("T", tableDef, values, TestContext.Current.CancellationToken));
+            Assert.Contains(rule, ex.Message, StringComparison.Ordinal);
+            Assert.Contains("table validation message", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>A table rule checks the whole row when an unrelated field is updated.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyUpdateAsync_TableValidationRule_ChecksUnassignedColumns()
+    {
+        var tableDef = new TableDef
+        {
+            Columns = [new ColumnInfo { Name = "A", Type = ColumnType.LongIntegerType }, new ColumnInfo { Name = "B", Type = ColumnType.LongIntegerType }],
+        };
+        ConstraintRegistry registry = RegistryWithProperties(BuildColumnProperties((string.Empty, Constants.ColumnPropertyNames.ValidationRule, "[B] >= 0")));
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+            await registry.ApplyUpdateAsync("T", tableDef, [1, -1], [0], TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>Table-rule plans and absence are cached with the hydrated column metadata.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_TableValidationRule_ReadsPropertiesOnce()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        ColumnPropertyBlock properties = BuildColumnProperties((string.Empty, Constants.ColumnPropertyNames.ValidationRule, "[Score] >= 0"));
+        int reads = 0;
+        var registry = new ConstraintRegistry((_, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult<ColumnPropertyBlock?>(properties);
+        });
+        _ = await registry.ApplyAsync("T", tableDef, [1], TestContext.Current.CancellationToken);
+        _ = await registry.ApplyAsync("T", tableDef, [2], TestContext.Current.CancellationToken);
+        Assert.Equal(1, reads);
+    }
+
+    /// <summary>Rollback restores the table rule cache to its previous schema state.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task Restore_TableValidationRule_RestoresCachedRule()
+    {
+        TableDef tableDef = SingleColumnTable(ColumnType.LongIntegerType);
+        ColumnPropertyBlock properties = BuildColumnProperties((string.Empty, Constants.ColumnPropertyNames.ValidationRule, "True"));
+        var registry = new ConstraintRegistry((_, _) => ValueTask.FromResult<ColumnPropertyBlock?>(properties));
+        _ = await registry.ApplyAsync("T", tableDef, [1], TestContext.Current.CancellationToken);
+        ConstraintRegistrySnapshot snapshot = registry.CaptureSnapshot();
+        registry.Unregister("T");
+        properties = BuildColumnProperties((string.Empty, Constants.ColumnPropertyNames.ValidationRule, "False"));
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+            await registry.ApplyAsync("T", tableDef, [1], TestContext.Current.CancellationToken));
+        registry.Restore(snapshot);
+        _ = await registry.ApplyAsync("T", tableDef, [1], TestContext.Current.CancellationToken);
     }
 
     private static async Task AssertRuleAsync(string rule, ColumnType type, object? value, bool accepted)

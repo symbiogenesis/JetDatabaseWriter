@@ -83,6 +83,8 @@ internal static class LinkedTableManager
             PageReadOptimizationMode = options.PageReadOptimizationMode,
             ValidateOnOpen = options.ValidateOnOpen,
             StrictParsing = options.StrictParsing,
+            MaxLongValueBytes = options.MaxLongValueBytes,
+            MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,
             Password = options.Password,

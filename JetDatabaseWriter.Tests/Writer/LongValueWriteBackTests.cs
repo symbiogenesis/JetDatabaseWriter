@@ -369,10 +369,11 @@ public sealed class LongValueWriteBackTests
         }
 
         ms.Position = 0;
-        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false, StrictParsing = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
         DataRow first = table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 1);
         DataRow second = table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 2);
+        Assert.Equal(DBNull.Value, first["Body"]);
         Assert.Equal("a", first["Note"]);
         Assert.Equal("changed", second["Note"]);
         Assert.Equal("short memo", second["Body"]);
@@ -540,12 +541,12 @@ public sealed class LongValueWriteBackTests
         ms.Position = lvalPageStart;
         ms.WriteByte(0x7F);
 
-        // The public read still reports the damage in-band.
+        // The default public read refuses corrupt stored content.
         ms.Position = 0;
         await using (AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
         {
-            DataTable table = await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken);
-            Assert.DoesNotContain(marker, (string)table.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 1)["Body"], StringComparison.Ordinal);
+            await Assert.ThrowsAsync<InvalidDataException>(async () =>
+                await reader.ReadDataTableAsync(TableName, cancellationToken: TestContext.Current.CancellationToken));
         }
 
         return ms;

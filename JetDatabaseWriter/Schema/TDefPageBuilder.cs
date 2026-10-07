@@ -124,12 +124,11 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
                 // NOTE: nullability is NOT encoded in the TDEF flag byte. DAO/Access
                 // refuse to open a table whose flag byte carries any unknown bits
-                // (including the 0x08 NOT NULL marker an earlier writer revision used);
                 // the constraint is persisted via the Boolean `Required` property in
                 // MSysObjects.LvProp instead. See JetExpressionConverter.ApplyColumn.
                 if (definition.IsAutoIncrement)
                 {
-                    flags |= Constants.ColumnDescriptorFlags.AutoNumber;
+                    flags |= definition.ClrType == typeof(Guid) ? Constants.ColumnDescriptorFlags.AutoNumberGuid : Constants.ColumnDescriptorFlags.AutoNumber;
                 }
 
                 // ValidateColumnForFormat has checked that a Hyperlink column is a Memo.
@@ -261,9 +260,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             }
             else if (col.Type == NumericType && format.SupportsNumeric)
             {
-                // Jet3 has no Numeric type: a decimal column there is created as
-                // Currency, and a Jet3 Numeric column an earlier build wrote keeps
-                // its zero precision and scale through a schema rewrite.
+                // Numeric descriptors are supported only by Jet4 and ACE.
                 if (!col.IsCalculated)
                 {
                     page[o + format.ColumnDescriptor.MiscOff] = col.NumericPrecision;

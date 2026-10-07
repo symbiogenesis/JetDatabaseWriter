@@ -192,6 +192,39 @@ public sealed class LongValueStoreTests
 
         Assert.Same(failure, actual);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(13)]
+    public void LocateRow_RejectsTruncatedPageBeforeHeaderRead(int length)
+    {
+        byte[] page = new byte[length];
+        if (length > 0)
+        {
+            page[0] = Constants.PageTypes.Data;
+        }
+
+        LvalRowLocation location = LongValueStore.LocateRow(
+            7, 0, page, new DataPageLayout(TDefOff: 4, NumRows: 12, RowsStart: 14), 128, []);
+
+        Assert.True(location.Failed);
+    }
+
+    [Fact]
+    public void LocateRow_RejectsRowExtendingBeyondPage()
+    {
+        byte[] page = new byte[128];
+        page[0] = Constants.PageTypes.Data;
+        var layout = new DataPageLayout(TDefOff: 4, NumRows: 12, RowsStart: 14);
+        Wu16(page, layout.NumRows, 1);
+
+        LvalRowLocation location = LongValueStore.LocateRow(
+            7, 0, page, layout, 128, [new RowBound(RowIndex: 0, RowStart: 120, RowSize: 20)]);
+
+        Assert.True(location.Failed);
+    }
+
     [Fact]
     public void LocateRow_UsesProvidedLiveRowBounds()
     {
