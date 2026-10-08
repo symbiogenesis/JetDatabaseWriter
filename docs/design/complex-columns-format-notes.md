@@ -85,7 +85,12 @@ identity; a flat-table name suffix never establishes ownership.
 A nonzero `ComplexTypeObjectID` must resolve to a recognized template name on a
 real local table with a valid TDEF and matching payload schema. Attachment
 payloads require all six native field names with their corresponding types;
-scalar templates require their canonical `Value` field and element type.
+scalar templates require their canonical `Value` field and element type. Matching
+unknown scalar discriminators in the template and flat payload remain visible as
+their own hexadecimal type name, as in the Jackcess
+`unsupportedFieldsTestV2007` fixture's `0x48` fields. They are not reinterpreted
+from the template's name or treated as catalog corruption. Template and payload
+types must still agree.
 Version-history payload names can contain native GUIDs, so template/flat agreement
 does not require those names to be identical. Flat tables must carry their complex
 catalog flags and a valid parent-reference field. Schema renames can preserve that

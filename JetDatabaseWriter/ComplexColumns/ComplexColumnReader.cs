@@ -741,8 +741,17 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 }
 
                 ColumnType? expected = TemplateElementType(info.ComplexTypeName);
+                ColumnInfo? value = flat.FindColumn("Value");
+
+                // Matching unknown scalar discriminators remain opaque in metadata.
+                // Unsupported value codecs still follow the existing decoding refusal.
+                bool opaqueScalar = value is { IsAutoNumber: false, IsCalculated: false }
+                    && template.Columns.Count == 1
+                    && value.Type != default
+                    && value.Type == template.Columns[0].Type
+                    && GetClrType(value.Type) is null;
                 valid &= info.Kind != ComplexColumnKind.MultiValue
-                    || (expected is not null && template.Columns.Count == 1 && template.Columns[0].Type == expected && string.Equals(template.Columns[0].Name, "Value", StringComparison.OrdinalIgnoreCase));
+                    || (expected is not null && template.Columns.Count == 1 && (template.Columns[0].Type == expected || opaqueScalar) && string.Equals(template.Columns[0].Name, "Value", StringComparison.OrdinalIgnoreCase));
                 valid &= info.Kind != ComplexColumnKind.Attachment || (IsAttachmentTemplate(template) && HasAttachmentPayloadSchema(flat));
                 valid &= info.Kind != ComplexColumnKind.VersionHistory || ClassifyFlatTable(flat, info.ColumnName) == ComplexColumnKind.VersionHistory;
             }

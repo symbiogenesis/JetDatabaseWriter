@@ -19,6 +19,19 @@ using Xunit;
 public sealed class ComplexColumnCatalogValidationTests
 {
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnsupportedScalarComplexCodec_PreservesOpaqueMetadata(bool strict)
+    {
+        await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.UnsupportedFieldsTestV2007, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, ComplexColumnTestSupport.Ct);
+        System.Collections.Generic.IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("Test", ComplexColumnTestSupport.Ct);
+        ColumnMetadata unsupported = Assert.Single(metadata, column => column.Name == "UnknownComplex");
+        Assert.Equal("Multi-value 0x48", unsupported.TypeName);
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () => await reader.GetMultiValueItemsAsync("Test", "UnknownComplex", ComplexColumnTestSupport.Ct));
+        Assert.Contains("0x48", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(true, true)]
     [InlineData(false, true)]
     [InlineData(true, false)]
@@ -308,11 +321,15 @@ public sealed class ComplexColumnCatalogValidationTests
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    [InlineData(false, true)]
-    public async Task ComplexColumns_TemplateAndFlatSchemaDisagree_RefusesDescriptor(bool strict, bool damageTemplate)
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    public async Task ComplexColumns_TemplateAndFlatSchemaDisagree_RefusesDescriptor(bool strict, bool damageTemplate, bool unknownCodec)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await ComplexColumnTestSupport.CreateWriterAsync(stream))
@@ -331,7 +348,7 @@ public sealed class ComplexColumnCatalogValidationTests
             int descriptor = harness.Database.Format.TDef.BlockEnd + (realIndexes * harness.Database.Format.TDef.RealIdxEntrySz);
             TableDef flat = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(targetPage, ComplexColumnTestSupport.Ct));
             int valueIndex = flat.FindColumnIndex("Value");
-            page[descriptor + (valueIndex * harness.Database.Format.ColumnDescriptor.Size) + harness.Database.Format.ColumnDescriptor.TypeOff] = (byte)JetDatabaseWriter.Enums.ColumnType.FloatType;
+            page[descriptor + (valueIndex * harness.Database.Format.ColumnDescriptor.Size) + harness.Database.Format.ColumnDescriptor.TypeOff] = unknownCodec ? (byte)0x48 : (byte)JetDatabaseWriter.Enums.ColumnType.FloatType;
             await harness.Pager.WritePageAsync(targetPage, page, ComplexColumnTestSupport.Ct);
         }
 

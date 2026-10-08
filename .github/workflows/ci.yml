@@ -25,7 +25,7 @@ env:
 
 # Every job runs on Windows: the suite uses Windows paths and byte-range locks, and the
 # DAO round-trip tests skip themselves when Access is not installed. The jobs run in
-# parallel. The analyzers take most of a Release build, so three jobs share them, and the
+# parallel. The analyzers take most of a Release build, so four jobs share them, and the
 # test legs build without them.
 jobs:
   analyze:
