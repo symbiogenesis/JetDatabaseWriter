@@ -41,8 +41,15 @@ internal static class RowValueDecodePolicy
         return CalculatedColumnUtil.Unwrap(data);
     }
 
-    internal static void ValidateCalculatedPayload(ReadOnlySpan<byte> payload, ColumnType type)
+    internal static bool HasCalculatedPayload(ReadOnlySpan<byte> payload, ColumnType type)
     {
+        // Native Access calculated scalar slots keep their envelope when the
+        // cached result is null; an assigned result has a nonempty payload.
+        if (payload.IsEmpty)
+        {
+            return false;
+        }
+
         int required;
         if (type == BooleanType)
         {
@@ -61,6 +68,8 @@ internal static class RowValueDecodePolicy
         {
             throw new ArgumentException($"Calculated payload needs {required} byte(s), found {payload.Length}.", nameof(payload));
         }
+
+        return true;
     }
 
     internal static object EmptyVariableValue(ColumnInfo column)

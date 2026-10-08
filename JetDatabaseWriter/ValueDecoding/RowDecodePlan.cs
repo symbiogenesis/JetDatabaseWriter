@@ -689,7 +689,11 @@ internal sealed class RowDecodePlan
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
                 byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
-                RowValueDecodePolicy.ValidateCalculatedPayload(payload, valueType);
+                if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
+                {
+                    return string.Empty;
+                }
+
                 return CalculatedColumnUtil.ReadPayloadString(
                     payload,
                     valueType,
@@ -843,7 +847,11 @@ internal sealed class RowDecodePlan
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
                 byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
-                RowValueDecodePolicy.ValidateCalculatedPayload(payload, valueType);
+                if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
+                {
+                    return DBNull.Value;
+                }
+
                 return CalculatedColumnUtil.ReadPayloadTyped(
                     payload,
                     valueType,
