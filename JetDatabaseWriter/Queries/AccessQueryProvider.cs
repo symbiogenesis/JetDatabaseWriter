@@ -73,7 +73,9 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
             rows = InMemoryTail.Apply(rows, expression, boundary, cancellationToken);
         }
 
-        return this.ReadPreparedAsync(rows, cancellationToken);
+        bool maySkipSource = !ReferenceEquals(boundary, expression)
+            || plan.Stages.Any(static stage => stage is TakeStage { SkipsSource: true });
+        return this.ReadPreparedAsync(rows, maySkipSource, cancellationToken);
     }
 
     public async ValueTask<long> CountAsync(Expression expression, CancellationToken cancellationToken)
@@ -119,9 +121,15 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
 
     private async IAsyncEnumerable<object?> ReadPreparedAsync(
         IAsyncEnumerable<object?> rows,
+        bool maySkipSource,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await tables.RequireTableAsync(table, cancellationToken).ConfigureAwait(false);
+        // Ordinary translated plans advance a reader that validates the table.
+        // Empty Take and in-memory tails can bypass that source entirely.
+        if (maySkipSource)
+        {
+            await tables.RequireTableAsync(table, cancellationToken).ConfigureAwait(false);
+        }
 
         // A buffered stage or a synthetic element need not advance the table reader,
         // so enforce cancellation even after the read itself has finished.

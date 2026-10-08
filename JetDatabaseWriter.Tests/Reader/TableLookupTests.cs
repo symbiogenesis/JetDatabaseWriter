@@ -68,6 +68,28 @@ public class TableLookupTests(DatabaseCache db) : IClassFixture<DatabaseCache>
         }
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task UnknownTableShortCircuitAndSyntheticQueriesStillThrow(int count)
+    {
+        AccessReader reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
+        const string missing = "MissingLookupTable";
+        Func<Task>[] queries =
+        [
+            async () => _ = await reader.Query<LookupRow>(missing).Take(count).ToListAsync(TestContext.Current.CancellationToken),
+            async () => _ = await reader.Query<LookupRow>(missing).Select(row => row.Id).Take(count).ToListAsync(TestContext.Current.CancellationToken),
+            async () => _ = await reader.Query<LookupRow>(missing).Take(count).DefaultIfEmpty(new LookupRow()).ToListAsync(TestContext.Current.CancellationToken),
+            async () => _ = await reader.Query<LookupRow>(missing).Prepend(new LookupRow()).Take(1).ToListAsync(TestContext.Current.CancellationToken),
+        ];
+        foreach (Func<Task> query in queries)
+        {
+            JetObjectNotFoundException error = await Assert.ThrowsAsync<JetObjectNotFoundException>(query);
+            Assert.Equal(JetErrorCode.TableNotFound, error.ErrorCode);
+            Assert.Equal(missing, error.ErrorInfo.TableName);
+        }
+    }
+
     [Fact]
     public async Task TryLookupDistinguishesAbsentEmptyAndUnopenedLinkedTables()
     {
@@ -142,6 +164,8 @@ public class TableLookupTests(DatabaseCache db) : IClassFixture<DatabaseCache>
         {
             JetCorruptDataException lookup = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.TryLookupTableAsync("Unusable", ct));
             Assert.Equal(JetErrorCode.CorruptCatalog, lookup.ErrorCode);
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ListIndexesAsync("Unusable", ct));
+            await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Query<LookupRow>("Unusable").Take(0).ToListAsync(ct));
             await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             {
                 using DataTable table = await reader.ReadTableAsync("Unusable", cancellationToken: ct);

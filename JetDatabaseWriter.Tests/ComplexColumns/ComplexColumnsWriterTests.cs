@@ -95,8 +95,7 @@ public sealed class ComplexColumnsWriterTests
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
 
-        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
-        Assert.Empty(meta);
+        Assert.False(await reader.TryLookupTableAsync("MSysComplexColumns", TestContext.Current.CancellationToken));
     }
 
     // ── ColumnDefinition declaration surface ───────────────────────────────────
@@ -382,8 +381,7 @@ public sealed class ComplexColumnsWriterTests
 
         foreach (string template in ExpectedTemplateNames)
         {
-            IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(template, TestContext.Current.CancellationToken);
-            Assert.Empty(meta);
+            Assert.False(await reader.TryLookupTableAsync(template, TestContext.Current.CancellationToken));
         }
     }
 

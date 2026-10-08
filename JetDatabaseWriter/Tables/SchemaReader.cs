@@ -186,10 +186,10 @@ internal sealed class SchemaReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
-        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             IReadOnlyList<ColumnMetadata>? linkedMetadata = await linked.TryGetColumnMetadataAsync(tableName, cancellationToken).ConfigureAwait(false);
             return linkedMetadata ?? [];
         }
@@ -296,9 +296,14 @@ internal sealed class SchemaReader(
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         cancellationToken.ThrowIfCancellationRequested();
-        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        return resolved is null ? 0 : (await tableDefs.ReadTableCountersAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
+        if (resolved is null)
+        {
+            await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+            return 0;
+        }
+
+        return (await tableDefs.ReadTableCountersAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
     }
 
     /// <summary>

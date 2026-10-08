@@ -9,6 +9,9 @@ using System.Threading.Tasks;
 /// <param name="count">The maximum number of leading rows to yield.</param>
 internal sealed class TakeStage(int count) : QueryStage
 {
+    /// <summary>Gets a value indicating whether this stage completes without advancing its source.</summary>
+    internal bool SkipsSource => count <= 0;
+
     public override async IAsyncEnumerable<T> Apply<T>(
         IAsyncEnumerable<T> source,
         [EnumeratorCancellation] CancellationToken cancellationToken)
