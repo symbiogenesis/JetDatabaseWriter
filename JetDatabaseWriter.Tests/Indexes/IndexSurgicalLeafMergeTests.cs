@@ -399,55 +399,6 @@ public sealed class IndexSurgicalLeafMergeTests
         }
     }
 
-    private async Task<(long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength)> ReadMergeSnapshotAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
-        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
-        long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
-        byte[] rootPage = await harness.Database.Pages.ReadPageCopyAsync(root, this.ct);
-        long tail = IndexPageCodec.ReadTailPage(harness.Database.Format.IndexPage, rootPage);
-        HashSet<long> pages = await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct);
-        Assert.Contains(tail, pages);
-        List<IndexEntry> entries = await IndexLeafChain.ReadEntriesAsync(harness.Database, table.TDefPage, root, this.ct);
-        return (root, tail, pages, entries, stream.Length);
-    }
-
-    private async Task AssertDetachedTailReclaimedAsync(
-        MemoryStream stream,
-        (long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength) before,
-        int remainingRows)
-    {
-        // No page appended and exactly the detached leaf removed from the
-        // tree: all surviving root/child pages retain their identities.
-        Assert.Equal(before.FileLength, stream.Length);
-        stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
-        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
-        long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
-        Assert.Equal(before.Root, root);
-        HashSet<long> pages = await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct);
-        var expectedPages = new HashSet<long>(before.Pages);
-        Assert.True(expectedPages.Remove(before.Tail));
-        Assert.True(expectedPages.SetEquals(pages));
-        Assert.True(await harness.Services.PageAllocator.IsPageFreeAsync(before.Tail, this.ct));
-        Assert.Equal(Constants.PageTypes.Freed, (await harness.Database.Pages.ReadPageCopyAsync(before.Tail, this.ct))[0]);
-        foreach (long page in pages)
-        {
-            Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(page, this.ct));
-        }
-
-        Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
-        List<IndexEntry> entries = await IndexLeafChain.ReadEntriesAsync(harness.Database, table.TDefPage, root, this.ct);
-        Assert.Equal(remainingRows, entries.Count);
-        for (int i = 0; i < remainingRows; i++)
-        {
-            Assert.Equal(before.Entries[i].Key, entries[i].Key);
-            Assert.Equal(before.Entries[i].DataPage, entries[i].DataPage);
-            Assert.Equal(before.Entries[i].DataRow, entries[i].DataRow);
-        }
-    }
-
     private static int CountIndexPages(byte[] fileBytes)
     {
         int n = 0;
@@ -498,5 +449,54 @@ public sealed class IndexSurgicalLeafMergeTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             TestContext.Current.CancellationToken);
+    }
+
+    private async Task<(long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength)> ReadMergeSnapshotAsync(MemoryStream stream)
+    {
+        stream.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
+        long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
+        byte[] rootPage = await harness.Database.Pages.ReadPageCopyAsync(root, this.ct);
+        long tail = IndexPageCodec.ReadTailPage(harness.Database.Format.IndexPage, rootPage);
+        HashSet<long> pages = await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct);
+        Assert.Contains(tail, pages);
+        List<IndexEntry> entries = await IndexLeafChain.ReadEntriesAsync(harness.Database, table.TDefPage, root, this.ct);
+        return (root, tail, pages, entries, stream.Length);
+    }
+
+    private async Task AssertDetachedTailReclaimedAsync(
+        MemoryStream stream,
+        (long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength) before,
+        int remainingRows)
+    {
+        // No page appended and exactly the detached leaf removed from the
+        // tree: all surviving root/child pages retain their identities.
+        Assert.Equal(before.FileLength, stream.Length);
+        stream.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
+        long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
+        Assert.Equal(before.Root, root);
+        HashSet<long> pages = await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct);
+        var expectedPages = new HashSet<long>(before.Pages);
+        Assert.True(expectedPages.Remove(before.Tail));
+        Assert.True(expectedPages.SetEquals(pages));
+        Assert.True(await harness.Services.PageAllocator.IsPageFreeAsync(before.Tail, this.ct));
+        Assert.Equal(Constants.PageTypes.Freed, (await harness.Database.Pages.ReadPageCopyAsync(before.Tail, this.ct))[0]);
+        foreach (long page in pages)
+        {
+            Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(page, this.ct));
+        }
+
+        Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
+        List<IndexEntry> entries = await IndexLeafChain.ReadEntriesAsync(harness.Database, table.TDefPage, root, this.ct);
+        Assert.Equal(remainingRows, entries.Count);
+        for (int i = 0; i < remainingRows; i++)
+        {
+            Assert.Equal(before.Entries[i].Key, entries[i].Key);
+            Assert.Equal(before.Entries[i].DataPage, entries[i].DataPage);
+            Assert.Equal(before.Entries[i].DataRow, entries[i].DataRow);
+        }
     }
 }
