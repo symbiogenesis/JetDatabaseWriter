@@ -133,6 +133,16 @@ Check 'Dry confidence intervals remain unavailable' {
     $report = & $compare -Baseline $base -Head $headPath
     Assert ($report.Contains('| Sample.Read | 100.0 ns | n/a | 100.0 ns | n/a | 1.00 | 0 B | 0 B | 1.00 |')) 'Nonfinite dry-run errors were rendered as numeric measurements.'
 }
+Check 'Exporter empty measurements remain unavailable' {
+    $empty = New-Case
+    $empty.Statistics.Mean = ''
+    $empty.Statistics.ConfidenceInterval.Margin = ''
+    $empty.Memory.BytesAllocatedPerOperation = ''
+    Write-Report $base @($empty)
+    Write-Report $headPath @($empty)
+    $report = & $compare -Baseline $base -Head $headPath
+    Assert ($report.Contains('| Sample.Read | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |')) 'Empty exporter measurements were rendered as zero.'
+}
 Check 'Missing run manifests summarize without error' {
     $summary = & $runner -Results (Join-Path $root 'missing-manifest') -SummaryOnly
     Assert ($summary -eq 'No benchmark run manifest was produced.') 'Missing run manifest did not produce the partial-result diagnostic.'

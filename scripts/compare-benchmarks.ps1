@@ -30,10 +30,11 @@ function Read-Results([string] $dir) {
                      else { $b.FullName -replace '^.*?\.(\w+\.\w+(\(.*\))?)$', '$1' }
             $map[$b.FullName] = [pscustomobject]@{
                 Label = $label
-                Mean = if ($null -ne $b.Statistics.Mean) { [double]$b.Statistics.Mean } else { $null }
-                # BenchmarkDotNet's Error column is the confidence interval's margin, not the standard error.
-                Error = if ($null -ne $b.Statistics.ConfidenceInterval.Margin) { [double]$b.Statistics.ConfidenceInterval.Margin } else { $null }
-                Allocated = if ($null -ne $b.Memory.BytesAllocatedPerOperation) { [double]$b.Memory.BytesAllocatedPerOperation } else { $null }
+                Mean = if (-not [string]::IsNullOrWhiteSpace([string]$b.Statistics.Mean)) { [double]$b.Statistics.Mean } else { $null }
+                # BenchmarkDotNet exports undefined measurements as empty strings (for example a dry-run margin).
+                # Error is the confidence interval's margin, not the standard error.
+                Error = if (-not [string]::IsNullOrWhiteSpace([string]$b.Statistics.ConfidenceInterval.Margin)) { [double]$b.Statistics.ConfidenceInterval.Margin } else { $null }
+                Allocated = if (-not [string]::IsNullOrWhiteSpace([string]$b.Memory.BytesAllocatedPerOperation)) { [double]$b.Memory.BytesAllocatedPerOperation } else { $null }
             }
         }
     }
