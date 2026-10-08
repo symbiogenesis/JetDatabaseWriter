@@ -97,6 +97,7 @@ internal static class LinkedTableManager
             StrictParsing = options.StrictParsing,
             MaxEncryptionSpinCount = options.MaxEncryptionSpinCount,
             MaxEncryptionInfoBytes = options.MaxEncryptionInfoBytes,
+            MaxTableDefinitionBytes = options.MaxTableDefinitionBytes,
             MaxLongValueBytes = options.MaxLongValueBytes,
             MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,
             FileAccess = options.FileAccess,

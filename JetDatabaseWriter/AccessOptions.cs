@@ -43,6 +43,13 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     public int MaxEncryptionInfoBytes { get; init; } = 1024 * 1024;
 
     /// <summary>
+    /// Gets the maximum logical byte length of one table definition, including
+    /// continuation pages. Default: 16 MiB. Must be positive. Increase explicitly
+    /// to permit larger schemas; aggregate schema and cache memory is separate.
+    /// </summary>
+    public int MaxTableDefinitionBytes { get; init; } = 16 * 1024 * 1024;
+
+    /// <summary>
     /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
     /// alongside the database while it is open, and deleted on dispose.
     /// Default: true.

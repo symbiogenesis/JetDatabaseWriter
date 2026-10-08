@@ -86,6 +86,31 @@ public sealed class CompoundFileReaderTests
         Assert.NotNull(streams);
     }
 
+    /// <summary>
+    /// Rejects stream names whose UTF-16 byte length or terminating NUL is invalid.
+    /// </summary>
+    /// <param name="nameLength">The directory name byte length, including its NUL.</param>
+    /// <param name="terminate">Whether to retain the required UTF-16 NUL.</param>
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(3, true)]
+    [InlineData(65, true)]
+    [InlineData(22, false)]
+    public async Task ReadStreams_InvalidDirectoryName_ThrowsInvalidData(int nameLength, bool terminate)
+    {
+        byte[] file = BuildSyntheticDifatFile();
+        const int streamEntryOffset = 512 + 128;
+        BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(streamEntryOffset + 0x40, 2), checked((ushort)nameLength));
+        if (!terminate)
+        {
+            file[streamEntryOffset + nameLength - 2] = 0x41;
+        }
+
+        await using var stream = new MemoryStream(file, writable: false);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken).AsTask());
+    }
+
     [Fact]
     public async Task ReadStreams_FatChainLoop_ThrowsInvalidData()
     {
@@ -289,15 +314,8 @@ public sealed class CompoundFileReaderTests
 
     // ── DIFAT overflow / DoS mitigation tests ─────────────────────────
     //
-    // These tests verify hardening against the DIFAT overflow attack
-    // described in the Mimecast disclosure (March 2019) which weaponised
-    // crafted CFB headers to exploit parsers via CVE-2017-11882-adjacent
-    // techniques. A malicious file can set NumFatSectors / NumDifatSectors
-    // to values far beyond the stream's physical size, causing either:
-    //   (a) OOM from the List<uint> pre-allocation, or
-    //   (b) CPU/IO denial of service from unbounded DIFAT chain walks.
-    //
-    // Ref: https://www.mimecast.com/blog/2019/03/the-return-of-the-equation-editor-exploit--difat-overflow/
+    // Hostile FAT/DIFAT counts must not control allocation or traversal
+    // beyond the validated physical sector count.
 
     /// <summary>
     /// A crafted header with <c>NumFatSectors = 0x7FFF_FFFF</c> would
@@ -495,13 +513,7 @@ public sealed class CompoundFileReaderTests
         BinaryPrimitives.WriteUInt32LittleEndian(e[0x78..], sizeLow);
     }
 
-    // ── CVE-2019-0560 analog: OLE info disclosure via sector padding ──
-    //
-    // CVE-2019-0560 describes OLE parsers leaking uninitialized memory
-    // by returning sector-sized buffers without truncating to the
-    // declared stream size. Our AllocateChainBuffer truncates to
-    // exactSize; this test verifies no trailing sector padding is
-    // exposed to callers.
+    // Logical stream sizes exclude on-disk trailing sector padding.
 
     /// <summary>
     /// Builds a synthetic CFB where the declared stream size (10 bytes) is
@@ -581,7 +593,7 @@ public sealed class CompoundFileReaderTests
         byte[] payload = streams["TestStream"];
 
         // The returned buffer must be exactly StreamSize bytes — no
-        // trailing sector padding is leaked (CVE-2019-0560 mitigation).
+        // trailing sector padding is leaked to the caller.
         Assert.Equal(streamSize, payload.Length);
 
         // Verify the valid bytes are correct.

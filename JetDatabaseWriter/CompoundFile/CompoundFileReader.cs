@@ -131,12 +131,11 @@ internal static class CompoundFileReader
         byte[] scratch,
         CancellationToken cancellationToken)
     {
-        // ── Mitigate CVE-2017-11882-adjacent DIFAT overflow attacks ──
+        // Bound hostile DIFAT counts by the physical file geometry.
         // A crafted CFB can set NumFatSectors / NumDifatSectors to
         // enormous values, causing unbounded I/O or OOM via the List
         // pre-allocation. Clamp both to the physical sector count the
         // stream can actually contain.
-        // See: https://www.mimecast.com/blog/2019/03/the-return-of-the-equation-editor-exploit--difat-overflow/
         long maxPhysicalSectors = stream.Length > 0
             ? (stream.Length - 1) / hdr.SectorSize
             : 0;
@@ -286,9 +285,14 @@ internal static class CompoundFileReader
 
             ReadOnlySpan<byte> entry = directory.AsSpan(off, Constants.CompoundFile.DirEntrySize);
             ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(entry.Slice(0x40, 2));
-            if (nameLen is 0 or > 64)
+            if (nameLen is < 2 or > 64 || (nameLen & 1) != 0)
             {
-                continue;
+                throw new InvalidDataException("CFB stream name has an invalid UTF-16 byte length.");
+            }
+
+            if (entry[nameLen - 2] != 0 || entry[nameLen - 1] != 0)
+            {
+                throw new InvalidDataException("CFB stream name is not NUL-terminated.");
             }
 
             // nameLen includes the trailing UTF-16 NUL.

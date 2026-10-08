@@ -2,8 +2,10 @@ namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -161,6 +163,75 @@ public sealed class LogicalTDefChainTests
         Assert.Equal((byte)'V', pages[10][2]);
         Assert.Equal((byte)'C', pages[10][3]);
         Assert.Equal(usedLength - 8, Ri32(pages[10], 8));
+    }
+
+    // Security regression: TDEF-CYCLE
+    [Fact]
+    public async Task ReadAsync_Cycle_RefusesInsteadOfReturningPartialSchema()
+    {
+        var pages = new Dictionary<long, byte[]> { [10] = CreatePage(20), [20] = CreatePage(10) };
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await LogicalTDefChain.ReadAsync(
+                10,
+                PageSize,
+                (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct));
+    }
+
+    // Security regression: TDEF-CONTINUATION
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReadAsync_InvalidContinuation_RefusesInsteadOfReturningPartialSchema(bool truncated)
+    {
+        byte[] continuation = truncated ? new byte[PageSize - 1] : CreatePage(0);
+        if (!truncated)
+        {
+            continuation[0] = Constants.PageTypes.Data;
+        }
+
+        var pages = new Dictionary<long, byte[]> { [10] = CreatePage(20), [20] = continuation };
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await LogicalTDefChain.ReadAsync(
+                10,
+                PageSize,
+                (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct));
+    }
+
+    // Security regression: TDEF-BYTE-BUDGET
+    [Theory]
+    [InlineData(119, 1)]
+    [InlineData(120, 2)]
+    public async Task ReadAsync_ByteBudget_RefusesBeforeReadingExcessPage(int budget, int expectedReads)
+    {
+        int reads = 0;
+        var pages = new Dictionary<long, byte[]> { [10] = CreatePage(20), [20] = CreatePage(30), [30] = CreatePage(0) };
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await LogicalTDefChain.ReadAsync(10, PageSize, ReadCountedAsync, ReturnBorrowedPage, true, this.ct, budget));
+        Assert.Equal(JetErrorCode.ValueTooLarge, error.ErrorCode);
+        Assert.Equal(expectedReads, reads);
+
+        ValueTask<byte[]> ReadCountedAsync(long number, CancellationToken token)
+        {
+            reads++;
+            return ReadPageAsync(pages, number, token);
+        }
+    }
+
+    [Fact]
+    public async Task ReadAsync_ExactBudget_PreservesAllContinuationBytes()
+    {
+        var pages = new Dictionary<long, byte[]> { [10] = CreatePage(20), [20] = CreatePage(30), [30] = CreatePage(0) };
+        pages[20][PageSize - 1] = 0xAB;
+        pages[30][PageSize - 1] = 0xCD;
+        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
+            10,
+            PageSize,
+            (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct, 176);
+        Assert.NotNull(chain);
+        Assert.Equal(176, chain.Bytes.Length);
+        Assert.Equal(0xAB, chain.Bytes[119]);
+        Assert.Equal(0xCD, chain.Bytes[175]);
+        Assert.Equal([10L, 20L, 30L], chain.PageNumbers);
     }
 
     private static byte[] CreatePage(long nextPage)
