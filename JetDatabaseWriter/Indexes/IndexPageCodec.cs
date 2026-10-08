@@ -69,6 +69,7 @@ internal static class IndexPageCodec
         {
             throw new IndexCapacityException(nameof(entries), "Leaf page capacity exceeded.");
         }
+
         if (pageSize <= layout.FirstEntryOffset)
         {
             throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
@@ -267,6 +268,7 @@ internal static class IndexPageCodec
         {
             throw new IndexCapacityException(nameof(entries), "Intermediate page capacity exceeded.");
         }
+
         if (pageSize <= layout.FirstEntryOffset)
         {
             throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");

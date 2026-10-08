@@ -147,6 +147,7 @@ internal sealed class TableStorageEditor(
             PageBuffers.Return(tdef);
         }
     }
+
     private async ValueTask ReplaceOriginalAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
     {
         string tableName = plan.TableName;

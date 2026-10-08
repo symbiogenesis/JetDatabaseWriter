@@ -22,6 +22,7 @@ public sealed class RowValueDecodePolicyTests
         Assert.True(RowValueDecodePolicy.IsMalformedValueException(new OverflowException()));
         Assert.True(RowValueDecodePolicy.HasFixedPayload(new ColumnInfo { Type = MoneyType }, 8, strict));
     }
+
     [Fact]
     public void EmptyVariableValue_TextAndMemo_ReturnsEmptyString()
     {
