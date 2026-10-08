@@ -143,7 +143,7 @@ internal static class AgileEncryptionFixtureBuilder
         // Data integrity (MS-OFFCRYPTO §2.3.4.14): generate a random HMAC
         // key, compute HMAC-SHA512 over the EncryptedPackage, and encrypt
         // both the key and the computed value with the intermediate key.
-        byte[] hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
+        byte[] hmacKey = RandomBytes(Constants.AgileEncryption.SaltSize);
         byte[] hmacValue;
         using (var hmac = new HMACSHA512(hmacKey))
         {

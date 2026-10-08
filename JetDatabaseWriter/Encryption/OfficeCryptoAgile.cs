@@ -32,9 +32,8 @@ internal static class OfficeCryptoAgile
         [0x14, 0x6E, 0x0B, 0xE7, 0xAB, 0xAC, 0xD0, 0xD6];
 
     // Block-key constants for the dataIntegrity HMAC (MS-OFFCRYPTO §2.3.4.14).
-    // Emitted on encryption so MS Office files round-trip cleanly; the reader
-    // tolerates a placeholder HMAC value because integrity is optional for
-    // open-time decryption.
+    // Emitted and verified for Office packages. Native ACE page encryption
+    // has no EncryptedPackage stream and does not use package integrity.
 
     private static ReadOnlySpan<byte> BlockKeyHmacKey =>
         [0x5F, 0xB2, 0xAD, 0x01, 0x0C, 0xB9, 0xE1, 0xF6];
@@ -188,7 +187,7 @@ internal static class OfficeCryptoAgile
             // dataIntegrity (MS-OFFCRYPTO §2.3.4.14): generate a random HMAC
             // key, compute HMAC-SHA512 over the EncryptedPackage, and encrypt
             // both the key and the value with the intermediate key.
-            hmacKey = RandomBytes(Constants.AgileEncryption.HashBytes);
+            hmacKey = RandomBytes(Constants.AgileEncryption.SaltSize);
             hmacValue = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
 
             byte[] hmacKeyCipher = AesCbcRaw(
@@ -486,6 +485,7 @@ internal static class OfficeCryptoAgile
 
         var d = new AgileDescriptor();
         bool inPasswordKeyEncryptor = false;
+        bool hasDataIntegrity = false;
 
         using var sr = new StringReader(xml);
         using var reader = XmlReader.Create(sr, settings);
@@ -515,6 +515,7 @@ internal static class OfficeCryptoAgile
             }
             else if (local == "dataIntegrity")
             {
+                hasDataIntegrity = true;
                 d.EncryptedHmacKey = ReadBase64Attr(reader, "encryptedHmacKey");
                 d.EncryptedHmacValue = ReadBase64Attr(reader, "encryptedHmacValue");
             }
@@ -574,6 +575,13 @@ internal static class OfficeCryptoAgile
             || d.EncryptedKeyValue.Length != ((d.KeyDataKeyBits / 8) + 15) / 16 * 16)
         {
             throw new InvalidDataException("Agile EncryptionInfo contains inconsistent or unsupported cryptographic parameter sizes.");
+        }
+
+        if (hasDataIntegrity
+            && (d.EncryptedHmacKey.Length != (d.KeyDataSaltSize + 15) / 16 * 16
+                || d.EncryptedHmacValue.Length != (d.KeyDataHashSize + 15) / 16 * 16))
+        {
+            throw new InvalidDataException("Agile EncryptionInfo contains incomplete or inconsistent data integrity fields.");
         }
 
         if (d.SpinCount > maxSpinCount)
@@ -664,8 +672,8 @@ internal static class OfficeCryptoAgile
     /// <summary>
     /// MS-OFFCRYPTO §2.3.4.14 — verifies the <c>dataIntegrity</c> HMAC over
     /// the EncryptedPackage. Throws <see cref="InvalidDataException"/> on
-    /// mismatch. Silently skips verification when the descriptor has no
-    /// HMAC fields (e.g. files created before HMAC support was added).
+    /// mismatch. Skips verification only when the descriptor omits the
+    /// optional dataIntegrity element. Present integrity fields are validated during parsing.
     /// </summary>
     /// <param name="d">The Agile encryption descriptor.</param>
     /// <param name="intermediateKey">The intermediate key.</param>
@@ -691,7 +699,7 @@ internal static class OfficeCryptoAgile
             hmacValueIv = HmacIv(d.KeyDataSalt, BlockKeyHmacValue);
 
             hmacKeyRaw = AesCbcRaw(d.EncryptedHmacKey, intermediateKey, hmacKeyIv, encrypt: false);
-            hmacKey = Truncate(hmacKeyRaw, d.KeyDataHashSize);
+            hmacKey = Truncate(hmacKeyRaw, d.KeyDataSaltSize);
 
             hmacValueRaw = AesCbcRaw(d.EncryptedHmacValue, intermediateKey, hmacValueIv, encrypt: false);
             storedHmac = Truncate(hmacValueRaw, d.KeyDataHashSize);

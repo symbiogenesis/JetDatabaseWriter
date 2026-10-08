@@ -83,6 +83,21 @@ public sealed class AgileDescriptorCorruptionTests
         Assert.Throws<JetLimitationException>(() => OfficeCryptoAgile.Decrypt(info, [], "password"));
     }
 
+    [Theory]
+    [InlineData("<dataIntegrity/>")]
+    [InlineData("<dataIntegrity encryptedHmacKey=\"AA==\"/>")]
+    [InlineData("<dataIntegrity encryptedHmacValue=\"AA==\"/>")]
+    [InlineData("<dataIntegrity encryptedHmacKey=\"\" encryptedHmacValue=\"\"/>")]
+    public void Decrypt_RejectsIncompleteIntegrityBeforePasswordWork(string integrity)
+    {
+        string xml = DescriptorXml().Replace("<keyEncryptors>", integrity + "<keyEncryptors>", StringComparison.Ordinal);
+
+        InvalidDataException failure = Assert.Throws<InvalidDataException>(() =>
+            OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
+
+        Assert.Contains("integrity", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static byte[] Info(string xml)
     {
         byte[] bytes = new byte[8 + Encoding.UTF8.GetByteCount(xml)];

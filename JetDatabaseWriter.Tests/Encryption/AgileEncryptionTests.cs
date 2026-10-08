@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.Encryption;
 using System;
 using System.IO;
 using System.Text;
+using System.Xml;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -88,6 +89,28 @@ public sealed class AgileEncryptionTests
         Assert.Equal(plaintext, OfficeCryptoAgile.Decrypt(package.EncryptionInfo, package.EncryptedPackage, "segment password"));
     }
 
+    /// <summary>MS-OFFCRYPTO 2.3.4.14 sizes the HMAC key to keyData saltSize, not hashSize.</summary>
+    [Fact]
+    public void Agile_EncryptPrimitive_UsesSaltSizedIntegrityKey()
+    {
+        OfficeEncryptedPackage package = OfficeCryptoAgile.Encrypt(new byte[16], "integrity sizes");
+        string xml = Encoding.UTF8.GetString(package.EncryptionInfo, 8, package.EncryptionInfo.Length - 8);
+        using var input = new StringReader(xml);
+        using var reader = XmlReader.Create(input, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
+        bool found = false;
+        while (reader.Read())
+        {
+            if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "dataIntegrity")
+            {
+                Assert.Equal(16, Convert.FromBase64String(reader.GetAttribute("encryptedHmacKey")!).Length);
+                Assert.Equal(64, Convert.FromBase64String(reader.GetAttribute("encryptedHmacValue")!).Length);
+                found = true;
+            }
+        }
+
+        Assert.True(found);
+    }
+
     /// <summary>The Office package primitive authenticates its ciphertext before decryption.</summary>
     [Fact]
     public void Agile_TamperedPackagePrimitive_RejectsIntegrityFailure()
@@ -104,7 +127,16 @@ public sealed class AgileEncryptionTests
     {
         AgileEncryptionFixtureBuilder.Parameters parameters = AgileEncryptionFixtureBuilder.DeterministicParameters();
         (byte[] info, byte[] package) = AgileEncryptionFixtureBuilder.BuildStreams(parameters, new byte[256], "primitive password");
-        Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.Decrypt(info, package, "wrong"));
+        string xml = Encoding.UTF8.GetString(info, 8, info.Length - 8);
+        int integrityStart = xml.IndexOf("<dataIntegrity", StringComparison.Ordinal);
+        int integrityEnd = xml.IndexOf("/>", integrityStart, StringComparison.Ordinal) + 2;
+        byte[] xmlBytes = Encoding.UTF8.GetBytes(xml.Remove(integrityStart, integrityEnd - integrityStart));
+        byte[] withoutIntegrity = new byte[8 + xmlBytes.Length];
+        info.AsSpan(0, 8).CopyTo(withoutIntegrity);
+        xmlBytes.CopyTo(withoutIntegrity.AsSpan(8));
+
+        Assert.Equal(new byte[256], OfficeCryptoAgile.Decrypt(withoutIntegrity, package, "primitive password"));
+        Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.Decrypt(withoutIntegrity, package, "wrong"));
     }
 
     [Fact]
