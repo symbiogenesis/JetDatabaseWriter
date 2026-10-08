@@ -60,12 +60,96 @@ public sealed class IndexPageReservationTests
         var runs = new ReservedPageRuns(allocator);
         IndexBTreeBuildResult? placed = await new IndexBTreeEditor(db.Format, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
             firstPage => ++calls == 2
-                ? throw new ArgumentOutOfRangeException(nameof(firstPage), "Injected relocation failure.")
+                ? throw new IndexCapacityException(nameof(firstPage), "Injected capacity refusal.")
                 : IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, firstPage),
             runs,
             this.ct);
 
         Assert.Null(placed);
+        Assert.Equal(2, calls);
+        Assert.True(runs.IsEmpty);
+        for (long page = freeRun; page < freeRun + treePages; page++)
+        {
+            Assert.True(await allocator.IsPageFreeAsync(page, this.ct), $"Page {page} of the reused run should be free again.");
+        }
+
+        Assert.Equal(pageCountBefore, db.Pages.PageCount);
+        SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
+        Assert.Empty(allocatedAfter.Except(allocatedBefore));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task TryPlaceTree_InvalidRelocatedMetadata_ReleasesRunAndRethrows(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        DatabaseFile db = harness.Database;
+        PageAllocator allocator = harness.Services.PageAllocator;
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        List<IndexEntry> entries = BuildLongKeyEntries(1000);
+        int treePages = IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, db.Pages.PageCount).Pages.Count;
+        Assert.True(treePages > 1, "The tree should span several pages.");
+
+        // A free run the size of the tree makes the reservation reuse it, so
+        // the tree is rebuilt at the run's first page; that rebuild fails.
+        long freeRun = await CreateFreeRunAsync(harness, treePages, this.ct);
+        SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
+        long pageCountBefore = db.Pages.PageCount;
+
+        int calls = 0;
+        var runs = new ReservedPageRuns(allocator);
+        _ = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => new IndexBTreeEditor(db.Format, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+            firstPage => ++calls == 2
+                ? throw new ArgumentOutOfRangeException(nameof(firstPage), "Injected invalid metadata.")
+                : IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, firstPage),
+            runs,
+            this.ct).AsTask());
+
+        Assert.Equal(2, calls);
+        Assert.True(runs.IsEmpty);
+        for (long page = freeRun; page < freeRun + treePages; page++)
+        {
+            Assert.True(await allocator.IsPageFreeAsync(page, this.ct), $"Page {page} of the reused run should be free again.");
+        }
+
+        Assert.Equal(pageCountBefore, db.Pages.PageCount);
+        SortedSet<long> allocatedAfter = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
+        Assert.Empty(allocatedAfter.Except(allocatedBefore));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task TryPlaceTree_RelocatedCancellation_ReleasesRunAndRethrows(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        DatabaseFile db = harness.Database;
+        PageAllocator allocator = harness.Services.PageAllocator;
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        List<IndexEntry> entries = BuildLongKeyEntries(1000);
+        int treePages = IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, db.Pages.PageCount).Pages.Count;
+        Assert.True(treePages > 1, "The tree should span several pages.");
+
+        // A free run the size of the tree makes the reservation reuse it, so
+        // the tree is rebuilt at the run's first page; that rebuild fails.
+        long freeRun = await CreateFreeRunAsync(harness, treePages, this.ct);
+        SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(db, allocator, this.ct);
+        long pageCountBefore = db.Pages.PageCount;
+
+        int calls = 0;
+        var runs = new ReservedPageRuns(allocator);
+        _ = await Assert.ThrowsAsync<OperationCanceledException>(() => new IndexBTreeEditor(db.Format, harness.Pager, harness.Services.TDefWriter, allocator).TryPlaceTreeAsync(
+            firstPage => ++calls == 2
+                ? throw new OperationCanceledException(this.ct)
+                : IndexBTreeBuilder.Build(layout, db.Format.PageSize, 2, entries, firstPage),
+            runs,
+            this.ct).AsTask());
+
         Assert.Equal(2, calls);
         Assert.True(runs.IsEmpty);
         for (long page = freeRun; page < freeRun + treePages; page++)

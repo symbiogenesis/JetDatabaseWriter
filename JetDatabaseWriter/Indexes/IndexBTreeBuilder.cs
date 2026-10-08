@@ -78,6 +78,7 @@ internal static class IndexBTreeBuilder
             throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
         }
 
+        IndexPageCodec.ValidateLeafMetadata(layout, pageSize, parentTdefPage, entries);
         Guard.NotNull(entries, nameof(entries));
         Guard.InRange(firstPageNumber, 0, 0xFFFFFF, nameof(firstPageNumber));
 
@@ -121,7 +122,7 @@ internal static class IndexBTreeBuilder
                 int entryLen = e.Key.Length + 4;
                 if (entryLen > entryAreaSize)
                 {
-                    throw new ArgumentOutOfRangeException(nameof(entries), $"Single index entry of {entryLen} bytes exceeds the {entryAreaSize}-byte payload area; one entry must fit on one page.");
+                    throw new IndexCapacityException(nameof(entries), $"Single index entry of {entryLen} bytes exceeds the {entryAreaSize}-byte payload area; one entry must fit on one page.");
                 }
 
                 if (currentSize + entryLen > entryAreaSize)
@@ -145,7 +146,7 @@ internal static class IndexBTreeBuilder
         int splitPageCount = splitPages.Count;
         if (firstPageNumber + splitPageCount - 1 > 0xFFFFFF)
         {
-            throw new ArgumentOutOfRangeException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
+            throw new IndexCapacityException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
         }
 
         // Step 3: Render split pages (leaves) with prev/next sibling chain.
@@ -198,7 +199,7 @@ internal static class IndexBTreeBuilder
             int levelCount = groups.Count;
             if (nextFreePage + levelCount - 1 > 0xFFFFFF)
             {
-                throw new ArgumentOutOfRangeException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
+                throw new IndexCapacityException(nameof(firstPageNumber), "Allocated page numbers exceed the 24-bit child-pointer range.");
             }
 
             for (int i = 0; i < levelCount; i++)
@@ -318,7 +319,7 @@ internal static class IndexBTreeBuilder
             int len = entry.Entry.Key.Length + 4 + 4;
             if (len > entryAreaSize)
             {
-                throw new ArgumentOutOfRangeException(nameof(childLastEntries), "Intermediate entry exceeds page payload area.");
+                throw new IndexCapacityException(nameof(childLastEntries), "Intermediate entry exceeds page payload area.");
             }
 
             if (currentSize + len > entryAreaSize)

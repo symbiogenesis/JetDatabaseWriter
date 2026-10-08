@@ -65,6 +65,10 @@ internal static class IndexPageCodec
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
     {
+        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength))
+        {
+            throw new IndexCapacityException(nameof(entries), "Leaf page capacity exceeded.");
+        }
         if (pageSize <= layout.FirstEntryOffset)
         {
             throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
@@ -112,7 +116,7 @@ internal static class IndexPageCodec
             if (entryStart + entryLen > payloadLimit)
             {
                 string message = $"Index entries do not fit on a single leaf page (need {entryStart + entryLen} bytes, have {payloadLimit}). B-tree splitting is required for tables this large.";
-                throw new ArgumentOutOfRangeException(nameof(entries), message);
+                throw new IndexCapacityException(nameof(entries), message);
             }
 
             Buffer.BlockCopy(entry.Key, keyOffset, page, entryStart, keyLen);
@@ -232,14 +236,9 @@ internal static class IndexPageCodec
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
     {
-        try
-        {
-            return BuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return null;
-        }
+        return CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
+            ? BuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
+            : null;
     }
 
     /// <summary>
@@ -264,6 +263,10 @@ internal static class IndexPageCodec
         long tailPage,
         int? maxPrefixLength = null)
     {
+        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength))
+        {
+            throw new IndexCapacityException(nameof(entries), "Intermediate page capacity exceeded.");
+        }
         if (pageSize <= layout.FirstEntryOffset)
         {
             throw new ArgumentOutOfRangeException(nameof(pageSize), $"pageSize must be greater than {layout.FirstEntryOffset}.");
@@ -316,7 +319,7 @@ internal static class IndexPageCodec
 
             if (entryStart + entryLen > payloadLimit)
             {
-                throw new ArgumentOutOfRangeException(nameof(entries), "Intermediate page overflow (internal error).");
+                throw new IndexCapacityException(nameof(entries), "Intermediate page overflow (internal error).");
             }
 
             Buffer.BlockCopy(key, keyOffset, page, entryStart, keyLen);
@@ -375,20 +378,9 @@ internal static class IndexPageCodec
         long tailPage,
         int? maxPrefixLength = null)
     {
-        Guard.NotNull(entries, nameof(entries));
-        if (entries.Count == 0)
-        {
-            return null;
-        }
-
-        try
-        {
-            return BuildIntermediatePage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, maxPrefixLength);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return null;
-        }
+        return CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength)
+            ? BuildIntermediatePage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, maxPrefixLength)
+            : null;
     }
 
     /// <summary>
@@ -1059,6 +1051,116 @@ internal static class IndexPageCodec
         return left.Length - right.Length;
     }
 
+    /// <summary>Validates every leaf entry and layout before multi-page packing chooses capacity fallbacks.</summary>
+    /// <param name="layout">The layout for this phase.</param>
+    /// <param name="pageSize">The pageSize for this phase.</param>
+    /// <param name="parentTdefPage">The parentTdefPage for this phase.</param>
+    /// <param name="entries">The entries for this phase.</param>
+    internal static void ValidateLeafMetadata(IndexPageLayout layout, int pageSize, long parentTdefPage, IReadOnlyList<IndexEntry> entries)
+        => _ = CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, 0, 0, 0, false, null);
+
+    private static bool CanBuildPage<T>(
+        IndexPageLayout layout,
+        int pageSize,
+        long parentTdefPage,
+        IReadOnlyList<T> entries,
+        Func<T, IndexEntry> getEntry,
+        Func<T, long>? getChild,
+        long prevPage,
+        long nextPage,
+        long tailPage,
+        bool enablePrefixCompression,
+        int? maxPrefixLength)
+    {
+        Guard.NotNull(entries, nameof(entries));
+        if (pageSize <= layout.FirstEntryOffset || pageSize - layout.FirstEntryOffset > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pageSize));
+        }
+
+        if (maxPrefixLength < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxPrefixLength));
+        }
+
+        // Validate all metadata before capacity: even an entry after an overfull
+        // payload must never turn an invalid pointer into a split request.
+        ValidatePageNumber(parentTdefPage, nameof(parentTdefPage));
+        ValidatePageNumber(prevPage, nameof(prevPage));
+        ValidatePageNumber(nextPage, nameof(nextPage));
+        ValidatePageNumber(tailPage, nameof(tailPage));
+        if (layout.PrevPageOffset < 0 || layout.PrevPageOffset + 4 > layout.FirstEntryOffset
+            || layout.NextPageOffset < 0 || layout.NextPageOffset + 4 > layout.FirstEntryOffset
+            || layout.TailPageOffset < 0 || layout.TailPageOffset + 4 > layout.FirstEntryOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(layout));
+        }
+
+        if (layout.BitmaskOffset < 0 || layout.BitmaskOffset >= layout.FirstEntryOffset
+            || layout.PrefLenOffset < 0 || layout.PrefLenOffset + 2 > layout.FirstEntryOffset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(layout));
+        }
+
+        if (entries.Count > 0)
+        {
+            Guard.NotNull(getEntry(entries[0]).Key, nameof(entries));
+        }
+
+        int sharedPrefix = entries.Count < 2 ? 0 : getEntry(entries[0]).Key.Length;
+        foreach (T item in entries)
+        {
+            IndexEntry entry = getEntry(item);
+            Guard.NotNull(entry.Key, nameof(entries));
+            if (entry.DataPage is < 0 or > 0xFFFFFF
+                || (getChild is not null && getChild(item) is < 0 or > 0xFFFFFFFFL))
+            {
+                throw new ArgumentOutOfRangeException(nameof(entries), "Index entry pointer exceeds its format range.");
+            }
+
+            int matched = 0;
+            byte[] firstKey = getEntry(entries[0]).Key;
+            while (matched < sharedPrefix && matched < entry.Key.Length && firstKey[matched] == entry.Key[matched])
+            {
+                matched++;
+            }
+
+            sharedPrefix = matched;
+        }
+
+        int prefix = enablePrefixCompression ? Math.Min(sharedPrefix, ushort.MaxValue) : 0;
+        prefix = Math.Min(prefix, maxPrefixLength ?? prefix);
+        if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
+        {
+            prefix = Math.Min(prefix, byte.MaxValue);
+        }
+
+        long cursor = layout.FirstEntryOffset;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            if (i > 0 && layout.BitmaskOffset + ((cursor - layout.FirstEntryOffset) / 8) >= layout.FirstEntryOffset)
+            {
+                return false;
+            }
+
+            cursor += getEntry(entries[i]).Key.Length - (i == 0 ? 0 : prefix) + (getChild is null ? LeafTrailerSize : IntermediateTrailerSize);
+            if (cursor > pageSize)
+            {
+                return false;
+            }
+        }
+
+        return getChild is null || entries.Count > 0;
+    }
+
+    private static void ValidatePageNumber(long pageNumber, string parameterName)
+    {
+        if (pageNumber is < 0 or > 0xFFFFFFFFL)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, "Index page number exceeds the 32-bit range.");
+        }
+    }
+
     private static void WriteIndexPageHeader(
         byte[] page,
         byte pageType,
@@ -1107,7 +1209,7 @@ internal static class IndexPageCodec
         int byteOffset = layout.BitmaskOffset + (bitIndex / 8);
         if (byteOffset >= layout.FirstEntryOffset)
         {
-            throw new ArgumentOutOfRangeException(parameterName, overflowMessage);
+            throw new IndexCapacityException(parameterName, overflowMessage);
         }
 
         page[byteOffset] |= (byte)(1 << (bitIndex % 8));

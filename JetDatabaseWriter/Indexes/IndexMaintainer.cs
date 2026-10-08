@@ -347,6 +347,7 @@ internal sealed class IndexMaintainer(
         int RealIdxDescStart)
     {
         /// <summary>Gets the logical TDEF bytes; patches to it are written back with the chain.</summary>
+        /// <summary>Gets the current image bytes.</summary>
         public byte[] Buffer => this.Chain.Bytes;
     }
 
@@ -1327,8 +1328,7 @@ internal sealed class IndexMaintainer(
                 return false;
         }
 
-        LogicalTDefChain tdefChain = preamble.Chain;
-        byte[] tdefBuffer = tdefChain.Bytes;
+        var metadata = new IncrementalMetadataState(preamble.Chain);
         int numIdx = preamble.NumIdx;
         int numRealIdx = preamble.NumRealIdx;
         int realIdxDescStart = preamble.RealIdxDescStart;
@@ -1340,9 +1340,9 @@ internal sealed class IndexMaintainer(
         // against Access-authored repair output.
         for (int li = 0; li < numIdx; li++)
         {
-            if (!idxLayout.TryReadLogicalEntry(tdefBuffer, logIdxStart, li, out LogicalIdxEntry entry))
+            if (!idxLayout.TryReadLogicalEntry(metadata.Buffer, logIdxStart, li, out LogicalIdxEntry entry))
             {
-                this.LastIncrementalBail = $"C1b li={li} logIdxStart={logIdxStart} bufLen={tdefBuffer.Length}";
+                this.LastIncrementalBail = $"C1b li={li} logIdxStart={logIdxStart} bufLen={metadata.Buffer.Length}";
                 return false;
             }
 
@@ -1357,9 +1357,9 @@ internal sealed class IndexMaintainer(
         var slots = new List<(int RealIdxNum, RealIdxEntry Entry)>(numRealIdx);
         for (int ri = 0; ri < numRealIdx; ri++)
         {
-            if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(tdefBuffer, realIdxDescStart, ri, out RealIdxSlot slot, out List<KeyColumn>? keyCols))
+            if (!idxLayout.TryReadRealIdxSlotWithKeyColumns(metadata.Buffer, realIdxDescStart, ri, out RealIdxSlot slot, out List<KeyColumn>? keyCols))
             {
-                this.LastIncrementalBail = $"C1 ri={ri} realIdxDescStart={realIdxDescStart} bufLen={tdefBuffer.Length}";
+                this.LastIncrementalBail = $"C1 ri={ri} realIdxDescStart={realIdxDescStart} bufLen={metadata.Buffer.Length}";
                 return false;
             }
 
@@ -1379,7 +1379,6 @@ internal sealed class IndexMaintainer(
 
         Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
 
-        bool tdefDirty = false;
         foreach ((_, RealIdxEntry rie) in slots)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1392,7 +1391,7 @@ internal sealed class IndexMaintainer(
             }
 
             // Read the index root; require a single-leaf root.
-            long firstDp = (uint)Ri32(tdefBuffer, rie.FirstDpOffset);
+            long firstDp = (uint)Ri32(metadata.Buffer, rie.FirstDpOffset);
             if (firstDp <= 0)
             {
                 this.LastIncrementalBail = $"C3 firstDp={firstDp}";
@@ -1505,12 +1504,12 @@ internal sealed class IndexMaintainer(
                 // mutate each leaf in place, aggregating per-parent summary
                 // updates. Bails on underflow or parent overflow,
                 // in which case the bulk path below resnaps the tree.
-                if (tdefDirty)
+                if (metadata.Dirty)
                 {
                     // This write links every tree rebuilt so far.
                     runs.MarkLinked();
-                    await tdefWriter.WriteChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
-                    tdefDirty = false;
+                    await tdefWriter.WriteChainInPlaceAsync(metadata.Chain, cancellationToken).ConfigureAwait(false);
+                    metadata.Dirty = false;
                 }
 
                 bool crossLeafHandled = await this.btreeEditor.TrySurgicalCrossLeafMaintainAsync(
@@ -1525,8 +1524,7 @@ internal sealed class IndexMaintainer(
                 {
                     // The editor may have patched this index's first_dp on
                     // disk; pick up the chain it wrote.
-                    tdefChain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-                    tdefBuffer = tdefChain.Bytes;
+                    metadata.Chain = await tableDefs.ReadTDefChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -1581,8 +1579,8 @@ internal sealed class IndexMaintainer(
                     return false;
                 }
 
-                Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)placedTree.RootPageNumber));
-                tdefDirty = true;
+                Wi32(metadata.Buffer, rie.FirstDpOffset, checked((int)placedTree.RootPageNumber));
+                metadata.Dirty = true;
                 continue;
             }
 
@@ -1610,37 +1608,15 @@ internal sealed class IndexMaintainer(
                     return false;
                 }
 
-                Wi32(tdefBuffer, rie.FirstDpOffset, checked((int)grownTree.RootPageNumber));
-                tdefDirty = true;
+                Wi32(metadata.Buffer, rie.FirstDpOffset, checked((int)grownTree.RootPageNumber));
+                metadata.Dirty = true;
                 continue;
             }
 
             await pager.WritePageAsync(firstDp, newLeaf, cancellationToken).ConfigureAwait(false);
         }
 
-        long[][]? indexPageGroups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, tdefBuffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false);
-        if (indexPageGroups is null)
-        {
-            this.LastIncrementalBail = "C14 usage-map refresh failed";
-            return false;
-        }
-
-        // The usage-map rows and the TDEF write below link every tree
-        // rebuilt since the last TDEF write.
-        runs.MarkLinked();
-        await this.WriteIncrementalIndexUsageMapsAsync(tdefBuffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
-
-        if (!format.IsJet3)
-        {
-            tdefDirty = true;
-        }
-
-        if (tdefDirty)
-        {
-            await tdefWriter.WriteChainInPlaceAsync(tdefChain, cancellationToken).ConfigureAwait(false);
-        }
-
-        return true;
+        return await this.CommitIncrementalMetadataAsync(tdefPage, layout, slots, numRealIdx, metadata, runs, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1882,269 +1858,70 @@ internal sealed class IndexMaintainer(
                 return false;
             }
 
-            // Descend by binary-searching child summaries. First try
-            // without tail overshoot so we capture a clean path for
-            // ancestor updates (needed when the leaf splits). Fall back
-            // to allowTailOvershoot when the key overshoots every summary
-            // on an intermediate — in that case the chain walk below still
-            // finds the correct leaf and we accept that ancestor updates
-            // won't be possible (but a split can still chain-append).
-            var descentPath = new List<DescentStep>();
-            bool hasCleanPath = true;
-            long targetLeafPage = await this.btreeEditor.DescendCapturingAsync(
-                layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: false).ConfigureAwait(false);
-            if (targetLeafPage <= 0)
+            if (!await this.btreeEditor.TryInsertCatalogEntryAsync(layout, tdefPage, firstDp, rie.FirstDpOffset, composite, newRowLoc, cancellationToken).ConfigureAwait(false))
             {
-                // Overshoot — retry with tail following. Path will be
-                // incomplete but the chain walk handles placement.
-                descentPath.Clear();
-                hasCleanPath = false;
-                targetLeafPage = await this.btreeEditor.DescendCapturingAsync(
-                    layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
-                if (targetLeafPage <= 0)
-                {
-                    this.LastIncrementalBail = $"S5 ri={ri} descent failed firstDp={firstDp}";
-                    return false;
-                }
-            }
-
-            byte[] leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
-
-            if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
-            {
-                this.LastIncrementalBail = $"S8 ri={ri} targetLeafPage={targetLeafPage} type=0x{leaf[0]:X2}";
+                this.LastIncrementalBail = $"S5 ri={ri} tree insertion refused";
                 return false;
             }
-
-            // If the descent landed before the true tail of a sibling
-            // chain (Access can store mostly-monotonic data with stale
-            // intermediate summaries plus a rightward chain), walk
-            // next_page while every existing entry on the current leaf
-            // is < composite. That way we still find the correct
-            // insertion leaf.
-            int chainBudget = 1_000_000;
-            while (true)
-            {
-                long nextLeaf = IndexPageCodec.ReadNextPage(layout, leaf);
-                if (nextLeaf <= 0)
-                {
-                    break;
-                }
-
-                List<IndexEntry> probe = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
-                if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[^1].Key) <= 0)
-                {
-                    // composite belongs in this leaf (or earlier).
-                    break;
-                }
-
-                if (--chainBudget <= 0)
-                {
-                    this.LastIncrementalBail = $"S8b ri={ri} chainBudget exhausted";
-                    return false;
-                }
-
-                targetLeafPage = nextLeaf;
-                leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
-
-                if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
-                {
-                    this.LastIncrementalBail = $"S8c ri={ri} walkedTo={targetLeafPage} type=0x{leaf[0]:X2}";
-                    return false;
-                }
-            }
-
-            long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
-            long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
-            long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
-            int originalPrefLen = IndexPageCodec.ReadPrefixLength(layout, leaf);
-
-            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
-
-            var addEntries = new List<IndexEntry>(1)
-            {
-                new(composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex),
-            };
-
-            List<IndexEntry>? spliced = IndexEntrySplicer.Splice(
-                existing,
-                addEntries,
-                []);
-            if (spliced is null)
-            {
-                this.LastIncrementalBail = $"S11 ri={ri} splice null";
-                return false;
-            }
-
-            byte[] rewritten;
-            try
-            {
-                rewritten = IndexPageCodec.BuildLeafPage(
-                    layout,
-                    format.PageSize,
-                    tdefPage,
-                    spliced,
-                    prevPage: leafPrev,
-                    nextPage: leafNext,
-                    tailPage: leafTail,
-                    enablePrefixCompression: true,
-                    maxPrefixLength: originalPrefLen);
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                // Leaf overflow → N-way split.
-                SplitPages? splitPages = this.btreeEditor.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
-                    ?? IndexHelpers.TryGreedySplitLeafInN(layout, format.PageSize, spliced);
-                if (splitPages is null)
-                {
-                    this.LastIncrementalBail = $"S12 ri={ri} split failed";
-                    return false;
-                }
-
-                // Plan the split at the provisional end of file and reserve
-                // its new pages only once an in-place split is certain: the
-                // rebuild fallbacks below reserve their own pages, and a run
-                // reserved first would be left behind, unwritten and marked
-                // used.
-                int splitCount = splitPages.Count;
-                bool canSplitInPlace = hasCleanPath && descentPath.Count > 0;
-                CatalogLeafSplitPlan? plan = this.TryPlanCatalogLeafSplit(
-                    layout, tdefPage, splitPages, targetLeafPage, pager.PageCount, leafPrev, leafNext, originalPrefLen, canSplitInPlace ? descentPath : null);
-                if (plan is null)
-                {
-                    this.LastIncrementalBail = $"S12b ri={ri} split build failed";
-                    return false;
-                }
-
-                var runs = new ReservedPageRuns(pageAllocator);
-                try
-                {
-                    if (plan.AncestorWrites is not null)
-                    {
-                        long firstFreshPage = await runs.ReserveAsync(splitCount - 1, cancellationToken).ConfigureAwait(false);
-                        if (firstFreshPage != plan.PageNumbers[1])
-                        {
-                            plan = this.TryPlanCatalogLeafSplit(
-                                layout, tdefPage, splitPages, targetLeafPage, firstFreshPage, leafPrev, leafNext, originalPrefLen, descentPath);
-                        }
-                    }
-
-                    if (plan?.AncestorWrites is not { } ancestorWrites)
-                    {
-                        // No clean ancestor path, or the ancestor summaries
-                        // overflow: rebuild just this index from its entries.
-                        await runs.ReleaseAsync().ConfigureAwait(false);
-                        bool rebuilt = await this.btreeEditor.TryRebuildCatalogIndexTreeAsync(
-                            layout,
-                            tdefPage,
-                            firstDp,
-                            rie.FirstDpOffset,
-                            addEntries,
-                            cancellationToken).ConfigureAwait(false);
-                        if (!rebuilt)
-                        {
-                            this.LastIncrementalBail = canSplitInPlace
-                                ? $"S12c ri={ri} ancestor overflow"
-                                : $"S12c ri={ri} no clean ancestor path";
-                            return false;
-                        }
-
-                        continue;
-                    }
-
-                    // Commit: write the new pages, then patch next-leaf's prev
-                    // pointer, the original leaf and the ancestors, which link
-                    // them.
-                    long[] pageNumbers = plan.PageNumbers;
-                    for (int p = 1; p < splitCount; p++)
-                    {
-                        await pager.WritePageAsync(pageNumbers[p], plan.Pages[p], cancellationToken).ConfigureAwait(false);
-                    }
-
-                    runs.MarkLinked();
-                    if (leafNext > 0)
-                    {
-                        byte[] nextLeafBuf = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
-                        IndexPageCodec.WritePrevPage(layout, nextLeafBuf, pageNumbers[splitCount - 1]);
-                        await pager.WritePageAsync(leafNext, nextLeafBuf, cancellationToken).ConfigureAwait(false);
-                    }
-
-                    await pager.WritePageAsync(targetLeafPage, plan.Pages[0], cancellationToken).ConfigureAwait(false);
-
-                    foreach ((long pn, byte[] bytes) in ancestorWrites)
-                    {
-                        await pager.WritePageAsync(pn, bytes, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                finally
-                {
-                    if (!runs.IsEmpty)
-                    {
-                        await runs.ReleaseAsync().ConfigureAwait(false);
-                    }
-                }
-
-                continue;
-            }
-
-            await pager.WritePageAsync(targetLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
         }
 
         return true;
     }
 
-    /// <summary>
-    /// Builds the pages of a catalog leaf split whose new right-hand pages
-    /// start at <paramref name="firstNewPage"/>, and, when
-    /// <paramref name="descentPath"/> is supplied, the ancestor rewrites that
-    /// link them. Writes and reserves nothing, so the splice can plan at the
-    /// provisional end of file, reserve only when the in-place split is
-    /// certain, and plan again if the reservation lands elsewhere.
-    /// </summary>
-    /// <param name="layout">The index page layout.</param>
-    /// <param name="tdefPage">The catalog TDEF page.</param>
-    /// <param name="splitPages">The entries of each split page, left to right.</param>
-    /// <param name="targetLeafPage">The leaf being split; it stays the left-most page.</param>
-    /// <param name="firstNewPage">The page number of the first new right-hand page.</param>
-    /// <param name="leafPrev">The split leaf's prev_page.</param>
-    /// <param name="leafNext">The split leaf's next_page.</param>
-    /// <param name="maxPrefixLength">The split leaf's prefix-length cap.</param>
-    /// <param name="descentPath">The clean root-to-leaf path, or <see langword="null"/> when there is none.</param>
-    /// <returns>The plan, or <see langword="null"/> when a split page cannot be built.</returns>
-    private CatalogLeafSplitPlan? TryPlanCatalogLeafSplit(
-        IndexPageLayout layout,
+    /// <summary>Links staged trees and refreshes usage maps from the latest TDEF image.</summary>
+    /// <param name="tdefPage">The tdefPage for this phase.</param>
+    /// <param name="layout">The layout for this phase.</param>
+    /// <param name="slots">The slots for this phase.</param>
+    /// <param name="numRealIdx">The numRealIdx for this phase.</param>
+    /// <param name="metadata">The metadata for this phase.</param>
+    /// <param name="runs">The runs for this phase.</param>
+    /// <param name="cancellationToken">The cancellationToken for this phase.</param>
+    private async ValueTask<bool> CommitIncrementalMetadataAsync(
         long tdefPage,
-        SplitPages splitPages,
-        long targetLeafPage,
-        long firstNewPage,
-        long leafPrev,
-        long leafNext,
-        int maxPrefixLength,
-        List<DescentStep>? descentPath)
+        IndexPageLayout layout,
+        List<(int RealIdxNum, RealIdxEntry Entry)> slots,
+        int numRealIdx,
+        IncrementalMetadataState metadata,
+        ReservedPageRuns runs,
+        CancellationToken cancellationToken)
     {
-        long[] pageNumbers = IndexBTreeEditor.AllocateSplitPageNumbers(targetLeafPage, splitPages.Count, firstNewPage);
-        byte[][]? pages = this.btreeEditor.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, maxPrefixLength);
-        if (pages is null)
+        cancellationToken.ThrowIfCancellationRequested();
+        long[][]? indexPageGroups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, metadata.Buffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false);
+        if (indexPageGroups is null)
         {
-            return null;
+            this.LastIncrementalBail = "C14 usage-map refresh failed";
+            return false;
         }
 
-        List<(long PageNum, byte[] Bytes)>? ancestorWrites = null;
-        if (descentPath is not null)
+        // The usage-map rows and the TDEF write below link every tree
+        // rebuilt since the last TDEF write.
+        runs.MarkLinked();
+        await this.WriteIncrementalIndexUsageMapsAsync(metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
+
+        if (!format.IsJet3)
         {
-            DecodedIntermediateEntry[] summaries = IndexBTreeEditor.BuildSplitSummaries(splitPages, pageNumbers);
-            ancestorWrites = this.btreeEditor.PrepareAncestorSplitWrites(layout, tdefPage, descentPath, summaries);
+            metadata.Dirty = true;
         }
 
-        return new CatalogLeafSplitPlan(pageNumbers, pages, ancestorWrites);
+        if (metadata.Dirty)
+        {
+            await tdefWriter.WriteChainInPlaceAsync(metadata.Chain, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
     }
 
-    /// <summary>A planned in-place catalog leaf split.</summary>
-    /// <param name="PageNumbers">The page number of each split page; <c>[0]</c> is the original leaf.</param>
-    /// <param name="Pages">The bytes of each split page, parallel to <paramref name="PageNumbers"/>.</param>
-    /// <param name="AncestorWrites">The ancestor rewrites that link the new pages, or <see langword="null"/> when the split cannot be linked in place.</param>
-    private sealed record CatalogLeafSplitPlan(
-        long[] PageNumbers,
-        byte[][] Pages,
-        List<(long PageNum, byte[] Bytes)>? AncestorWrites);
+    /// <summary>Owns pending TDEF changes across tree edits that can replace the on-disk root.</summary>
+    /// <param name="chain">The chain for this phase.</param>
+    private sealed class IncrementalMetadataState(LogicalTDefChain chain)
+    {
+        /// <summary>Gets or sets the current logical TDEF image.</summary>
+        public LogicalTDefChain Chain { get; set; } = chain;
+
+        /// <summary>Gets the current image bytes.</summary>
+        public byte[] Buffer => this.Chain.Bytes;
+
+        /// <summary>Gets or sets a value indicating whether pending roots need linking.</summary>
+        public bool Dirty { get; set; }
+    }
 }

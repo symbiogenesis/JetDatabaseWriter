@@ -8,6 +8,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -101,7 +102,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// Builds a tree with <paramref name="buildAt"/> at the provisional end of
     /// file, then places it with <see cref="PlaceBuiltTreeAsync"/>. Returns
     /// <see langword="null"/>, with nothing reserved, when the tree cannot be
-    /// built (<see cref="ArgumentOutOfRangeException"/>: an entry larger than a
+    /// built (<see cref="IndexCapacityException"/>: an entry larger than a
     /// page, or page numbers past the 24-bit limit).
     /// </summary>
     /// <param name="buildAt">Builds the tree with its first page at the given page number; production passes <see cref="IndexBTreeBuilder.Build(IndexPageLayout, int, long, IReadOnlyList{IndexEntry}, long)"/>.</param>
@@ -118,7 +119,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         {
             provisional = buildAt(pager.PageCount);
         }
-        catch (ArgumentOutOfRangeException)
+        catch (IndexCapacityException)
         {
             return null;
         }
@@ -163,7 +164,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 {
                     build = buildAt(firstPage);
                 }
-                catch (ArgumentOutOfRangeException)
+                catch (IndexCapacityException)
                 {
                     return null;
                 }
@@ -308,7 +309,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <paramref name="leafNext"/>; interior pages point at their
     /// neighbours via <paramref name="pageNumbers"/>). Returns
     /// <see langword="null"/> on any single-entry overflow
-    /// (<see cref="ArgumentOutOfRangeException"/> from the page builder).
+    /// (<see cref="IndexCapacityException"/> from the page builder).
     /// </summary>
     /// <param name="layout">The layout.</param>
     /// <param name="tdefPage">The TDEF page.</param>
@@ -346,7 +347,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                     maxPrefixLength: maxPrefixLength);
             }
         }
-        catch (ArgumentOutOfRangeException)
+        catch (IndexCapacityException)
         {
             return null;
         }
@@ -396,7 +397,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 pages[p] = built;
             }
         }
-        catch (ArgumentOutOfRangeException)
+        catch (IndexCapacityException)
         {
             return null;
         }
@@ -478,7 +479,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             freeSpace = Ru16(page, 2);
             return true;
         }
-        catch (ArgumentOutOfRangeException)
+        catch (IndexCapacityException)
         {
             return false;
         }
@@ -659,7 +660,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 enablePrefixCompression: true,
                 maxPrefixLength: originalTailPrefLen);
         }
-        catch (ArgumentOutOfRangeException)
+        catch (IndexCapacityException)
         {
             // Tail leaf would overflow a single page. Fall through to the
             // bulk path, which will resnap the tree (and emit a fresh tail leaf).
@@ -1465,43 +1466,8 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return false;
         }
 
-        // ── Phase D: validate + Phase E: commit ──────────────────────
-        // Validation is already done implicitly (every staged page was built
-        // via a try-call that returned null/false on overflow). Commit in
-        // safe order: append new pages first (so their numbers exist before
-        // any in-place rewrite references them), patch sibling pointers, then
-        // rewrite all in-place pages.
-        if (!await this.TryAppendContiguousAsync(newPageAppends, cancellationToken).ConfigureAwait(false))
-        {
-            return false;
-        }
-
-        foreach ((long neighbourPage, long newPrevValue) in leafNextPointerPatches)
-        {
-            await this.PatchPrevPointerAsync(layout, neighbourPage, newPrevValue, cancellationToken).ConfigureAwait(false);
-        }
-
-        foreach ((long neighbourPage, long newNextValue) in leafPrevPointerPatches)
-        {
-            await this.PatchNextPointerAsync(layout, neighbourPage, newNextValue, cancellationToken).ConfigureAwait(false);
-        }
-
-        foreach ((long pageNum, byte[] bytes) in existingPageRewrites)
-        {
-            await pager.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
-        }
-
-        // If the root intermediate split, patch the real-idx first_dp slot
-        // in the TDEF to point at the freshly-allocated root. The new root
-        // page itself was already appended via newPageAppends above, so the
-        // page number is stable. firstDpOffset is a logical TDEF offset and
-        // may fall on a continuation page of a wide table's TDEF chain.
-        if (stagingState.NewRootPage is long newRootPage)
-        {
-            await tdefWriter.WriteInt32Async(tdefPage, firstDpOffset, checked((int)newRootPage), cancellationToken).ConfigureAwait(false);
-        }
-
-        return true;
+        var plan = new CrossLeafMutationPlan(newPageAppends, existingPageRewrites, leafNextPointerPatches, leafPrevPointerPatches, stagingState.NewRootPage);
+        return await this.CommitCrossLeafPlanAsync(layout, tdefPage, firstDpOffset, plan, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1688,61 +1654,13 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     {
         stagingState.NewRootPage = null;
 
-        // Track which intermediates are "parent-of-leaf" (children are
-        // leaves, NOT intermediates). These are the only pages the leaf-split
-        // helper is willing to split — splitting a higher-level intermediate
-        // requires reading its children's tail_page values to recompute
-        // the split halves' tail_page headers, handled by the recursive
-        // helper below.
-        var parentOfLeaf = new HashSet<long>(parentOps.Keys);
-
-        // Per-touched-intermediate maps. Multiple groups may pass through the
-        // same intermediate; they all carry identical canonical bytes (the
-        // page cache returns the same content per call in single-writer mode,
-        // as no mid-batch write touches these pages yet), so the first
-        // DescentStep seen is the reference for header + original entries.
-        var intermediateRefs = new Dictionary<long, DescentStep>(parentOps.Count * 2);
-        var intermediateGrandparent = new Dictionary<long, (long ParentPage, int IndexInParent)>(parentOps.Count * 2);
-
-        // tail_page propagation: when a splice drops a parent's rightmost
-        // child (or a split appends a new one), the parent's tail_page must
-        // point at the new rightmost leaf, and that cascades up to any
-        // ancestor whose rightmost child is the page we changed. Recorded
-        // here as we process deepest-first so shallower rebuilds inherit it.
-        var intermediateTailOverrides = new Dictionary<long, long>(parentOps.Count * 2);
-
-        // One pass over every captured path fills the reference-step,
-        // grandparent, and deepest-level maps. Depth drives the deepest-first
-        // processing order; parentOps starts keyed on parent-of-leaf pages
-        // only, and propagating max-key changes adds shallower ones as we go.
-        var depthOf = new Dictionary<long, int>(parentOps.Count * 2);
-        foreach (LeafGroup group in groups.Values)
-        {
-            for (int level = 0; level < group.Path.Count; level++)
-            {
-                DescentStep step = group.Path[level];
-                long pn = step.PageNumber;
-
-                if (!intermediateRefs.ContainsKey(pn))
-                {
-                    intermediateRefs[pn] = step;
-                }
-
-                if (level > 0)
-                {
-                    DescentStep parent = group.Path[level - 1];
-                    intermediateGrandparent[pn] = (parent.PageNumber, parent.TakenIndex);
-                }
-
-                if (!depthOf.TryGetValue(pn, out int existingDepth) || existingDepth < level)
-                {
-                    depthOf[pn] = level;
-                }
-            }
-        }
-
-        // Process pages in descending depth (deepest first).
-        var pending = new List<long>(parentOps.Keys);
+        IntermediateRewriteContext context = CaptureIntermediateContext(groups, parentOps);
+        HashSet<long> parentOfLeaf = context.ParentsOfLeaves;
+        Dictionary<long, DescentStep> intermediateRefs = context.References;
+        Dictionary<long, (long ParentPage, int IndexInParent)> intermediateGrandparent = context.Grandparents;
+        Dictionary<long, long> intermediateTailOverrides = context.Tails;
+        Dictionary<long, int> depthOf = context.Depths;
+        List<long> pending = context.Pending;
         while (pending.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1970,7 +1888,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                         newRootBytes = IndexBTreeBuilder.TryBuildIntermediatePage(
                             layout, format.PageSize, tdefPage, rootEntries, prevPage: 0, nextPage: 0, tailPage: intTails[nSplit - 1]);
                     }
-                    catch (ArgumentOutOfRangeException)
+                    catch (IndexCapacityException)
                     {
                         return false;
                     }
@@ -2021,5 +1939,425 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         }
 
         return true;
+    }
+
+    /// <summary>Stages and applies one encoded catalog entry using the ordinary tree editor.</summary>
+    /// <param name="layout">The layout for this phase.</param>
+    /// <param name="tdefPage">The tdefPage for this phase.</param>
+    /// <param name="firstDp">The firstDp for this phase.</param>
+    /// <param name="firstDpOffset">The firstDpOffset for this phase.</param>
+    /// <param name="composite">The composite for this phase.</param>
+    /// <param name="newRowLoc">The newRowLoc for this phase.</param>
+    /// <param name="cancellationToken">The cancellationToken for this phase.</param>
+    internal async ValueTask<bool> TryInsertCatalogEntryAsync(
+        IndexPageLayout layout, long tdefPage, long firstDp, int firstDpOffset,
+        byte[] composite, RowLocation newRowLoc, CancellationToken cancellationToken)
+    {
+        // Descend by binary-searching child summaries. First try
+        // without tail overshoot so we capture a clean path for
+        // ancestor updates (needed when the leaf splits). Fall back
+        // to allowTailOvershoot when the key overshoots every summary
+        // on an intermediate — in that case the chain walk below still
+        // finds the correct leaf and we accept that ancestor updates
+        // won't be possible (but a split can still chain-append).
+        var descentPath = new List<DescentStep>();
+        bool hasCleanPath = true;
+        long targetLeafPage = await this.DescendCapturingAsync(
+            layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: false).ConfigureAwait(false);
+        if (targetLeafPage <= 0)
+        {
+            // Overshoot — retry with tail following. Path will be
+            // incomplete but the chain walk handles placement.
+            descentPath.Clear();
+            hasCleanPath = false;
+            targetLeafPage = await this.DescendCapturingAsync(
+                layout, firstDp, composite, descentPath, cancellationToken, allowTailOvershoot: true).ConfigureAwait(false);
+            if (targetLeafPage <= 0)
+            {
+                return false;
+            }
+        }
+
+        byte[] leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+
+        if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
+        {
+            return false;
+        }
+
+        // If the descent landed before the true tail of a sibling
+        // chain (Access can store mostly-monotonic data with stale
+        // intermediate summaries plus a rightward chain), walk
+        // next_page while every existing entry on the current leaf
+        // is < composite. That way we still find the correct
+        // insertion leaf.
+        int chainBudget = 1_000_000;
+        while (true)
+        {
+            long nextLeaf = IndexPageCodec.ReadNextPage(layout, leaf);
+            if (nextLeaf <= 0)
+            {
+                break;
+            }
+
+            List<IndexEntry> probe = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
+            if (probe.Count == 0 || IndexHelpers.CompareKeyBytes(composite, probe[^1].Key) <= 0)
+            {
+                // composite belongs in this leaf (or earlier).
+                break;
+            }
+
+            if (--chainBudget <= 0)
+            {
+                return false;
+            }
+
+            targetLeafPage = nextLeaf;
+            leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+
+            if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                return false;
+            }
+        }
+
+        long leafPrev = IndexPageCodec.ReadPrevPage(layout, leaf);
+        long leafNext = IndexPageCodec.ReadNextPage(layout, leaf);
+        long leafTail = IndexPageCodec.ReadTailPage(layout, leaf);
+        int originalPrefLen = IndexPageCodec.ReadPrefixLength(layout, leaf);
+
+        List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize);
+
+        var addEntries = new List<IndexEntry>(1)
+        {
+            new(composite, newRowLoc.PageNumber, (byte)newRowLoc.RowIndex),
+        };
+
+        List<IndexEntry>? spliced = IndexEntrySplicer.Splice(
+            existing,
+            addEntries,
+            []);
+        if (spliced is null)
+        {
+            return false;
+        }
+
+        byte[]? rewritten = IndexPageCodec.TryBuildLeafPage(
+            layout,
+            format.PageSize,
+            tdefPage,
+            spliced,
+            prevPage: leafPrev,
+            nextPage: leafNext,
+            tailPage: leafTail,
+            enablePrefixCompression: true,
+            maxPrefixLength: originalPrefLen);
+        if (rewritten is null)
+        {
+            // Leaf overflow → N-way split.
+            SplitPages? splitPages = this.TryBalancedTwoWayLeafSplit(layout, spliced, originalPrefLen)
+                ?? IndexHelpers.TryGreedySplitLeafInN(layout, format.PageSize, spliced);
+            if (splitPages is null)
+            {
+                return false;
+            }
+
+            // Plan the split at the provisional end of file and reserve
+            // its new pages only once an in-place split is certain: the
+            // rebuild fallbacks below reserve their own pages, and a run
+            // reserved first would be left behind, unwritten and marked
+            // used.
+            int splitCount = splitPages.Count;
+            bool canSplitInPlace = hasCleanPath && descentPath.Count > 0;
+            CatalogLeafSplitPlan? plan = this.TryPlanCatalogLeafSplit(
+                layout, tdefPage, splitPages, targetLeafPage, pager.PageCount, leafPrev, leafNext, originalPrefLen, canSplitInPlace ? descentPath : null);
+            if (plan is null)
+            {
+                return false;
+            }
+
+            var runs = new ReservedPageRuns(pageAllocator);
+            try
+            {
+                if (plan.AncestorWrites is not null)
+                {
+                    long firstFreshPage = await runs.ReserveAsync(splitCount - 1, cancellationToken).ConfigureAwait(false);
+                    if (firstFreshPage != plan.PageNumbers[1])
+                    {
+                        plan = this.TryPlanCatalogLeafSplit(
+                            layout, tdefPage, splitPages, targetLeafPage, firstFreshPage, leafPrev, leafNext, originalPrefLen, descentPath);
+                    }
+                }
+
+                if (plan?.AncestorWrites is not { } ancestorWrites)
+                {
+                    // No clean ancestor path, or the ancestor summaries
+                    // overflow: rebuild just this index from its entries.
+                    await runs.ReleaseAsync().ConfigureAwait(false);
+                    bool rebuilt = await this.TryRebuildCatalogIndexTreeAsync(
+                        layout,
+                        tdefPage,
+                        firstDp,
+                        firstDpOffset,
+                        addEntries,
+                        cancellationToken).ConfigureAwait(false);
+                    if (!rebuilt)
+                    {
+                        return false;
+                    }
+
+                    return true;
+                }
+
+                // Complete sibling staging before the first page write.
+                byte[]? nextLeafBytes = null;
+                if (leafNext > 0)
+                {
+                    nextLeafBytes = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
+                    IndexPageCodec.WritePrevPage(layout, nextLeafBytes, plan.PageNumbers[splitCount - 1]);
+                }
+
+                await this.CommitCatalogSplitAsync(targetLeafPage, leafNext, plan, nextLeafBytes, ancestorWrites, runs, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (!runs.IsEmpty)
+                {
+                    await runs.ReleaseAsync().ConfigureAwait(false);
+                }
+            }
+
+            return true;
+        }
+
+        await pager.WritePageAsync(targetLeafPage, rewritten, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Builds the pages of a catalog leaf split whose new right-hand pages
+    /// start at <paramref name="firstNewPage"/>, and, when
+    /// <paramref name="descentPath"/> is supplied, the ancestor rewrites that
+    /// link them. Writes and reserves nothing, so the splice can plan at the
+    /// provisional end of file, reserve only when the in-place split is
+    /// certain, and plan again if the reservation lands elsewhere.
+    /// </summary>
+    /// <param name="layout">The index page layout.</param>
+    /// <param name="tdefPage">The catalog TDEF page.</param>
+    /// <param name="splitPages">The entries of each split page, left to right.</param>
+    /// <param name="targetLeafPage">The leaf being split; it stays the left-most page.</param>
+    /// <param name="firstNewPage">The page number of the first new right-hand page.</param>
+    /// <param name="leafPrev">The split leaf's prev_page.</param>
+    /// <param name="leafNext">The split leaf's next_page.</param>
+    /// <param name="maxPrefixLength">The split leaf's prefix-length cap.</param>
+    /// <param name="descentPath">The clean root-to-leaf path, or <see langword="null"/> when there is none.</param>
+    /// <returns>The plan, or <see langword="null"/> when a split page cannot be built.</returns>
+    private CatalogLeafSplitPlan? TryPlanCatalogLeafSplit(
+        IndexPageLayout layout,
+        long tdefPage,
+        SplitPages splitPages,
+        long targetLeafPage,
+        long firstNewPage,
+        long leafPrev,
+        long leafNext,
+        int maxPrefixLength,
+        List<DescentStep>? descentPath)
+    {
+        long[] pageNumbers = IndexBTreeEditor.AllocateSplitPageNumbers(targetLeafPage, splitPages.Count, firstNewPage);
+        byte[][]? pages = this.TryBuildSplitLeafPages(layout, tdefPage, splitPages, pageNumbers, leafPrev, leafNext, maxPrefixLength);
+        if (pages is null)
+        {
+            return null;
+        }
+
+        List<(long PageNum, byte[] Bytes)>? ancestorWrites = null;
+        if (descentPath is not null)
+        {
+            DecodedIntermediateEntry[] summaries = IndexBTreeEditor.BuildSplitSummaries(splitPages, pageNumbers);
+            ancestorWrites = this.PrepareAncestorSplitWrites(layout, tdefPage, descentPath, summaries);
+        }
+
+        return new CatalogLeafSplitPlan(pageNumbers, pages, ancestorWrites);
+    }
+
+    /// <summary>A planned in-place catalog leaf split.</summary>
+    /// <param name="PageNumbers">The page number of each split page; <c>[0]</c> is the original leaf.</param>
+    /// <param name="Pages">The bytes of each split page, parallel to <paramref name="PageNumbers"/>.</param>
+    /// <param name="AncestorWrites">The ancestor rewrites that link the new pages, or <see langword="null"/> when the split cannot be linked in place.</param>
+    private sealed record CatalogLeafSplitPlan(
+        long[] PageNumbers,
+        byte[][] Pages,
+        List<(long PageNum, byte[] Bytes)>? AncestorWrites);
+
+    /// <summary>Commits a fully staged cross-leaf mutation in dependency order.</summary>
+    /// <param name="layout">The layout for this phase.</param>
+    /// <param name="tdefPage">The tdefPage for this phase.</param>
+    /// <param name="firstDpOffset">The firstDpOffset for this phase.</param>
+    /// <param name="plan">The plan for this phase.</param>
+    /// <param name="cancellationToken">The cancellationToken for this phase.</param>
+    private async ValueTask<bool> CommitCrossLeafPlanAsync(
+        IndexPageLayout layout,
+        long tdefPage,
+        int firstDpOffset,
+        CrossLeafMutationPlan plan,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        List<byte[]> newPageAppends = plan.NewPages;
+        Dictionary<long, long> leafNextPointerPatches = plan.PreviousPointers;
+        Dictionary<long, long> leafPrevPointerPatches = plan.NextPointers;
+        Dictionary<long, byte[]> existingPageRewrites = plan.ExistingPages;
+
+        // ── Phase D: validate + Phase E: commit ──────────────────────
+        // Validation is already done implicitly (every staged page was built
+        // via a try-call that returned null/false on overflow). Commit in
+        // safe order: append new pages first (so their numbers exist before
+        // any in-place rewrite references them), patch sibling pointers, then
+        // rewrite all in-place pages.
+        if (!await this.TryAppendContiguousAsync(newPageAppends, cancellationToken).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        foreach ((long neighbourPage, long newPrevValue) in leafNextPointerPatches)
+        {
+            await this.PatchPrevPointerAsync(layout, neighbourPage, newPrevValue, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach ((long neighbourPage, long newNextValue) in leafPrevPointerPatches)
+        {
+            await this.PatchNextPointerAsync(layout, neighbourPage, newNextValue, cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach ((long pageNum, byte[] bytes) in existingPageRewrites)
+        {
+            await pager.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
+        }
+
+        // If the root intermediate split, patch the real-idx first_dp slot
+        // in the TDEF to point at the freshly-allocated root. The new root
+        // page itself was already appended via newPageAppends above, so the
+        // page number is stable. firstDpOffset is a logical TDEF offset and
+        // may fall on a continuation page of a wide table's TDEF chain.
+        if (plan.NewRootPage is long newRootPage)
+        {
+            await tdefWriter.WriteInt32Async(tdefPage, firstDpOffset, checked((int)newRootPage), cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>Validated page bytes and links awaiting an ordered cross-leaf commit.</summary>
+    /// <param name="NewPages">The NewPages for this phase.</param>
+    /// <param name="ExistingPages">The ExistingPages for this phase.</param>
+    /// <param name="PreviousPointers">The PreviousPointers for this phase.</param>
+    /// <param name="NextPointers">The NextPointers for this phase.</param>
+    /// <param name="NewRootPage">The NewRootPage for this phase.</param>
+    private sealed record CrossLeafMutationPlan(
+        List<byte[]> NewPages,
+        Dictionary<long, byte[]> ExistingPages,
+        Dictionary<long, long> PreviousPointers,
+        Dictionary<long, long> NextPointers,
+        long? NewRootPage);
+
+    /// <summary>Captures immutable ancestry before any intermediate operation is staged.</summary>
+    /// <param name="groups">The groups for this phase.</param>
+    /// <param name="parentOps">The parentOps for this phase.</param>
+    private static IntermediateRewriteContext CaptureIntermediateContext(
+        Dictionary<long, LeafGroup> groups,
+        Dictionary<long, List<IntermediateOp>> parentOps)
+    {
+        // Per-touched-intermediate maps. Multiple groups may pass through the
+        // same intermediate; they all carry identical canonical bytes (the
+        // page cache returns the same content per call in single-writer mode,
+        // as no mid-batch write touches these pages yet), so the first
+        // DescentStep seen is the reference for header + original entries.
+        var intermediateRefs = new Dictionary<long, DescentStep>(parentOps.Count * 2);
+        var intermediateGrandparent = new Dictionary<long, (long ParentPage, int IndexInParent)>(parentOps.Count * 2);
+
+        // One pass over every captured path fills the reference-step,
+        // grandparent, and deepest-level maps. Depth drives the deepest-first
+        // processing order; parentOps starts keyed on parent-of-leaf pages
+        // only, and propagating max-key changes adds shallower ones as we go.
+        var depthOf = new Dictionary<long, int>(parentOps.Count * 2);
+        foreach (LeafGroup group in groups.Values)
+        {
+            for (int level = 0; level < group.Path.Count; level++)
+            {
+                DescentStep step = group.Path[level];
+                long pn = step.PageNumber;
+
+                if (!intermediateRefs.ContainsKey(pn))
+                {
+                    intermediateRefs[pn] = step;
+                }
+
+                if (level > 0)
+                {
+                    DescentStep parent = group.Path[level - 1];
+                    intermediateGrandparent[pn] = (parent.PageNumber, parent.TakenIndex);
+                }
+
+                if (!depthOf.TryGetValue(pn, out int existingDepth) || existingDepth < level)
+                {
+                    depthOf[pn] = level;
+                }
+            }
+        }
+
+        // Process pages in descending depth (deepest first).
+        var pending = new List<long>(parentOps.Keys);
+        return new IntermediateRewriteContext(new HashSet<long>(parentOps.Keys), intermediateRefs, intermediateGrandparent, new Dictionary<long, long>(parentOps.Count * 2), depthOf, pending);
+    }
+
+    /// <summary>Owns ancestry and pending parent work throughout deepest-first intermediate staging.</summary>
+    /// <param name="ParentsOfLeaves">The ParentsOfLeaves for this phase.</param>
+    /// <param name="References">The References for this phase.</param>
+    /// <param name="Grandparents">The Grandparents for this phase.</param>
+    /// <param name="Tails">The Tails for this phase.</param>
+    /// <param name="Depths">The Depths for this phase.</param>
+    /// <param name="Pending">The Pending for this phase.</param>
+    private sealed record IntermediateRewriteContext(
+        HashSet<long> ParentsOfLeaves,
+        Dictionary<long, DescentStep> References,
+        Dictionary<long, (long ParentPage, int IndexInParent)> Grandparents,
+        Dictionary<long, long> Tails,
+        Dictionary<long, int> Depths,
+        List<long> Pending);
+
+    /// <summary>Writes reserved pages before publishing sibling, leaf and ancestor links.</summary>
+    /// <param name="targetLeafPage">The targetLeafPage for this phase.</param>
+    /// <param name="nextLeafPage">The nextLeafPage for this phase.</param>
+    /// <param name="plan">The plan for this phase.</param>
+    /// <param name="nextLeafBytes">The nextLeafBytes for this phase.</param>
+    /// <param name="ancestorWrites">The ancestorWrites for this phase.</param>
+    /// <param name="runs">The runs for this phase.</param>
+    /// <param name="cancellationToken">The cancellationToken for this phase.</param>
+    private async ValueTask CommitCatalogSplitAsync(
+        long targetLeafPage,
+        long nextLeafPage,
+        CatalogLeafSplitPlan plan,
+        byte[]? nextLeafBytes,
+        List<(long PageNum, byte[] Bytes)> ancestorWrites,
+        ReservedPageRuns runs,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        for (int p = 1; p < plan.Pages.Length; p++)
+        {
+            await pager.WritePageAsync(plan.PageNumbers[p], plan.Pages[p], cancellationToken).ConfigureAwait(false);
+        }
+
+        runs.MarkLinked();
+        if (nextLeafBytes is not null)
+        {
+            await pager.WritePageAsync(nextLeafPage, nextLeafBytes, cancellationToken).ConfigureAwait(false);
+        }
+
+        await pager.WritePageAsync(targetLeafPage, plan.Pages[0], cancellationToken).ConfigureAwait(false);
+        foreach ((long pageNumber, byte[] bytes) in ancestorWrites)
+        {
+            await pager.WritePageAsync(pageNumber, bytes, cancellationToken).ConfigureAwait(false);
+        }
     }
 }

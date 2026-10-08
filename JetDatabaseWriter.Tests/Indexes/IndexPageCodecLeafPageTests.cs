@@ -23,6 +23,37 @@ public sealed class IndexPageCodecLeafPageTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void TryBuildIntermediate_InvalidChildAfterOverflow_Throws(DatabaseFormat format)
+    {
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        DecodedIntermediateEntry[] entries = [new(new(new byte[PageSizeOf(format)], 1, 0), 1), new(new([1], 1, 0), 0x100000000L)];
+        Assert.Throws<ArgumentOutOfRangeException>(() => IndexPageCodec.TryBuildIntermediatePage(layout, PageSizeOf(format), 42, entries, 0, 0, 0));
+        Assert.Null(IndexPageCodec.TryBuildIntermediatePage(layout, PageSizeOf(format), 42, [entries[0]], 0, 0, 0));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void TryBuild_InvalidPointerAfterOverfullEntry_Throws(DatabaseFormat format)
+    {
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        IndexEntry[] entries = [new(new byte[PageSizeOf(format)], 1, 0), new([1], 0x1000000, 0)];
+        Assert.Throws<ArgumentOutOfRangeException>(() => IndexPageCodec.TryBuildLeafPage(layout, PageSizeOf(format), 42, entries));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public void TryBuild_ValidOverfullEntry_ReturnsNull(DatabaseFormat format)
+    {
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        Assert.Null(IndexPageCodec.TryBuildLeafPage(layout, PageSizeOf(format), 42, [new(new byte[PageSizeOf(format)], 1, 0)]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => IndexPageCodec.TryBuildLeafPage(layout, layout.FirstEntryOffset, 42, []));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     public void EmptyPage_HasCorrectHeaderAndFreeSpace(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
@@ -135,7 +166,7 @@ public sealed class IndexPageCodecLeafPageTests
             entries[i] = entry;
         }
 
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        Assert.ThrowsAny<ArgumentOutOfRangeException>(() =>
             IndexPageCodec.BuildLeafPage(layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: false));
     }
 
@@ -149,7 +180,7 @@ public sealed class IndexPageCodecLeafPageTests
         byte[] key = IndexKeyEncoder.EncodeEntry(LongIntegerType, 1, ascending: true);
         IndexEntry[] entries = [new IndexEntry(key, 0x1_000_000L, 0)];
 
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
+        Assert.ThrowsAny<ArgumentOutOfRangeException>(() =>
             IndexPageCodec.BuildLeafPage(layout, pageSize, 100, entries, 0, 0, 0, enablePrefixCompression: false));
     }
 
