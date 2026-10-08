@@ -11,7 +11,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
-using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -31,9 +30,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// Owns the Attachment / MultiValue (complex column) subsystem for
-/// <see cref="AccessWriter"/>: ACCDB system-table scaffolding
-/// (<c>MSysACEs</c>, <c>MSysQueries</c>, <c>MSysRelationships</c>,
-/// <c>MSysComplexColumns</c>, <c>MSysComplexType_*</c>), per-table
+/// <see cref="AccessWriter"/>: ACE complex system-table scaffolding
+/// (<c>MSysComplexColumns</c>, <c>MSysComplexType_*</c>), per-table
 /// allocation of per-column <c>ComplexID</c> values and per-row complex references, hidden
 /// flat-child-table emission, the row-level Add* APIs that backfill
 /// flat tables, and cascade / drop / rename plumbing for the artifacts
@@ -43,7 +41,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="format">The database's immutable format profile.</param>
 /// <param name="tableDefs">The table-definition reader.</param>
 /// <param name="ownedPages">The database's owned-page discovery and row walks.</param>
-/// <param name="pager">The writer's page file, through which the header page and patched parent rows are written.</param>
+/// <param name="pager">The writer's page file, through which patched parent rows are written.</param>
 /// <param name="catalog">Resolves parent tables by name.</param>
 /// <param name="tableRows">Writes and tombstones flat-table and <c>MSysComplexColumns</c> rows.</param>
 /// <param name="indexes">Keeps system-table indexes current.</param>
@@ -76,22 +74,10 @@ internal sealed class ComplexColumnManager(
     private readonly Pager pager = pager;
     private readonly TableCatalog catalog = catalog;
 
-    /// <summary>
-    /// Scaffolds native Jet4/ACE core system tables:
-    /// <c>MSysACEs</c>, <c>MSysQueries</c>, and <c>MSysRelationships</c>
-    /// tables. ACE additionally receives <c>MSysComplexColumns</c> and
-    /// the per-kind <c>MSysComplexType_*</c> templates.
-    /// </summary>
-    /// <param name="coreSystemTableStartPage">The core system table start page.</param>
+    /// <summary>Creates the ACE-only complex catalog and type templates in a fresh database.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public async ValueTask ScaffoldSystemTablesAsync(long coreSystemTableStartPage, CancellationToken cancellationToken)
+    public async ValueTask ScaffoldComplexSystemTablesAsync(CancellationToken cancellationToken)
     {
-        if (!this.format.SupportsCoreCatalogTables)
-        {
-            return;
-        }
-
-        await this.CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
         if (!this.format.SupportsComplexColumns)
         {
             return;
@@ -99,203 +85,6 @@ internal sealed class ComplexColumnManager(
 
         await this.CreateMSysComplexColumnsAsync(cancellationToken).ConfigureAwait(false);
         await this.CreateMSysComplexTypeTemplatesAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private async ValueTask CreateCoreSystemTablesAsync(long coreSystemTableStartPage, CancellationToken cancellationToken)
-    {
-        const uint systemTableFlags = Constants.SystemObjects.SystemTableMask & Constants.SystemObjects.SystemObjectFlag;
-        var plan = new CatalogArtifactPlan(
-            [
-                new CatalogTableArtifact(
-                    Constants.SystemTableNames.Aces,
-                    [
-                        new ColumnDefinition("ObjectId", typeof(int)),
-                        new ColumnDefinition("SID", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x32 },
-                        new ColumnDefinition("ACM", typeof(int)),
-                        new ColumnDefinition("FInheritable", typeof(bool)),
-                    ],
-                    [new IndexDefinition("ObjectId", "ObjectId") { IsRequired = true }],
-                    systemTableFlags,
-                    ReservedTdefPageNumber: coreSystemTableStartPage,
-                    EmitLvProp: false),
-                new CatalogTableArtifact(
-                    Constants.SystemTableNames.Queries,
-                    [
-                        new ColumnDefinition("ObjectId", typeof(int)),
-                        new ColumnDefinition("Attribute", typeof(byte)),
-                        new ColumnDefinition("Order", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x12 },
-                        new ColumnDefinition("Name1", typeof(string), maxLength: 255),
-                        new ColumnDefinition("Name2", typeof(string), maxLength: 255),
-                        new ColumnDefinition("Expression", typeof(string)),
-                        new ColumnDefinition("Flag", typeof(short)),
-                        new ColumnDefinition("LvExtra", typeof(int)),
-                    ],
-                    [new IndexDefinition("ObjectIdAttribute", ["ObjectId", "Attribute", "Order"]) { IsPrimaryKey = true }],
-                    systemTableFlags,
-                    ReservedTdefPageNumber: coreSystemTableStartPage > 0 ? coreSystemTableStartPage + 1 : 0,
-                    EmitLvProp: false),
-                new CatalogTableArtifact(
-                    Constants.SystemTableNames.Relationships,
-                    [
-                        new ColumnDefinition("szRelationship", typeof(string), maxLength: 255),
-                        new ColumnDefinition("grbit", typeof(int)),
-                        new ColumnDefinition("ccolumn", typeof(int)),
-                        new ColumnDefinition("icolumn", typeof(int)),
-                        new ColumnDefinition("szObject", typeof(string), maxLength: 255),
-                        new ColumnDefinition("szColumn", typeof(string), maxLength: 255),
-                        new ColumnDefinition("szReferencedObject", typeof(string), maxLength: 255),
-                        new ColumnDefinition("szReferencedColumn", typeof(string), maxLength: 255),
-                    ],
-                    [
-                        new IndexDefinition("szRelationship", "szRelationship") { IgnoreNulls = true },
-                        new IndexDefinition("szObject", "szObject") { IgnoreNulls = true },
-                        new IndexDefinition("szReferencedObject", "szReferencedObject") { IgnoreNulls = true },
-                    ],
-                    systemTableFlags,
-                    ReservedTdefPageNumber: coreSystemTableStartPage > 0 ? coreSystemTableStartPage + 2 : 0,
-                    EmitLvProp: false),
-            ],
-            []);
-
-        CatalogObjectArtifact[] objects = BuildCoreCatalogObjectArtifacts();
-        byte[]? header = null;
-        if (this.format.UsesHeaderMaskedSecuritySids)
-        {
-            byte[] borrowed = await this.pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                header = borrowed.AsSpan(0, this.format.PageSize).ToArray();
-            }
-            finally
-            {
-                PageBuffers.Return(borrowed);
-            }
-
-            objects = objects.Select(artifact => artifact with
-            {
-                Owner = Jet4SecuritySid.Encode(this.format, header, artifact.ObjectName == "MSysDb" ? [0x03, 0x01] : [0x02, 0x03]),
-            }).ToArray();
-        }
-
-        if (header is not null)
-        {
-            _ = await catalogArtifacts.ExecutePlanAsync(new CatalogArtifactPlan([], objects), cancellationToken).ConfigureAwait(false);
-            byte[] systemOwner = Jet4SecuritySid.Encode(this.format, header, [0x02, 0x03]);
-            plan = plan with { TableArtifacts = plan.TableArtifacts.Select(table => table with { Owner = systemOwner }).ToArray() };
-        }
-        else
-        {
-            plan = plan with { CatalogObjects = objects };
-        }
-
-        long[] tablePages = await catalogArtifacts.ExecutePlanAsync(plan, cancellationToken).ConfigureAwait(false);
-        long acesTdefPage = tablePages[0];
-        long queriesTdefPage = tablePages[1];
-        long relationshipsTdefPage = tablePages[2];
-        await this.PatchHeaderSystemTablePagesAsync(acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
-        if (header is not null)
-        {
-            await this.InitializeJet4PermissionsAsync(header, acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async ValueTask InitializeJet4PermissionsAsync(
-        byte[] header,
-        long acesPage,
-        long queriesPage,
-        long relationshipsPage,
-        CancellationToken cancellationToken)
-    {
-        TableDef definition = await this.tableDefs.ReadRequiredTableDefAsync(acesPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        byte[] owner = Jet4SecuritySid.Encode(this.format, header, [0x03, 0x01]);
-        byte[] users = Jet4SecuritySid.Encode(this.format, header, [0x02, 0x01]);
-        byte[] inheritedOwner = Jet4SecuritySid.GetOwnerPlaceholder(this.format, header);
-        (int ObjectId, byte[] Sid, int Acm, bool Inheritable)[] permissions =
-        [
-            (2, owner, 0x60000, false),
-            (checked((int)acesPage), owner, 0x60000, false),
-            (checked((int)queriesPage), owner, 0x60000, false),
-            (checked((int)relationshipsPage), owner, 0xE0000, false),
-            (Constants.SystemObjects.TablesParentId, inheritedOwner, 0xF00FE, true),
-            (Constants.SystemObjects.TablesParentId, owner, 0x60001, false),
-            (Constants.SystemObjects.RelationshipsParentId, inheritedOwner, 0xF00FE, true),
-            (Constants.SystemObjects.RelationshipsParentId, owner, 0x60001, false),
-            (Constants.SystemObjects.DatabasesParentId, owner, 0x60000, false),
-            (Constants.SystemObjects.DatabaseObjectId, owner, 0x6000E, false),
-            (Constants.SystemObjects.DatabaseObjectId, users, 0xE, false),
-            (checked((int)queriesPage), users, 0x14, false),
-            (checked((int)relationshipsPage), users, 0x14, false),
-            (2, users, 0x14, false),
-            (Constants.SystemObjects.TablesParentId, users, 0xFFEFF, true),
-            (Constants.SystemObjects.RelationshipsParentId, users, 0xFFFFF, true),
-        ];
-        foreach ((int objectId, byte[] sid, int acm, bool inheritable) in permissions)
-        {
-            object[] values = definition.CreateNullValueRow();
-            definition.SetValueByName(values, "ObjectId", objectId);
-            definition.SetValueByName(values, "SID", sid);
-            definition.SetValueByName(values, "ACM", acm);
-            definition.SetValueByName(values, "FInheritable", inheritable);
-            await indexes.InsertSystemRowAndMaintainAsync(acesPage, definition, Constants.SystemTableNames.Aces, values, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private static CatalogObjectArtifact[] BuildCoreCatalogObjectArtifacts()
-        =>
-        [
-            new CatalogObjectArtifact(
-                2,
-                Constants.SystemObjects.TablesParentId,
-                Constants.SystemTableNames.Objects,
-                Constants.SystemObjects.UserTableType,
-                Constants.SystemObjects.SystemObjectFlag),
-            new CatalogObjectArtifact(
-                Constants.SystemObjects.TablesParentId,
-                Constants.SystemObjects.RootParentId,
-                "Tables",
-                3,
-                Constants.SystemObjects.SystemObjectFlag),
-            new CatalogObjectArtifact(
-                Constants.SystemObjects.DatabasesParentId,
-                Constants.SystemObjects.RootParentId,
-                "Databases",
-                3,
-                Constants.SystemObjects.SystemObjectFlag),
-            new CatalogObjectArtifact(
-                Constants.SystemObjects.RelationshipsParentId,
-                Constants.SystemObjects.RootParentId,
-                "Relationships",
-                3,
-                Constants.SystemObjects.SystemObjectFlag),
-            new CatalogObjectArtifact(
-                Constants.SystemObjects.DatabaseObjectId,
-                Constants.SystemObjects.DatabasesParentId,
-                "MSysDb",
-                2,
-                Constants.SystemObjects.SystemObjectFlag),
-        ];
-
-    private async ValueTask PatchHeaderSystemTablePagesAsync(
-        long acesTdefPage,
-        long queriesTdefPage,
-        long relationshipsTdefPage,
-        CancellationToken cancellationToken)
-    {
-        byte[] header = await this.pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            EncryptionManager.TransformHeaderMask(header);
-            Wi32(header, 0x20, 2);
-            Wi32(header, 0x24, checked((int)acesTdefPage));
-            Wi32(header, 0x28, checked((int)queriesTdefPage));
-            Wi32(header, 0x2C, checked((int)relationshipsTdefPage));
-            EncryptionManager.TransformHeaderMask(header);
-            await this.pager.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            PageBuffers.Return(header);
-        }
     }
 
     /// <summary>

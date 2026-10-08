@@ -8,6 +8,10 @@
 
 ---
 
+## Mutation ownership
+
+`RelationshipManager` owns declaration checks, relationship catalog lifecycle and schema-rewrite orchestration. `ForeignKeyMetadataEditor` owns the physical FK descriptor layout, logical TDEF-chain writes, partner links and leaf reservations. It has no relationship-catalog or table-catalog dependency. Unlinked leaf reservations are released on failure; TDEF writes link them inside the caller's existing transaction. The relationship workflow keeps native-security checks ahead of physical edits and coordinates catalog state with those edits.
+
 ## Null keys and cascade planning
 
 Non-primary unique indexes allow multiple all-Null keys; partly Null composite keys still participate in uniqueness. IgnoreNulls omits all-Null keys in rebuilds, incremental changes and catalog splices. Required and primary indexes reject a Null component before mutation. Northwind Employees supplies real-file evidence for repeated Null WindowsUserName keys; the format/write-mode regression matrix covers batch inserts, updates and reopen behavior.

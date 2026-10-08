@@ -100,11 +100,12 @@ internal sealed class WriterServices
         this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
         var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, constraints, this.CatalogRows, pager);
         this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
+        this.SystemCatalog = new SystemCatalogBootstrapper(db.Format, db.TableDefs, pager, this.Indexes, this.CatalogArtifacts);
         this.ComplexColumns = new ComplexColumnManager(db.Format, db.TableDefs, db.OwnedPages, pager, catalog, tableRows, this.Indexes, this.CatalogArtifacts, this.CatalogRows, constraints, autoNumbers, complexReferenceSeeds, this.Snapshots);
 
         var relationshipCatalog = new RelationshipCatalogStore(db.Format, db.TableDefs, db.OwnedPages, this.Indexes, this.CatalogRows, snapshots, catalog);
         var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots, constraints);
-        this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, this.PageAllocator, this.CatalogArtifacts, this.CatalogRows, relationshipCatalog, snapshots);
+        this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, new ForeignKeyMetadataEditor(db.Format, db.TableDefs, pager, this.PageAllocator), this.CatalogArtifacts, this.CatalogRows, relationshipCatalog, snapshots);
 
         this.Transactions = new TransactionLifecycle(db.Format, pager, options, byteRangeLock, catalog, dataPages, this.OwnedMaps, constraints);
         this.Data = new TableDataWriter(
@@ -155,6 +156,9 @@ internal sealed class WriterServices
 
     /// <summary>Gets the catalog-plan executor and fresh-catalog bootstrap.</summary>
     internal CatalogArtifactWriter CatalogArtifacts { get; }
+
+    /// <summary>Gets core system-table and permission bootstrap.</summary>
+    internal SystemCatalogBootstrapper SystemCatalog { get; }
 
     /// <summary>Gets the cached user-table catalog.</summary>
     internal TableCatalog Catalog { get; }

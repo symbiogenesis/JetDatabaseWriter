@@ -243,10 +243,12 @@ public sealed class ServiceGraphTests
             typeof(TableSchemaEditor),
             typeof(TableRowStore),
             typeof(RelationshipManager),
+            typeof(ForeignKeyMetadataEditor),
             typeof(RelationshipEnforcer),
             typeof(ComplexColumnManager),
             typeof(CatalogWriter),
             typeof(CatalogArtifactWriter),
+            typeof(SystemCatalogBootstrapper),
             typeof(CatalogOwnedMapPolicy),
             typeof(IndexMaintainer),
             typeof(TransactionLifecycle),
@@ -260,6 +262,32 @@ public sealed class ServiceGraphTests
         {
             Assert.Contains(service, state.Keys);
         }
+    }
+
+    [Fact]
+    public void PhysicalForeignKeyMetadata_DoesNotOwnRelationshipPolicyOrCatalogLifecycle()
+    {
+        Type[] dependencies = [.. DependenciesOf(typeof(ForeignKeyMetadataEditor))];
+
+        Assert.DoesNotContain(typeof(RelationshipManager), dependencies);
+        Assert.DoesNotContain(typeof(RelationshipCatalogStore), dependencies);
+        Assert.DoesNotContain(typeof(TableCatalog), dependencies);
+        Assert.DoesNotContain(typeof(CatalogArtifactWriter), dependencies);
+        Assert.DoesNotContain(typeof(IndexMaintainer), dependencies);
+        Assert.Contains(typeof(PageAllocator), dependencies);
+        Assert.Contains(typeof(Pager), dependencies);
+    }
+
+    [Fact]
+    public void CoreCatalogBootstrap_DoesNotDependOnComplexValueStorage()
+    {
+        var state = new Dictionary<Type, bool>();
+        _ = FindCycle(typeof(SystemCatalogBootstrapper), state, new Stack<Type>());
+
+        Assert.DoesNotContain(typeof(ComplexColumnManager), state.Keys);
+        Assert.Contains(typeof(CatalogArtifactWriter), state.Keys);
+        Assert.DoesNotContain(typeof(PageAllocator), DependenciesOf(typeof(RelationshipManager)));
+        Assert.DoesNotContain(typeof(SystemCatalogBootstrapper), DependenciesOf(typeof(ComplexColumnManager)));
     }
 
     [Fact]

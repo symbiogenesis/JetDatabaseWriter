@@ -751,7 +751,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         await using WriteScope scope = this.services.Transactions.BeginWriteScope();
         long coreSystemTableStartPage = await this.services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(cancellationToken).ConfigureAwait(false);
         await this.services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(cancellationToken).ConfigureAwait(false);
-        await this.services.ComplexColumns.ScaffoldSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
+        await this.services.SystemCatalog.CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
+        await this.services.ComplexColumns.ScaffoldComplexSystemTablesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private ValueTask CreateLinkedOdbcTableCoreAsync(

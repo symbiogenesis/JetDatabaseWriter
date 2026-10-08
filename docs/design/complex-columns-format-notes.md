@@ -8,6 +8,10 @@
 
 ---
 
+## Bootstrap ownership
+
+`SystemCatalogBootstrapper` creates the core `MSysACEs`, `MSysQueries` and `MSysRelationships` tables, installs native permissions and patches the system-table header pointers. Fresh database creation runs that service before `ComplexColumnManager` creates the ACE-only complex catalog and type templates. Both execute inside the creation write scope and use the same pager and catalog-artifact writer. Complex-value storage does not own general database security or core catalog bootstrap.
+
 ## 1. Background
 
 Access 2007 introduced three "complex column" kinds. All three are stored the same way: a 4-byte per-row complex reference in the parent row, pointing into a hidden child ("flat") table that holds the actual values. **All three kinds share the column-type byte `0x12` (`COMPLEX_TYPE`)** — confirmed both by Jackcess `DataType.java` and by our format-probe across the entire test corpus (no on-disk fixture in `JetDatabaseWriter.Tests/Databases/` carries `0x11` on a complex column). The writer emits `0x12` for attachment and multi-value parent descriptors. Type `0x11` is native Jet4 `BIGBINARY`, a fixed 3992-byte payload used by `MSysAccessObjects.Data`; it is decoded as binary bytes and never enters complex-column processing. This matches [Jackcess’s native datatype definition](https://github.com/jahlborn/jackcess/blob/master/src/main/java/com/healthmarketscience/jackcess/DataType.java) and the bundled Access-authored Jet4 fixtures.
