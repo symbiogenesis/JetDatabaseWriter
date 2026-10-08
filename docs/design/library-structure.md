@@ -4,6 +4,12 @@ This document describes the architecture and folder organization of the `JetData
 
 ---
 
+## Table rewrite phases
+
+`TableSchemaEditor` retains declaration policy and coordinates preparation, replacement creation and application. `TableRewritePlanner.PrepareAsync` captures original properties, descriptors, row projections, surviving indexes, relationship/complex identities and both persisted counter high-water values in `TableRewritePlan` before creating a temporary table. Preparation may reserve complex references in the constraint cache: callers must hold the serialized write scope and transaction/savepoint checkpoint, and must roll back if the plan is abandoned. It does not publish database pages.
+
+`TableStorageEditor` owns row/index copying, validation of the completed `TableRewriteCopy`, then replacement/transplant and reclamation. Validation and cancellation checks precede destruction of the original table. Dependent complex and relationship metadata repair remains inside the caller's transaction, using the same pager and cache checkpoints. Storage reclamation and publication are absent from the declaration service and the planner.
+
 ## Directory layout
 
 ```
@@ -350,7 +356,11 @@ JetDatabaseWriter/
 │   ├── IndexRowReader.cs                  (index metadata, seeks and range reads, predicate-inferred index reads)
 │   ├── SchemaReader.cs                    (column metadata, relationships, table lists and database statistics)
 │   ├── TableDataWriter.cs                 (row DML: insert / update / delete batches)
-│   ├── TableSchemaEditor.cs               (table DDL: create / drop table, add / drop / rename column, page reclaim)
+│   ├── TableSchemaEditor.cs               (declaration policy and DDL orchestration)
+│   ├── TableRewritePlanner.cs             (schema/row/property projection and identity capture)
+│   ├── TableRewritePlan.cs                (validated replacement, preserved identities and counters)
+│   ├── TableRewriteCopy.cs                (copied storage identity before publication)
+│   ├── TableStorageEditor.cs              (copy, validate, replace and storage reclamation)
 │   ├── TableRowStore.cs                   (row primitives: write row bytes, mark deleted, adjust TDEF row count)
 │   └── TableSnapshotReader.cs             (writer's decoded reads of its own rows, through its own page source and journal)
 │
@@ -495,9 +505,12 @@ AccessReader → ReaderServices
 AccessWriter → WriterServices
   TableDataWriter     → TableCatalog, TableRowStore, IndexMaintainer, UniqueIndexChecker, AutoNumberMaintainer,
                         ConstraintRegistry, RelationshipEnforcer, ComplexColumnManager, TableSnapshotReader
-  TableSchemaEditor   → TableCatalog, TableRowStore, IndexMaintainer, PageAllocator, LongValueEncoder, CatalogWriter,
-                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader,
-                        AutoNumberMaintainer
+  TableSchemaEditor   → TableCatalog, TableRowStore, IndexMaintainer, CatalogWriter, CatalogArtifactWriter,
+                        ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader, TableRewritePlanner, TableStorageEditor
+  TableRewritePlanner → TableCatalog, IndexMaintainer, CatalogArtifactWriter, ConstraintRegistry, RelationshipManager,
+                        TableSnapshotReader, AutoNumberMaintainer
+  TableStorageEditor  → TableCatalog, TableRowStore, IndexMaintainer, PageAllocator, LongValueEncoder, CatalogWriter,
+                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, RelationshipManager, AutoNumberMaintainer
   RelationshipManager → TableCatalog, IndexMaintainer, ForeignKeyMetadataEditor, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
   ForeignKeyMetadataEditor → Pager, TableDefReader, PageAllocator
   SystemCatalogBootstrapper → Pager, TableDefReader, IndexMaintainer, CatalogArtifactWriter
@@ -508,7 +521,7 @@ AccessWriter → WriterServices
   CatalogArtifactWriter → TableCatalog, PageAllocator, TDefPageBuilder, DataPageInserter, CatalogOwnedMapPolicy, CatalogWriter,
                         ConstraintRegistry
   CatalogWriter       → TableCatalog, TableRowStore, IndexMaintainer, LongValueEncoder, ConstraintRegistry, CatalogRowReader
-  IndexMaintainer     → TDefWriter, PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
+  IndexMaintainer     → IndexBTreeEditor, TDefWriter, PageAllocator, TableRowStore, DataPageInserter, TableSnapshotReader
   TDefWriter          → Pager, TableDefReader
   TableSnapshotReader → RowDecoder, CatalogReader
   CatalogReader       → TableCatalog, CatalogRowReader, RowDecoder
@@ -754,7 +767,7 @@ Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `Relatio
 
 ### 8. Usage-map parsing stays with page ownership
 
-`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `OwnedDataPages` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows in the maps `CatalogOwnedMapPolicy` lets it extend and writes index rows through `UsageMapEditor`, which moves an empty INLINE window, promotes a row that outgrows its window to REFERENCE and allocates its bitmap pages; `PageAllocator` decides when to promote the global free map and allocate reference pages; `CatalogArtifactWriter`, `TableSchemaEditor`, and `IndexMaintainer` decide which index pages to emit or reclaim.
+`UsageMap` lives in `Pages/` because INLINE and REFERENCE usage-map rows are page-layout structures, not reader-only or writer-only behavior. It owns pointer reads/writes, row-bound lookup, bitmap traversal, point bit checks and mutation, and inline row serialization. Callers keep policy: `OwnedDataPages` validates mapped owned data pages before taking the fast path; `DataPageInserter` marks table owned/free rows in the maps `CatalogOwnedMapPolicy` lets it extend and writes index rows through `UsageMapEditor`, which moves an empty INLINE window, promotes a row that outgrows its window to REFERENCE and allocates its bitmap pages; `PageAllocator` decides when to promote the global free map and allocate reference pages; `CatalogArtifactWriter`, `TableStorageEditor`, and `IndexMaintainer` decide which index pages to emit or reclaim.
 
 ### 9. Linked-table metadata spans catalog, schema, and delimited text parsing
 

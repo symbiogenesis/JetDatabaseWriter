@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -31,7 +30,8 @@ public sealed class TableRewritePlanningTests
             leaveOpen: true,
             ct))
         {
-            await writer.CreateTableAsync("Original",
+            await writer.CreateTableAsync(
+                "Original",
                 [new("Id", typeof(int)), new ColumnDefinition("Old", typeof(byte[])) { IsAttachment = true }],
                 ct);
             await writer.InsertRowsAsync("Original", [[1, DBNull.Value], [2, DBNull.Value]], ct);
@@ -42,6 +42,7 @@ public sealed class TableRewritePlanningTests
             stream,
             new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = true },
             cancellationToken: ct);
+
         // Warm the reference cache, so rollback must rewind an existing holder.
         await harness.InsertRowAsync("Original", [3, DBNull.Value], ct);
         byte[] original = stream.ToArray();
@@ -87,11 +88,11 @@ public sealed class TableRewritePlanningTests
     private static ValueTask<TableRewritePlan> PrepareReplacementAsync(WriterHarness harness, CancellationToken cancellationToken)
         => harness.Services.RewritePlanner.PrepareAsync(
             "Original",
-            static (columns, _) => new List<ColumnDefinition>
-            {
+            static (columns, _) =>
+            [
                 columns[0],
                 new("New", typeof(byte[])) { IsAttachment = true },
-            },
+            ],
             static (values, _) => [values[0], DBNull.Value],
             static name => string.Equals(name, "Old", StringComparison.Ordinal) ? null : name,
             cancellationToken);

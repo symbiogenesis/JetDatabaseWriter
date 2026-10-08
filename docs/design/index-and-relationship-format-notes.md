@@ -12,6 +12,12 @@
 
 `RelationshipManager` owns declaration checks, relationship catalog lifecycle and schema-rewrite orchestration. `ForeignKeyMetadataEditor` owns the physical FK descriptor layout, logical TDEF-chain writes, partner links and leaf reservations. It has no relationship-catalog or table-catalog dependency. Unlinked leaf reservations are released on failure; TDEF writes link them inside the caller's existing transaction. The relationship workflow keeps native-security checks ahead of physical edits and coordinates catalog state with those edits.
 
+## Index capacity and publication
+
+`IndexPageCodec` validates every pointer and layout before considering fullness, including entries after an already overfull payload. It sizes prefix-compressed payloads and entry-start bitmasks before encoding. Its `TryBuild` methods return null for valid entries that exceed capacity; invalid metadata still throws. The tree builder/editor recognize the dedicated `IndexCapacityException` when a throwing build API encounters capacity, so a general range error cannot select splitting or rebuilding.
+
+`IndexMaintainer` owns key/metadata preparation and TDEF/usage-map finalization. Ordinary and catalog tree surgery belongs to `IndexBTreeEditor`; catalog insertion accepts an encoded entry after catalog policy has run. Staged plans keep page images and link updates together before the ordered commit. The incremental metadata state carries pending root changes across TDEF refreshes; its finalization links reservations through usage maps and TDEF writes inside the existing caller-owned transaction.
+
 ## Null keys and cascade planning
 
 Non-primary unique indexes allow multiple all-Null keys; partly Null composite keys still participate in uniqueness. IgnoreNulls omits all-Null keys in rebuilds, incremental changes and catalog splices. Required and primary indexes reject a Null component before mutation. Northwind Employees supplies real-file evidence for repeated Null WindowsUserName keys; the format/write-mode regression matrix covers batch inserts, updates and reopen behavior.
