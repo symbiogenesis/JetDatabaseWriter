@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Indexes;
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
@@ -56,7 +57,24 @@ internal static class IndexPredicateTranslator
     /// The pushable conjuncts as a <see cref="RowCriteria"/>. The result is always
     /// a (possibly empty) subset of the predicate's necessary conditions.
     /// </returns>
+    [RequiresUnreferencedCode("Runtime predicates discover the entity mapping from expression metadata.")]
     public static RowCriteria ExtractPushableCriteria(LambdaExpression predicate)
+    {
+        Guard.NotNull(predicate, nameof(predicate));
+        return ExtractPushableCriteria(predicate, predicate.Parameters.Count == 1 ? EntityMap.For(predicate.Parameters[0].Type) : null);
+    }
+
+    /// <summary>Extracts typed predicates while preserving the entity's mapped properties.</summary>
+    /// <typeparam name="T">The mapped entity type.</typeparam>
+    /// <param name="predicate">The row predicate.</param>
+    /// <returns>The index-seekable criteria.</returns>
+    public static RowCriteria ExtractPushableCriteria<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>(Expression<Func<T, bool>> predicate)
+    {
+        Guard.NotNull(predicate, nameof(predicate));
+        return ExtractPushableCriteria(predicate, EntityMap.For(typeof(T)));
+    }
+
+    private static RowCriteria ExtractPushableCriteria(LambdaExpression predicate, EntityMap? map)
     {
         Guard.NotNull(predicate, nameof(predicate));
 
@@ -72,7 +90,7 @@ internal static class IndexPredicateTranslator
 
         foreach (Expression conjunct in conjuncts)
         {
-            if (TryTranslateComparison(conjunct, parameter, out ColumnPredicate? model))
+            if (TryTranslateComparison(conjunct, parameter, map!, out ColumnPredicate? model))
             {
                 criteria.Add(model);
             }
@@ -97,6 +115,7 @@ internal static class IndexPredicateTranslator
     private static bool TryTranslateComparison(
         Expression expression,
         ParameterExpression parameter,
+        EntityMap map,
         [NotNullWhen(true)] out ColumnPredicate? predicate)
     {
         predicate = null;
@@ -110,14 +129,14 @@ internal static class IndexPredicateTranslator
             return false;
         }
 
-        if (TryResolveColumn(binary.Left, parameter, out string? leftColumn)
+        if (TryResolveColumn(binary.Left, parameter, map, out string? leftColumn)
             && IsConstant(binary.Right, parameter))
         {
             predicate = Build(leftColumn!, @operator, EvaluateValue(binary.Right));
             return predicate is not null;
         }
 
-        if (TryResolveColumn(binary.Right, parameter, out string? rightColumn)
+        if (TryResolveColumn(binary.Right, parameter, map, out string? rightColumn)
             && IsConstant(binary.Left, parameter))
         {
             // `value < o.X`  ==>  `o.X > value`.
@@ -161,7 +180,7 @@ internal static class IndexPredicateTranslator
         _ => @operator,
     };
 
-    private static bool TryResolveColumn(Expression expression, ParameterExpression parameter, out string? columnName)
+    private static bool TryResolveColumn(Expression expression, ParameterExpression parameter, EntityMap map, out string? columnName)
     {
         columnName = null;
         if (StripConvert(expression) is not MemberExpression member)
@@ -187,7 +206,7 @@ internal static class IndexPredicateTranslator
         // [Column("Last Name")] property seeks the "Last Name" index. A
         // [NotMapped] or read-only property is not a column and is left to the
         // client-side filter.
-        if (EntityMap.For(parameter.Type).FindByMember(property) is not EntityProperty mapped)
+        if (map.FindByMember(property) is not EntityProperty mapped)
         {
             return false;
         }

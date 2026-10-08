@@ -4,6 +4,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -56,6 +57,8 @@ using JetDatabaseWriter.Tables;
 /// in memory per parent after the related rows load, so a <c>Take</c> bounds the children
 /// per parent and a following <c>ThenInclude</c> descends only into the kept rows.
 /// </remarks>
+[RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
+[RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
 internal static class IncludeLoader
 {
     /// <summary>

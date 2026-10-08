@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Queries;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
@@ -31,6 +32,8 @@ using JetDatabaseWriter.Linq;
 /// <see cref="NotSupportedException"/> before anything is read, naming the operator and
 /// <c>AsAsyncEnumerable()</c>, which hands the rows to the async LINQ operators instead.
 /// </summary>
+[RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
+[RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
 internal static class InMemoryTail
 {
     private static readonly Func<object?, object?> Identity = static item => item;

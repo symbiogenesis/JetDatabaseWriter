@@ -4,6 +4,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using JetDatabaseWriter.Mapping;
@@ -15,6 +16,8 @@ using JetDatabaseWriter.Mapping;
 /// mapper uses, but for a <see cref="Type"/> only known at runtime — as needed when eagerly
 /// loading a related entity discovered from a navigation property.
 /// </summary>
+[RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
+[RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
 internal static class RuntimeRowMapper
 {
     private static readonly ConcurrentDictionary<Type, Func<object>> InstanceFactories = new();

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using JetDatabaseWriter.Catalog.Models;
@@ -52,7 +53,7 @@ internal static class IndexSeekFilter
     /// <param name="rowType">The type the rows map to, whose properties the comparisons read.</param>
     /// <param name="table">The table's definition, which gives each column's type.</param>
     /// <returns>The comparisons to seek; possibly empty.</returns>
-    public static RowCriteria SelectSeekable(RowCriteria pushable, Type rowType, TableDef table)
+    public static RowCriteria SelectSeekable(RowCriteria pushable, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type rowType, TableDef table)
     {
         Guard.NotNull(pushable, nameof(pushable));
         Guard.NotNull(rowType, nameof(rowType));

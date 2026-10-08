@@ -101,7 +101,7 @@ Advance: `pos += entryLen`.
 | `0x0C` | Memo | UTF-16LE (Jet4) |
 | `0x0F` | GUID | 16 bytes |
 
-For the four properties we care about in this PR series, the dataType is always `0x0A` (Text) carrying a Jet expression string or free text.
+Expression and descriptive properties can use Text (`0x0A`) or Memo (`0x0C`); edits preserve an existing text property's type. A new table-target `ValidationRule` uses Memo and `ValidationText` uses Text, both with DDL flag 1. DAO120-created table rules and a synthetically migrated Text-typed rule remain readable, preserve validation text through setters and column rename, and retain native enforcement through Compact & Repair.
 
 ## 4. Property-block subtype variation
 
@@ -158,3 +158,19 @@ AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again.
 - Unknown chunks retain their source positions relative to surviving chunks. Existing name pools retain their raw content and placement; new names append without renumbering prior entries.
 
 The projected blob is the same on both rewrite paths: the copy that is renamed into place and the copy transplanted onto the original TDEF page.
+
+## Table-level validation
+
+Table rules bind to the empty-name table property target and evaluate complete
+candidate rows, including unchanged columns. Null results pass; false results
+and unsupported expressions refuse mutation. Column rename rewrites rule
+references, and dropping a referenced column is refused.
+
+The guarded `DaoTextCollationTests` table-rule cases compare writer output with
+DAO120. They cover unrelated updates, Null-result rows, cascade acceptance and
+refusal, rollback of cascades and rule/text changes, and native `Partition(...)`
+expressions that the library cannot evaluate. The latter remain byte-identical
+after a refused update, then accept a DAO update and Compact & Repair. The
+property-migration case changes a DAO source rule to Text synthetically; it
+establishes native acceptance of the edited output, not native provenance of
+that encoding. Access97-engine coverage remains part of the corpus requirements.

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -64,7 +65,7 @@ internal static class DirectRowDecoderBuilder
     /// <param name="headers">The headers.</param>
     /// <param name="columns">The columns.</param>
     /// <param name="clrTypes">The clr types.</param>
-    public static DirectRowDecoder<T>? TryBuild<T>(
+    public static DirectRowDecoder<T>? TryBuild<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         IReadOnlyList<string> headers,
         IReadOnlyList<ColumnInfo> columns,
         IReadOnlyList<Type> clrTypes)
@@ -84,7 +85,7 @@ internal static class DirectRowDecoderBuilder
     /// <summary>Gets a direct decoder cached against the table's immutable shape.</summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="td">The table definition.</param>
-    internal static DirectRowDecoder<T>? TryBuild<T>(Catalog.Models.TableDef td)
+    internal static DirectRowDecoder<T>? TryBuild<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(Catalog.Models.TableDef td)
         where T : class, new() => RowMapper<T>.GetDirect(td.Shape, () => TryBuildUncached<T>(td.Columns.Select(static column => column.Name).ToArray(), td.Columns, td.ClrTypes));
 
     /// <summary>Builds a scalar/OLE decoder, or refuses unsupported bound properties.</summary>
@@ -92,7 +93,7 @@ internal static class DirectRowDecoderBuilder
     /// <param name="headers">The column names.</param>
     /// <param name="columns">The column definitions.</param>
     /// <param name="clrTypes">The natural column types.</param>
-    internal static HybridRowDecodePlan<T>? TryBuildHybrid<T>(
+    internal static HybridRowDecodePlan<T>? TryBuildHybrid<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         IReadOnlyList<string> headers,
         IReadOnlyList<ColumnInfo> columns,
         IReadOnlyList<Type> clrTypes)
@@ -112,10 +113,10 @@ internal static class DirectRowDecoderBuilder
     /// <summary>Gets the hybrid decoder cached against an immutable table shape.</summary>
     /// <typeparam name="T">The target row type.</typeparam>
     /// <param name="td">The table definition.</param>
-    internal static HybridRowDecodePlan<T>? TryBuildHybrid<T>(Catalog.Models.TableDef td)
+    internal static HybridRowDecodePlan<T>? TryBuildHybrid<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(Catalog.Models.TableDef td)
         where T : class, new() => RowMapper<T>.GetHybrid(td.Shape, () => TryBuildHybridUncached<T>(td.Columns.Select(static column => column.Name).ToArray(), td.Columns, td.ClrTypes));
 
-    private static HybridRowDecodePlan<T>? TryBuildHybridUncached<T>(
+    private static HybridRowDecodePlan<T>? TryBuildHybridUncached<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         IReadOnlyList<string> headers,
         IReadOnlyList<ColumnInfo> columns,
         IReadOnlyList<Type> clrTypes)
@@ -175,7 +176,7 @@ internal static class DirectRowDecoderBuilder
             : new HybridRowDecodePlan<T>(Emit<T, HybridRowDecoder<T>>(bound, hybrid: true), oleColumns.ToArray());
     }
 
-    private static DirectRowDecoder<T>? TryBuildUncached<T>(IReadOnlyList<string> headers, IReadOnlyList<ColumnInfo> columns, IReadOnlyList<Type> clrTypes)
+    private static DirectRowDecoder<T>? TryBuildUncached<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(IReadOnlyList<string> headers, IReadOnlyList<ColumnInfo> columns, IReadOnlyList<Type> clrTypes)
         where T : class, new()
     {
         Guard.NotNull(headers, nameof(headers));
@@ -228,7 +229,7 @@ internal static class DirectRowDecoderBuilder
         return Emit<T, DirectRowDecoder<T>>(bound, hybrid: false);
     }
 
-    private static TDelegate Emit<T, TDelegate>(
+    private static TDelegate Emit<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T, TDelegate>(
         List<(int Index, RowMapper<T>.Accessor Accessor, ColumnInfo Col)> bound,
         bool hybrid)
         where T : class, new()
@@ -418,10 +419,10 @@ internal static class DirectRowDecoderBuilder
             _ => throw new InvalidOperationException($"BuildReadExpression invoked for unsupported type {JetTypeInfo.GetTypeDisplayName(column.Type)}."),
         };
 
-    private static MethodInfo GetRequiredMethod(Type declaringType, string name, BindingFlags bindingAttr) =>
+    private static MethodInfo GetRequiredMethod([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.NonPublicMethods)] Type declaringType, string name, BindingFlags bindingAttr) =>
         declaringType.GetMethod(name, bindingAttr) ?? throw new MissingMethodException(declaringType.FullName ?? declaringType.Name, name);
 
-    private static PropertyInfo GetRequiredProperty(Type declaringType, string name) =>
+    private static PropertyInfo GetRequiredProperty([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type declaringType, string name) =>
         declaringType.GetProperty(name) ?? throw new MissingMemberException(declaringType.FullName ?? declaringType.Name, name);
 
     private static bool IsDirectlyDecodable(ColumnType colType, Type targetUnderlying)

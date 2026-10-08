@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -22,7 +23,7 @@ using JetDatabaseWriter.Schema;
 /// Uses compiled expression trees for high-performance property access.
 /// </summary>
 /// <typeparam name="T">The row type whose public properties are bound to column headers.</typeparam>
-internal static class RowMapper<T>
+internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>
     where T : new()
 {
     private static readonly MaterializerCache<Materializers> Cache = new();
@@ -375,9 +376,24 @@ internal static class RowMapper<T>
             values[i] = valueExpr;
         }
 
-        NewArrayExpression body = Expression.NewArrayInit(typeof(object), values);
+        // The array element type is fixed. Allocate it through ordinary compiled code,
+        // because NewArrayInit's runtime array construction is not NativeAOT compatible.
+        ParameterExpression result = Expression.Variable(typeof(object[]), "result");
+        var assignments = new List<Expression>(values.Length + 2)
+        {
+            Expression.Assign(result, Expression.Invoke(Expression.Constant((Func<int, object[]>)AllocateRow), Expression.Constant(values.Length))),
+        };
+        for (int i = 0; i < values.Length; i++)
+        {
+            assignments.Add(Expression.Assign(Expression.ArrayAccess(result, Expression.Constant(i)), values[i]));
+        }
+
+        assignments.Add(result);
+        BlockExpression body = Expression.Block([result], assignments);
         return Expression.Lambda<Func<T, object[]>>(body, itemParam).Compile();
     }
+
+    private static object[] AllocateRow(int count) => new object[count];
 
     private static long? ValidateComplexReference(object value, string columnName, string parameterName)
     {

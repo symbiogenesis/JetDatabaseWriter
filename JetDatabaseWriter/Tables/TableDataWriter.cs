@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tables;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -163,7 +164,7 @@ internal sealed class TableDataWriter(
             cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask InsertItemAsync<T>(string tableName, T item, CancellationToken cancellationToken)
+    internal async ValueTask InsertItemAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, T item, CancellationToken cancellationToken)
         where T : class, new()
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -178,7 +179,7 @@ internal sealed class TableDataWriter(
             cancellationToken).ConfigureAwait(false);
     }
 
-    internal async ValueTask<int> InsertItemsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken)
+    internal async ValueTask<int> InsertItemsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken)
         where T : class, new()
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));

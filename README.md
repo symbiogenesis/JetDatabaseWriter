@@ -531,7 +531,7 @@ await writer.CreateTableAsync("Contacts", new[]
 await writer.DropTableAsync("Contacts");
 ```
 
-`DropTableAsync` refuses, with `InvalidOperationException` and before it writes anything, to drop a table that a relationship names, as Microsoft Access does; drop the relationships first (see [Foreign-key relationships](#foreign-key-relationships)).
+`DropTableAsync` refuses with `JetOperationException` (`TableInRelationship`) before mutation when an enforced relationship connects the table to another table; drop that relationship first. Unenforced and self-referencing relationships are removed with the table. Targeted DAO `TableDefs.Delete` checks verify these cases (see [Foreign-key relationships](#foreign-key-relationships)).
 
 New table, column, index, relationship and linked-table names follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of `.` `!` `` ` `` `[` `]` or a control character (U+0000–U+001F and U+007F). Spaces inside or at the end of a name, quotes, `#`, `=` and non-ASCII letters are fine. `CreateTableAsync`, `AddColumnAsync`, `RenameColumnAsync` (the new name), `CreateRelationshipAsync`, `RenameRelationshipAsync` (the new name) and the `CreateLinked*TableAsync` methods (the local name) throw `ArgumentException` for any other name before writing anything, and `CreateTableAsync` also rejects two columns whose names differ only by case, since Access compares names ignoring case. A linked table's foreign name, such as `dbo.Orders` or `orders.csv`, is not checked against these rules. On a Jet3 database every new name, and a linked table's foreign name, path and connect string, must also be in the database's code page (see above). Names that an existing database already holds are only looked up, so a table or column written with such a name by another tool can still be read, written, altered and dropped, and a column can be renamed to a valid name.
 
@@ -732,6 +732,12 @@ await writer.DropColumnAsync("Contacts", "Phone");
 ### Linked tables
 
 Linked tables are catalog-only entries that point at data living in another source. The library can create and enumerate Access, ODBC, and text linked-table entries. Managed reads follow Access-file links and supported delimited text/CSV links through the linked-source path policy; ODBC links are metadata-only. Text links currently materialize delimited fields as string columns and support `HDR=YES/NO`, `FMT=Delimited`, `FMT=CSVDelimited`, `FMT=TabDelimited`, and `FMT=Delimited(<char>)`. Ragged linked-text rows are normalized to the resolved column set: missing fields become empty strings and extra fields are ignored by row materialization. Header names are normalized; linked-text values follow DAO text-driver trimming by removing leading spaces outside quoted fields and trailing spaces after CSV unescaping. ODBC links write a parseable `MSysObjects.LvProp` property block; supply remote source columns when you want a generated linked-schema cache, or supply an Access/DAO-authored `LvProp` payload when you need byte-for-byte engine-authored metadata. Access/DAO-authored payloads are the source-of-truth fixture bytes; generated writer payloads are subjects under test, not oracles.
+Table aliases and catalog identities must be unique. Access/text link IDs and
+negative ODBC IDs identify catalog objects, not physical TDEF pages. Access/text
+links require a source path and foreign table/file name: strict reads reject
+incomplete entries, and lenient reads omit them. Native ODBC entries can expose
+cached schema without connection metadata. Missing required catalog columns are
+`CorruptCatalog` errors in every mode, and storage I/O failures propagate.
 
 Linked reads interpret stored Windows path separators before authorization and reject paths that escape the approved source directory or cross a symlink/reparse point. Supply canonical filesystem paths for trusted host and allowlist roots; for example, macOS callers whose temporary directory is reached through `/var` should use its resolved `/private/var` path. A path callback does not permit symlink crossings. For text links, the callback must approve both the source directory and the final text file. `LinkedTextMaxSourceFileBytes` checks the opened file length and limits consumption even if the file grows; one excess byte may be read to detect the limit. Authorization is still path-based: opened-handle identity, hard links and path-swap races remain open requirements under S6.
 
@@ -966,6 +972,25 @@ public sealed class Orders
 
 ---
 
+## Trimming and NativeAOT
+
+On .NET 10, typed inserts, `Rows<T>` (including predicates),
+`ReadTableAsync<T>` and typed index reads preserve the mapped public properties
+and parameterless constructor needed by POCO and scaffold-generated models.
+Generic helper methods wrapping these APIs must propagate their
+`DynamicallyAccessedMembers` requirements; follow linker diagnostics rather than
+suppressing them. `Query<T>` and its `Include` pipeline depend on runtime type
+discovery and generic construction and require an untrimmed JIT application.
+They carry `RequiresUnreferencedCode` and `RequiresDynamicCode` annotations.
+
+CI runs `scripts/test-aot.ps1` to generate classes and records, then publish and
+execute each as a trimmed and NativeAOT Windows x64 consumer. The checks cover
+column-name mapping, nullable values, typed insert/read, streaming and predicate
+reads, and compilation of generated relationship navigations. This evidence
+covers the .NET 10 typed API paths exercised by that consumer.
+
+---
+
 ## Configuration
 
 ```csharp
@@ -974,6 +999,7 @@ var options = new AccessReaderOptions("secretPassword")
     PageCacheSize            = 512,    // pages in LRU cache (default: 256)
     PageReadOptimizationMode = PageReadOptimizationMode.Auto, // random-access/read-ahead policy (default)
     DiagnosticsEnabled       = false,  // verbose logging (default: false)
+    MaxComplexDiscoveryEntries = 65_536, // aggregate metadata work per complex-column discovery
     ValidateOnOpen           = true,   // format check on open (default: true)
     FileAccess               = FileAccess.Read,        // default
     FileShare                = FileShare.ReadWrite,    // default: tolerate Access also having the file open
@@ -999,7 +1025,7 @@ await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOpti
 
 ## Error Handling
 
-Constraint, lookup, schema, lock and transaction-state refusals implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship and page context. These exceptions retain their previous BCL base types and messages. Other failure paths are being converted separately; callers should still handle ordinary I/O and argument errors.
+Constraint, lookup, schema, lock and transaction-state refusals implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship and page context. Use the structured code rather than matching exception messages. Some corruption and encryption paths still report BCL exceptions; callers should also handle ordinary I/O and argument errors. See S11 in [the TODO](docs/todo.md#s--hostile-file-parsing-and-schema-preservation) for the remaining conversion work.
 
 ```csharp
 try { var dt = await reader.ReadTableAsync("Orders"); }

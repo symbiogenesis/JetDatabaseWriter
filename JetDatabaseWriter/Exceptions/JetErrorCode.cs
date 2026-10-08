@@ -192,6 +192,9 @@ public enum JetErrorCode
     /// <summary>Identifies ColumnCountLimit.</summary>
     ColumnCountLimit = 809,
 
+    /// <summary>Identifies ComplexDiscoveryBudgetExceeded.</summary>
+    ComplexDiscoveryBudgetExceeded = 810,
+
     /// <summary>Identifies FeatureNotSupported.</summary>
     FeatureNotSupported = 901,
 

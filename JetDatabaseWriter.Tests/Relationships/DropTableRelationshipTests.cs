@@ -18,16 +18,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
 /// <see cref="AccessWriter.DropTableAsync"/> on a table that takes part in a
-/// relationship. Microsoft Access refuses such a drop (DAO and Jet SQL error
-/// 3303, "currently participates in one or more relationships") whenever a
-/// <c>MSysRelationships</c> row names the table, so the writer refuses too,
-/// before it writes anything, and the caller drops the relationships first.
+/// relationship. Enforced relationships to other tables block the drop before
+/// mutation; unenforced and self-referencing relationships are removed with
+/// the table. DAO oracle coverage is in <c>DaoRelationshipDropTests</c>.
 /// A table whose foreign-key index entries have no <c>MSysRelationships</c>
 /// row left in a damaged catalog can still be dropped, and the drop
 /// removes its partners' entries, so none is left naming the freed TDEF page.
-/// Jet4 runs over a copy of the Access-authored <c>AdventureLT2008.mdb</c>
-/// (fresh Jet4 files have no <c>MSysRelationships</c>), ACCDB over a fresh
-/// database and Jet3 over a copy of the Access 97 <c>indexTestV1997.mdb</c>.
+/// Jet4 runs over a copy of the Access-authored <c>AdventureLT2008.mdb</c>,
+/// ACCDB over a fresh database and Jet3 over a copy of the Access 97
+/// <c>indexTestV1997.mdb</c>.
 /// </summary>
 /// <param name="db">Caches the fixture databases.</param>
 public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture<DatabaseCache>

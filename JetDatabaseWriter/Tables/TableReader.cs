@@ -4,6 +4,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -242,7 +243,7 @@ internal sealed class TableReader(
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
-    internal IAsyncEnumerable<T> Rows<T>(
+    internal IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         IProgress<long>? progress,
         CancellationToken cancellationToken)
@@ -255,7 +256,7 @@ internal sealed class TableReader(
     /// <param name="forceProjection">Whether to use the projection mapper for comparison.</param>
     /// <param name="progress">The progress sink.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    internal async IAsyncEnumerable<T> RowsWithDecoder<T>(
+    internal async IAsyncEnumerable<T> RowsWithDecoder<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         bool forceProjection,
         IProgress<long>? progress,
@@ -352,7 +353,7 @@ internal sealed class TableReader(
     /// <param name="tableName">The table name.</param>
     /// <param name="maxRows">The max rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal async ValueTask<IReadOnlyList<T>> ReadTableAsync<T>(string tableName, uint? maxRows, CancellationToken cancellationToken)
+    internal async ValueTask<IReadOnlyList<T>> ReadTableAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, uint? maxRows, CancellationToken cancellationToken)
         where T : class, new()
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
@@ -729,7 +730,7 @@ internal sealed class TableReader(
     /// <param name="forceProjection">Whether to bypass generated decoders.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
-    private IAsyncEnumerable<T> EnumerateMappedRowsAsync<T>(
+    private IAsyncEnumerable<T> EnumerateMappedRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         ResolvedTable resolved,
         bool forceProjection,
@@ -795,7 +796,7 @@ internal sealed class TableReader(
     /// <param name="factory">Delegate that maps decoded row values to <typeparamref name="T"/>.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async IAsyncEnumerable<T> EnumerateMappedRowsPooledAsync<T>(
+    private async IAsyncEnumerable<T> EnumerateMappedRowsPooledAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         CatalogEntry entry,
         TableDef td,
@@ -977,7 +978,7 @@ internal sealed class TableReader(
     /// <param name="hybridPlan">Optional scalar/OLE plan whose payloads resolve before yielding.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async IAsyncEnumerable<T> EnumerateDirectRowsAsync<T>(
+    private async IAsyncEnumerable<T> EnumerateDirectRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         CatalogEntry entry,
         TableDef td,
         DirectRowDecoder<T>? directDecoder,

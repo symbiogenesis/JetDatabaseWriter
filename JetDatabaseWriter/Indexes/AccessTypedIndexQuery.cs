@@ -1,11 +1,12 @@
 namespace JetDatabaseWriter.Indexes;
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Tables;
 
-internal sealed class AccessTypedIndexQuery<T> : AccessIndexQueryBase<T>
+internal sealed class AccessTypedIndexQuery<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T> : AccessIndexQueryBase<T>
     where T : class, new()
 {
     public AccessTypedIndexQuery(IndexRowReader indexes, string tableName, string indexName)

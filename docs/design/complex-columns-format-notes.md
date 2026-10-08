@@ -74,9 +74,36 @@ The rows above are in the catalog's logical column order; the `fixed_off` values
 
 `ComplexID` is an AutoNumber column. The `MSysComplexColumns` TDEF counter at offset 20 holds the last ID handed out, including dropped columns: 1 in `ComplexFields.accdb`, 7 in both `complexDataTest*.accdb` (largest remaining ID 4) and 3 in `NorthwindTraders.accdb`. `GetNextComplexIdAsync` validates the required descriptor and stored IDs against that counter and refuses inconsistent metadata instead of recovering an ID from existing rows. A new column takes counter + 1, and `InsertMSysComplexColumnsRowAsync` raises the counter after insertion. Transaction rollback discards that raise with the other page writes. Native-fixture and corruption tests cover allocation, dropping columns, rollback and refusal without mutation.
 
-There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`. The reader joins the requested table's complex descriptors to `ComplexID` and verifies that `ConceptualTableID` names that parent. Duplicate IDs for the parent are ambiguous and yield no descriptor. If the descriptor join fails, a fallback requires one matching `ConceptualTableID` and `ColumnName` catalog row with a positive `FlatTableID`. A flat-table name suffix alone never establishes ownership; missing or ambiguous mappings yield no cell under the existing best-effort read policy.
+There is **no** `ParentTable` / `ParentColumn` column in `MSysComplexColumns`.
+Parent complex descriptors require positive, unique IDs. The reader joins them
+to `ComplexID` and verifies both the parent `ConceptualTableID` and column name.
+Missing required catalog tables, columns or mapping rows raise contextual
+`CorruptCatalog` errors in strict and lenient modes. Descriptor-only ID fallback
+still requires one matching parent/column mapping with an unambiguous flat-table
+identity; a flat-table name suffix never establishes ownership.
 
-The descriptor join and flat-table fallback both require all five metadata columns above; missing required columns raise contextual `CorruptCatalog` errors in strict and lenient modes. A matching row's nonzero `ComplexTypeObjectID` must resolve to a recognized `MSysComplexType_*` name in the verified object-name map. Strict reads reject invalid references. Lenient reads omit that row before duplicate tracking, preserve valid siblings, and do not recover the rejected row through the fallback. A zero template ID retains flat-schema classification. Real I/O failures propagate, and a later lookup can retry without a cached partial result. The template check validates the referenced catalog name, not its object kind, target TDEF or agreement with the flat schema; those checks remain open. These malformed-row regressions use synthetic mutations; they do not establish native acceptance of damaged catalogs.
+A nonzero `ComplexTypeObjectID` must resolve to a recognized template name on a
+real local table with a valid TDEF and matching payload schema. Attachment
+payloads require all six native field names with their corresponding types;
+scalar templates require their canonical `Value` field and element type.
+Version-history payload names can contain native GUIDs, so template/flat agreement
+does not require those names to be identical. Flat tables must carry their complex
+catalog flags and a valid parent-reference field. Schema renames can preserve that
+internal field's old name. A zero template ID retains flat-schema classification.
+
+Strict reads reject malformed optional descriptors. Lenient reads omit their
+cells without reintroducing invalid or shared flat tables through fallback, while
+preserving valid sibling columns. Required parent identities remain corruption
+errors in every mode. Real I/O failures propagate and retries do not use cached
+partial results. Synthetic catalog mutations establish these refusal behaviors;
+the existing Access-authored complex fixtures establish supported valid layouts.
+
+`AccessReaderOptions.MaxComplexDiscoveryEntries` bounds metadata discovery and
+aggregate fallback scans across one table read, with a default of 65,536 entries.
+The caller can raise this positive limit for a larger catalog. A refusal is
+`JetLimitationException` with `ComplexDiscoveryBudgetExceeded`, including in
+lenient mode; it is not classified as corrupt input. Linked readers inherit the
+limit. Broader aggregate parser and schema-allocation budgets remain in S1.
 
 `MSysComplexColumns` is now created by the ACCDB full-catalog scaffold on every fresh ACCDB built via `CreateDatabaseAsync` (Phase C1, 2026-04-25). That same scaffold also creates the core `MSysACEs`, `MSysQueries`, and `MSysRelationships` tables expected by DAO compatibility paths. The catalog rows carry `Flags = 0x80000000` so the tables are excluded from `ListTablesAsync`. ACE only — Jet3/Jet4 `.mdb` scaffolds skip these tables.
 

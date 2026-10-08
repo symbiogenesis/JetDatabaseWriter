@@ -572,13 +572,10 @@ internal sealed class RelationshipManager(
     // Dropped tables (DropTableAsync)
     // ════════════════════════════════════════════════════════════════
     //
-    // Microsoft Access refuses to drop a table that a relationship names
-    // (DAO / Jet SQL error 3303), and so does TableSchemaEditor: it calls
-    // FindRelationshipNamesForTableAsync and EnsureTableHasNoRelationships
-    // before it writes anything, so the caller drops the relationships first.
-    // That decision is made from MSysRelationships, which every format has
-    // and which enforcement reads; it covers relationships that do not
-    // enforce referential integrity and self-referencing ones too.
+    // PlanTableDropRelationshipsAsync refuses enforced relationships to other
+    // tables before mutation, matching the DAO TableDefs.Delete oracle. It
+    // returns unenforced and self-referencing relationships for removal with
+    // the table. The decision uses MSysRelationships when the catalog exists.
     //
     // A table can still carry FK logical-idx entries that no MSysRelationships
     // row names in an inconsistent catalog. Once
@@ -646,13 +643,11 @@ internal sealed class RelationshipManager(
     }
 
     /// <summary>
-    /// Throws when <paramref name="relationshipNames"/> is not empty: a table
-    /// that takes part in a relationship cannot be dropped. Microsoft Access
-    /// refuses the same drop with error 3303 ("currently participates in one or
-    /// more relationships").
+    /// Refuses a table drop when the caller supplies blocking relationships.
+    /// The drop planner supplies only enforced relationships to another table.
     /// </summary>
     /// <param name="tableName">The table being dropped.</param>
-    /// <param name="relationshipNames">The relationships that name it, from <see cref="FindRelationshipNamesForTableAsync"/>.</param>
+    /// <param name="relationshipNames">The enforced relationships that connect it to another table.</param>
     /// <exception cref="InvalidOperationException">Thrown when any relationship names the table.</exception>
     /// <exception cref="JetOperationException">The operation is refused with a structured <see cref="JetOperationException"/>.</exception>
     internal static void EnsureTableHasNoRelationships(string tableName, IReadOnlyList<string> relationshipNames)

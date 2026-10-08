@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using JetDatabaseWriter.Infrastructure;
 
@@ -38,7 +39,7 @@ internal sealed class EntityMap
     private readonly Dictionary<string, EntityProperty> byColumn;
     private readonly Dictionary<string, EntityProperty> byPropertyName;
 
-    private EntityMap(Type type)
+    private EntityMap([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
     {
         this.TableName = type.GetCustomAttribute<TableAttribute>(inherit: true) is { Name.Length: > 0 } table
             ? table.Name
@@ -95,10 +96,10 @@ internal sealed class EntityMap
     /// <param name="type">The POCO type.</param>
     /// <returns>The mapping model.</returns>
     /// <exception cref="InvalidOperationException">Two properties of <paramref name="type"/> name the same column through <c>[Column]</c>.</exception>
-    public static EntityMap For(Type type)
+    public static EntityMap For([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type)
     {
         Guard.NotNull(type, nameof(type));
-        return Cache.GetOrAdd(type, static t => new EntityMap(t));
+        return Cache.TryGetValue(type, out EntityMap? map) ? map : Cache.GetOrAdd(type, new EntityMap(type));
     }
 
     /// <summary>Finds the property bound to <paramref name="columnName"/> (case-insensitive).</summary>

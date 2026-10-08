@@ -301,10 +301,10 @@ internal sealed class TableSchemaEditor(
     }
 
     /// <summary>
-    /// Public DropTable entry point. Refuses, before anything is written, to
-    /// drop a table that any <c>MSysRelationships</c> row names, as Microsoft
-    /// Access does (error 3303); otherwise drops the table, its complex-column
-    /// children and any partner FK entries that still name it.
+    /// Public DropTable entry point. Refuses, before anything is written, an
+    /// enforced relationship to another table. Removes unenforced and self
+    /// relationships with the table, its complex-column children and partner
+    /// FK entries that still name it.
     /// </summary>
     /// <param name="tableName">The table to drop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

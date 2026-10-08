@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Interfaces;
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Models;
@@ -63,7 +64,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
-    public ValueTask InsertRowAsync<T>(string tableName, T item, CancellationToken cancellationToken = default)
+    public ValueTask InsertRowAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, T item, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -85,7 +86,7 @@ public interface IAccessWriter : IAccessBase
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that yields the number of rows inserted.</returns>
     /// <exception cref="System.InvalidOperationException">Thrown when a NOT NULL column is null after defaults and AutoNumber values are applied, for example when the row supplies null for it.</exception>
-    public ValueTask<int> InsertRowsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
+    public ValueTask<int> InsertRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>

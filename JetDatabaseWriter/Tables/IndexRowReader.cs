@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tables;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
@@ -142,7 +143,7 @@ internal sealed class IndexRowReader(
             static _ => (static row => (object[])row, null),
             cancellationToken);
 
-    internal IAsyncEnumerable<T> ReadIndexRowsAsync<T>(
+    internal IAsyncEnumerable<T> ReadIndexRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         string indexName,
         IndexQueryCriteria criteria,
@@ -179,7 +180,7 @@ internal sealed class IndexRowReader(
     /// <param name="predicate">A row filter expression; drives index inference and the client-side filter.</param>
     /// <param name="progress">Optional progress reporter — receives the matched-row count.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
-    internal IAsyncEnumerable<T> Rows<T>(
+    internal IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         Expression<Func<T, bool>> predicate,
         IProgress<long>? progress,
@@ -282,7 +283,7 @@ internal sealed class IndexRowReader(
     /// <param name="pushable">The index-seekable necessary conditions extracted from the predicate.</param>
     /// <param name="progress">Optional matched-row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
-    private async IAsyncEnumerable<T> RowsInferredAsync<T>(
+    private async IAsyncEnumerable<T> RowsInferredAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         Func<T, bool> predicate,
         RowCriteria pushable,
@@ -322,7 +323,7 @@ internal sealed class IndexRowReader(
     /// <returns>The chosen index plan, or <see langword="null"/> to scan.</returns>
     private async ValueTask<IndexPlan?> TryPlanIndexReadAsync(
         string tableName,
-        Type rowType,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type rowType,
         RowCriteria pushable,
         CancellationToken cancellationToken)
     {

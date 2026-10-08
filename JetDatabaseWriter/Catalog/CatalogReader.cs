@@ -34,6 +34,9 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
     internal static ColumnType ResolveCalculatedResultType(ColumnPropertyTarget? target)
         => ColumnPropertyReader.ResolveCalculatedResultType(target);
 
+    /// <summary>Gets a value indicating whether malformed optional metadata is refused.</summary>
+    internal bool StrictParsing => rows.StrictParsing;
+
     /// <summary>Returns all user-visible table names and their TDEF page numbers.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<List<CatalogEntry>> GetUserTablesAsync(CancellationToken cancellationToken)
@@ -94,6 +97,19 @@ internal sealed class CatalogReader(JetFormat format, TableDefReader tableDefs, 
         }
 
         return td;
+    }
+
+    /// <summary>Reads catalog identities after validating local table references.</summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="maxEntries">The maximum number of catalog entries to inspect.</param>
+    /// <exception cref="JetDatabaseWriter.Exceptions.JetCorruptDataException">Required catalog structure or table references are invalid.</exception>
+    internal async ValueTask<List<CatalogRow>> ReadValidatedObjectsAsync(CancellationToken cancellationToken, int maxEntries = int.MaxValue)
+    {
+        TableDef msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false)
+            ?? throw new JetDatabaseWriter.Exceptions.JetCorruptDataException(JetDatabaseWriter.Exceptions.JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
+        List<CatalogRow> objects = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken, maxEntries).ConfigureAwait(false);
+        await catalogRows.ValidateTableReferencesAsync(objects, cancellationToken).ConfigureAwait(false);
+        return objects;
     }
 
     /// <summary>Loads the MSysObjects TableDef (page 2).</summary>

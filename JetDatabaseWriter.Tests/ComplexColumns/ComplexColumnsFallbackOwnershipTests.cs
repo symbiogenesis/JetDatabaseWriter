@@ -54,7 +54,7 @@ public sealed class ComplexColumnsFallbackOwnershipTests
 
         await DamageCatalogAsync(stream, damage);
         await using AccessReader reader = await ComplexColumnTestSupport.OpenReaderAsync(stream);
-        if (damage == "TDEF")
+        if (damage is "TDEF" or "ParentOnly" or "WrongParent" or "DescriptorDuplicate" or "FlatTableID" or "ConceptualTableID")
         {
             JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             {
@@ -98,7 +98,7 @@ public sealed class ComplexColumnsFallbackOwnershipTests
 
         await DamageCatalogAsync(stream, damage);
         await using AccessReader reader = await ComplexColumnTestSupport.OpenReaderAsync(stream);
-        if (damage == "TDEF")
+        if (damage is "TDEF" or "ParentOnly" or "WrongParent" or "DescriptorDuplicate")
         {
             JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             {

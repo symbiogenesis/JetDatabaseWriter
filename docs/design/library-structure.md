@@ -807,3 +807,21 @@ The public entry points are:
 | `Interfaces/*` | Abstractions for DI/testing (`IAccessReader`, `IAccessWriter`, `IAccessSchema`, etc.) |
 
 All other types are `internal` — implementation details organized by domain.
+
+### Trimming and NativeAOT boundary
+
+Typed row reads, index reads and inserts carry `DynamicallyAccessedMembers`
+requirements for public mapped properties and parameterless constructors through
+their generic call chains. `EntityMap` retains the annotated `Type` flow instead
+of losing it in a cache factory callback. Typed predicate translation obtains
+its map from `typeof(T)`; dynamic query translation remains separate. The writer
+materializer allocates its fixed `object[]` through ordinary compiled code so it
+does not require runtime array-type construction.
+
+`Query<T>` and the runtime Include/query implementation are marked with
+`RequiresUnreferencedCode` and `RequiresDynamicCode`. The supported trimmed/AOT
+consumer uses typed row APIs. `scripts/test-aot.ps1` generates both class and
+record models, including relationship navigations, and runs warning-as-error
+trimmed and NativeAOT publishes on Windows x64 with .NET 10. Its lock files pin
+the seed, trimmed and native dependency graphs; each invocation isolates build
+and output files under its own artifacts directory.

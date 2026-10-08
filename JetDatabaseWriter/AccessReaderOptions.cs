@@ -45,6 +45,14 @@ public sealed class AccessReaderOptions : AccessOptions
     /// </summary>
     public int MaxAttachmentContentBytes { get; init; } = 64 * 1024 * 1024;
 
+    /// <summary>
+    /// Gets the maximum number of metadata entries inspected during complex-column
+    /// discovery, including aggregate fallback scans for one table read. Default:
+    /// 65,536. Set a positive value appropriate for the largest catalog permitted.
+    /// Budget refusals propagate in strict and lenient parsing modes.
+    /// </summary>
+    public int MaxComplexDiscoveryEntries { get; init; } = 65536;
+
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; init; } = 256;
 

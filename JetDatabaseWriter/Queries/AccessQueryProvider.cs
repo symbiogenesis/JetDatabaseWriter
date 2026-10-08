@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Queries;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
@@ -30,7 +31,9 @@ using JetDatabaseWriter.Tables;
 /// <param name="indexes">Serves pushed-down filters and index-ordered reads.</param>
 /// <param name="schema">Supplies the relationship and column metadata that includes need.</param>
 /// <param name="table">The table being queried.</param>
-internal sealed class AccessQueryProvider<T>(TableReader tables, IndexRowReader indexes, SchemaReader schema, string table) : IQueryProvider, IAccessQueryEngine
+[RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
+[RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
+internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(TableReader tables, IndexRowReader indexes, SchemaReader schema, string table) : IQueryProvider, IAccessQueryEngine
     where T : class, new()
 {
     public IQueryable CreateQuery(Expression expression) =>

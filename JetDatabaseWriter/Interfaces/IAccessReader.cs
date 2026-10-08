@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
@@ -109,7 +110,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="maxRows">The max rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A read-only snapshot of mapped rows.</returns>
-    public ValueTask<IReadOnlyList<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
+    public ValueTask<IReadOnlyList<T>> ReadTableAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -188,7 +189,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="indexName">Index name (case-insensitive).</param>
     /// <returns>A fluent index-query builder.</returns>
-    public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
+    public IAccessIndexQuery<T> FromIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, string indexName)
         where T : class, new();
 
     /// <summary>
@@ -235,7 +236,9 @@ public interface IAccessReader : IAccessBase
     /// <typeparam name="T">A class with a parameterless constructor whose public settable properties map to columns by name, or by <c>[Column("...")]</c> when set; <c>[NotMapped]</c> properties are skipped.</typeparam>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <returns>A composable query; enumerate with the async terminal extensions or <c>AsAsyncEnumerable()</c>.</returns>
-    public IQueryable<T> Query<T>(string tableName)
+    [RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
+    [RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
+    public IQueryable<T> Query<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName)
         where T : class, new();
 
     /// <summary>
@@ -354,7 +357,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives row count after each page.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of <typeparamref name="T"/> instances.</returns>
-    public IAsyncEnumerable<T> Rows<T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
         where T : class, new();
 
     /// <summary>
@@ -385,7 +388,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="progress">Optional progress reporter — receives the matched-row count.</param>
     /// <param name="cancellationToken">A token used to cancel asynchronous enumeration.</param>
     /// <returns>An async sequence of matching <typeparamref name="T"/> instances.</returns>
-    public IAsyncEnumerable<T> Rows<T>(
+    public IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         Expression<Func<T, bool>> predicate,
         IProgress<long>? progress = null,

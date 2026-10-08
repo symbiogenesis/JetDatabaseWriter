@@ -30,8 +30,10 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// </summary>
     /// <param name="msys">The <c>MSysObjects</c> table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="maxEntries">The maximum number of catalog entries to inspect.</param>
+    /// <exception cref="JetLimitationException">The complex discovery metadata budget is exceeded.</exception>
     /// <exception cref="JetCorruptDataException">The catalog is missing a required field or a live row has malformed required values.</exception>
-    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken)
+    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
         ColumnInfo? parentIdColumn = msys.FindColumn("ParentId");
@@ -48,6 +50,11 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
             2,
             (row, _) =>
             {
+                if (result.Count >= maxEntries)
+                {
+                    throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Catalog discovery exceeds MaxComplexDiscoveryEntries.");
+                }
+
                 byte[] page = row.Page;
                 RowLocation location = row.Location;
                 if (!this.CanDecodeRow(page, location))
@@ -92,12 +99,21 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var roots = new HashSet<long>();
+        var identities = new HashSet<long>();
         foreach (CatalogRow row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (row.ObjectType is not Constants.SystemObjects.UserTableType and not Constants.SystemObjects.LinkedOdbcType)
+            if (row.ObjectType is not Constants.SystemObjects.UserTableType and not Constants.SystemObjects.LinkedOdbcType and not Constants.SystemObjects.LinkedTableType)
             {
                 continue;
+            }
+
+            if (row.Id == 0 || !identities.Add(row.Id))
+            {
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptCatalog,
+                    "A catalog table identity is invalid or ambiguous.",
+                    new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
             }
 
             bool isCatalog = string.Equals(row.Name, Constants.SystemTableNames.Objects, StringComparison.OrdinalIgnoreCase);
@@ -115,6 +131,11 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
                     JetErrorCode.CorruptCatalog,
                     "A catalog table name is ambiguous.",
                     new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
+            }
+
+            if (row.ObjectType == Constants.SystemObjects.LinkedTableType)
+            {
+                continue;
             }
 
             // Negative ODBC IDs identify catalog-only links whose schema lives in LvProp.

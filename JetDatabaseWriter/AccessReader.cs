@@ -243,7 +243,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         => this.services.Tables.Rows(tableName, progress, cancellationToken);
 
     /// <inheritdoc/>
-    public IAsyncEnumerable<T> Rows<T>(
+    public IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         IProgress<long>? progress = null,
         CancellationToken cancellationToken = default)
@@ -251,7 +251,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         => this.services.Tables.Rows<T>(tableName, progress, cancellationToken);
 
     /// <inheritdoc/>
-    public IAsyncEnumerable<T> Rows<T>(
+    public IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         Expression<Func<T, bool>> predicate,
         IProgress<long>? progress = null,
@@ -290,12 +290,14 @@ public sealed class AccessReader : AccessBase, IAccessReader
         => new AccessObjectIndexQuery(this.services.Indexes, tableName, indexName);
 
     /// <inheritdoc/>
-    public IAccessIndexQuery<T> FromIndex<T>(string tableName, string indexName)
+    public IAccessIndexQuery<T> FromIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, string indexName)
         where T : class, new()
             => new AccessTypedIndexQuery<T>(this.services.Indexes, tableName, indexName);
 
     /// <inheritdoc/>
-    public IQueryable<T> Query<T>(string tableName)
+    [RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
+    [RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
+    public IQueryable<T> Query<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName)
         where T : class, new()
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
@@ -336,7 +338,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         => this.services.Tables.ReadTableAsync(tableName, maxRows, progress, cancellationToken);
 
     /// <inheritdoc/>
-    public ValueTask<IReadOnlyList<T>> ReadTableAsync<T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
+    public ValueTask<IReadOnlyList<T>> ReadTableAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new()
         => this.services.Tables.ReadTableAsync<T>(tableName, maxRows, cancellationToken);
 

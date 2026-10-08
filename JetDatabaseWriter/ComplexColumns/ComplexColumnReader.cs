@@ -32,16 +32,14 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="rows">Decodes system-table rows as strings and flat-table rows as typed values.</param>
 /// <param name="diagnosticsEnabled">Whether suppressed best-effort failures are traced.</param>
 /// <param name="maxAttachmentContentBytes">The maximum uncompressed attachment content size.</param>
-internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024)
+/// <param name="maxComplexDiscoveryEntries">The maximum aggregate metadata entries inspected during discovery.</param>
+internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536)
 {
     /// <summary>The <c>MSysComplexColumns</c> columns the descriptor join reads.</summary>
     private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
 
     /// <summary>The <c>MSysComplexColumns</c> columns the flat-table lookup by column name reads.</summary>
     private static readonly string[] FlatTableLookupColumns = ["ColumnName", "ConceptualTableID", "FlatTableID", "ComplexTypeObjectID"];
-
-    /// <summary>The <c>MSysObjects</c> columns the object-name lookup reads; the LvProp, LvModule and LvExtra blobs are not decoded.</summary>
-    private static readonly string[] ObjectNameColumns = ["Id", "Name"];
 
     /// <summary>
     /// Replaces each complex column's <see cref="ComplexIdRef"/> in a typed row
@@ -126,9 +124,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         var byComplexId = new Dictionary<int, (string Name, ColumnType Type)>();
         foreach (ColumnInfo column in columns)
         {
-            if (column.Type is ComplexType && column.Misc > 0)
+            if (column.Type is ComplexType && (column.Misc <= 0 || !byComplexId.TryAdd(column.Misc, (column.Name, column.Type))))
             {
-                byComplexId[column.Misc] = (column.Name, column.Type);
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A required complex parent descriptor identity is missing or ambiguous.", new JetErrorInfo { TableName = tableName, ColumnName = column.Name, PageNumber = resolved.Entry.TDefPage });
             }
         }
 
@@ -195,6 +193,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     {
         Dictionary<int, Dictionary<int, byte[]>>? result = null;
         IReadOnlyList<ComplexColumnInfo>? complexColumns = null;
+        var discovery = new DiscoveryBudget(maxComplexDiscoveryEntries);
 
         for (int i = 0; i < columns.Count; i++)
         {
@@ -208,7 +207,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             }
 
             complexColumns ??= await this.TryGetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
-            Dictionary<int, byte[]>? colData = await this.LoadColumnCellsAsync(tableName, col.Name, complexColumns, cancellationToken).ConfigureAwait(false);
+            Dictionary<int, byte[]>? colData = await this.LoadColumnCellsAsync(tableName, col.Name, complexColumns, discovery, cancellationToken).ConfigureAwait(false);
             if (colData?.Count > 0)
             {
                 result ??= [];
@@ -337,16 +336,16 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// template declares, or <see langword="null"/> for any other name.
     /// </summary>
     /// <param name="templateName">The template table name.</param>
-    private static ColumnType? TemplateElementType(string templateName) => templateName switch
+    private static ColumnType? TemplateElementType(string templateName) => templateName.ToUpperInvariant() switch
     {
-        Constants.ComplexTypeNames.UnsignedByte => ByteType,
-        Constants.ComplexTypeNames.Short => IntegerType,
-        Constants.ComplexTypeNames.Long => LongIntegerType,
-        Constants.ComplexTypeNames.IEEESingle => FloatType,
-        Constants.ComplexTypeNames.IEEEDouble => DoubleType,
-        Constants.ComplexTypeNames.GUID => GuidType,
-        Constants.ComplexTypeNames.Decimal => NumericType,
-        Constants.ComplexTypeNames.Text => TextType,
+        "MSYSCOMPLEXTYPE_UNSIGNEDBYTE" => ByteType,
+        "MSYSCOMPLEXTYPE_SHORT" => IntegerType,
+        "MSYSCOMPLEXTYPE_LONG" => LongIntegerType,
+        "MSYSCOMPLEXTYPE_IEEESINGLE" => FloatType,
+        "MSYSCOMPLEXTYPE_IEEEDOUBLE" => DoubleType,
+        "MSYSCOMPLEXTYPE_GUID" => GuidType,
+        "MSYSCOMPLEXTYPE_DECIMAL" => NumericType,
+        "MSYSCOMPLEXTYPE_TEXT" => TextType,
         _ => null,
     };
 
@@ -466,22 +465,44 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return null;
     }
 
+    private static bool IsAttachmentTemplate(TableDef template)
+        => template.Columns.Count == 6 && HasAttachmentPayloadSchema(template);
+
+    private static bool HasAttachmentPayloadSchema(TableDef template)
+        => template.FindColumn("FileData")?.Type == OleType
+            && template.FindColumn("FileFlags")?.Type == LongIntegerType
+            && template.FindColumn("FileName")?.Type == TextType
+            && template.FindColumn("FileTimeStamp")?.Type == DateTimeType
+            && template.FindColumn("FileType")?.Type == TextType
+            && template.FindColumn("FileURL")?.Type == MemoType;
+
+    private static long FindComplexCatalogPage(Dictionary<long, CatalogRow> objects)
+    {
+        foreach (CatalogRow entry in objects.Values)
+        {
+            if (entry.ObjectType == Constants.SystemObjects.UserTableType && string.Equals(entry.Name, Constants.SystemTableNames.ComplexColumns, StringComparison.OrdinalIgnoreCase))
+            {
+                return entry.TDefPage;
+            }
+        }
+
+        return 0;
+    }
+
     private async ValueTask<IReadOnlyList<ComplexColumnInfo>> JoinComplexColumnsAsync(
         Dictionary<int, (string Name, ColumnType Type)> byComplexId,
         long parentTdefPage,
         CancellationToken cancellationToken)
     {
-        long msysTdef = await catalog.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+        Dictionary<long, CatalogRow> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
+        long msysTdef = FindComplexCatalogPage(objectNamesById);
         if (msysTdef <= 0)
         {
-            return [];
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The required MSysComplexColumns catalog table is missing.");
         }
 
-        TableDef? msys = await tableDefs.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return [];
-        }
+        TableDef msys = await tableDefs.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false)
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The required MSysComplexColumns definition could not be read.");
 
         int idxColumnName = msys.FindColumnIndex("ColumnName");
         int idxComplexId = msys.FindColumnIndex("ComplexID");
@@ -491,25 +512,55 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
         ValidateRequiredComplexColumns(msys, msysTdef);
 
-        Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
-
         var result = new List<ComplexColumnInfo>(byComplexId.Count);
+        var referencedIds = new HashSet<int>();
+        var expectedNames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (KeyValuePair<int, (string Name, ColumnType Type)> expected in byComplexId)
+        {
+            expectedNames.Add(expected.Value.Name, expected.Key);
+        }
+
         var seenIds = new HashSet<int>();
+        var seenFlats = new HashSet<int>();
+        int discoveryWork = objectNamesById.Count;
         await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, msys, ComplexColumnJoinColumns, cancellationToken).ConfigureAwait(false))
         {
+            if (discoveryWork >= maxComplexDiscoveryEntries)
+            {
+                throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Complex catalog discovery exceeds MaxComplexDiscoveryEntries.");
+            }
+
+            discoveryWork++;
+
+            if (ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), parentTdefPage, tableName: null)
+                && expectedNames.TryGetValue(CatalogValueReader.GetStringOrEmpty(row, idxColumnName), out int mappedId))
+            {
+                referencedIds.Add(mappedId);
+            }
+
             if (!CatalogValueReader.TryParseInt32(row, idxComplexId, out int complexId))
             {
                 continue;
             }
 
-            if (!byComplexId.TryGetValue(complexId, out (string Name, ColumnType Type) parent)
-                || !ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), parentTdefPage, tableName: null))
+            if (!byComplexId.TryGetValue(complexId, out (string Name, ColumnType Type) parent))
             {
                 continue;
             }
 
+            referencedIds.Add(complexId);
+            if (!ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), parentTdefPage, tableName: null))
+            {
+                if (rows.StrictParsing)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The complex catalog parent identity disagrees with its descriptor.");
+                }
+
+                continue;
+            }
+
             bool hasTypeObjectId = CatalogValueReader.TryParseInt32(row, idxComplexType, out int typeObjectId);
-            string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? tn) ? tn : string.Empty;
+            string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out CatalogRow? tn) ? tn.Name : string.Empty;
             if (!this.AcceptComplexTypeReference(hasTypeObjectId, typeObjectId, typeName, msysTdef))
             {
                 continue;
@@ -517,15 +568,40 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             if (!seenIds.Add(complexId))
             {
+                if (rows.StrictParsing)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The complex catalog descriptor identity is ambiguous.");
+                }
+
                 result.RemoveAll(column => column.ComplexId == complexId);
                 continue;
             }
 
             int flatId = CatalogValueReader.ParseInt32OrZero(row, idxFlatTable);
             int conceptualId = CatalogValueReader.ParseInt32OrZero(row, idxConceptualTable);
+            if (!seenFlats.Add(flatId))
+            {
+                if (rows.StrictParsing)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The complex catalog flat table identity is ambiguous.");
+                }
 
-            string columnName = CatalogValueReader.GetStringOrDefault(row, idxColumnName, parent.Name);
-            string flatName = flatId != 0 && objectNamesById.TryGetValue(flatId, out string? fn) ? fn : string.Empty;
+                result.RemoveAll(column => column.FlatTableId == flatId);
+                continue;
+            }
+
+            string columnName = CatalogValueReader.GetStringOrEmpty(row, idxColumnName);
+            if (!string.Equals(columnName, parent.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                if (rows.StrictParsing)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The complex catalog column identity disagrees with its parent descriptor.");
+                }
+
+                continue;
+            }
+
+            string flatName = flatId != 0 && objectNamesById.TryGetValue(flatId, out CatalogRow? fn) ? fn.Name : string.Empty;
 
             var info = new ComplexColumnInfo
             {
@@ -544,7 +620,15 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 info = info with { Kind = await this.ClassifyFromFlatTableAsync(info, cancellationToken).ConfigureAwait(false) };
             }
 
-            result.Add(info);
+            if (await this.AcceptComplexSchemaAsync(info, objectNamesById, cancellationToken).ConfigureAwait(false))
+            {
+                result.Add(info);
+            }
+        }
+
+        if (referencedIds.Count != byComplexId.Count)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A required MSysComplexColumns entry is missing.", new JetErrorInfo { TableName = Constants.SystemTableNames.ComplexColumns, PageNumber = msysTdef });
         }
 
         return result;
@@ -599,32 +683,77 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return elementType is ColumnType type ? "Multi-value " + GetTypeDisplayName(type) : null;
     }
 
-    private async ValueTask<Dictionary<long, string>> BuildObjectNameLookupAsync(CancellationToken cancellationToken)
+    private async ValueTask<Dictionary<long, CatalogRow>> BuildObjectNameLookupAsync(CancellationToken cancellationToken, int? maxEntries = null)
     {
-        var map = new Dictionary<long, string>();
-
-        TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
-        if (msys == null)
+        var map = new Dictionary<long, CatalogRow>();
+        foreach (CatalogRow entry in await catalog.ReadValidatedObjectsAsync(cancellationToken, maxEntries ?? maxComplexDiscoveryEntries).ConfigureAwait(false))
         {
-            return map;
-        }
-
-        int idxId = msys.FindColumnIndex("Id");
-        int idxName = msys.FindColumnIndex("Name");
-        if (idxId < 0 || idxName < 0)
-        {
-            return map;
-        }
-
-        await foreach (string[] row in rows.EnumerateRowsForTdefAsync(2, msys, ObjectNameColumns, cancellationToken).ConfigureAwait(false))
-        {
-            if (CatalogValueReader.TryParseInt64(row, idxId, out long id))
+            if (!map.TryAdd(entry.Id, entry))
             {
-                map[id] = CatalogValueReader.GetStringOrEmpty(row, idxName);
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects contains duplicate object identities.");
             }
         }
 
         return map;
+    }
+
+    private async ValueTask<bool> AcceptComplexSchemaAsync(ComplexColumnInfo info, Dictionary<long, CatalogRow> objects, CancellationToken cancellationToken)
+    {
+        bool valid = objects.TryGetValue(info.FlatTableId, out CatalogRow? flatObject)
+            && flatObject.ObjectType == Constants.SystemObjects.UserTableType
+            && (flatObject.Flags & Constants.SystemObjects.ComplexFlatTableFlags) == Constants.SystemObjects.ComplexFlatTableFlags;
+        TableDef? flat = valid ? await tableDefs.ReadTableDefAsync(flatObject!.TDefPage, cancellationToken).ConfigureAwait(false) : null;
+        int foreignKey = flat is null ? -1 : FindForeignKeyIndex(flat, info.ColumnName);
+        valid &= foreignKey >= 0 && !flat!.Columns[foreignKey].IsAutoNumber && flat.Columns[foreignKey].Name.StartsWith('_');
+        if (valid && info.Kind == ComplexColumnKind.Unknown)
+        {
+            info = info with { Kind = ClassifyFlatTable(flat!, info.ColumnName) };
+            valid = info.Kind != ComplexColumnKind.Unknown;
+        }
+
+        if (valid && info.Kind == ComplexColumnKind.Attachment)
+        {
+            valid = HasAttachmentPayloadSchema(flat!);
+        }
+
+        if (valid && info.ComplexTypeObjectId != 0)
+        {
+            valid = objects.TryGetValue(info.ComplexTypeObjectId, out CatalogRow? templateObject)
+                && templateObject.ObjectType == Constants.SystemObjects.UserTableType;
+            TableDef? template = valid ? await tableDefs.ReadTableDefAsync(templateObject!.TDefPage, cancellationToken).ConfigureAwait(false) : null;
+            valid &= template is { Columns.Count: > 0 };
+            if (valid)
+            {
+                int fk = FindForeignKeyIndex(flat!, info.ColumnName);
+                var payload = new List<ColumnType>();
+                for (int i = 0; i < flat!.Columns.Count; i++)
+                {
+                    if (i != fk && !flat.Columns[i].IsAutoNumber)
+                    {
+                        payload.Add(flat.Columns[i].Type);
+                    }
+                }
+
+                valid = payload.Count == template!.Columns.Count;
+                foreach (ColumnInfo column in template.Columns)
+                {
+                    valid &= !column.IsAutoNumber && !column.IsCalculated && payload.Remove(column.Type);
+                }
+
+                ColumnType? expected = TemplateElementType(info.ComplexTypeName);
+                valid &= info.Kind != ComplexColumnKind.MultiValue
+                    || (expected is not null && template.Columns.Count == 1 && template.Columns[0].Type == expected && string.Equals(template.Columns[0].Name, "Value", StringComparison.OrdinalIgnoreCase));
+                valid &= info.Kind != ComplexColumnKind.Attachment || (IsAttachmentTemplate(template) && HasAttachmentPayloadSchema(flat));
+                valid &= info.Kind != ComplexColumnKind.VersionHistory || ClassifyFlatTable(flat, info.ColumnName) == ComplexColumnKind.VersionHistory;
+            }
+        }
+
+        if (!valid && rows.StrictParsing)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysComplexColumns contains an invalid flat table or incompatible type template.", new JetErrorInfo { TableName = Constants.SystemTableNames.ComplexColumns, ColumnName = "FlatTableID" });
+        }
+
+        return valid;
     }
 
     private bool AcceptComplexTypeReference(bool hasTypeObjectId, int typeObjectId, string typeName, long tdefPage)
@@ -647,21 +776,20 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return false;
     }
 
-    private async ValueTask<long> GetComplexFlatTablePageAsync(string tableName, string columnName, CancellationToken cancellationToken)
+    private async ValueTask<long> GetComplexFlatTablePageAsync(string tableName, string columnName, DiscoveryBudget discovery, CancellationToken cancellationToken)
     {
         try
         {
-            long msysTdef = await catalog.FindSystemTablePageAsync(Constants.SystemTableNames.ComplexColumns, cancellationToken).ConfigureAwait(false);
+            Dictionary<long, CatalogRow> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken, discovery.Remaining).ConfigureAwait(false);
+            discovery.Consume(objectNamesById.Count);
+            long msysTdef = FindComplexCatalogPage(objectNamesById);
             if (msysTdef <= 0)
             {
-                return 0;
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The required MSysComplexColumns catalog table is missing.");
             }
 
-            TableDef? td = await tableDefs.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false);
-            if (td == null)
-            {
-                return 0;
-            }
+            TableDef td = await tableDefs.ReadTableDefAsync(msysTdef, cancellationToken).ConfigureAwait(false)
+                ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The required MSysComplexColumns definition could not be read.");
 
             int idxCol = td.FindColumnIndex("ColumnName");
             int idxConceptualTable = td.FindColumnIndex("ConceptualTableID");
@@ -677,11 +805,19 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             }
 
             long matchedPage = 0;
+            long matchedId = 0;
+            var seenFlatIds = new HashSet<long>();
+            var ambiguousFlatIds = new HashSet<long>();
             int idxComplexType = td.FindColumnIndex("ComplexTypeObjectID");
-            Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
             await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, td, FlatTableLookupColumns, cancellationToken).ConfigureAwait(false))
             {
+                discovery.Consume(1);
+                if (CatalogValueReader.TryParseInt64(row, idxFlatTable, out long discoveredFlatId) && !seenFlatIds.Add(discoveredFlatId))
+                {
+                    ambiguousFlatIds.Add(discoveredFlatId);
+                }
+
                 string colName = CatalogValueReader.GetStringOrEmpty(row, idxCol);
                 if (!string.Equals(colName, columnName, StringComparison.OrdinalIgnoreCase))
                 {
@@ -694,7 +830,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 }
 
                 bool hasTypeObjectId = CatalogValueReader.TryParseInt32(row, idxComplexType, out int typeObjectId);
-                string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? templateName) ? templateName : string.Empty;
+                string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out CatalogRow? templateName) ? templateName.Name : string.Empty;
                 if (!this.AcceptComplexTypeReference(hasTypeObjectId, typeObjectId, typeName, msysTdef))
                 {
                     continue;
@@ -710,9 +846,31 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                             return 0;
                         }
 
-                        matchedPage = flatTdef;
+                        var info = new ComplexColumnInfo
+                        {
+                            ColumnName = columnName,
+                            FlatTableId = checked((int)flatId),
+                            ComplexTypeObjectId = typeObjectId,
+                            ComplexTypeName = typeName,
+                            Kind = ClassifyComplexKind(typeName),
+                        };
+                        if (await this.AcceptComplexSchemaAsync(info, objectNamesById, cancellationToken).ConfigureAwait(false))
+                        {
+                            matchedPage = flatTdef;
+                            matchedId = flatId;
+                        }
                     }
                 }
+            }
+
+            if (ambiguousFlatIds.Contains(matchedId))
+            {
+                if (rows.StrictParsing)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The complex fallback flat table identity is ambiguous.");
+                }
+
+                return 0;
             }
 
             return matchedPage;
@@ -759,6 +917,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         string tableName,
         string columnName,
         IReadOnlyList<ComplexColumnInfo> complexColumns,
+        DiscoveryBudget discovery,
         CancellationToken cancellationToken)
     {
         try
@@ -767,7 +926,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             FlatTable? flat = info == null
                 ? null
                 : await this.ResolveFlatTableAsync(info, cancellationToken).ConfigureAwait(false);
-            flat ??= await this.FindFlatTableFallbackAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+            flat ??= await this.FindFlatTableFallbackAsync(tableName, columnName, discovery, cancellationToken).ConfigureAwait(false);
             if (flat == null)
             {
                 return null;
@@ -832,9 +991,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return resolved == null ? null : new FlatTable(resolved.Entry.TDefPage, resolved.Definition);
     }
 
-    private async ValueTask<FlatTable?> FindFlatTableFallbackAsync(string tableName, string columnName, CancellationToken cancellationToken)
+    private async ValueTask<FlatTable?> FindFlatTableFallbackAsync(string tableName, string columnName, DiscoveryBudget discovery, CancellationToken cancellationToken)
     {
-        long tdefPage = await this.GetComplexFlatTablePageAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
+        long tdefPage = await this.GetComplexFlatTablePageAsync(tableName, columnName, discovery, cancellationToken).ConfigureAwait(false);
         TableDef? td = tdefPage > 0 ? await tableDefs.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false) : null;
         return td == null ? null : new FlatTable(tdefPage, td);
     }
@@ -941,6 +1100,26 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         if (diagnosticsEnabled)
         {
             Trace.WriteLine($"[AccessReader] Best-effort fallback in ComplexColumnReader.{operation}: suppressed {exception.GetType().Name} while reading MSysComplexColumns.");
+        }
+    }
+
+    /// <summary>Bounds aggregate catalog work across all fallback columns of a table scan.</summary>
+    /// <param name="limit">The maximum number of entries to inspect.</param>
+    private sealed class DiscoveryBudget(int limit)
+    {
+        /// <summary>Gets the remaining entries permitted before schema loading.</summary>
+        internal int Remaining { get; private set; } = limit;
+
+        /// <summary>Charges inspected metadata entries to this scan.</summary>
+        /// <param name="count">The number of entries inspected.</param>
+        /// <exception cref="JetLimitationException">The aggregate metadata limit is exceeded.</exception>
+        internal void Consume(int count)
+        {
+            this.Remaining -= count;
+            if (this.Remaining < 0)
+            {
+                throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Complex fallback discovery exceeds MaxComplexDiscoveryEntries.");
+            }
         }
     }
 

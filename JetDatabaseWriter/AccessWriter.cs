@@ -260,12 +260,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => EncryptionManager.DetectEncryptionFormatAsync(stream, cancellationToken);
 
     /// <summary>
-    /// Changes the password of an already-encrypted JET / ACE database,
-    /// preserving the existing on-disk encryption format. Use
-    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, CancellationToken)"/>
-    /// to add encryption to an unencrypted database, or
-    /// <see cref="DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>
-    /// to remove it.
+    /// Requests a password change for an encrypted JET / ACE database.
+    /// Native password maintenance is currently unsupported and is refused
+    /// before mutation. Existing encrypted databases can be opened and updated
+    /// with their original password.
     /// </summary>
     /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
     /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
@@ -273,19 +271,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="options">Optional configuration. Used only for lockfile honouring; the password fields are ignored.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    /// <exception cref="UnauthorizedAccessException">The supplied <paramref name="oldPassword"/> is wrong, or the database is unencrypted.</exception>
+    /// <exception cref="InvalidOperationException">The database is unencrypted.</exception>
     /// <exception cref="ArgumentException"><paramref name="newPassword"/> is empty.</exception>
-    /// <remarks>
-    /// Writes and flushes a temporary file named <c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>,
-    /// then replaces the database by renaming that file over it.
-    /// </remarks>
-    /// <exception cref="IOException">
-    /// The temporary file cannot be written or the database cannot be replaced,
-    /// for example while a reader holds it open. The original is unchanged unless
-    /// <see cref="Exception.Data"/> contains <c>JetDatabaseWriter.ReplacementFile</c>;
-    /// that entry names the retained temporary file holding the new contents
-    /// when replacement removed the original but could not install the new file.
-    /// </exception>
+    /// <exception cref="NotSupportedException">Native encryption maintenance is not supported. The database is unchanged.</exception>
     public static ValueTask ChangePasswordAsync(
         string path,
         ReadOnlyMemory<char> oldPassword,
@@ -295,9 +283,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => EncryptionManager.ChangePasswordAsync(path, oldPassword, newPassword, options, cancellationToken);
 
     /// <summary>
-    /// Encrypts a currently-unencrypted JET / ACE database, applying
-    /// <paramref name="targetFormat"/> when supplied or the best supported
-    /// password encryption for the database format when omitted.
+    /// Requests encryption of an unencrypted JET / ACE database.
+    /// Creating native password/security metadata is currently unsupported,
+    /// including when <paramref name="targetFormat"/> is omitted. The request
+    /// is refused before mutation.
     /// </summary>
     /// <param name="path">Path to an existing unencrypted .mdb or .accdb file.</param>
     /// <param name="newPassword">The password to apply (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
@@ -311,17 +300,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// or the format is not valid for the underlying file kind.
     /// </exception>
     /// <exception cref="InvalidOperationException">The file is already encrypted.</exception>
-    /// <remarks>
-    /// Writes and flushes a temporary file named <c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>,
-    /// then replaces the database by renaming that file over it.
-    /// </remarks>
-    /// <exception cref="IOException">
-    /// The temporary file cannot be written or the database cannot be replaced,
-    /// for example while a reader holds it open. The original is unchanged unless
-    /// <see cref="Exception.Data"/> contains <c>JetDatabaseWriter.ReplacementFile</c>;
-    /// that entry names the retained temporary file holding the new contents
-    /// when replacement removed the original but could not install the new file.
-    /// </exception>
+    /// <exception cref="NotSupportedException">Native encryption maintenance is not supported. The database is unchanged.</exception>
     public static ValueTask EncryptAsync(
         string path,
         ReadOnlyMemory<char> newPassword,
@@ -331,27 +310,17 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => EncryptionManager.EncryptAsync(path, newPassword, targetFormat, options, cancellationToken);
 
     /// <summary>
-    /// Removes encryption from a JET / ACE database, leaving an
-    /// unencrypted file with no header password residue.
+    /// Requests removal of native JET / ACE encryption and password protection.
+    /// Native security-metadata maintenance is currently unsupported, so the
+    /// request is refused before mutation.
     /// </summary>
     /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
     /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
     /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    /// <exception cref="UnauthorizedAccessException">The supplied <paramref name="oldPassword"/> is wrong.</exception>
     /// <exception cref="InvalidOperationException">The file is already unencrypted.</exception>
-    /// <remarks>
-    /// Writes and flushes a temporary file named <c>&lt;path&gt;.reenc-&lt;guid&gt;.tmp</c>,
-    /// then replaces the database by renaming that file over it.
-    /// </remarks>
-    /// <exception cref="IOException">
-    /// The temporary file cannot be written or the database cannot be replaced,
-    /// for example while a reader holds it open. The original is unchanged unless
-    /// <see cref="Exception.Data"/> contains <c>JetDatabaseWriter.ReplacementFile</c>;
-    /// that entry names the retained temporary file holding the new contents
-    /// when replacement removed the original but could not install the new file.
-    /// </exception>
+    /// <exception cref="NotSupportedException">Native encryption maintenance is not supported. The database is unchanged.</exception>
     public static ValueTask DecryptAsync(
         string path,
         ReadOnlyMemory<char> oldPassword,
@@ -362,8 +331,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Stream-based equivalent of
     /// <see cref="ChangePasswordAsync(string, ReadOnlyMemory{char}, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
-    /// The stream must be readable, writable, and seekable; it is rewritten
-    /// in place (length may change for Agile transitions).
+    /// The stream must be readable, writable, and seekable. Native password
+    /// changes are currently refused without rewriting it.
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the database bytes.</param>
     /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
@@ -448,12 +417,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => this.RunAutoCommitAsync(_ => this.services.Data.InsertRowsAsync(tableName, rows, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
-    public ValueTask InsertRowAsync<T>(string tableName, T item, CancellationToken cancellationToken = default)
+    public ValueTask InsertRowAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, T item, CancellationToken cancellationToken = default)
         where T : class, new()
         => this.RunAutoCommitAsync(_ => this.services.Data.InsertItemAsync(tableName, item, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
-    public ValueTask<int> InsertRowsAsync<T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
+    public ValueTask<int> InsertRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
         where T : class, new()
         => this.RunAutoCommitAsync(_ => this.services.Data.InsertItemsAsync(tableName, items, cancellationToken), cancellationToken);
 
@@ -672,16 +641,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <summary>
-    /// Begins an explicit page-buffered transaction against this writer. While
-    /// the returned <see cref="JetTransaction"/> is active, every page-write
-    /// performed by this writer is journaled in memory instead of flushed to
-    /// the database file. <see cref="JetTransaction.CommitAsync"/> writes the
-    /// journaled pages over the file in place; this is not crash-atomic, so a
-    /// crash partway through can leave part of the transaction in the file.
-    /// An I/O failure restores the original image; if restoration also fails,
-    /// the writer rejects further mutations. <see cref="JetTransaction.RollbackAsync"/> (and
-    /// <see cref="JetTransaction.DisposeAsync"/> on an uncommitted transaction)
-    /// discards the journal, leaving the file in its pre-transaction state.
+    /// Begins a transaction with bounded page buffering. Changed pages may
+    /// spill to the database before commit; before-images are retained in
+    /// memory or a temporary undo file. <see cref="JetTransaction.CommitAsync"/>
+    /// writes the remaining pages in place. This is not crash-atomic: a crash
+    /// during a spill or commit can leave partial transaction contents.
+    /// <see cref="JetTransaction.RollbackAsync"/> (and disposal of an uncommitted
+    /// transaction) restores early writes and cached state. An I/O failure also
+    /// attempts restoration; if undo fails, the writer rejects further mutations.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The newly-started transaction.</returns>

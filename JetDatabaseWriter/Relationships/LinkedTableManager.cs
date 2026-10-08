@@ -13,6 +13,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.DelimitedText;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -100,6 +101,7 @@ internal static class LinkedTableManager
             MaxTableDefinitionBytes = options.MaxTableDefinitionBytes,
             MaxLongValueBytes = options.MaxLongValueBytes,
             MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,
+            MaxComplexDiscoveryEntries = options.MaxComplexDiscoveryEntries,
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,
             Password = password,
@@ -128,15 +130,14 @@ internal static class LinkedTableManager
     /// <param name="catalog">Reads the <c>MSysObjects</c> rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
+    /// <exception cref="JetCorruptDataException">Required linked catalog structure is missing or invalid.</exception>
     internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CatalogReader catalog, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        TableDef? msys = await catalog.GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false);
-        if (msys == null)
-        {
-            return [];
-        }
+        _ = await catalog.ReadValidatedObjectsAsync(cancellationToken).ConfigureAwait(false);
+        TableDef msys = await catalog.GetMSysObjectsTableDefAsync(cancellationToken).ConfigureAwait(false)
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
 
         int idxName = msys.FindColumnIndex("Name");
         int idxType = msys.FindColumnIndex("Type");
@@ -145,9 +146,9 @@ internal static class LinkedTableManager
         int idxForeignName = msys.FindColumnIndex("ForeignName");
         int idxConnect = msys.FindColumnIndex("Connect");
 
-        if (idxName < 0 || idxType < 0)
+        if (idxName < 0 || idxType < 0 || idxFlags < 0 || idxDatabase < 0 || idxForeignName < 0 || idxConnect < 0)
         {
-            return [];
+            throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects is missing a required linked-table metadata column.");
         }
 
         var result = new List<LinkedTableInfo>();
@@ -186,6 +187,19 @@ internal static class LinkedTableManager
                 Constants.SystemObjects.LinkedTableType => LinkedTableKind.Access,
                 _ => throw new InvalidDataException($"Unsupported linked-table object type: {objType}."),
             };
+
+            // Native ODBC links may expose only cached LvProp schema, with no source connection metadata.
+            bool valid = kind == LinkedTableKind.Odbc
+                || (!string.IsNullOrWhiteSpace(foreignName) && !string.IsNullOrWhiteSpace(sourcePath));
+            if (!valid)
+            {
+                if (catalog.StrictParsing)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "A linked table has incomplete source metadata.", new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, ObjectName = nameStr });
+                }
+
+                continue;
+            }
 
             if (result.Count >= MaxLinkedTableMetadataRows)
             {

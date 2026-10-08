@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Relationships;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -98,7 +99,7 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <param name="tableName">The linked table name.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel enumeration.</param>
-    internal IAsyncEnumerable<T> EnumerateRowsAsync<T>(
+    internal IAsyncEnumerable<T> EnumerateRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         IProgress<long>? progress,
         CancellationToken cancellationToken)
@@ -165,7 +166,7 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <param name="tableName">The linked table name.</param>
     /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    internal ValueTask<IReadOnlyList<T>?> TryReadTableAsync<T>(
+    internal ValueTask<IReadOnlyList<T>?> TryReadTableAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         string tableName,
         uint? maxRows,
         CancellationToken cancellationToken)
