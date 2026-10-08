@@ -1338,7 +1338,8 @@ internal sealed class RelationshipManager(
             this.pager.ReadPageAsync,
             PageBuffers.Return,
             retainPageNumbers: false,
-            cancellationToken, this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
+            cancellationToken,
+            this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
         if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
         {
             return false;
@@ -1390,7 +1391,8 @@ internal sealed class RelationshipManager(
             this.pager.ReadPageAsync,
             PageBuffers.Return,
             retainPageNumbers: true,
-            cancellationToken, this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
+            cancellationToken,
+            this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
         if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
         {
             return;
@@ -1617,7 +1619,8 @@ internal sealed class RelationshipManager(
             this.pager.ReadPageAsync,
             PageBuffers.Return,
             retainPageNumbers: false,
-            cancellationToken, this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
+            cancellationToken,
+            this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
         if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
         {
             return;
@@ -1688,7 +1691,8 @@ internal sealed class RelationshipManager(
                 this.pager.ReadPageAsync,
                 PageBuffers.Return,
                 retainPageNumbers: true,
-                cancellationToken, this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
+                cancellationToken,
+                this.tableDefs.MaxLogicalBytes).ConfigureAwait(false);
             if (chain is null || !this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
             {
                 break;
@@ -2352,7 +2356,8 @@ internal sealed class RelationshipManager(
             this.pager.ReadPageAsync,
             PageBuffers.Return,
             retainPageNumbers: true,
-            cancellationToken, this.tableDefs.MaxLogicalBytes);
+            cancellationToken,
+            this.tableDefs.MaxLogicalBytes);
 
     private ValueTask WriteLogicalTDefChainAsync(
         LogicalTDefChain chain,

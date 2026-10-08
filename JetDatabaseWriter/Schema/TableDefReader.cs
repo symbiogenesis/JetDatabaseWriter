@@ -15,7 +15,6 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     private readonly IPageSource pages;
     private readonly JetFormat format;
     private readonly bool cacheResults;
-    private readonly int maxLogicalBytes;
     private readonly TDefImageCache images;
 
     /// <summary>Initializes a new instance of the <see cref="TableDefReader"/> class.</summary>
@@ -28,7 +27,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         this.pages = pages;
         this.format = format;
         this.cacheResults = cacheResults;
-        this.maxLogicalBytes = maxLogicalBytes;
+        this.MaxLogicalBytes = maxLogicalBytes;
         this.images = new TDefImageCache(format);
     }
 
@@ -39,7 +38,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     internal long PageCount => this.pages.PageCount;
 
     /// <summary>Gets the per-table logical byte budget for direct chain readers.</summary>
-    internal int MaxLogicalBytes => this.maxLogicalBytes;
+    internal int MaxLogicalBytes { get; }
 
     /// <summary>Gets or sets a value indicating whether cache hits are checked against the source.</summary>
     internal bool VerifyOnHit { get; set; } = VerifyCacheHits;
@@ -178,5 +177,5 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
     private ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, CancellationToken cancellationToken)
-        => LogicalTDefChain.ReadAsync(startPage, this.format.PageSize, this.pages.ReadPageAsync, PageBuffers.Return, retainPageNumbers: true, cancellationToken, this.maxLogicalBytes);
+        => LogicalTDefChain.ReadAsync(startPage, this.format.PageSize, this.pages.ReadPageAsync, PageBuffers.Return, retainPageNumbers: true, cancellationToken, this.MaxLogicalBytes);
 }
