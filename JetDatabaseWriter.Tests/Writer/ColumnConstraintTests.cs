@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
@@ -395,6 +396,39 @@ public sealed class ColumnConstraintTests
         DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(rowCount, dt.Rows.Count);
         Assert.All(dt.AsEnumerable(), row => Assert.Equal(padding + (int)row["Id"], row["Name"]));
+    }
+
+    /// <summary>Authorized complex-table transplants retain survivor CLR rules and their rollback identity.</summary>
+    /// <param name="rollback">Whether the schema rewrite is rolled back.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ComplexSchemaRewrite_PreservesClrRule(bool rollback)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateFreshStreamAsync(DatabaseFormat.AceAccdb);
+        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await writer.CreateTableAsync("Rules", [new("Score", typeof(int)) { ValidationRule = value => value is int score && score >= 0 }, new("Files", typeof(byte[])) { IsAttachment = true }], ct);
+        await writer.InsertRowAsync("Rules", [1, DBNull.Value], ct);
+        await using (JetTransaction transaction = await writer.BeginTransactionAsync(ct))
+        {
+            await writer.AddColumnAsync("Rules", new ColumnDefinition("Extra", typeof(int)), ct);
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync("Rules", [-1, DBNull.Value, DBNull.Value], ct));
+            if (rollback)
+            {
+                await transaction.RollbackAsync(ct);
+            }
+            else
+            {
+                await transaction.CommitAsync(ct);
+            }
+        }
+
+        object[] rejected = rollback ? [-1, DBNull.Value] : [-1, DBNull.Value, DBNull.Value];
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync("Rules", rejected, ct));
+        object[] accepted = rollback ? [2, DBNull.Value] : [2, DBNull.Value, DBNull.Value];
+        await writer.InsertRowAsync("Rules", accepted, ct);
     }
 
     /// <summary>

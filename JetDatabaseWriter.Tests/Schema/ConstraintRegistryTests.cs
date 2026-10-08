@@ -799,6 +799,87 @@ public sealed class ConstraintRegistryTests
         return value;
     }
 
+    /// <summary>Same-name replacements must read their own defaults and counter seeds.</summary>
+    /// <param name="replaceTable">Whether the physical table rather than column is replaced.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApplyAsync_PhysicalReplacement_DoesNotReuseConstraints(bool replaceTable)
+    {
+        ColumnPropertyBlock properties = BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "7"));
+        var registry = new ConstraintRegistry((_, _) => ValueTask.FromResult<ColumnPropertyBlock?>(properties));
+        TableDef original = new() { TDefPageNumber = 10, Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, ColNum = 0 }] };
+        object[] first = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", original, first, TestContext.Current.CancellationToken);
+        Assert.Equal(7, first[0]);
+        ConstraintRegistrySnapshot snapshot = registry.CaptureSnapshot();
+        properties = BuildColumnProperties("Score", (Constants.ColumnPropertyNames.DefaultValue, "9"));
+        TableDef replacement = new() { TDefPageNumber = replaceTable ? 11 : 10, Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, ColNum = replaceTable ? 0 : 1 }] };
+        object[] second = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", replacement, second, TestContext.Current.CancellationToken);
+        Assert.Equal(9, second[0]);
+        registry.Restore(snapshot);
+        object[] restored = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", original, restored, TestContext.Current.CancellationToken);
+        Assert.Equal(7, restored[0]);
+    }
+
+    /// <summary>A replacement AutoNumber column must seed from its own table.</summary>
+    /// <param name="replaceTable">Whether the physical table rather than column is replaced.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApplyAsync_PhysicalReplacement_ReseedsAutoNumber(bool replaceTable)
+    {
+        long highWater = 10;
+        var registry = new ConstraintRegistry(readUsedAutoNumberHighWater: (_, _, _, _) => ValueTask.FromResult(highWater));
+        TableDef original = new() { TDefPageNumber = 10, Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, Flags = Constants.ColumnDescriptorFlags.AutoNumber, ColNum = 0 }] };
+        object[] first = [DBNull.Value];
+        _ = await registry.ApplyAsync("T", original, first, TestContext.Current.CancellationToken);
+        Assert.Equal(11, first[0]);
+        highWater = 30;
+        TableDef replacement = new() { TDefPageNumber = replaceTable ? 11 : 10, Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, Flags = Constants.ColumnDescriptorFlags.AutoNumber, ColNum = replaceTable ? 0 : 1 }] };
+        object[] second = [DBNull.Value];
+        _ = await registry.ApplyAsync("T", replacement, second, TestContext.Current.CancellationToken);
+        Assert.Equal(31, second[0]);
+    }
+
+    /// <summary>A replacement column must enforce its own persisted rule.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task ApplyAsync_PhysicalReplacement_ReadsNewValidationRule()
+    {
+        ColumnPropertyBlock properties = BuildColumnProperties("Score", (Constants.ColumnPropertyNames.ValidationRule, ">= 0"));
+        var registry = new ConstraintRegistry((_, _) => ValueTask.FromResult<ColumnPropertyBlock?>(properties));
+        TableDef original = new() { TDefPageNumber = 10, Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, ColNum = 0 }] };
+        _ = await registry.ApplyAsync("T", original, [5], TestContext.Current.CancellationToken);
+        properties = BuildColumnProperties("Score", (Constants.ColumnPropertyNames.ValidationRule, ">= 10"));
+        TableDef replacement = new() { TDefPageNumber = 10, Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType, ColNum = 1 }] };
+        _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
+            await registry.ApplyAsync("T", replacement, [5], TestContext.Current.CancellationToken));
+    }
+    /// <summary>Physical binding and authorized rebinding must not alter transaction snapshot objects.</summary>
+    /// <returns>The asynchronous test.</returns>
+    [Fact]
+    public async Task PhysicalBinding_DoesNotMutateSnapshotIdentity()
+    {
+        var registry = new ConstraintRegistry();
+        registry.Register("T", [new ColumnDefinition("Score", typeof(int)) { DefaultValue = 7 }], JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb), tdefPageNumber: 10);
+        ConstraintRegistrySnapshot snapshot = registry.CaptureSnapshot();
+        ColumnConstraint saved = Assert.Single(snapshot.Tables["T"]);
+        TableDef original = new() { TDefPageNumber = 10, Columns = [new ColumnInfo { Name = "Score", Type = ColumnType.LongIntegerType }] };
+        _ = await registry.ApplyAsync("T", original, [DbDefault.Value], TestContext.Current.CancellationToken);
+        Assert.Null(saved.PhysicalColumn);
+        registry.RebindPhysicalTable("T", 20);
+        Assert.Equal(10L, saved.TDefPageNumber);
+        registry.Restore(snapshot);
+        object[] values = [DbDefault.Value];
+        _ = await registry.ApplyAsync("T", original, values, TestContext.Current.CancellationToken);
+        Assert.Equal(7, values[0]);
+        Assert.Null(saved.PhysicalColumn);
+    }
     private static TableDef SingleColumnTable(ColumnType type) => new()
     {
         Columns = [new ColumnInfo { Name = "Score", Type = type }],

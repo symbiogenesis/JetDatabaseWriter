@@ -101,6 +101,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
         if (image is not null && chain is not null)
         {
+            image.TDefPageNumber = startPage;
             _ = this.images.Publish(startPage, image, chain.PageNumbers, epoch);
         }
 
@@ -137,12 +138,18 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
                 }
             }
 
+            cached.TDefPageNumber = tdefPage;
             return cached;
         }
 
         long epoch = this.images.Epoch;
         LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
+        if (image is not null)
+        {
+            image.TDefPageNumber = tdefPage;
+        }
+
         if (this.cacheResults && image is not null && chain is not null)
         {
             _ = this.images.Publish(tdefPage, image, chain.PageNumbers, epoch);

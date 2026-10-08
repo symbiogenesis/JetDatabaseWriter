@@ -287,6 +287,7 @@ internal sealed class TableStorageEditor(
         // AutoNumber seed) is not applied to the next insert.
         constraints.Unregister(tableName);
         constraints.Rename(tempName, tableName);
+        constraints.RebindPhysicalTable(tableName, originalTdefPage);
     }
 
     private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)

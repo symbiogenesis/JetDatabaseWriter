@@ -88,6 +88,7 @@ public sealed class AccessReaderOptions : AccessOptions
     /// <summary>
     /// Gets an optional callback to approve linked-table source paths.
     /// The callback receives linked-table metadata and the resolved absolute source path.
+    /// Text links require approval of both the source directory and the final file path.
     /// Return true to allow opening the source; false to block it.
     /// </summary>
     public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; init; }
@@ -122,6 +123,8 @@ public sealed class AccessReaderOptions : AccessOptions
 
     /// <summary>
     /// Gets an optional maximum source-file size, in bytes, for linked text/CSV read-through.
+    /// Checks the opened file length and bytes consumed, including growth while reading.
+    /// The reader may probe one excess byte to distinguish the end of the file from an exceeded limit.
     /// Leave <see langword="null"/> to allow files of any size while still enforcing record, field, and column limits.
     /// </summary>
     public long? LinkedTextMaxSourceFileBytes { get; init; }

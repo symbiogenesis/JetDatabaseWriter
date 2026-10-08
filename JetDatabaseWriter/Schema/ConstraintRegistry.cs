@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -82,7 +83,7 @@ internal sealed class ConstraintRegistry(
         }
     }
 
-    public void Register(string tableName, IReadOnlyList<ColumnDefinition> defs, JetFormat format)
+    public void Register(string tableName, IReadOnlyList<ColumnDefinition> defs, JetFormat format, long? tdefPageNumber = null)
     {
         this.tableRules.Remove(tableName);
         var list = new List<ColumnConstraint>(defs.Count);
@@ -90,6 +91,7 @@ internal sealed class ConstraintRegistry(
         foreach (ColumnDefinition def in defs)
         {
             ColumnConstraint c = ToConstraint(def, format);
+            c.TDefPageNumber = tdefPageNumber;
             anyConstraint |= c.HasAnyConstraint;
 
             if (c.IsAutoIncrement && !IsIntegralType(c.ClrType) && c.ClrType != typeof(Guid))
@@ -140,6 +142,17 @@ internal sealed class ConstraintRegistry(
         {
             this.constraints.Remove(oldName);
             this.constraints[newName] = list;
+        }
+    }
+
+    /// <summary>Retargets constraints after an authorized schema transplant, preserving session delegates.</summary>
+    /// <param name="tableName">The transplanted table.</param>
+    /// <param name="tdefPageNumber">Its final physical root page.</param>
+    internal void RebindPhysicalTable(string tableName, long tdefPageNumber)
+    {
+        if (this.constraints.TryGetValue(tableName, out List<ColumnConstraint>? list))
+        {
+            this.constraints[tableName] = list.ConvertAll(constraint => constraint.BindPhysicalIdentity(tdefPageNumber, column: null));
         }
     }
 
@@ -780,12 +793,28 @@ internal sealed class ConstraintRegistry(
         return resultType?.Value.Length > 0 ? (ColumnType)resultType.Value[0] : col.Type;
     }
 
-    private static bool MatchesColumnIdentity(ColumnConstraint constraint, ColumnInfo column)
+    private static bool MatchesColumnIdentity(ColumnConstraint constraint, ColumnInfo column, long? tdefPageNumber)
         => string.Equals(constraint.Name, column.Name, StringComparison.OrdinalIgnoreCase)
+            && (constraint.TDefPageNumber is null || constraint.TDefPageNumber == tdefPageNumber)
+            && (constraint.PhysicalColumn is null || MatchesPhysicalColumn(constraint.PhysicalColumn, column))
             && constraint.StorageType == column.Type
             && constraint.IsAutoIncrement == column.IsAutoNumber
             && constraint.IsCalculated == column.IsCalculated
             && constraint.IsComplexReference == (column.Type is ComplexType);
+
+    /// <summary>Compares stable physical descriptor fields without counter or index state.</summary>
+    /// <param name="previous">The bound column.</param>
+    /// <param name="current">The current column.</param>
+    /// <returns>Whether both descriptors identify the same column.</returns>
+    private static bool MatchesPhysicalColumn(ColumnInfo previous, ColumnInfo current)
+        => previous.ColNum == current.ColNum
+            && previous.VarIdx == current.VarIdx
+            && previous.FixedOff == current.FixedOff
+            && previous.Size == current.Size
+            && previous.Flags == current.Flags
+            && previous.ExtraFlags == current.ExtraFlags
+            && previous.Misc == current.Misc
+            && previous.RawDescriptor.SequenceEqual(current.RawDescriptor);
 
     /// <summary>Evaluates the complete row against a cached rule.</summary>
     /// <param name="tableName">The table name.</param>
@@ -857,11 +886,19 @@ internal sealed class ConstraintRegistry(
             bool aligned = true;
             for (int index = 0; index < list.Count; index++)
             {
-                aligned &= MatchesColumnIdentity(list[index], tableDef.Columns[index]);
+                aligned &= MatchesColumnIdentity(list[index], tableDef.Columns[index], tableDef.TDefPageNumber);
             }
 
             if (aligned)
             {
+                for (int index = 0; index < list.Count; index++)
+                {
+                    if (list[index].PhysicalColumn is null)
+                    {
+                        list[index] = list[index].BindPhysicalIdentity(tableDef.TDefPageNumber, tableDef.Columns[index]);
+                    }
+                }
+
                 return list;
             }
         }
@@ -880,7 +917,7 @@ internal sealed class ConstraintRegistry(
             {
                 ColumnConstraint current = hydrated[index];
                 ColumnConstraint? registered = list.Find(candidate =>
-                    string.Equals(candidate.Name, current.Name, StringComparison.OrdinalIgnoreCase)
+                    MatchesColumnIdentity(candidate, tableDef.Columns[index], tableDef.TDefPageNumber)
                     && candidate.ClrType == current.ClrType
                     && candidate.StorageType == current.StorageType
                     && candidate.IsAutoIncrement == current.IsAutoIncrement
@@ -889,7 +926,9 @@ internal sealed class ConstraintRegistry(
                     && candidate.IsComplexReference == current.IsComplexReference);
                 if (registered != null)
                 {
-                    hydrated[index] = registered;
+                    hydrated[index] = registered.PhysicalColumn is null
+                        ? registered.BindPhysicalIdentity(tableDef.TDefPageNumber, tableDef.Columns[index])
+                        : registered;
                 }
             }
         }
@@ -954,6 +993,8 @@ internal sealed class ConstraintRegistry(
             ColumnConstraint c = new()
             {
                 Name = col.Name,
+                TDefPageNumber = tableDef.TDefPageNumber,
+                PhysicalColumn = col,
                 StorageType = col.Type,
                 ClrType = JetTypeInfo.GetClrType(constraintType) ?? typeof(object),
                 IsNullable = isNullable,

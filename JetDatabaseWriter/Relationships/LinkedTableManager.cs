@@ -659,14 +659,14 @@ internal static class LinkedTableManager
         }
     }
 
-    private static void ValidateLinkedTextSourceFileSize(string filePath, LinkedTextLimits limits, string tableName)
+    private static void ValidateLinkedTextSourceFileSize(Stream source, LinkedTextLimits limits, string tableName)
     {
         if (!limits.MaxSourceFileBytes.HasValue)
         {
             return;
         }
 
-        long length = new FileInfo(filePath).Length;
+        long length = source.Length;
         if (length > limits.MaxSourceFileBytes.Value)
         {
             throw new InvalidDataException(
@@ -766,6 +766,13 @@ internal static class LinkedTableManager
                 $"Linked text table '{link.Name}' source file '{link.SourceObjectName}' is outside its source directory.");
         }
 
+        if (policy.OpenOptions.LinkedSourcePathValidator != null
+            && !policy.OpenOptions.LinkedSourcePathValidator(link with { }, resolvedFilePath))
+        {
+            throw new UnauthorizedAccessException(
+                $"Linked text table '{link.Name}' source file '{resolvedFilePath}' was rejected by AccessReaderOptions.LinkedSourcePathValidator.");
+        }
+
         EnsurePathDoesNotCrossReparsePoint(
             resolvedFilePath,
             resolvedDirectory,
@@ -805,8 +812,7 @@ internal static class LinkedTableManager
                 resolvedPath);
         }
 
-        ValidateLinkedTextSourceFileSize(resolvedPath, limits, link.Name);
-        return new LinkedTextDataSource(resolvedPath, ParseTextLinkFormat(link.ConnectString), limits);
+        return new LinkedTextDataSource(resolvedPath, ParseTextLinkFormat(link.ConnectString), limits, link.Name);
     }
 
     private static List<ColumnMetadata> CreateLinkedTextColumnMetadata(string[] columnNames)
@@ -1137,7 +1143,7 @@ internal static class LinkedTableManager
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
 
-    private readonly record struct LinkedTextDataSource(string FilePath, DelimitedTextFormat Format, LinkedTextLimits Limits);
+    private readonly record struct LinkedTextDataSource(string FilePath, DelimitedTextFormat Format, LinkedTextLimits Limits, string TableName);
 
     private readonly record struct LinkedTextLimits(
         DelimitedTextLimits Delimited,
@@ -1150,8 +1156,31 @@ internal static class LinkedTableManager
 
         internal LinkedTextRecordReader(LinkedTextDataSource source)
         {
-            this.textReader = new StreamReader(source.FilePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            this.DelimitedReader = new DelimitedTextReader(this.textReader, source.Format, source.Limits.Delimited);
+            var stream = new FileStream(source.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            StreamReader? reader = null;
+            try
+            {
+                ValidateLinkedTextSourceFileSize(stream, source.Limits, source.TableName);
+                reader = new StreamReader(
+                    new LinkedTextSourceStream(stream, source.Limits.MaxSourceFileBytes, source.TableName),
+                    Encoding.UTF8,
+                    detectEncodingFromByteOrderMarks: true);
+                this.DelimitedReader = new DelimitedTextReader(reader, source.Format, source.Limits.Delimited);
+                this.textReader = reader;
+            }
+            catch
+            {
+                try
+                {
+                    reader?.Dispose();
+                }
+                finally
+                {
+                    stream.Dispose();
+                }
+
+                throw;
+            }
         }
 
         internal DelimitedTextReader DelimitedReader { get; }

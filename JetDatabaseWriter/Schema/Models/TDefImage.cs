@@ -22,6 +22,9 @@ internal sealed class TDefImage
         this.LogicalIndexes = Array.AsReadOnly(logicalIndexes.ToArray());
     }
 
+    /// <summary>Gets or sets the physical root page before projecting its definition.</summary>
+    internal long? TDefPageNumber { get; set; }
+
     /// <summary>Gets the immutable column layout shared by counter-only revisions.</summary>
     internal TableDef Definition => field ??= TableSchema.CreateDefinition(this, properties: null);
 

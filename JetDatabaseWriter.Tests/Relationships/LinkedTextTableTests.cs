@@ -768,6 +768,31 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
+    public async Task LinkedTextTable_FinalFileRejectedByValidator_IsNotRead()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string host = await this.CreateTempAccdbDatabaseAsync("FinalTextAuthorization");
+        string directory = Path.GetDirectoryName(host)!;
+        string name = $"denied_{Guid.NewGuid():N}.csv";
+        string path = Path.Combine(directory, name);
+        this.tempFiles.Add(path);
+        await File.WriteAllTextAsync(path, "Id\r\n1\r\n", ct);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(host, cancellationToken: ct))
+        {
+            await writer.CreateLinkedTextTableAsync("Denied", directory, name, "Text;HDR=YES;FMT=Delimited", ct);
+        }
+
+        var options = new AccessReaderOptions
+        {
+            LinkedSourcePathValidator = (_, candidate) => !string.Equals(candidate, path, StringComparison.Ordinal),
+        };
+        await using AccessReader reader = await AccessReader.OpenAsync(host, options, ct);
+        _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.GetRealRowCountAsync("Denied", ct));
+        _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.GetColumnMetadataAsync("Denied", ct));
+        _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.ReadTableAsync("Denied", cancellationToken: ct));
+    }
+
+    [Fact]
     public async Task LinkedTextTable_CsvFile_SourceFileSizeLimit_ThrowsInvalidData()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

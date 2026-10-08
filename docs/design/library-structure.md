@@ -340,6 +340,7 @@ JetDatabaseWriter/
 │   ├── RelationshipKeyColumn.cs           (a relationship key column named by MSysRelationships)
 │   ├── LinkedTableManager.cs              (linked-table catalog scan, source-path policy, delimited-text read-through, link creation)
 │   ├── LinkedTableReader.cs               (reader-side link cache and read-through; opens a separate reader for Access-file links)
+│   ├── LinkedTextSourceStream.cs          (opened text-source ownership and byte-consumption limits)
 │   └── LinkedSourcePolicy.cs              (linked-source open options plus the host path relative sources anchor to)
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)

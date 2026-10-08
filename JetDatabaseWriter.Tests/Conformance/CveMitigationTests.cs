@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
@@ -276,90 +277,38 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
     }
 
-    // ─── Inline MEMO length overflow (malformed length) ───────────
-
-    /// <summary>
-    /// Corrupts an inline MEMO header's 3-byte length to the maximum (0xFFFFFF = 16 MB)
-    /// while keeping the bitmask as 0x80 (inline). The reader must cap the length
-    /// against the remaining row bytes, not allocate 16 MB.
-    /// </summary>
-    [Fact]
-    public async Task ReadTable_CorruptInlineMemoLen_16MB_DoesNotAllocateHuge()
+    /// <summary>Oversized inline declarations fail against the verified column slice before copying a payload.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task ReadTable_CorruptInlineMemoLength_RefusesVerifiedDescriptor(DatabaseFormat format)
     {
-        string path = TestDatabases.NorthwindTraders;
-        Assert.True(File.Exists(path), $"Required security fixture is missing: {path}");
-
         CancellationToken ct = TestContext.Current.CancellationToken;
-        byte[] original = await db.GetFileAsync(path, ct);
-        byte[] corrupted = (byte[])original.Clone();
+        (byte[] bytes, int offset, LongValueDescriptor _) = await CreateMemoMutationAsync(format, inline: true, ct);
+        LongValueDescriptor.Inline(0xFFFFFF).WriteTo(bytes.AsSpan(offset));
+        byte[] expected = (byte[])bytes.Clone();
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            counting,
+            new AccessReaderOptions { UseLockFile = false, StrictParsing = true, PageReadOptimizationMode = PageReadOptimizationMode.Disabled },
+            leaveOpen: true,
+            ct);
+        Assert.Equal(1, await reader.GetRealRowCountAsync("MemoTarget", ct));
+        counting.Reset();
 
-        const int pageSize = Constants.PageSizes.Jet4;
-        bool found = false;
-        for (int p = 3; p < corrupted.Length / pageSize && !found; p++)
+        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () =>
         {
-            int pageStart = p * pageSize;
-            if (corrupted[pageStart] != 0x01)
+            await foreach (object[] _ in reader.Rows("MemoTarget", cancellationToken: ct))
             {
-                continue;
-            }
-
-            int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr is 0 or > 200)
-            {
-                continue;
-            }
-
-            int firstRowRaw = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 14, 2));
-            if ((firstRowRaw & 0xC000) != 0)
-            {
-                continue;
-            }
-
-            int rowStart = pageStart + (firstRowRaw & 0x1FFF);
-            if (rowStart + 16 >= corrupted.Length || rowStart + 16 >= pageStart + pageSize)
-            {
-                continue;
-            }
-
-            // Write a fake inline MEMO header: length = 0xFFFFFF (16 MB), bitmask = 0x80 (inline).
-            int memoHeaderPos = rowStart + 4;
-            if (memoHeaderPos + 12 < pageStart + pageSize)
-            {
-                corrupted[memoHeaderPos] = 0xFF;
-                corrupted[memoHeaderPos + 1] = 0xFF;
-                corrupted[memoHeaderPos + 2] = 0xFF;
-                corrupted[memoHeaderPos + 3] = 0x80;
-                found = true;
-            }
-        }
-
-        Assert.True(found, "Security fixture contains no suitable mutation target.");
-
-        await using var stream = new MemoryStream(corrupted, writable: false);
-        Exception? ex = await Record.ExceptionAsync(async () =>
-        {
-            await using AccessReader reader = await AccessReader.OpenAsync(
-                stream,
-                new AccessReaderOptions { UseLockFile = false },
-                leaveOpen: true,
-                ct);
-
-            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
-            foreach (string table in tables)
-            {
-                int count = 0;
-                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
-                {
-                    count++;
-                    if (count > 100)
-                    {
-                        break;
-                    }
-                }
+                Assert.Fail("The malformed MEMO must not yield a row.");
             }
         });
-
-        Assert.True(ex is null or IJetException or InvalidDataException or NotSupportedException, $"Unexpected parser failure: {ex}");
+        Assert.Contains("Body", failure.Message, StringComparison.Ordinal);
+        Assert.InRange(counting.BytesRead, 0, bytes.LongLength);
+        Assert.Equal(expected, backing.ToArray());
     }
 
     // ─── CVE-2020-1400 analog: integer underflow in var-col offsets ────
@@ -594,106 +543,91 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         }
     }
 
-    // ─── Malformed metadata: LVAL chained MEMO length overflow ─────
-
-    /// <summary>
-    /// Corrupts a MEMO header to indicate a chained LVAL path (bitmask 0x00)
-    /// with a declared memoLen of 16 MB (0xFFFFFF). The reader pre-allocates
-    /// <c>new byte[memoLen]</c> in <c>ReadLvalChainAsync</c>, so the maximum
-    /// allocation is bounded at 16 MB by the 3-byte field. This test confirms
-    /// that a 16 MB LVAL declaration does not cause OOM or unhandled exceptions,
-    /// exercising the LVAL allocation path that the inline-MEMO test does not cover.
-    /// </summary>
-    [Fact]
-    public async Task ReadTable_CorruptLvalMemoLen_16MB_DoesNotOom()
+    /// <summary>A forged 30-bit chained length is refused before reading the verified first LVAL page.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="strict">Whether malformed values are rejected strictly.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    public async Task ReadTable_CorruptLvalMemoLength_RefusesBeforePayloadRead(DatabaseFormat format, bool strict)
     {
-        string path = TestDatabases.NorthwindTraders;
-        Assert.True(File.Exists(path), $"Required security fixture is missing: {path}");
-
         CancellationToken ct = TestContext.Current.CancellationToken;
-        byte[] original = await db.GetFileAsync(path, ct);
-        byte[] corrupted = (byte[])original.Clone();
+        (byte[] bytes, int offset, LongValueDescriptor original) = await CreateMemoMutationAsync(format, inline: false, ct);
+        Assert.True(original.UsesChainedPages);
+        Assert.NotEqual(0u, original.FirstDp);
+        (original with { Length = LongValueDescriptor.MaxLength }).WriteTo(bytes.AsSpan(offset));
+        byte[] expected = (byte[])bytes.Clone();
+        await using var backing = new MemoryStream(bytes, writable: false);
+        await using var counting = new CountingStream(backing);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            counting,
+            new AccessReaderOptions { UseLockFile = false, StrictParsing = strict, MaxLongValueBytes = 32768, PageCacheSize = 0, PageReadOptimizationMode = PageReadOptimizationMode.Disabled },
+            leaveOpen: true,
+            ct);
+        Assert.Equal(1, await reader.GetRealRowCountAsync("MemoTarget", ct));
+        counting.Reset();
 
-        const int pageSize = Constants.PageSizes.Jet4;
-        bool found = false;
-
-        for (int p = 3; p < corrupted.Length / pageSize && !found; p++)
+        JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(async () =>
         {
-            int pageStart = p * pageSize;
-            if (corrupted[pageStart] != 0x01)
+            await foreach (object[] _ in reader.Rows("MemoTarget", cancellationToken: ct))
             {
-                continue;
-            }
-
-            int nr = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 12, 2));
-            if (nr is 0 or > 200)
-            {
-                continue;
-            }
-
-            int firstRowRaw = BinaryPrimitives.ReadUInt16LittleEndian(corrupted.AsSpan(pageStart + 14, 2));
-            if ((firstRowRaw & 0xC000) != 0)
-            {
-                continue;
-            }
-
-            int rowStart = pageStart + (firstRowRaw & 0x1FFF);
-            if (rowStart + 12 >= pageStart + pageSize)
-            {
-                continue;
-            }
-
-            // Fabricate a chained LVAL MEMO header:
-            //   bytes 0..2: memoLen = 0xFFFFFF (16 MB)
-            //   byte  3:    bitmask 0x00 → chained LVAL path
-            //   bytes 4..7: page_row pointer → page 3, row 0 (arbitrary valid page)
-            int memoHeaderPos = rowStart + 4;
-            if (memoHeaderPos + 8 < pageStart + pageSize)
-            {
-                corrupted[memoHeaderPos] = 0xFF;     // memoLen low byte
-                corrupted[memoHeaderPos + 1] = 0xFF; // memoLen mid byte
-                corrupted[memoHeaderPos + 2] = 0xFF; // memoLen high byte
-                corrupted[memoHeaderPos + 3] = 0x00; // bitmask: chained LVAL
-
-                // Point to page 3, row 0 — likely invalid or a data page,
-                // but the reader will handle the lookup gracefully.
-                BinaryPrimitives.WriteUInt32LittleEndian(
-                    corrupted.AsSpan(memoHeaderPos + 4, 4),
-                    3 << 8);
-                found = true;
-            }
-        }
-
-        Assert.True(found, "Security fixture contains no suitable mutation target.");
-
-        await using var stream = new MemoryStream(corrupted, writable: false);
-        Exception? ex = await Record.ExceptionAsync(async () =>
-        {
-            await using AccessReader reader = await AccessReader.OpenAsync(
-                stream,
-                new AccessReaderOptions { UseLockFile = false },
-                leaveOpen: true,
-                ct);
-
-            IReadOnlyList<string> tables = await reader.ListTablesAsync(ct);
-            foreach (string table in tables)
-            {
-                int count = 0;
-                await foreach (object[] _ in reader.Rows(table, cancellationToken: ct))
-                {
-                    count++;
-                    if (count > 100)
-                    {
-                        break;
-                    }
-                }
+                Assert.Fail("The oversized MEMO must not yield a row.");
             }
         });
+        Assert.Equal(JetErrorCode.ValueTooLarge, failure.ErrorCode);
+        Assert.DoesNotContain((long)(original.FirstDp >> 8), counting.PagesRead(JetFormat.ForNewDatabase(format).PageSize));
+        Assert.InRange(counting.BytesRead, 0, bytes.LongLength);
+        Assert.Equal(expected, backing.ToArray());
+    }
 
-        // 16 MB is a bounded allocation; the CLR should handle it without OOM.
-        // The chain walk will fail (pointing at an invalid LVAL row) and the
-        // reader will surface a placeholder or skip, but must not crash.
-        Assert.True(ex is null or IJetException or InvalidDataException or NotSupportedException, $"Unexpected parser failure: {ex}");
+    private static async Task<(byte[] Bytes, int Offset, LongValueDescriptor Descriptor)> CreateMemoMutationAsync(
+        DatabaseFormat format,
+        bool inline,
+        CancellationToken cancellationToken)
+    {
+        await using var source = new MemoryStream();
+        string body = inline ? "verified memo" : new string('x', 12000);
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(source, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken))
+        {
+            await writer.CreateTableAsync("MemoTarget", [new("Body", typeof(string))], cancellationToken);
+            await writer.InsertRowAsync("MemoTarget", [body], cancellationToken);
+        }
+
+        source.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(source, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken))
+        {
+            int count = 0;
+            await foreach (object[] row in reader.Rows("MemoTarget", cancellationToken: cancellationToken))
+            {
+                Assert.Equal(body, Assert.IsType<string>(Assert.Single(row)));
+                count++;
+            }
+
+            Assert.Equal(1, count);
+        }
+
+        byte[] bytes = source.ToArray();
+        source.Position = 0;
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(source, cancellationToken: cancellationToken);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("MemoTarget", cancellationToken));
+        TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, cancellationToken));
+        ColumnInfo column = Assert.Single(definition.Columns);
+        Assert.Equal(ColumnType.MemoType, column.Type);
+        RowLocation location = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, cancellationToken));
+        byte[] page = await harness.ReadPageCopyAsync(location.DataPageNumber, cancellationToken);
+        JetFormat profile = harness.Database.Format;
+        Assert.True(RowDecodePlan.TryParseRowLayout(profile.RowFields, page, location.RowStart, location.RowSize, definition.HasVarColumns, out RowLayout layout));
+        ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(profile.RowFields, page, location.RowStart, location.RowSize, layout, column);
+        Assert.Equal(ColumnSliceKind.Var, slice.Kind);
+        int offset = checked((int)(location.DataPageNumber * profile.PageSize) + location.RowStart + slice.DataStart);
+        Assert.True(LongValueDescriptor.TryRead(bytes.AsSpan(offset, slice.DataLen), out LongValueDescriptor descriptor));
+        Assert.Equal(inline, descriptor.IsInline);
+        Assert.InRange(descriptor.Length, 1, 32768);
+        return (bytes, offset, descriptor);
     }
 
     // ─── Malformed metadata: all rows marked as deleted ─────────────

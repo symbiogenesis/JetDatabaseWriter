@@ -39,6 +39,7 @@ internal sealed class TableSchema(TDefImage image, ColumnPropertyBlock? properti
 
         return new TableDef
         {
+            TDefPageNumber = source.TDefPageNumber,
             Columns = columns,
             HasDeletedColumns = source.HasDeletedColumns,
         };

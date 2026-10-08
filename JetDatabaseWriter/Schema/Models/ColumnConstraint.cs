@@ -10,6 +10,12 @@ using JetDatabaseWriter.Schema.Expressions;
 /// </summary>
 internal sealed class ColumnConstraint
 {
+    /// <summary>Gets or sets the physical table identity bound to this constraint.</summary>
+    internal long? TDefPageNumber { get; set; }
+
+    /// <summary>Gets or sets the source column descriptor bound on first use.</summary>
+    internal ColumnInfo? PhysicalColumn { get; set; }
+
     public string Name { get; set; } = string.Empty;
 
     public ColumnType StorageType { get; set; }
@@ -75,6 +81,18 @@ internal sealed class ColumnConstraint
     /// <see cref="ColumnValidationRule.Unsupported"/> once it is known not to parse.
     /// </summary>
     internal ColumnValidationRule? ValidationRulePlan { get; set; }
+
+    /// <summary>Copies constraint state for an authorized physical identity binding without altering snapshots.</summary>
+    /// <param name="tdefPageNumber">The destination physical root page.</param>
+    /// <param name="column">The destination column, or null until its definition is read.</param>
+    /// <returns>The separately bound constraint.</returns>
+    internal ColumnConstraint BindPhysicalIdentity(long? tdefPageNumber, ColumnInfo? column)
+    {
+        var copy = (ColumnConstraint)this.MemberwiseClone();
+        copy.TDefPageNumber = tdefPageNumber;
+        copy.PhysicalColumn = column;
+        return copy;
+    }
 
     public bool HasAnyConstraint =>
         !this.IsNullable

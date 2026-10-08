@@ -11,6 +11,9 @@ using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class TableDef
 {
+    /// <summary>Gets or sets the physical root page, when read from a database.</summary>
+    internal long? TDefPageNumber { get; set; }
+
     /// <summary>Gets the immutable materializer identity for this definition.</summary>
     public RowShape Shape => field ??= new RowShape(this.Columns.Select(static column => column.Name).ToArray(), this.ClrTypes, this.Columns);
 
