@@ -10,6 +10,8 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
@@ -380,17 +382,17 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         // Security regression: ROW-VAR-OFFSET-UNDERFLOW
         // A real Jet4 trailer: EOD(2), reversed var-offsets(2), var-count(2), null-mask(1).
         byte[] row = [1, 0, 0x41, 0x42, 0x43, 5, 0, 2, 0, 1, 0, 1];
-        var fields = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb).RowFields;
+        RowFieldSizes fields = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb).RowFields;
         var column = new ColumnInfo { Type = ColumnType.BinaryType, ColNum = 0, VarIdx = 0 };
-        Assert.True(RowDecodePlan.TryParseRowLayout(fields, row, 0, row.Length, true, out var layout));
-        var valid = RowDecodePlan.ResolveColumnSlice(fields, row, 0, row.Length, layout, column);
+        Assert.True(RowDecodePlan.TryParseRowLayout(fields, row, 0, row.Length, true, out RowLayout layout));
+        ColumnSlice valid = RowDecodePlan.ResolveColumnSlice(fields, row, 0, row.Length, layout, column);
         Assert.Equal(ColumnSliceKind.Var, valid.Kind);
         Assert.Equal(3, valid.DataLen);
 
         // Change the actual variable offset to exceed EOD, leaving the trailer valid.
         BinaryPrimitives.WriteUInt16LittleEndian(row.AsSpan(layout.VarTableStart, 2), 6);
         Assert.True(RowDecodePlan.TryParseRowLayout(fields, row, 0, row.Length, true, out layout));
-        var corrupt = RowDecodePlan.ResolveColumnSlice(fields, row, 0, row.Length, layout, column);
+        ColumnSlice corrupt = RowDecodePlan.ResolveColumnSlice(fields, row, 0, row.Length, layout, column);
         Assert.Equal(ColumnSliceKind.Empty, corrupt.Kind);
         Assert.Equal(0, corrupt.DataLen);
     }
@@ -591,6 +593,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             return new ValueTask<LvalRowLocation>(new LvalRowLocation(page, 0, 8, null));
         }
     }
+
     // ─── Malformed metadata: LVAL chained MEMO length overflow ─────
 
     /// <summary>

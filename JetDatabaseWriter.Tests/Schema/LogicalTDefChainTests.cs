@@ -165,7 +165,7 @@ public sealed class LogicalTDefChainTests
         Assert.Equal(usedLength - 8, Ri32(pages[10], 8));
     }
 
-    // Security regression: TDEF-CYCLE
+    /// <summary>Security regression: TDEF-CYCLE refuses cyclic partial schemas.</summary>
     [Fact]
     public async Task ReadAsync_Cycle_RefusesInsteadOfReturningPartialSchema()
     {
@@ -174,10 +174,14 @@ public sealed class LogicalTDefChainTests
             await LogicalTDefChain.ReadAsync(
                 10,
                 PageSize,
-                (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct));
+                (number, token) => ReadPageAsync(pages, number, token),
+                ReturnBorrowedPage,
+                true,
+                this.ct));
     }
 
-    // Security regression: TDEF-CONTINUATION
+    /// <summary>Security regression: TDEF-CONTINUATION refuses invalid continuation pages.</summary>
+    /// <param name="truncated">Whether the continuation is shorter than one page.</param>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -194,10 +198,15 @@ public sealed class LogicalTDefChainTests
             await LogicalTDefChain.ReadAsync(
                 10,
                 PageSize,
-                (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct));
+                (number, token) => ReadPageAsync(pages, number, token),
+                ReturnBorrowedPage,
+                true,
+                this.ct));
     }
 
-    // Security regression: TDEF-BYTE-BUDGET
+    /// <summary>Security regression: TDEF-BYTE-BUDGET limits reads before excess allocation.</summary>
+    /// <param name="budget">The logical table definition byte budget.</param>
+    /// <param name="expectedReads">The number of pages that fit inside the budget.</param>
     [Theory]
     [InlineData(119, 1)]
     [InlineData(120, 2)]
@@ -226,7 +235,11 @@ public sealed class LogicalTDefChainTests
         LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(
             10,
             PageSize,
-            (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct, 176);
+            (number, token) => ReadPageAsync(pages, number, token),
+            ReturnBorrowedPage,
+            true,
+            this.ct,
+            176);
         Assert.NotNull(chain);
         Assert.Equal(176, chain.Bytes.Length);
         Assert.Equal(0xAB, chain.Bytes[119]);
