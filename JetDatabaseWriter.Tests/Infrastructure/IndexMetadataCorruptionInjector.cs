@@ -41,13 +41,13 @@ internal static class IndexMetadataCorruptionInjector
     /// does not have. When <c>L</c> is a multiple of the page size, the byte
     /// lands on the page-type byte of that continuation page instead (the
     /// write-atomicity probe's header hit with offset 0). The page then no
-    /// longer reads as a TDEF page, so the chain ends before it, and every
-    /// index descriptor, entry and name past that point is cut off.
+    /// longer reads as a TDEF page, so reading the chain is refused rather
+    /// than exposing a partial schema.
     /// </summary>
     /// <param name="writer">The open writer layers.</param>
     /// <param name="tdefPage">The table's first TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The real-index numbers, among those still readable, that now name a key column the table does not have, in ascending order.</returns>
+    /// <returns>The real-index numbers that now name a missing key column, in ascending order, or an empty list when the injected header damage makes the entire chain unreadable.</returns>
     /// <exception cref="InvalidOperationException">The database is Jet3, or a stray byte would land in a continuation page's header past its page-type byte.</exception>
     public static async ValueTask<IReadOnlyList<int>> InjectStrayUsedPagesByteAsync(WriterHarness writer, long tdefPage, CancellationToken cancellationToken)
     {
@@ -102,7 +102,9 @@ internal static class IndexMetadataCorruptionInjector
             await writer.Pager.WritePageAsync(pageNumber, page, cancellationToken);
         }
 
-        return await FindPhantomIndexesAsync(db, tdefPage, cancellationToken);
+        return strayBytes.Exists(stray => stray.Offset == 0)
+            ? []
+            : await FindPhantomIndexesAsync(db, tdefPage, cancellationToken);
     }
 
     /// <summary>

@@ -180,7 +180,7 @@ public sealed class UnmaintainableIndexWriteTests
         await using MemoryStream stream = await CreateDamagedTableAsync(format, layout);
         byte[] before = stream.ToArray();
 
-        JetLimitationException ex = await WriteExpectingRefusalAsync(
+        JetLimitationException ex = await WriteExpectingRefusalAsync<JetLimitationException>(
             stream,
             mode,
             async writer => await writer.UpdateRowsAsync(TableName, "C000", 7, new Dictionary<string, object?> { ["C001"] = 999 }, Ct));
@@ -196,7 +196,7 @@ public sealed class UnmaintainableIndexWriteTests
         await using MemoryStream stream = await CreateDamagedTableAsync(format, layout);
         byte[] before = stream.ToArray();
 
-        JetLimitationException ex = await WriteExpectingRefusalAsync(
+        JetLimitationException ex = await WriteExpectingRefusalAsync<JetLimitationException>(
             stream,
             mode,
             async writer => await writer.DeleteRowsAsync(TableName, "C000", 13, Ct));
@@ -222,7 +222,7 @@ public sealed class UnmaintainableIndexWriteTests
         await using MemoryStream stream = await CreateDamagedTableAsync(format, layout);
         byte[] before = stream.ToArray();
 
-        JetLimitationException ex = await WriteExpectingRefusalAsync(
+        JetLimitationException ex = await WriteExpectingRefusalAsync<JetLimitationException>(
             stream,
             mode,
             async writer => await writer.InsertRowsAsync(TableName, [WideRow(layout, 100)], Ct));
@@ -264,7 +264,7 @@ public sealed class UnmaintainableIndexWriteTests
         byte[] before = stream.ToArray();
         string lastColumn = ColumnName(ColumnCountOf(layout) - 1);
 
-        JetLimitationException ex = await WriteExpectingRefusalAsync(
+        JetLimitationException ex = await WriteExpectingRefusalAsync<JetLimitationException>(
             stream,
             mode,
             async writer =>
@@ -292,11 +292,9 @@ public sealed class UnmaintainableIndexWriteTests
     }
 
     /// <summary>
-    /// A stray byte on the page-type byte of a TDEF continuation page ends the
-    /// chain before that page, so the descriptors, entries and names of most
-    /// indexes lie past the end of what can be read. The preflight checked
-    /// only the indexes it could read, so every write succeeded and left the
-    /// others stale, and a schema rewrite rebuilt the table without any index.
+    /// A stray byte on a TDEF continuation page's type must refuse the whole
+    /// chain. Every write mode preserves the file instead of working from a
+    /// partial schema and losing the indexes beyond the invalid continuation.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="write">The write.</param>
@@ -304,15 +302,15 @@ public sealed class UnmaintainableIndexWriteTests
     /// <returns>A task that completes when the test has run.</returns>
     [Theory]
     [MemberData(nameof(ChainHeaderHitCases))]
-    public async Task Write_IndexSectionPastEndOfTableDefinition_ThrowsBeforeChangingAnything(DatabaseFormat format, TableWrite write, WriteMode mode)
+    public async Task Write_InvalidTDefContinuation_ThrowsBeforeChangingAnything(DatabaseFormat format, TableWrite write, WriteMode mode)
     {
         const DamagedTable layout = DamagedTable.ChainHeaderHit101;
         await using MemoryStream stream = await CreateDamagedTableAsync(format, layout);
         byte[] before = stream.ToArray();
-        int indexesBefore = await CountIndexesAsync(stream);
+        await Assert.ThrowsAsync<InvalidDataException>(() => CountIndexesAsync(stream));
         string lastColumn = ColumnName(ColumnCountOf(layout) - 1);
 
-        JetLimitationException ex = await WriteExpectingRefusalAsync(
+        _ = await WriteExpectingRefusalAsync<InvalidDataException>(
             stream,
             mode,
             async writer =>
@@ -343,9 +341,7 @@ public sealed class UnmaintainableIndexWriteTests
             });
 
         Assert.Equal(before, stream.ToArray());
-        Assert.Equal(indexesBefore, await CountIndexesAsync(stream));
-        Assert.Contains($"'{TableName}'", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("ends before the descriptor of real index 2", ex.Message, StringComparison.Ordinal);
+        await Assert.ThrowsAsync<InvalidDataException>(() => CountIndexesAsync(stream));
     }
 
     /// <summary>
@@ -464,7 +460,7 @@ public sealed class UnmaintainableIndexWriteTests
         DamagedTable.UniqueOnFirstPage100 => [.. Enumerable.Range(3, 27)],
         DamagedTable.Jet3HandSet50 => [3],
 
-        // Real indexes 0 and 1 keep their key columns; the rest cannot be read.
+        // Header damage makes the whole chain unreadable.
         DamagedTable.ChainHeaderHit101 => [],
         _ => throw new ArgumentOutOfRangeException(nameof(layout)),
     };
@@ -550,10 +546,11 @@ public sealed class UnmaintainableIndexWriteTests
                 if (layout == DamagedTable.ChainHeaderHit101)
                 {
                     // Real index 2's stray byte is now the first continuation
-                    // page's type, so the chain ends after its first page.
+                    // page's type, so the entire chain must be refused.
                     byte[] continuation = await harness.Database.Pages.ReadPageCopyAsync(intact.PageNumbers[1], Ct);
                     Assert.Equal((byte)0x04, continuation[0]);
-                    Assert.Single((await harness.Database.TableDefs.ReadTDefChainAsync(table.Entry.TDefPage, Ct)).PageNumbers);
+                    await Assert.ThrowsAsync<InvalidDataException>(async () =>
+                        await harness.Database.TableDefs.ReadTDefChainAsync(table.Entry.TDefPage, Ct));
                 }
             }
 
@@ -566,26 +563,28 @@ public sealed class UnmaintainableIndexWriteTests
 
     /// <summary>
     /// Runs <paramref name="write"/> in <paramref name="mode"/> and returns the
-    /// <see cref="JetLimitationException"/> it must throw. In an explicit
+    /// expected exception it must throw. In an explicit
     /// transaction the refusal leaves the transaction usable, and it is then
     /// committed, so anything the write changed before it threw reaches the file.
     /// </summary>
+    /// <typeparam name="TException">The precise refusal exception expected from the damaged structure.</typeparam>
     /// <param name="stream">The database.</param>
     /// <param name="mode">How the writer runs the write.</param>
     /// <param name="write">The write.</param>
     /// <returns>The exception the write threw.</returns>
-    private static async Task<JetLimitationException> WriteExpectingRefusalAsync(MemoryStream stream, WriteMode mode, Func<AccessWriter, Task> write)
+    private static async Task<TException> WriteExpectingRefusalAsync<TException>(MemoryStream stream, WriteMode mode, Func<AccessWriter, Task> write)
+        where TException : Exception
     {
         stream.Position = 0;
         var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit };
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, Ct);
         if (mode != WriteMode.ExplicitCommit)
         {
-            return await Assert.ThrowsAsync<JetLimitationException>(() => write(writer));
+            return await Assert.ThrowsAsync<TException>(() => write(writer));
         }
 
         await using JetTransaction transaction = await writer.BeginTransactionAsync(Ct);
-        JetLimitationException ex = await Assert.ThrowsAsync<JetLimitationException>(() => write(writer));
+        TException ex = await Assert.ThrowsAsync<TException>(() => write(writer));
         await transaction.CommitAsync(Ct);
         return ex;
     }
