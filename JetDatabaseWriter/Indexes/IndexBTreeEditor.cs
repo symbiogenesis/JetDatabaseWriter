@@ -2451,6 +2451,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
             return true;
         }
+
         /// <summary>Schedules an ancestor once even when several child operations affect it.</summary>
         /// <param name="page">The ancestor.</param>
         internal void Enqueue(long page)
