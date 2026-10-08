@@ -7,7 +7,7 @@
 
 Fully managed .NET library for reading and writing Microsoft Access (JET/ACE) databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
-Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.accdb` files from .NET without relying on native Access drivers or a local Access installation.
+Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from your .NET applications and tools, without installing Microsoft Access.
 
 ## Contents
 
@@ -19,12 +19,6 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 - [Documentation](#documentation)
 - [Encryption Support](#encryption-support)
 - [Limitations](#limitations)
-
-## At a Glance
-
-- Best fit for .NET applications and tools that need direct file-level access to Access databases.
-- Not a fit if you need a SQL engine, an ODBC driver, or full Access application features like forms, reports, macros, or VBA.
-- Access compatibility is checked with Microsoft-authored fixtures and DAO tests. Coverage is incomplete; see the [validation matrix](docs/design/writer-disk-format-validation-matrix.md) and [open requirements](docs/todo.md).
 
 ## Features
 
@@ -59,7 +53,7 @@ The parser enforces bounds on several page, long-value, attachment and encryptio
 
 The test suite draws from and extends the coverage of [Jackcess](https://jackcess.sourceforge.io/), [mdbtools](https://github.com/mdbtools/mdbtools), [OpenMcdf](https://github.com/ironfede/openmcdf), and Microsoft's [Extensible Storage Engine](https://github.com/microsoft/Extensible-Storage-Engine) for analogous storage-engine risk categories, with additional coverage for corner cases, corruption resilience, and format variants.
 
-For a compact map of writer-created disk-format surfaces and their strongest DAO OpenRecordset / CompactDatabase validation signals, see the [writer disk-format validation matrix](docs/design/writer-disk-format-validation-matrix.md).
+Access compatibility is checked with Microsoft-authored fixtures and DAO tests. Coverage is incomplete; see the [writer disk-format validation matrix](docs/design/writer-disk-format-validation-matrix.md) for tested formats and native-engine results, and the [open requirements](docs/todo.md) for remaining work.
 
 Beyond functional tests, the codebase is validated by:
 
