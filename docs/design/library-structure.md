@@ -85,6 +85,7 @@ JetDatabaseWriter/
 │   ├── CatalogWriter.cs                   (MSysObjects / MSysACEs row inserts, renames, and deletions)
 │   ├── CatalogValueReader.cs              (safe MSys* row access and tolerant invariant scalar parsing)
 │   ├── ColumnPropertyReader.cs            (reads a table's LvProp blob and hydrates calculated-column result types)
+│   ├── SystemCatalogBootstrapper.cs        (fresh core tables, permissions and header pointers)
 │   ├── TableCatalog.cs                    (cached user-table catalog and name lookup, shared by reader and writer)
 │   └── Models/
 │       ├── CatalogArtifactPlan.cs
@@ -127,7 +128,7 @@ JetDatabaseWriter/
 │   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, string rows, typed/direct slice decoding)
 │   ├── RowMapper.cs                       (cached object-array → POCO mapping and generic write projection, via EntityMap)
 │   ├── RowCriteriaEvaluator.cs            (compiles RowCriteria against a table, evaluates decoded rows)
-│   ├── TypedRowFallbackPolicy.cs          (strict/lenient malformed-row fallback behavior)
+│   ├── RowValueDecodePolicy.cs          (shared string/typed/POCO malformed variable-value policy)
 │   ├── OleObjectDecoder.cs                (structured OLE Object parser behind OleObjectValue, media type from a signature at offset 0, data URIs of stored bytes)
 │   ├── LongValueDecoder.cs               (typed MEMO/OLE decode over LongValues, through the reader's page cache)
 │   ├── RowDecoder.cs                      (decodes a cached data page's rows to typed values or strings, resolving LVAL chains)
@@ -315,7 +316,8 @@ JetDatabaseWriter/
 │       └── OfficeEncryptedPackage.cs
 │
 ├── Relationships/                         (foreign keys, cascade rules, linked tables)
-│   ├── RelationshipManager.cs             (relationship lifecycle and TDEF FK logical-index mutation)
+│   ├── ForeignKeyMetadataEditor.cs        (physical FK descriptors, TDEF chains, leaf reservations and partner links)
+│   ├── RelationshipManager.cs             (relationship policy and catalog lifecycle)
 │   ├── RelationshipCatalogStore.cs        (MSysRelationships row emission, loading, and rewrites)
 │   ├── RelationshipMetadataAggregator.cs  (groups MSysRelationships rows into per-relationship metadata)
 │   ├── RelationshipEnforcer.cs            (runtime FK insert/update/delete referential-integrity enforcement)
@@ -496,7 +498,9 @@ AccessWriter → WriterServices
   TableSchemaEditor   → TableCatalog, TableRowStore, IndexMaintainer, PageAllocator, LongValueEncoder, CatalogWriter,
                         CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader,
                         AutoNumberMaintainer
-  RelationshipManager → TableCatalog, IndexMaintainer, PageAllocator, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
+  RelationshipManager → TableCatalog, IndexMaintainer, ForeignKeyMetadataEditor, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
+  ForeignKeyMetadataEditor → Pager, TableDefReader, PageAllocator
+  SystemCatalogBootstrapper → Pager, TableDefReader, IndexMaintainer, CatalogArtifactWriter
   RelationshipEnforcer → TableCatalog, TableRowStore, IndexMaintainer, RelationshipCatalogStore, ComplexColumnManager, TableSnapshotReader
   ComplexColumnManager → TableCatalog, TableRowStore, IndexMaintainer, CatalogArtifactWriter, CatalogRowReader, ConstraintRegistry,
                         AutoNumberMaintainer, ComplexReferenceSeedReader
@@ -643,7 +647,7 @@ IAccessBase          (format metadata, page size, code page, async disposal)
 | **Runtime Enforcer** | `RelationshipEnforcer` | Keeps FK insert/update/delete referential-integrity checks separate from create/drop/rename workflows |
 | **Streaming Parser** | `DelimitedTextReader` | Parses linked CSV/delimited text records one at a time with bounded memory, quote handling, and line tracking |
 | **Planner / Locator** | `RelationshipSeekPlanner`, `RelationshipChildRowLocator` | Separates index-backed lookup planning and row-location resolution from FK fallback/enforcement workflow |
-| **Policy** | `TypedRowFallbackPolicy`, `RelationshipCascadePolicy` | Encapsulates strict vs lenient malformed-row handling and FK cascade recursion limits |
+| **Policy** | `RowValueDecodePolicy`, `RelationshipCascadePolicy` | Encapsulates strict vs lenient malformed-row handling and FK cascade recursion limits |
 | **Gateway** (Fowler) | `LockFileCoordinator`, `JetByteRangeLock` | Encapsulates filesystem concurrency primitives behind a clean interface |
 | **Registry** | `ConstraintRegistry`, `CalculatedExpressionFunctionRegistry` | Centralized constraint management and calculated-expression function dispatch — decoupled from the writer orchestrator and evaluator entry point |
 | **Query Provider / Pipeline** | `AccessQueryProvider`, `AccessQueryTranslator`, `QueryStage` subclasses | LINQ `IQueryable` provider over the reader's `TableReader`, `IndexRowReader`, and `SchemaReader` that translates an expression tree into an ordered stage pipeline, pushes a leading filter run into index inference, and runs the tail above it over the streamed rows (`InMemoryTail`) |
@@ -758,7 +762,7 @@ Linked-table public APIs live on `IAccessSchema`; linked-table catalog scanning,
 
 ### 10. Relationship catalog and runtime helpers are split from lifecycle orchestration
 
-`RelationshipManager` owns relationship create/drop/rename workflow and per-TDEF FK logical-index mutation. `RelationshipCatalogStore` owns `MSysRelationships` row emission, loading, and rewrites, while `RelationshipEnforcer` owns insert/update/delete referential-integrity checks. The runtime path uses smaller helpers for reusable policy and lookup work: `RelationshipSeekPlanner` resolves parent/child B-tree seek indexes, `RelationshipChildRowLocator` turns child-side seek hits into live `RowLocation` values, `RelationshipKeyBuilder` keeps seek and snapshot fallback key semantics aligned, and `RelationshipCascadePolicy` owns the cascade-depth guard independently of catalog mutation setup.
+`RelationshipManager` owns relationship create/drop/rename policy and catalog lifecycle. `ForeignKeyMetadataEditor` owns physical FK descriptors, TDEF-chain editing, leaf reservations and partner links under the same caller-owned transaction. `RelationshipCatalogStore` owns `MSysRelationships` row emission, loading, and rewrites, while `RelationshipEnforcer` owns insert/update/delete referential-integrity checks. The runtime path uses smaller helpers for reusable policy and lookup work: `RelationshipSeekPlanner` resolves parent/child B-tree seek indexes, `RelationshipChildRowLocator` turns child-side seek hits into live `RowLocation` values, `RelationshipKeyBuilder` keeps seek and snapshot fallback key semantics aligned, and `RelationshipCascadePolicy` owns the cascade-depth guard independently of catalog mutation setup.
 
 ### 11. Calculated expressions use explicit helper ownership
 

@@ -10,9 +10,9 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
-using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
+#pragma warning disable SA1204 // Keep bootstrap steps together in execution order, as in the original service.
 /// <summary>
 /// Creates core catalog tables, permissions and header pointers in a fresh database.
 /// The caller owns the creation transaction; artifact execution owns table allocation,
@@ -239,5 +239,4 @@ internal sealed class SystemCatalogBootstrapper(
             PageBuffers.Return(header);
         }
     }
-
 }

@@ -10,6 +10,10 @@ Jet3, Jet4 and ACE apart from the header offsets. The reference is
 `findRowEnd`, `positionAtRowData`, `deleteRow`, `updateRow`), checked against
 the Access-authored fixtures in `JetDatabaseWriter.Tests/Databases`.
 
+## Variable-value decode policy
+
+`RowValueDecodePolicy` validates nonempty fixed-size payloads stored in variable slots and calculated envelopes before the string, typed or compiled POCO decoder reads them. Strict parsing reports malformed values with the column name; lenient parsing returns empty text for string output, `DBNull.Value` for typed rows and an unassigned/default POCO property. A valid zero-length Text or binary value retains its normal empty representation. Calculated MEMO/OLE envelopes use the same validation after exact long-value retrieval. Write-back snapshots retain the unreadable-long-value sentinel, and storage I/O failures propagate.
+
 ## Long-value integrity
 
 Stored MEMO/OLE payload lengths are exact. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw InvalidDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.
