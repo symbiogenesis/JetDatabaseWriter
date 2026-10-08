@@ -19,8 +19,10 @@ using System.Text;
 /// numbers, and <c>&amp;H</c>/<c>&amp;O</c> radix literals where an operand
 /// is expected (after an operand, <c>&amp;</c> joins text, so in
 /// <c>[A]&amp;HFF</c> the name <c>HFF</c> is a field). A name chain is
-/// <c>[...]</c> or bare segments joined by <c>.</c> or <c>!</c> with nothing
-/// in between. A one-segment chain is a candidate, and so is the second
+/// <c>[...]</c> or bare segments joined by <c>.</c> or <c>!</c>, including
+/// whitespace around the separator. The scan conservatively preserves foreign
+/// chains even when the evaluator refuses their stored syntax. A one-segment
+/// chain is a candidate, and so is the second
 /// segment of a two-segment chain whose first segment is the table's own name
 /// (<c>[T].[Price]</c>, <c>T.Price</c>). Other chains, such as
 /// <c>Forms![F]![Price]</c> or <c>[Other].[Price]</c>, never are.
@@ -220,10 +222,15 @@ internal static class ExpressionFieldReferences
                 segments.Add(new Segment(start, index, text[start..nameEnd], Bracketed: false, HasDollarSuffix: dollar));
             }
 
-            if (index + 1 < text.Length && (text[index] is '.' or '!') && (text[index + 1] == '[' || IsNameStart(text[index + 1])))
+            int separator = SkipWhiteSpace(text, index);
+            if (separator < text.Length && text[separator] is '.' or '!')
             {
-                index++;
-                continue;
+                int next = SkipWhiteSpace(text, separator + 1);
+                if (next < text.Length && (text[next] == '[' || IsNameStart(text[next])))
+                {
+                    index = next;
+                    continue;
+                }
             }
 
             return index;
@@ -396,12 +403,18 @@ internal static class ExpressionFieldReferences
 
     private static char NextNonSpace(string text, int index)
     {
+        index = SkipWhiteSpace(text, index);
+        return index < text.Length ? text[index] : '\0';
+    }
+
+    private static int SkipWhiteSpace(string text, int index)
+    {
         while (index < text.Length && char.IsWhiteSpace(text[index]))
         {
             index++;
         }
 
-        return index < text.Length ? text[index] : '\0';
+        return index;
     }
 
     private static bool IsNameStart(char c) => char.IsLetter(c) || c == '_';

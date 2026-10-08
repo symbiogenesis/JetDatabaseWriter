@@ -76,8 +76,14 @@ The page codec unlocks the provider key once, leaves page 0 unchanged, and
 uses the native encoding key and salt when deriving each data page's IV.
 Reader and writer use normal page I/O and ownership. Regression tests cover
 native fixture reading, original-key mutation, wrong passwords and refusal
-of a spin budget below 100000 before data pages are read. DAO validation of
-library-mutated files must be recorded separately from library readback.
+of a spin budget below 100000 before data pages are read. Native fixture
+maintenance tests also require free-page scrubbing, actual tail shrink and
+unchanged page 0. On both target frameworks, DAO120 reads, writes and compacts
+the native JET4 RC4 and ACE Agile fixtures after this maintenance. Separate
+write, torn-write and flush fault tests restore the original Agile ciphertext
+and reuse the writer successfully; these are library rollback checks, not
+native crash-recovery evidence. Other algorithms and physical shrink faults
+still need their own coverage.
 
 ## File replacement guarantees
 

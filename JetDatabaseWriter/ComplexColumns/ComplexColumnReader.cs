@@ -11,6 +11,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -37,7 +38,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
 
     /// <summary>The <c>MSysComplexColumns</c> columns the flat-table lookup by column name reads.</summary>
-    private static readonly string[] FlatTableLookupColumns = ["ColumnName", "ConceptualTableID", "FlatTableID"];
+    private static readonly string[] FlatTableLookupColumns = ["ColumnName", "ConceptualTableID", "FlatTableID", "ComplexTypeObjectID"];
 
     /// <summary>The <c>MSysObjects</c> columns the object-name lookup reads; the LvProp, LvModule and LvExtra blobs are not decoded.</summary>
     private static readonly string[] ObjectNameColumns = ["Id", "Name"];
@@ -145,7 +146,8 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     /// Integer"). The element type comes from the flat table's value column,
     /// else from the <c>MSysComplexType_*</c> template name. A column whose
     /// kind or element type cannot be resolved is left out, and the caller
-    /// reports it as "Complex". Best-effort: a damaged catalog yields an empty map.
+    /// reports it as "Complex". Lenient reads omit invalid descriptors; missing
+    /// required catalog structure and real I/O failures remain errors.
     /// </summary>
     /// <param name="tableName">The parent table name.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
@@ -254,6 +256,20 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         }
 
         return tableName != null && string.Equals(tableIdStr, tableName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ValidateRequiredComplexColumns(TableDef definition, long tdefPage)
+    {
+        foreach (string columnName in ComplexColumnJoinColumns)
+        {
+            if (definition.FindColumnIndex(columnName) < 0)
+            {
+                throw new JetCorruptDataException(
+                    JetErrorCode.CorruptCatalog,
+                    "MSysComplexColumns is missing a required metadata column.",
+                    new JetErrorInfo { TableName = Constants.SystemTableNames.ComplexColumns, ColumnName = columnName, PageNumber = tdefPage });
+            }
+        }
     }
 
     private static ComplexColumnKind ClassifyComplexKind(string complexTypeName)
@@ -473,10 +489,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         int idxConceptualTable = msys.FindColumnIndex("ConceptualTableID");
         int idxComplexType = msys.FindColumnIndex("ComplexTypeObjectID");
 
-        if (idxComplexId < 0 || idxConceptualTable < 0)
-        {
-            return [];
-        }
+        ValidateRequiredComplexColumns(msys, msysTdef);
 
         Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
@@ -495,6 +508,13 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 continue;
             }
 
+            bool hasTypeObjectId = CatalogValueReader.TryParseInt32(row, idxComplexType, out int typeObjectId);
+            string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? tn) ? tn : string.Empty;
+            if (!this.AcceptComplexTypeReference(hasTypeObjectId, typeObjectId, typeName, msysTdef))
+            {
+                continue;
+            }
+
             if (!seenIds.Add(complexId))
             {
                 result.RemoveAll(column => column.ComplexId == complexId);
@@ -503,11 +523,9 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
 
             int flatId = CatalogValueReader.ParseInt32OrZero(row, idxFlatTable);
             int conceptualId = CatalogValueReader.ParseInt32OrZero(row, idxConceptualTable);
-            int typeObjectId = CatalogValueReader.ParseInt32OrZero(row, idxComplexType);
 
             string columnName = CatalogValueReader.GetStringOrDefault(row, idxColumnName, parent.Name);
             string flatName = flatId != 0 && objectNamesById.TryGetValue(flatId, out string? fn) ? fn : string.Empty;
-            string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? tn) ? tn : string.Empty;
 
             var info = new ComplexColumnInfo
             {
@@ -609,6 +627,26 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return map;
     }
 
+    private bool AcceptComplexTypeReference(bool hasTypeObjectId, int typeObjectId, string typeName, long tdefPage)
+    {
+        if (hasTypeObjectId && (typeObjectId == 0 || ClassifyComplexKind(typeName) != ComplexColumnKind.Unknown))
+        {
+            return true;
+        }
+
+        var error = new JetCorruptDataException(
+            JetErrorCode.CorruptCatalog,
+            "MSysComplexColumns contains an invalid complex type template reference.",
+            new JetErrorInfo { TableName = Constants.SystemTableNames.ComplexColumns, ColumnName = "ComplexTypeObjectID", PageNumber = tdefPage });
+        if (rows.StrictParsing)
+        {
+            throw error;
+        }
+
+        this.TraceBestEffortFallback(nameof(AcceptComplexTypeReference), error);
+        return false;
+    }
+
     private async ValueTask<long> GetComplexFlatTablePageAsync(string tableName, string columnName, CancellationToken cancellationToken)
     {
         try
@@ -629,10 +667,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             int idxConceptualTable = td.FindColumnIndex("ConceptualTableID");
             int idxFlatTable = td.FindColumnIndex("FlatTableID");
 
-            if (idxCol < 0 || idxFlatTable < 0 || idxConceptualTable < 0)
-            {
-                return 0;
-            }
+            ValidateRequiredComplexColumns(td, msysTdef);
 
             ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long targetTdefPage = resolved?.Entry.TDefPage ?? 0;
@@ -642,6 +677,8 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             }
 
             long matchedPage = 0;
+            int idxComplexType = td.FindColumnIndex("ComplexTypeObjectID");
+            Dictionary<long, string> objectNamesById = await this.BuildObjectNameLookupAsync(cancellationToken).ConfigureAwait(false);
 
             await foreach (string[] row in rows.EnumerateRowsForTdefAsync(msysTdef, td, FlatTableLookupColumns, cancellationToken).ConfigureAwait(false))
             {
@@ -652,6 +689,13 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
                 }
 
                 if (!ConceptualTableMatches(CatalogValueReader.GetStringOrEmpty(row, idxConceptualTable), targetTdefPage, tableName: null))
+                {
+                    continue;
+                }
+
+                bool hasTypeObjectId = CatalogValueReader.TryParseInt32(row, idxComplexType, out int typeObjectId);
+                string typeName = typeObjectId != 0 && objectNamesById.TryGetValue(typeObjectId, out string? templateName) ? templateName : string.Empty;
+                if (!this.AcceptComplexTypeReference(hasTypeObjectId, typeObjectId, typeName, msysTdef))
                 {
                     continue;
                 }

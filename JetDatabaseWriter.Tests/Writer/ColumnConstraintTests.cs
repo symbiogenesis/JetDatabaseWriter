@@ -1403,6 +1403,104 @@ public sealed class ColumnConstraintTests
         Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
     }
 
+    /// <summary>Gets unsupported parser cases across every public mutation surface and write mode.</summary>
+    public static TheoryData<DatabaseFormat, string, WriteMode> UnsupportedRuleMutationCases
+    {
+        get
+        {
+            var cases = new TheoryData<DatabaseFormat, string, WriteMode>();
+            foreach (string surface in new[] { "Array", "ArrayBatch", "Poco", "PocoBatch", "Named", "NamedBatch", "CriteriaUpdate", "PredicateUpdate" })
+            {
+                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
+                {
+                    foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+                    {
+                        cases.Add(format, surface, mode);
+                    }
+                }
+            }
+
+            return cases;
+        }
+    }
+
+    /// <summary>Unsupported persisted syntax refuses mutation without poisoning rollback or counters.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="surface">The public mutation overload.</param>
+    /// <param name="mode">The transaction mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(UnsupportedRuleMutationCases))]
+    public async Task UnsupportedPersistedRule_EveryMutationSurface_RefusesAfterReopenAndRollback(DatabaseFormat format, string surface, WriteMode mode)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "UnsupportedBoundary";
+        await using (AccessWriter creator = await OpenWriterAsync(stream))
+        {
+            await creator.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true },
+                    new("Score", typeof(int)) { ValidationRuleExpression = "[Score] >= 0" },
+                ],
+                TestContext.Current.CancellationToken);
+            await creator.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+        }
+
+        // Substitute an unsupported function without changing property lengths or any other bytes.
+        System.Text.Encoding propertyEncoding = format == DatabaseFormat.Jet3Mdb ? System.Text.Encoding.ASCII : System.Text.Encoding.Unicode;
+        byte[] supported = propertyEncoding.GetBytes("[Score] >= 0");
+        byte[] unsupported = propertyEncoding.GetBytes("Bogus() >= 0");
+        Assert.Equal(supported.Length, unsupported.Length);
+        byte[] original = stream.ToArray();
+        int ruleOffset = original.AsSpan().IndexOf(supported);
+        Assert.True(ruleOffset >= 0);
+        Assert.Equal(-1, original.AsSpan(ruleOffset + supported.Length).IndexOf(supported));
+        unsupported.CopyTo(stream.GetBuffer(), ruleOffset);
+        byte[] refused = stream.ToArray();
+
+        await using (AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit }))
+        {
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+
+                // An unrelated assignment remains legal and establishes caller-owned pending work.
+                Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Id"] = 7 }, TestContext.Current.CancellationToken));
+                int pages = transaction.JournaledPageCount;
+                Assert.True(pages > 0);
+                _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false, predicateId: 7));
+                Assert.Equal(refused, stream.ToArray());
+                Assert.Equal(pages, transaction.JournaledPageCount);
+                Assert.False(transaction.IsCommitted);
+                Assert.False(transaction.IsRolledBack);
+                Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 7, new Dictionary<string, object?> { ["Id"] = 8 }, TestContext.Current.CancellationToken));
+                await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+                Assert.Equal(refused, stream.ToArray());
+                if (mode != WriteMode.ExplicitCommit)
+                {
+                    _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
+                    Assert.Equal(refused, stream.ToArray());
+                }
+            }
+        }
+
+        // Restoring just the rule allows a real insert to verify the durable AutoNumber rewind.
+        supported.CopyTo(stream.GetBuffer(), ruleOffset);
+        Assert.Equal(original, stream.ToArray());
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal<int>([1, 2], rows.AsEnumerable().Select(row => (int)row["Id"]).Order());
+        Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
+    }
+
     /// <summary>Jet3 decimal storage resolution preserves the declaring writer's callback.</summary>
     /// <returns>The asynchronous test.</returns>
     [Fact]
@@ -1436,7 +1534,7 @@ public sealed class ColumnConstraintTests
         Assert.Equal(7m, Assert.Single(rows.AsEnumerable())["Score"]);
     }
 
-    private static async Task RefuseMutationAsync(AccessWriter writer, string table, string surface, bool badDefault)
+    private static async Task RefuseMutationAsync(AccessWriter writer, string table, string surface, bool badDefault, int predicateId = 1)
     {
         object score = badDefault ? DbDefault.Value : 0;
         var named = new RowValues { ["Score"] = score };
@@ -1465,7 +1563,7 @@ public sealed class ColumnConstraintTests
                 _ = await writer.UpdateRowsAsync(table, RowCriteria.All(), named, TestContext.Current.CancellationToken);
                 break;
             case "PredicateUpdate":
-                _ = await writer.UpdateRowsAsync(table, "Id", 1, new Dictionary<string, object?> { ["Score"] = score }, TestContext.Current.CancellationToken);
+                _ = await writer.UpdateRowsAsync(table, "Id", predicateId, new Dictionary<string, object?> { ["Score"] = score }, TestContext.Current.CancellationToken);
                 break;
             default:
                 throw new ArgumentException("Unknown mutation surface.", nameof(surface));

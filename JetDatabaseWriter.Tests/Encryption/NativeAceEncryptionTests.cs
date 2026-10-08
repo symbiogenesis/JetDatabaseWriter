@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -56,6 +57,80 @@ public sealed class NativeAceEncryptionTests
         DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Rows.Count);
         Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["Id"], 8) && Equals(row["Label"], "Library updated native file"));
+    }
+
+    /// <summary>Free-page maintenance preserves native encryption and retained rows.</summary>
+    [Fact]
+    public async Task NativeAgile_ScrubAndShrinkPreserveHeaderAndRows()
+    {
+        byte[] original = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
+        await using var stream = new MemoryStream();
+        await stream.WriteAsync(original, TestContext.Current.CancellationToken);
+        stream.Position = 0;
+        long populatedLength;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Maintenance", [1, new byte[32_000]], TestContext.Current.CancellationToken);
+            populatedLength = stream.Length;
+            await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
+            Assert.True(await writer.ScrubFreePagesAsync(TestContext.Current.CancellationToken) > 0);
+            Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) > 0);
+        }
+
+        Assert.True(stream.Length < populatedLength);
+        Assert.Equal(original.AsSpan(0, Constants.PageSizes.Jet4).ToArray(), stream.ToArray().AsSpan(0, Constants.PageSizes.Jet4).ToArray());
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions("Native123") { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        using DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        DataRow row = Assert.Single(rows.Rows.Cast<DataRow>());
+        Assert.Equal(7, row["Id"]);
+        Assert.Equal("Native encrypted row", row["Label"]);
+    }
+
+    /// <summary>Native scrub rollback restores ciphertext after torn writes and flush faults.</summary>
+    /// <param name="fault">The physical fault to inject.</param>
+    [Theory]
+    [InlineData("write")]
+    [InlineData("partial")]
+    [InlineData("flush")]
+    public async Task NativeAgile_ScrubFailureRestoresCiphertext(string fault)
+    {
+        byte[] original = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
+        await using var stream = new WriteFaultStream();
+        await stream.WriteAsync(original, TestContext.Current.CancellationToken);
+        stream.Position = 0;
+        await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
+        await writer.InsertRowAsync("Maintenance", [1, new byte[32_000]], TestContext.Current.CancellationToken);
+        await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
+        byte[] baseline = stream.ToArray();
+        if (fault == "flush")
+        {
+            stream.FailOnFlush(1);
+        }
+        else if (fault == "partial")
+        {
+            stream.FailDuringWrite(2);
+        }
+        else
+        {
+            stream.FailOnWrite(2);
+        }
+
+        await Assert.ThrowsAsync<IOException>(async () => await writer.ScrubFreePagesAsync(TestContext.Current.CancellationToken));
+        Assert.True(stream.Faulted);
+        Assert.Equal(baseline, stream.ToArray());
+        Assert.True(await writer.ScrubFreePagesAsync(TestContext.Current.CancellationToken) > 0);
+        Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) > 0);
+        await writer.InsertRowAsync("T", [8, "After scrub fault"], TestContext.Current.CancellationToken);
+        await writer.DisposeAsync();
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions("Native123") { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        using DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, rows.Rows.Count);
+        Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["Id"], 7) && Equals(row["Label"], "Native encrypted row"));
+        Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["Id"], 8) && Equals(row["Label"], "After scrub fault"));
     }
 
     /// <summary>Reader and writer reject excessive native hashing before reading encrypted data pages.</summary>

@@ -28,9 +28,19 @@ public sealed class DaoNativeEncryptionTests
             await writer.InsertRowAsync("T", [8, "Library inserted"], TestContext.Current.CancellationToken);
             await writer.CreateTableAsync("Added", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("Added", [1], TestContext.Current.CancellationToken);
-            await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("Added", [2], TestContext.Current.CancellationToken);
-            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            await using (JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken))
+            {
+                await writer.InsertRowAsync("Added", [2], TestContext.Current.CancellationToken);
+                await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            }
+
+            await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Maintenance", [1, new byte[32_000]], TestContext.Current.CancellationToken);
+            long populatedLength = new FileInfo(session.SourcePath).Length;
+            await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
+            Assert.True(await writer.ScrubFreePagesAsync(TestContext.Current.CancellationToken) > 0);
+            Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) > 0);
+            Assert.True(new FileInfo(session.SourcePath).Length < populatedLength);
         }
 
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
@@ -52,7 +62,12 @@ public sealed class DaoNativeEncryptionTests
         Assert.Contains("ADDED=1", result.StdOut, StringComparison.Ordinal);
         await using AccessReader reader = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions("Native123") { UseLockFile = false }, TestContext.Current.CancellationToken);
         using DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, rows.Rows.Count);
+        DataRow original = Assert.Single(rows.Select("Id = 7"));
+        Assert.Equal("Native encrypted row", original["Label"]);
         DataRow updated = Assert.Single(rows.Select("Id = 8"));
         Assert.Equal("DAO updated", updated["Label"]);
+        using DataTable added = await reader.ReadTableAsync("Added", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(1, Assert.Single(added.Select())["Id"]);
     }
 }

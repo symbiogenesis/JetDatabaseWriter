@@ -24,8 +24,12 @@ and resolve it only against an explicit, matching current-table context.
 Cross-table and multi-segment object references are refused; no embedded code
 is executed. Defaults and validation rules reject qualified references before
 mutation, including setting a rule on an empty table. Column renames preserve
-the qualifier and rewrite the matching field dependency. Table renames and
-whitespace around qualification separators still need separate native evidence.
+the qualifier and rewrite the matching field dependency. DAO120 rejects all
+nine tested variants with a space before, after or on both sides of the
+separator in `[T].[Price]`, `T.Price` and `[T]![Price]`; the evaluator rejects
+them too. Each native refusal leaves the field collection unchanged, and the
+adjacent spelling succeeds in the same database. Table renames still need
+separate native evidence.
 
 ## On-disk format
 
@@ -142,9 +146,12 @@ skips string, `#date#` and `{guid ...}` literals, numbers and radix literals,
 and rewrites `[Old]` and a bare `Old` (not a keyword, a `vb` constant, a
 function call or a `$` name) as `[New]`. A reference qualified by the table's
 own name keeps the qualifier: `[Table].[Old]` becomes `[Table].[New]` and
-`Table.Old` becomes `Table.[New]`. The expression engine cannot evaluate a
-table-qualified reference yet, before the rename or after it. Other qualified
-names (`[Other].[Old]`, `Forms![F]![Old]`) are left alone. Every Access-authored expression in the fixtures uses
+`Table.Old` becomes `Table.[New]`. Same-table qualified references evaluate
+before and after column rename. Other qualified names (`[Other].[Old]`,
+`Forms![F]![Old]`) are left alone. The text scanner also groups spaced name
+chains conservatively, so unsupported stored syntax such as `[Other] . [Old]`
+cannot be mistaken for a local field and rewritten. Every Access-authored
+expression in the original fixtures uses
 `[Field]` brackets. A bracketed name cannot hold `]`, and the Access naming
 rules that `RenameColumnAsync` checks the new name against exclude it, so a
 rename to such a name throws `ArgumentException` before the table is read.

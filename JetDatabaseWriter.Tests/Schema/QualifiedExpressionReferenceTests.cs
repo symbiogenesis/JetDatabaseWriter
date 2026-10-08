@@ -72,6 +72,16 @@ public sealed class QualifiedExpressionReferenceTests
         Assert.Equal(4, plan.Root.Evaluate(Context("T", "Cost"), plan));
     }
 
+    [Theory]
+    [InlineData("[Other] . [Price]")]
+    [InlineData("Other ! Price")]
+    [InlineData("Forms ! [T] ! [Price]")]
+    public void SpacedForeignReference_IsNotRenamedAsLocalField(string expression)
+    {
+        Assert.False(ExpressionFieldReferences.References(expression, "Price", "T"));
+        Assert.Equal(expression, ExpressionFieldReferences.Rename(expression, "Price", "Cost", "T"));
+    }
+
     [Fact]
     public void QualifiedNamesInsideLiterals_RemainText()
     {
@@ -88,6 +98,8 @@ public sealed class QualifiedExpressionReferenceTests
 
     [Theory]
     [InlineData("Forms![T]![Price]")]
+    [InlineData("Forms ! [T] ! [Price]")]
+    [InlineData("[T] . [Price] . [Value]")]
     [InlineData("[T].[Price].[Value]")]
     public void MultiSegmentObjectReference_Refuses(string expression)
         => Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
@@ -261,6 +273,69 @@ public sealed class QualifiedExpressionReferenceTests
         Assert.Equal(4, values[2]);
         Assert.Equal(6, values[3]);
         Assert.Equal(8, values[4]);
+    }
+
+    [Theory]
+    [InlineData("[T] .[Price]")]
+    [InlineData("[T]. [Price]")]
+    [InlineData("[T] . [Price]")]
+    [InlineData("T .Price")]
+    [InlineData("T. Price")]
+    [InlineData("T . Price")]
+    [InlineData("[T] ![Price]")]
+    [InlineData("[T]! [Price]")]
+    [InlineData("[T] ! [Price]")]
+    public void SpacedQualifiedCalculation_RefusesAsNativeDaoDoes(string reference)
+        => Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(reference + " * 2"));
+
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    [InlineData("[T] .[Price]")]
+    [InlineData("[T]. [Price]")]
+    [InlineData("[T] . [Price]")]
+    [InlineData("T .Price")]
+    [InlineData("T. Price")]
+    [InlineData("T . Price")]
+    [InlineData("[T] ![Price]")]
+    [InlineData("[T]! [Price]")]
+    [InlineData("[T] ! [Price]")]
+    public async Task NativeSpacedQualifiedCalculation_RefusesWithoutAddingField(string reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.SpacedQualification");
+        string path = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
+        string expression = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(reference + " * 2");
+        string adjacent = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(reference.Replace(" ", string.Empty, StringComparison.Ordinal) + " * 2");
+        AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(
+            $$"""
+            $db = $engine.CreateDatabase({{path}}, ';LANGID=0x0409;CP=1252;COUNTRY=0')
+            try {
+                $db.Execute('CREATE TABLE [T] ([Price] LONG)')
+                $db.TableDefs.Refresh()
+                $tdf = $db.TableDefs('T')
+                $field = $tdf.CreateField('Rejected', 4)
+                $field.Properties('Expression').Value = {{expression}}
+                $rejected = $false
+                try { $tdf.Fields.Append($field) }
+                catch [System.Runtime.InteropServices.COMException] { $rejected = $true }
+                if (!$rejected) { throw 'DAO accepted a spaced qualified expression.' }
+                $tdf.Fields.Refresh()
+                if ($tdf.Fields.Count -ne 1) { throw 'DAO retained the rejected calculated field.' }
+                $field = $tdf.CreateField('Calculated', 4)
+                $field.Properties('Expression').Value = {{adjacent}}
+                $tdf.Fields.Append($field)
+                $db.Execute('INSERT INTO [T] ([Price]) VALUES (4)', 128)
+                $rs = $db.OpenRecordset('SELECT [Calculated] FROM [T]')
+                try { Write-Output ('CALCULATED=' + [string]$rs.Fields('Calculated').Value) }
+                finally { $rs.Close() }
+            } finally { $db.Close() }
+            """,
+            TimeSpan.FromMinutes(1));
+        Assert.True(result.ExitCode == 0, $"DAO failed: {result.StdOut}\n{result.StdErr}");
+        Assert.Contains("CALCULATED=8", result.StdOut, StringComparison.Ordinal);
     }
 
     private static CalculatedExpressionEvaluationContext Context(string? tableName, string column = "Price")
