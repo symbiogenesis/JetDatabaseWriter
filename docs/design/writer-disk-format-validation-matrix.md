@@ -66,6 +66,8 @@ The library regressions below distinguish their round trips from explicit DAO ch
 - `LinkedTextTableTests` checks that a callback approving the source directory can still refuse the final text file across count, metadata and materialized reads. `LinkedTextSourceStreamTests` checks consumed-byte limits when a source grows, exact-limit EOF and empty reads. Opened-handle identity and hard-link/path-swap protection remain unverified.
 - `CveMitigationTests` locates MEMO descriptors using the catalog, physical row location, parsed row trailer and column slice, with valid readback before mutation, across Jet3/Jet4/ACE. Inline overstatement fails against its field bounds; a forged 30-bit chained length raises `ValueTooLarge` in strict and lenient modes before reading its first LVAL page. Read counts are bounded and source bytes remain unchanged. These synthetic corruptions establish library refusal behavior, not native interoperability.
 
+- `IndexTreeReclamationTests` forces multi-page trees on the Access-authored Jet3 index fixture and checks repeated public insert batches do not accumulate writer-created orphans beyond retained native-map pages. Jet3/Jet4/ACE shrink cases check reachable entries and exact rollback bytes. Synthetic shared-map, invalid-map and partial-intermediate cases retain potentially owned pages. Native Jet3 map reclamation and matching-revision DAO compact evidence remain separate requirements.
+
 ## Validation Levels
 
 Use the canonical ladder in [dao-validation-strategy.md](dao-validation-strategy.md). In this matrix, the levels are named as follows:

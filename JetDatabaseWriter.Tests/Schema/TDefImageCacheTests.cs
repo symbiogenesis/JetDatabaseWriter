@@ -70,13 +70,14 @@ public sealed class TDefImageCacheTests
     [InlineData(DatabaseFormat.AceAccdb)]
     public void Definition_ProjectsPhysicalIdentityWithoutRecursiveInitialization(DatabaseFormat kind)
     {
-        JetFormat format = JetFormat.ForNewDatabase(kind);
+        var format = JetFormat.ForNewDatabase(kind);
         TDefImage image = TDefCodec.Parse(format, EmptyRoot(format))!;
         image.TDefPageNumber = 5;
         Assert.Equal(5L, image.Definition.TDefPageNumber);
         Assert.Same(image.Definition, image.Definition);
         Assert.Equal(5L, TableSchema.CreateDefinition(image, properties: null).TDefPageNumber);
     }
+
     private static byte[] EmptyRoot(JetFormat format)
     {
         byte[] page = new byte[format.PageSize];

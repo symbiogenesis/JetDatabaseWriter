@@ -145,10 +145,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         long epoch = this.images.Epoch;
         LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
-        if (image is not null)
-        {
-            image.TDefPageNumber = tdefPage;
-        }
+        image?.TDefPageNumber = tdefPage;
 
         if (this.cacheResults && image is not null && chain is not null)
         {

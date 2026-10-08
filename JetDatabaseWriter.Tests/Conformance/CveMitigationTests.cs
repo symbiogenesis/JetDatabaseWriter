@@ -579,7 +579,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
             }
         });
         Assert.Equal(JetErrorCode.ValueTooLarge, failure.ErrorCode);
-        Assert.DoesNotContain((long)(original.FirstDp >> 8), counting.PagesRead(JetFormat.ForNewDatabase(format).PageSize));
+        Assert.DoesNotContain(original.FirstDp >> 8, counting.PagesRead(JetFormat.ForNewDatabase(format).PageSize));
         Assert.InRange(counting.BytesRead, 0, bytes.LongLength);
         Assert.Equal(expected, backing.ToArray());
     }

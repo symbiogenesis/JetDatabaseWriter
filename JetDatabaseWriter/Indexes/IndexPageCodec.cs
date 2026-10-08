@@ -672,12 +672,28 @@ internal static class IndexPageCodec
         byte[] page,
         int pageSize)
     {
-        var result = new List<DecodedIntermediateEntry>();
+        _ = TryDecodeIntermediateEntries(layout, page, pageSize, out List<DecodedIntermediateEntry> result);
+        return result;
+    }
+
+    /// <summary>Decodes intermediate entries only when the entire payload is valid.</summary>
+    /// <param name="layout">The page layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="result">The decoded entries, possibly partial on failure.</param>
+    /// <returns>Whether every entry in the payload was decoded.</returns>
+    public static bool TryDecodeIntermediateEntries(
+        IndexPageLayout layout,
+        byte[] page,
+        int pageSize,
+        out List<DecodedIntermediateEntry> result)
+    {
+        result = [];
         if (!IsIntermediate(page)
             || !TryGetPayloadEnd(layout, page, pageSize, out int payloadEnd)
-            || payloadEnd <= layout.FirstEntryOffset)
+            || payloadEnd < layout.FirstEntryOffset)
         {
-            return result;
+            return false;
         }
 
         int prefixLength = ReadPrefixLength(layout, page);
@@ -692,7 +708,7 @@ internal static class IndexPageCodec
             byte[] fullEntry = DecodeCanonicalKey(page, entryStart, storedLength, prefixLength, sharedPrefix, isFirstEntry);
             if (fullEntry.Length < IntermediateTrailerSize || (isFirstEntry && prefixLength > fullEntry.Length))
             {
-                break;
+                return false;
             }
 
             if (isFirstEntry && prefixLength > 0)
@@ -718,7 +734,7 @@ internal static class IndexPageCodec
             entryStart = nextEntryStart;
         }
 
-        return result;
+        return true;
     }
 
     /// <summary>

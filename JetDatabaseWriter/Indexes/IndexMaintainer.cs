@@ -624,8 +624,8 @@ internal sealed class IndexMaintainer(
         // after the TDEF write. System tables, complex flat tables and tables
         // with long or complex storage columns stay conservative and keep
         // them. Jet4 / ACE find each old tree through its index usage-map row;
-        // Jet3 keeps none the writer can read back, so each old tree is walked
-        // from its first_dp, before anything is written.
+        // Jet3 retains native map membership and walks each current tree from
+        // its first_dp, collecting only pages those preserved maps do not name.
         bool freeReplacedTrees = !HasLongOrComplexStorageColumns(tableDef)
             && !IsGeneratedComplexFlatTableName(tableName)
             && !tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase);
@@ -882,7 +882,7 @@ internal sealed class IndexMaintainer(
                     format.PageSize,
                     pager.PageCount,
                     minimumPageNumber: 0,
-                    strict: false,
+                    strict: true,
                     pager.ReadPageAsync,
                     PageBuffers.Return,
                     pageNumbers,
@@ -908,11 +908,10 @@ internal sealed class IndexMaintainer(
     /// <summary>
     /// Collects every page of the current tree of each real index a Jet3 bulk
     /// rebuild is about to replace, by walking it from its <c>first_dp</c>:
-    /// Jet3 keeps no index usage map the writer can read back. Only an index
-    /// whose <c>used_pages</c> is 0, one the writer created, is collected. An
-    /// Access-authored index keeps a usage-map row that still names its old
-    /// pages, so its tree is left for Compact &amp; Repair rather than freed
-    /// while that row lists it. A tree that cannot be walked is not collected.
+    /// Access-authored usage-map rows remain unchanged: every page they name
+    /// stays allocated. Subsequent writer-built trees are collected even when
+    /// the descriptor retains that native map pointer. An unreadable map or
+    /// tree prevents reclamation rather than guessing page ownership.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tdefBuffer">The logical TDEF bytes, before the rebuild patches them.</param>
@@ -929,16 +928,61 @@ internal sealed class IndexMaintainer(
         int numRealIdx,
         CancellationToken cancellationToken)
     {
+        int numCols = TDefCodec.ReadCounts(format, tdefBuffer).ColumnCount;
+        int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(format, tdefBuffer, numCols, numRealIdx);
+        if (realIdxDescStart < 0)
+        {
+            return CreateEmptyPageGroups(numRealIdx);
+        }
+
+        var pointers = new UsageMapPointer[numRealIdx];
+        var hasMap = new bool[numRealIdx];
+        for (int realIdxNum = 0; realIdxNum < numRealIdx; realIdxNum++)
+        {
+            if (!format.Index.TryReadRealIdxSlot(tdefBuffer, realIdxDescStart, realIdxNum, out RealIdxSlot slot)
+                || !UsageMap.TryReadPointer(tdefBuffer, slot.FirstDpOffset - 4, out pointers[realIdxNum]))
+            {
+                return CreateEmptyPageGroups(numRealIdx);
+            }
+
+            hasMap[realIdxNum] = Ri32(tdefBuffer, slot.FirstDpOffset - 4) != 0;
+        }
+
+        long[][] mappedGroups = await this.ReadIndexPageGroupsFromUsageMapAsync(pointers, cancellationToken).ConfigureAwait(false) ?? CreateEmptyPageGroups(numRealIdx);
+        var mappedPages = new HashSet<long>();
+        for (int realIdxNum = 0; realIdxNum < mappedGroups.Length; realIdxNum++)
+        {
+            // Even an unmaintained descriptor may own pages shared with a
+            // replaced tree. Every nonzero native map must be understood.
+            if (hasMap[realIdxNum] && mappedGroups[realIdxNum].Length == 0)
+            {
+                return CreateEmptyPageGroups(numRealIdx);
+            }
+
+            mappedPages.UnionWith(mappedGroups[realIdxNum]);
+        }
+
         long[][] groups = CreateEmptyPageGroups(numRealIdx);
         foreach ((int realIdxNum, RealIdxEntry entry) in realIdxByNum)
         {
             long rootPage = (uint)Ri32(tdefBuffer, entry.FirstDpOffset);
-            if (realIdxNum < 0 || realIdxNum >= numRealIdx || rootPage == 0 || Ri32(tdefBuffer, entry.FirstDpOffset - 4) != 0)
+            if (realIdxNum < 0 || realIdxNum >= numRealIdx || rootPage == 0
+                || (Ri32(tdefBuffer, entry.FirstDpOffset - 4) != 0 && mappedGroups[realIdxNum].Length == 0))
             {
                 continue;
             }
 
-            groups[realIdxNum] = await this.TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false) ?? [];
+            long[] treePages = await this.TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false) ?? [];
+            var reclaimable = new List<long>();
+            foreach (long pageNumber in treePages)
+            {
+                if (!mappedPages.Contains(pageNumber))
+                {
+                    reclaimable.Add(pageNumber);
+                }
+            }
+
+            groups[realIdxNum] = reclaimable.ToArray();
         }
 
         return groups;
@@ -957,6 +1001,36 @@ internal sealed class IndexMaintainer(
             {
                 _ = newPages.Add(pageNumber);
             }
+        }
+
+        // Include every current descriptor, even one not maintained in this
+        // pass. A page shared with another live tree must stay allocated.
+        (TdefPreambleStatus status, TdefPreamble current) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (status != TdefPreambleStatus.Ok)
+        {
+            return;
+        }
+
+        for (int realIdxNum = 0; realIdxNum < current.NumRealIdx; realIdxNum++)
+        {
+            if (!format.Index.TryReadRealIdxSlot(current.Buffer, current.RealIdxDescStart, realIdxNum, out RealIdxSlot slot))
+            {
+                return;
+            }
+
+            long rootPage = (uint)Ri32(current.Buffer, slot.FirstDpOffset);
+            if (rootPage == 0)
+            {
+                continue;
+            }
+
+            long[]? reachable = await this.TryCollectIndexTreePagesAsync(format.IndexPage, tdefPage, rootPage, cancellationToken).ConfigureAwait(false);
+            if (reachable is null)
+            {
+                return;
+            }
+
+            newPages.UnionWith(reachable);
         }
 
         var deallocatedPages = new HashSet<long>();
@@ -1022,8 +1096,7 @@ internal sealed class IndexMaintainer(
     /// Collects, for each maintained real index, every page its tree now
     /// spans. Reads pages without changing <paramref name="tdefBuffer"/> or
     /// writing pages, so the caller can still bail and release what it reserved.
-    /// Returns an empty array when the format keeps no index usage maps
-    /// (Jet3) or no slot was maintained, and <see langword="null"/> when a
+    /// Returns an empty array when no slot was maintained, and <see langword="null"/> when a
     /// tree cannot be walked or the table has no usage-map page.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
@@ -1040,13 +1113,13 @@ internal sealed class IndexMaintainer(
         int numRealIdx,
         CancellationToken cancellationToken)
     {
-        if (format.IsJet3 || slots.Count == 0)
+        if (slots.Count == 0)
         {
             return [];
         }
 
         long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
-        if (usageMapPage <= 0 || usageMapPage >= pager.PageCount)
+        if (!format.IsJet3 && (usageMapPage <= 0 || usageMapPage >= pager.PageCount))
         {
             return null;
         }
@@ -1086,7 +1159,7 @@ internal sealed class IndexMaintainer(
     /// Writes the index usage-map rows collected by
     /// <see cref="TryCollectIncrementalIndexPageGroupsAsync"/>, as REFERENCE
     /// rows where a tree spans more than one INLINE window. Does nothing for
-    /// an empty array.
+    /// Jet3, whose native maps are preserved, or an empty array.
     /// </summary>
     /// <param name="tdefBuffer">The logical TDEF bytes, which name the table's usage-map page.</param>
     /// <param name="slots">The maintained real-index descriptors.</param>
@@ -1094,7 +1167,7 @@ internal sealed class IndexMaintainer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask WriteIncrementalIndexUsageMapsAsync(byte[] tdefBuffer, List<(int RealIdxNum, RealIdxEntry Entry)> slots, long[][] indexPageGroups, CancellationToken cancellationToken)
     {
-        if (indexPageGroups.Length == 0)
+        if (format.IsJet3 || indexPageGroups.Length == 0)
         {
             return;
         }
@@ -1160,8 +1233,18 @@ internal sealed class IndexMaintainer(
                 return null;
             }
 
-            List<DecodedIntermediateEntry> entries = IndexPageCodec.DecodeIntermediateEntries(layout, page, format.PageSize);
-            if (entries.Count == 0)
+            if (!IndexPageCodec.TryDecodeIntermediateEntries(layout, page, format.PageSize, out List<DecodedIntermediateEntry> entries))
+            {
+                return null;
+            }
+
+            long tailPage = IndexPageCodec.ReadTailPage(layout, page);
+            if (tailPage != 0)
+            {
+                stack.Push(tailPage);
+            }
+
+            if (entries.Count == 0 && tailPage == 0)
             {
                 return null;
             }
@@ -1191,8 +1274,8 @@ internal sealed class IndexMaintainer(
     /// already wrote is harmless: a rebuilt tree it reserved and wrote but
     /// had not yet linked through the TDEF is given back to the global usage
     /// map before it returns, and a tree it had already linked (or replaced)
-    /// is left orphaned for Access to reclaim on Compact &amp; Repair, exactly
-    /// like the bulk-rebuild path's own orphans.
+    /// is retained if the call bails. Successful maintenance releases replaced
+    /// pages after protecting current roots and preserved native usage maps.
     /// <para>
     /// Two flavours of fast path are attempted per real-idx:
     /// </para>
@@ -1302,9 +1385,8 @@ internal sealed class IndexMaintainer(
         // 39-byte real-idx physical descriptor (first_dp at phys+34 instead
         // of phys+38). The change-set encode + splice + rebuild logic is
         // unchanged; only the layout-dependent byte offsets and page builder
-        // calls fork on `jet3`. Same disposal model as Jet4 — old leaf /
-        // intermediate pages are orphaned and reclaimed by Access on
-        // Compact & Repair.
+        // calls fork on `jet3`. Replaced pages are reclaimed only after the
+        // maintained roots are linked, preserving native map-owned pages.
         IndexLayout idxLayout = format.Index;
         IndexPageLayout layout = format.IndexPage;
 
@@ -1375,6 +1457,21 @@ internal sealed class IndexMaintainer(
         {
             this.LastIncrementalBail = $"C1d no usable real-idx slots numIdx={numIdx} numRealIdx={numRealIdx}";
             return false;
+        }
+
+        if (format.IsJet3)
+        {
+            var entriesByNumber = new Dictionary<int, RealIdxEntry>();
+            foreach ((int realIdxNum, RealIdxEntry entry) in slots)
+            {
+                entriesByNumber.Add(realIdxNum, entry);
+            }
+
+            metadata.ReplacedPageGroups = await this.CollectJet3ReplacedTreePagesAsync(tdefPage, metadata.Buffer, layout, entriesByNumber, numRealIdx, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            metadata.ReplacedPageGroups = await this.TryCollectIncrementalIndexPageGroupsAsync(tdefPage, metadata.Buffer, layout, slots, numRealIdx, cancellationToken).ConfigureAwait(false);
         }
 
         Dictionary<int, int> snapshotIndexByColNum = IndexCatalogReader.BuildColumnNumberToSnapshotIndex(tableDef.Columns);
@@ -1600,7 +1697,7 @@ internal sealed class IndexMaintainer(
                 // as the multi-level path does, and point first_dp at its
                 // root. Nothing is re-encoded from the table's rows, so system
                 // tables, which have no bulk fallback, grow too. The old root
-                // leaf is left orphaned, like a replaced multi-level tree.
+                // leaf is reclaimed after the metadata commit when safe.
                 IndexBTreeBuildResult? grown = await this.btreeEditor.TryPlaceTreeAsync(layout, tdefPage, spliced, runs, cancellationToken).ConfigureAwait(false);
                 if (grown is not { } grownTree)
                 {
@@ -1908,6 +2005,11 @@ internal sealed class IndexMaintainer(
             await tdefWriter.WriteChainInPlaceAsync(metadata.Chain, cancellationToken).ConfigureAwait(false);
         }
 
+        if (metadata.ReplacedPageGroups is not null)
+        {
+            await this.DeallocateReplacedIndexPagesAsync(tdefPage, metadata.ReplacedPageGroups, indexPageGroups, cancellationToken).ConfigureAwait(false);
+        }
+
         return true;
     }
 
@@ -1923,5 +2025,8 @@ internal sealed class IndexMaintainer(
 
         /// <summary>Gets or sets a value indicating whether pending roots need linking.</summary>
         public bool Dirty { get; set; }
+
+        /// <summary>Gets or sets the traversable trees captured before editing.</summary>
+        public long[][]? ReplacedPageGroups { get; set; }
     }
 }

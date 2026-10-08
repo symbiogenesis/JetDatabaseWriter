@@ -1152,17 +1152,18 @@ internal static class LinkedTableManager
 
     private sealed class LinkedTextRecordReader : IDisposable
     {
+        private readonly FileStream sourceStream;
         private readonly StreamReader textReader;
 
         internal LinkedTextRecordReader(LinkedTextDataSource source)
         {
-            var stream = new FileStream(source.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            this.sourceStream = new FileStream(source.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             StreamReader? reader = null;
             try
             {
-                ValidateLinkedTextSourceFileSize(stream, source.Limits, source.TableName);
+                ValidateLinkedTextSourceFileSize(this.sourceStream, source.Limits, source.TableName);
                 reader = new StreamReader(
-                    new LinkedTextSourceStream(stream, source.Limits.MaxSourceFileBytes, source.TableName),
+                    new LinkedTextSourceStream(this.sourceStream, source.Limits.MaxSourceFileBytes, source.TableName),
                     Encoding.UTF8,
                     detectEncodingFromByteOrderMarks: true);
                 this.DelimitedReader = new DelimitedTextReader(reader, source.Format, source.Limits.Delimited);
@@ -1176,7 +1177,7 @@ internal static class LinkedTableManager
                 }
                 finally
                 {
-                    stream.Dispose();
+                    this.sourceStream.Dispose();
                 }
 
                 throw;
@@ -1187,8 +1188,21 @@ internal static class LinkedTableManager
 
         public void Dispose()
         {
-            this.DelimitedReader.Dispose();
-            this.textReader.Dispose();
+            try
+            {
+                this.DelimitedReader.Dispose();
+            }
+            finally
+            {
+                try
+                {
+                    this.textReader.Dispose();
+                }
+                finally
+                {
+                    this.sourceStream.Dispose();
+                }
+            }
         }
     }
 

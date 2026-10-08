@@ -860,6 +860,7 @@ public sealed class ConstraintRegistryTests
         _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
             await registry.ApplyAsync("T", replacement, [5], TestContext.Current.CancellationToken));
     }
+
     /// <summary>Physical binding and authorized rebinding must not alter transaction snapshot objects.</summary>
     /// <returns>The asynchronous test.</returns>
     [Fact]
@@ -880,6 +881,7 @@ public sealed class ConstraintRegistryTests
         Assert.Equal(7, values[0]);
         Assert.Null(saved.PhysicalColumn);
     }
+
     private static TableDef SingleColumnTable(ColumnType type) => new()
     {
         Columns = [new ColumnInfo { Name = "Score", Type = type }],
