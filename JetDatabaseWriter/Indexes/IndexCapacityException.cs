@@ -2,6 +2,8 @@ namespace JetDatabaseWriter.Indexes;
 
 using System;
 
+#pragma warning disable RCS1194 // This internal capacity signal does not expose serialization or unrelated base overloads.
+
 /// <summary>Signals valid index entries that exceed the available format capacity.</summary>
 internal sealed class IndexCapacityException : ArgumentOutOfRangeException
 {

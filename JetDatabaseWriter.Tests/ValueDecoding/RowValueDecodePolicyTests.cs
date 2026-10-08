@@ -18,7 +18,9 @@ public sealed class RowValueDecodePolicyTests
         Assert.False(RowValueDecodePolicy.IsMalformedValueException(new IOException("disk failure")));
         Assert.False(RowValueDecodePolicy.IsMalformedValueException(new OperationCanceledException()));
         Assert.True(RowValueDecodePolicy.IsMalformedValueException(new ArgumentException("invalid bytes")));
+#pragma warning disable CA2201 // The policy must recognize this runtime exception without swallowing I/O failures.
         Assert.True(RowValueDecodePolicy.IsMalformedValueException(new IndexOutOfRangeException()));
+#pragma warning restore CA2201
         Assert.True(RowValueDecodePolicy.IsMalformedValueException(new OverflowException()));
         Assert.True(RowValueDecodePolicy.HasFixedPayload(new ColumnInfo { Type = MoneyType }, 8, strict));
     }

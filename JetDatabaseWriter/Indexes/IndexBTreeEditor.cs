@@ -1432,7 +1432,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
         List<(long PageNum, byte[] Bytes)> neighborWrites = await this.StageNeighborWritesAsync(layout, leafNextPointerPatches, leafPrevPointerPatches, cancellationToken).ConfigureAwait(false);
         var commitPlan = new CrossLeafMutationPlan(pager.PageCount, newPageAppends, existingPageRewrites, neighborWrites, stagingState.NewRootPage);
-        return await this.CommitCrossLeafPlanAsync(layout, tdefPage, firstDpOffset, commitPlan, cancellationToken).ConfigureAwait(false);
+        return await this.CommitCrossLeafPlanAsync(tdefPage, firstDpOffset, commitPlan, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1996,14 +1996,13 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                     // No clean ancestor path, or the ancestor summaries
                     // overflow: rebuild just this index from its entries.
                     await runs.ReleaseAsync().ConfigureAwait(false);
-                    bool rebuilt = await this.TryRebuildCatalogIndexTreeAsync(
+                    return await this.TryRebuildCatalogIndexTreeAsync(
                         layout,
                         tdefPage,
                         firstDp,
                         firstDpOffset,
                         addEntries,
                         cancellationToken).ConfigureAwait(false);
-                    return rebuilt;
                 }
 
                 // Complete sibling staging before the first page write.
@@ -2194,13 +2193,11 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     }
 
     /// <summary>Commits a fully staged cross-leaf mutation in dependency order.</summary>
-    /// <param name="layout">The layout for this phase.</param>
     /// <param name="tdefPage">The tdefPage for this phase.</param>
     /// <param name="firstDpOffset">The firstDpOffset for this phase.</param>
     /// <param name="plan">The plan for this phase.</param>
     /// <param name="cancellationToken">The cancellationToken for this phase.</param>
     private async ValueTask<bool> CommitCrossLeafPlanAsync(
-        IndexPageLayout layout,
         long tdefPage,
         int firstDpOffset,
         CrossLeafMutationPlan plan,
@@ -2250,9 +2247,9 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     }
 
     /// <summary>Validated page bytes and links awaiting an ordered cross-leaf commit.</summary>
+    /// <param name="FirstNewPage">Expected first append address.</param>
     /// <param name="NewPages">The NewPages for this phase.</param>
     /// <param name="ExistingPages">The ExistingPages for this phase.</param>
-    /// <param name="FirstNewPage">Expected first append address.</param>
     /// <param name="NeighborWrites">Prepared neighboring pages.</param>
     /// <param name="NewRootPage">The NewRootPage for this phase.</param>
     private sealed record CrossLeafMutationPlan(

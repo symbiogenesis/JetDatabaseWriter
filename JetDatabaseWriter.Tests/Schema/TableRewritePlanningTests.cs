@@ -7,11 +7,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
-using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
-using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>Complex reference reservations made during preparation belong to the caller's transaction.</summary>
 public sealed class TableRewritePlanningTests
@@ -62,14 +61,14 @@ public sealed class TableRewritePlanningTests
             throw new IOException("Injected failure after reserving complex references.");
         }
 
-        Func<Task> mutation = () => harness.Services.Transactions.RunAutoCommitAsync(PrepareAndFailAsync, ct).AsTask();
+        Task MutateAsync() => harness.Services.Transactions.RunAutoCommitAsync(PrepareAndFailAsync, ct).AsTask();
         if (cancel)
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(mutation);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(MutateAsync);
         }
         else
         {
-            await Assert.ThrowsAsync<IOException>(mutation);
+            await Assert.ThrowsAsync<IOException>(MutateAsync);
         }
 
         Assert.Equal(original, stream.ToArray());
@@ -78,6 +77,7 @@ public sealed class TableRewritePlanningTests
         TableRewritePlan retry = await harness.Services.Transactions.RunAutoCommitAsync(
             token => PrepareReplacementAsync(harness, token),
             ct);
+        Assert.NotNull(reserved);
         Assert.Equal([4, 5, 6], reserved);
         Assert.Equal(reserved, References(retry));
         await retryTransaction.RollbackAsync(ct);
