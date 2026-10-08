@@ -28,24 +28,24 @@ Use JetDatabaseWriter when you need to query, migrate, or generate `.mdb` and `.
 
 ## Features
 
-| | |
-|---|---|
-| ✅ **Pure managed .NET** | No OleDB, ODBC, or ACE/Jet driver — runs anywhere .NET runs |
-| **JET/ACE formats** | Jet3, Jet4 and ACE `.mdb` / `.accdb` files; feature and generation coverage is incomplete. Pre-Jet3 formats are not supported. See the [validation matrix](docs/design/writer-disk-format-validation-matrix.md). |
-| ✅ **Read & write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
-| ✅ **Typed values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
-| ✅ **POCO + LINQ** | `Rows<T>("...", o => …)` auto-infers an index; `FromIndex<T>(...)` to override; async LINQ (`Where`/`Take`/`FirstOrDefaultAsync`/…) over `IAsyncEnumerable<T>` |
-| ✅ **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Select`/`Include`+`ThenInclude` (relationship-inferred eager load) and async terminals (`ToListAsync`/`CountAsync`/`FirstAsync`/…); results are async-only |
-| ✅ **Async-first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
-| ✅ **Stream-based I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
-| **Encryption** | Read/update existing Jet4 and ACE Agile encrypted files; other formats have restrictions. See [Encryption Support](#encryption-support). |
-| ✅ **Schema features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access-file read-through plus ODBC/text catalog entries) |
-| ✅ **Complex columns** | Read/write attachments and multi-value columns (ACCDB) |
-| ✅ **Calculated columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
-| ✅ **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
-| ✅ **Transactions** | Group changes with `CommitAsync` / `RollbackAsync`; no crash recovery (see [Limitations](#limitations)) |
-| ✅ **Storage maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
-| ✅ **Performance** | Configurable LRU page cache, default parallel read-ahead for eligible page scans, streams millions of rows without loading the file |
+| Support | Feature | Description |
+|:---:|---|---|
+| ✅ | **Pure&nbsp;managed&nbsp;.NET** | No OleDB, ODBC, or ACE/Jet driver — runs anywhere .NET runs |
+| Partial | **JET/ACE&nbsp;formats** | Jet3, Jet4 and ACE `.mdb` / `.accdb` files; feature and generation coverage is incomplete. Pre-Jet3 formats are not supported. See the [validation matrix](docs/design/writer-disk-format-validation-matrix.md). |
+| ✅ | **Read&nbsp;&&nbsp;write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
+| ✅ | **Typed&nbsp;values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
+| ✅ | **POCO&nbsp;+&nbsp;LINQ** | `Rows<T>("...", o => …)` auto-infers an index; `FromIndex<T>(...)` to override; async LINQ (`Where`/`Take`/`FirstOrDefaultAsync`/…) over `IAsyncEnumerable<T>` |
+| ✅ | **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Select`/`Include`+`ThenInclude` (relationship-inferred eager load) and async terminals (`ToListAsync`/`CountAsync`/`FirstAsync`/…); results are async-only |
+| ✅ | **Async&#8209;first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
+| ✅ | **Stream&#8209;based&nbsp;I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
+| Partial | **Encryption** | Read/update existing Jet4 and ACE Agile encrypted files; other formats have restrictions. See [Encryption Support](#encryption-support). |
+| ✅ | **Schema&nbsp;features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access-file read-through plus ODBC/text catalog entries) |
+| ✅ | **Complex&nbsp;columns** | Read/write attachments and multi-value columns (ACCDB) |
+| ✅ | **Calculated&nbsp;columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
+| ✅ | **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
+| ✅ | **Transactions** | Group changes with `CommitAsync` / `RollbackAsync`; no crash recovery (see [Limitations](#limitations)) |
+| ✅ | **Storage&nbsp;maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
+| ✅ | **Performance** | Configurable LRU page cache, default parallel read-ahead for eligible page scans, streams millions of rows without loading the file |
 
 ---
 
