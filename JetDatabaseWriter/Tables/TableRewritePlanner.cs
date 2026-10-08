@@ -139,6 +139,7 @@ internal sealed class TableRewritePlanner(
 
         // Project the stored properties onto the new columns, and serialize them,
         // before anything is written: the rebuilt table's catalog row carries them.
+        this.ThrowIfDisplayPropertiesUnmaintainable(tableName, originalProperties, existingDefs, mapColumnName);
         originalProperties = this.ProjectTableRuleReferences(tableName, originalProperties, existingDefs, mapColumnName);
         ColumnPropertyBlock persistedProperties =
             PersistedPropertyProjector.ProjectForRewrite(originalProperties, existingDefs, newDefs, mapColumnName, format);
@@ -429,6 +430,57 @@ internal sealed class TableRewritePlanner(
             if (row[i] is null or DBNull)
             {
                 row[i] = value;
+            }
+        }
+    }
+
+    /// <summary>Refuses name changes when opaque persisted display dependencies cannot be maintained.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="properties">The stored properties.</param>
+    /// <param name="existing">The original columns.</param>
+    /// <param name="mapColumnName">The column projection.</param>
+    /// <exception cref="JetOperationException">A rename or drop cannot preserve a stored display property safely.</exception>
+    private void ThrowIfDisplayPropertiesUnmaintainable(string tableName, ColumnPropertyBlock? properties, IReadOnlyList<ColumnDefinition> existing, Func<string, string?> mapColumnName)
+    {
+        if (properties is null)
+        {
+            return;
+        }
+
+        foreach (ColumnDefinition column in existing)
+        {
+            if (string.Equals(column.Name, mapColumnName(column.Name), StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (ColumnPropertyTarget target in properties.Targets)
+            {
+                if (target.Name.Length != 0)
+                {
+                    continue;
+                }
+
+                foreach (ColumnPropertyEntry entry in target.Entries)
+                {
+                    if ((!string.Equals(entry.Name, "Filter", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(entry.Name, "OrderBy", StringComparison.OrdinalIgnoreCase))
+                        || entry.Value.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (entry.DataType is TextType or MemoType
+                        && string.IsNullOrWhiteSpace((target.TextEncoding ?? format.PropertyTextEncoding).GetString(entry.Value)))
+                    {
+                        continue;
+                    }
+
+                    throw new JetOperationException(
+                        JetErrorCode.FeatureNotSupported,
+                        $"Cannot rename or drop column '{column.Name}' from table '{tableName}': its persisted '{entry.Name}' property cannot be maintained safely.",
+                        new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+                }
             }
         }
     }

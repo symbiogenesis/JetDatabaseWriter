@@ -220,6 +220,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         => this.services.Schema.ListTablesAsync(cancellationToken);
 
     /// <inheritdoc/>
+    public ValueTask<bool> TryLookupTableAsync(string tableName, CancellationToken cancellationToken = default)
+        => this.services.Tables.TryLookupTableAsync(tableName, cancellationToken);
+
+    /// <inheritdoc/>
     public ValueTask<IReadOnlyList<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
         => this.services.Schema.ListLinkedTablesAsync(cancellationToken);
 

@@ -271,6 +271,14 @@ internal sealed class RowDecodePlan
         return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
     }
 
+    private static DateTime ReadDatePayload(ReadOnlySpan<byte> payload, ColumnType type)
+        => type == DateTimeType
+            ? DateTime.FromOADate(JetTypeInfo.ReadDoubleLittleEndian(payload[..8]))
+            : JetTypeInfo.ReadDateTimeExtended(payload, 0, payload.Length);
+
+    private static string FormatDatePayload(DateTime date, ColumnType type)
+        => date.ToString(type == DateTimeType ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>Gets the name of the column at <paramref name="columnIndex"/>, for error messages.</summary>
     /// <param name="columnIndex">The column index.</param>
     internal string GetColumnName(int columnIndex) => this.columns[columnIndex].Name;
@@ -281,23 +289,23 @@ internal sealed class RowDecodePlan
     private object MalformedFixedDate(ColumnInfo column, Exception exception)
         => RowValueDecodePolicy.MalformedFixedDate(column, exception, this.strictParsing || this.PreservesLongValueBytes);
 
-    internal bool TryReadFixedDate(byte[] page, int start, ColumnInfo column, out DateTime value)
+    internal bool TryReadDate(byte[] page, int start, ColumnInfo column, out DateTime value)
     {
         try
         {
-            value = JetTypeInfo.ReadDateTimeLE(page, start);
+            value = column.Type == DateTimeType ? JetTypeInfo.ReadDateTimeLE(page, start) : JetTypeInfo.ReadDateTimeExtendedAt(page, start);
             return true;
         }
         catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
-            _ = this.MalformedFixedDate(column, exception);
+            _ = column.IsFixed ? this.MalformedFixedDate(column, exception) : this.MalformedVariableValue(column, exception);
             value = default;
             return false;
         }
     }
 
     private object DecodeFixedDate(byte[] page, int start, ColumnInfo column)
-        => this.TryReadFixedDate(page, start, column, out DateTime value) ? value : DBNull.Value;
+        => this.TryReadDate(page, start, column, out DateTime value) ? value : DBNull.Value;
 
     private string DecodeFixedDateString(byte[] page, int start, ColumnInfo column)
     {
@@ -637,6 +645,13 @@ internal sealed class RowDecodePlan
 
         try
         {
+            if (column.Type is DateTimeType or DateTimeExtendedType)
+            {
+                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
+                    ? FormatDatePayload(ReadDatePayload(page.AsSpan(start, length), column.Type), column.Type)
+                    : string.Empty;
+            }
+
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
                 return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
@@ -723,6 +738,11 @@ internal sealed class RowDecodePlan
                     return string.Empty;
                 }
 
+                if (valueType is DateTimeType or DateTimeExtendedType)
+                {
+                    return FormatDatePayload(ReadDatePayload(payload, valueType), valueType);
+                }
+
                 return CalculatedColumnUtil.ReadPayloadString(
                     payload,
                     valueType,
@@ -793,6 +813,13 @@ internal sealed class RowDecodePlan
 
         try
         {
+            if (column.Type is DateTimeType or DateTimeExtendedType)
+            {
+                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes)
+                    ? ReadDatePayload(page.AsSpan(start, length), column.Type)
+                    : DBNull.Value;
+            }
+
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
                 return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
@@ -841,7 +868,7 @@ internal sealed class RowDecodePlan
             return new UnreadableLongValue(column.Name, exception.Message);
         }
 
-        return RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing);
+        return RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing || (this.PreservesLongValueBytes && JetTypeInfo.ResolveValueType(column) is DateTimeType or DateTimeExtendedType));
     }
 
     private object? DecodeCalculatedTypedVariableValue(
@@ -880,6 +907,11 @@ internal sealed class RowDecodePlan
                 if (!RowValueDecodePolicy.HasCalculatedPayload(payload, valueType))
                 {
                     return DBNull.Value;
+                }
+
+                if (valueType is DateTimeType or DateTimeExtendedType)
+                {
+                    return ReadDatePayload(payload, valueType);
                 }
 
                 return CalculatedColumnUtil.ReadPayloadTyped(

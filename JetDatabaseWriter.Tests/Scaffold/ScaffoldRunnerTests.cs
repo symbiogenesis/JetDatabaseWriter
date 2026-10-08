@@ -706,6 +706,9 @@ public sealed class ScaffoldRunnerTests : IDisposable
 
         public string LastDiagnostics => string.Empty;
 
+        public ValueTask<bool> TryLookupTableAsync(string tableName, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(tables.Exists(table => string.Equals(table, tableName, StringComparison.OrdinalIgnoreCase)));
+
         public ValueTask<IReadOnlyList<string>> ListTablesAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();

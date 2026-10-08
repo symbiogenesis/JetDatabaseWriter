@@ -57,7 +57,7 @@ internal sealed class SchemaReader(
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         ResolvedTable table = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false)
-            ?? throw new JetObjectNotFoundException(JetErrorCode.TableNotFound, $"Table '{tableName}' was not found.", nameof(tableName));
+            ?? throw new JetObjectNotFoundException(JetErrorCode.TableNotFound, $"Table '{tableName}' was not found.", nameof(tableName), new JetErrorInfo { TableName = tableName });
         ColumnPropertyBlock? properties = await catalog.ReadLvPropForTableAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         ColumnPropertyTarget? target = properties?.FindTableTarget();
         string? expression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format));
@@ -186,6 +186,7 @@ internal sealed class SchemaReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -250,9 +251,14 @@ internal sealed class SchemaReader(
         cancellationToken.ThrowIfCancellationRequested();
 
         // MSysRelationships is a system table; ReadTableAsync resolves it through
-        // the catalog fallback and returns an empty table when it is absent.
+        // the catalog fallback; absence means there are no stored relationships.
         // The gate is reentrant, so the nested
         // ReadTableAsync call joins this root operation rather than blocking.
+        if (!await tables.TryLookupTableAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false))
+        {
+            return [];
+        }
+
         DataTable table = await tables.ReadTableAsync(Constants.SystemTableNames.Relationships, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
         try
         {
@@ -274,21 +280,23 @@ internal sealed class SchemaReader(
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         return await complexColumns.GetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Returns the declared row count from <paramref name="tableName"/>'s TDEF header
-    /// (a cheap lookup with no row scan), or 0 when the table cannot be resolved. Used
+    /// (a cheap lookup with no row scan), or 0 for a linked table. Used
     /// as a cost estimate when choosing between per-key index seeks and a single scan.
     /// </summary>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The declared row count, or 0 when unknown.</returns>
+    /// <returns>The declared row count, or 0 for a linked table.</returns>
     internal async ValueTask<long> GetDeclaredRowCountAsync(string tableName, CancellationToken cancellationToken)
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         cancellationToken.ThrowIfCancellationRequested();
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         return resolved is null ? 0 : (await tableDefs.ReadTableCountersAsync(resolved.Entry.TDefPage, cancellationToken).ConfigureAwait(false))?.RowCount ?? 0;
     }

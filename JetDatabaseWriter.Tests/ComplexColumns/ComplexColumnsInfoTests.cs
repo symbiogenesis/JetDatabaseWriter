@@ -68,11 +68,12 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public async Task GetComplexColumns_UnknownTable_ReturnsEmpty()
+    public async Task GetComplexColumns_UnknownTable_Throws()
     {
         AccessReader reader = await db.GetReaderAsync(TestDatabases.ComplexFields, TestContext.Current.CancellationToken);
-        IReadOnlyList<ComplexColumnInfo> info = await reader.GetComplexColumnsAsync("NoSuchTable", TestContext.Current.CancellationToken);
-        Assert.Empty(info);
+        JetObjectNotFoundException error = await Assert.ThrowsAsync<JetObjectNotFoundException>(async () =>
+            await reader.GetComplexColumnsAsync("NoSuchTable", TestContext.Current.CancellationToken));
+        Assert.Equal(JetErrorCode.TableNotFound, error.ErrorCode);
     }
 
     [Fact]

@@ -697,17 +697,17 @@ public sealed class SchemaEvolutionTests
 
         await using AccessReader reader = await OpenReaderAsync(stream);
 
-        DataTable? msysIndexes = await reader.ReadTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
-        if (msysIndexes is not null)
+        if (await reader.TryLookupTableAsync("MSysIndexes", TestContext.Current.CancellationToken))
         {
+            using DataTable msysIndexes = await reader.ReadTableAsync("MSysIndexes", cancellationToken: TestContext.Current.CancellationToken);
             int matches = msysIndexes.AsEnumerable()
                 .Count(r => MentionsTable(r, tableName));
             Assert.Equal(0, matches);
         }
 
-        DataTable? msysRels = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
-        if (msysRels is not null)
+        if (await reader.TryLookupTableAsync("MSysRelationships", TestContext.Current.CancellationToken))
         {
+            using DataTable msysRels = await reader.ReadTableAsync("MSysRelationships", cancellationToken: TestContext.Current.CancellationToken);
             int matches = msysRels.AsEnumerable()
                 .Count(r => MentionsTable(r, tableName));
             Assert.Equal(0, matches);

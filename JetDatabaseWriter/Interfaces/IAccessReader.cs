@@ -16,6 +16,8 @@ using JetDatabaseWriter.Models;
 /// Provides methods for listing tables, reading data, and streaming large datasets.
 /// </summary>
 /// <remarks>
+/// Named-table reads throw <see cref="Exceptions.JetObjectNotFoundException"/> when the table is absent.
+/// Use <see cref="TryLookupTableAsync"/> to check existence without executing a linked source.
 /// Every typed read (the row streams, the <see cref="DataTable"/> and POCO reads, index
 /// seeks and LINQ queries) returns an OLE Object value as its stored bytes, as DAO, ADO
 /// and Jackcess do: an object Access inserted keeps Access's OLE header and the OLE
@@ -26,6 +28,12 @@ using JetDatabaseWriter.Models;
 /// </remarks>
 public interface IAccessReader : IAccessBase
 {
+    /// <summary>Looks up a local or linked table name without executing a linked source.</summary>
+    /// <param name="tableName">The table name (case-insensitive).</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>True when the catalog contains the table; false when it is absent. Invalid names, corrupt catalog data and I/O errors still throw.</returns>
+    public ValueTask<bool> TryLookupTableAsync(string tableName, CancellationToken cancellationToken = default);
+
     /// <summary>Gets a value indicating whether GetUserTables logs verbose hex dumps for debugging. Default: false.</summary>
     public bool DiagnosticsEnabled { get; }
 
@@ -99,7 +107,7 @@ public interface IAccessReader : IAccessBase
     /// <param name="maxRows">Maximum number of rows to read, or <see langword="null"/> for unlimited.</param>
     /// <param name="progress">Optional row-count progress sink.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. Returns an empty DataTable if the table is not found.</returns>
+    /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns. An unknown named table throws a structured table-not-found error.</returns>
     public ValueTask<DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -139,7 +147,7 @@ public interface IAccessReader : IAccessBase
     /// Only schema metadata is surfaced — the index B-tree leaf pages are not traversed.
     /// Multiple logical indexes may share the same physical (real) index; consult
     /// <see cref="IndexMetadata.RealIndexNumber"/> to detect that sharing. Returns an
-    /// empty list when the table has no indexes or cannot be resolved.
+    /// empty list when the existing table has no indexes.
     /// </remarks>
     /// <param name="tableName">Table name (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>

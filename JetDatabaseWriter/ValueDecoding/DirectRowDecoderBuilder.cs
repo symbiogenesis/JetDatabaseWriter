@@ -306,12 +306,12 @@ internal static class DirectRowDecoderBuilder
                 boolValueExpr,
                 formatParam);
 
-            ParameterExpression? fixedDate = null;
-            if (col.IsFixed && col.Type == DateTimeType)
+            ParameterExpression? dateValue = null;
+            if (col.Type == DateTimeType || (!col.IsFixed && col.Type == DateTimeExtendedType))
             {
-                fixedDate = Expression.Variable(typeof(DateTime), "fixedDate");
-                locals.Add(fixedDate);
-                readExpr = fixedDate;
+                dateValue = Expression.Variable(typeof(DateTime), "dateValue");
+                locals.Add(dateValue);
+                readExpr = dateValue;
             }
 
             // target.Prop = (PropType)readExpr;
@@ -358,15 +358,15 @@ internal static class DirectRowDecoderBuilder
                 kindGate = Expression.AndAlso(validPayload, kindGate);
             }
 
-            if (fixedDate is not null)
+            if (dateValue is not null)
             {
                 kindGate = Expression.AndAlso(kindGate, Expression.Call(
                     decodePlanParam,
-                    GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.TryReadFixedDate), InstanceNonPublic),
+                    GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.TryReadDate), InstanceNonPublic),
                     pageParam,
                     offsetExpr,
                     colExpr,
-                    fixedDate));
+                    dateValue));
             }
 
             statements.Add(Expression.IfThen(kindGate, safeAssign));

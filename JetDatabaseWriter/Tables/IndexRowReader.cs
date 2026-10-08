@@ -103,6 +103,7 @@ internal sealed class IndexRowReader(
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         return resolved == null ? [] : await this.ReadIndexesAsync(resolved, cancellationToken).ConfigureAwait(false);
     }
@@ -202,6 +203,7 @@ internal sealed class IndexRowReader(
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved is null)
         {
@@ -241,6 +243,7 @@ internal sealed class IndexRowReader(
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved is null)
         {
@@ -335,6 +338,7 @@ internal sealed class IndexRowReader(
 
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
         await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
@@ -379,6 +383,7 @@ internal sealed class IndexRowReader(
         cancellationToken.ThrowIfCancellationRequested();
 
         await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {

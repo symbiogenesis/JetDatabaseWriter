@@ -76,15 +76,17 @@ public sealed class RowValueDecodePolicyTests
     }
 
     [Fact]
-    public void MalformedVariableValue_Strict_WrapsAsInvalidDataException()
+    public void MalformedVariableDate_Strict_WrapsAsCorruption()
     {
         var inner = new ArgumentException("bad date");
-        InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
+        JetCorruptDataException ex = Assert.Throws<JetCorruptDataException>(() =>
             RowValueDecodePolicy.MalformedVariableValue(
                 new ColumnInfo { Name = "When", Type = DateTimeType },
                 inner,
                 strictParsing: true));
 
+        Assert.Equal(JetErrorCode.MalformedValue, ex.ErrorCode);
+        Assert.Equal("When", ex.ErrorInfo.ColumnName);
         Assert.Same(inner, ex.InnerException);
         Assert.Contains("When", ex.Message, StringComparison.Ordinal);
     }

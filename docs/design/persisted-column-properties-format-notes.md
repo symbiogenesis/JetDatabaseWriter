@@ -148,6 +148,14 @@ The blob is the column's stored bytes, inline, on one LVAL row or in an LVAL cha
 
 ## 8. Through schema rewrites
 
+Column rename and drop refuse a table with a nonempty stored `Filter` or
+`OrderBy` before writing. Their dependencies are not verified well enough to
+rewrite them safely, so this refusal also applies when the changed column
+appears unrelated. Adding a column preserves these properties. Empty values
+and whitespace-only text do not block an edit. The refusal leaves database bytes and the caller's
+transaction unchanged; native Name AutoCorrect and dependency rewrite behavior
+remain unverified.
+
 AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again. [`PersistedPropertyProjector`](../../JetDatabaseWriter/Schema/PersistedPropertyProjector.cs) builds the new blob from the stored one and changes only what the rewrite changes:
 
 - The table-level block keeps its position and every entry except `NameMap`, which is dropped.

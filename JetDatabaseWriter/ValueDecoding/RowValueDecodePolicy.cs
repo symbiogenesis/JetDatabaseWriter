@@ -13,19 +13,22 @@ using static JetDatabaseWriter.Enums.ColumnType;
 internal static class RowValueDecodePolicy
 {
     internal static object MalformedFixedDate(ColumnInfo column, Exception exception, bool strictParsing)
+        => MalformedDate(column, exception, strictParsing, "fixed");
+
+    private static DBNull MalformedDate(ColumnInfo column, Exception exception, bool strictParsing, string storage)
     {
         if (strictParsing)
         {
             throw new JetCorruptDataException(
                 JetErrorCode.MalformedValue,
-                $"Malformed fixed Date/Time payload for column '{column.Name}'.",
+                $"Malformed {storage} Date/Time payload for column '{column.Name}'.",
                 new JetErrorInfo { ColumnName = column.Name, Reason = exception.Message },
                 exception);
         }
 
         try
         {
-            Trace.TraceWarning("The fixed Date/Time value for column '{0}' is unreadable and was returned as a missing value.", column.Name);
+            Trace.TraceWarning("The {0} Date/Time value for column '{1}' is unreadable and was returned as a missing value.", storage, column.Name);
         }
 #pragma warning disable CA1031 // A diagnostic listener must not turn an explicitly lenient read into a failure.
         catch (Exception)
@@ -115,6 +118,11 @@ internal static class RowValueDecodePolicy
 
     internal static object FixedVariableSlotTooShort(ColumnInfo column, int actualLength, int requiredLength, bool strictParsing)
     {
+        if (JetTypeInfo.ResolveValueType(column) is DateTimeType or DateTimeExtendedType)
+        {
+            return MalformedDate(column, new ArgumentException($"Date/Time payload needs {requiredLength} byte(s), found {Math.Max(0, actualLength)}."), strictParsing, column.IsCalculated ? "calculated" : "variable-area");
+        }
+
         if (strictParsing)
         {
             throw new InvalidDataException(
@@ -129,6 +137,11 @@ internal static class RowValueDecodePolicy
         if (exception is JetLimitationException)
         {
             ExceptionDispatchInfo.Capture(exception).Throw();
+        }
+
+        if (JetTypeInfo.ResolveValueType(column) is DateTimeType or DateTimeExtendedType)
+        {
+            return MalformedDate(column, exception, strictParsing, column.IsCalculated ? "calculated" : "variable-area");
         }
 
         if (strictParsing)

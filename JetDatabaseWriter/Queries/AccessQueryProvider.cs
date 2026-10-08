@@ -73,7 +73,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
             rows = InMemoryTail.Apply(rows, expression, boundary, cancellationToken);
         }
 
-        return ReadPreparedAsync(rows, cancellationToken);
+        return this.ReadPreparedAsync(rows, cancellationToken);
     }
 
     public async ValueTask<long> CountAsync(Expression expression, CancellationToken cancellationToken)
@@ -101,20 +101,6 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         return count;
     }
 
-    private static async IAsyncEnumerable<object?> ReadPreparedAsync(
-        IAsyncEnumerable<object?> rows,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        // A buffered stage or a synthetic element need not advance the table reader,
-        // so enforce cancellation even after the read itself has finished.
-        cancellationToken.ThrowIfCancellationRequested();
-        await foreach (object? item in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return item;
-        }
-    }
-
     /// <summary>
     /// Determines whether <paramref name="expression"/>'s outermost node is a LINQ
     /// ordering operator (<c>OrderBy</c> / <c>OrderByDescending</c> / <c>ThenBy</c> /
@@ -130,6 +116,22 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         expression is MethodCallExpression call
         && call.Method.DeclaringType == typeof(Queryable)
         && call.Method.Name is "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending" or "Order" or "OrderDescending";
+
+    private async IAsyncEnumerable<object?> ReadPreparedAsync(
+        IAsyncEnumerable<object?> rows,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await tables.RequireTableAsync(table, cancellationToken).ConfigureAwait(false);
+
+        // A buffered stage or a synthetic element need not advance the table reader,
+        // so enforce cancellation even after the read itself has finished.
+        cancellationToken.ThrowIfCancellationRequested();
+        await foreach (object? item in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return item;
+        }
+    }
 
     private async IAsyncEnumerable<T> ExecuteEngineAsync(AccessQueryPlan plan, [EnumeratorCancellation] CancellationToken cancellationToken)
     {

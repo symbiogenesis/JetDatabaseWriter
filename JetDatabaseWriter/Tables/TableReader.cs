@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -122,6 +124,55 @@ internal sealed class TableReader(
         }
     }
 
+    /// <summary>Checks local and linked catalog names without executing a linked source.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the catalog contains the table.</returns>
+    /// <exception cref="JetCorruptDataException">The named catalog entry has an unusable schema or linked-source metadata.</exception>
+    internal async ValueTask<bool> TryLookupTableAsync(string tableName, CancellationToken cancellationToken)
+    {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+        Guard.NotNullOrEmpty(tableName, nameof(tableName));
+        cancellationToken.ThrowIfCancellationRequested();
+        if (await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return true;
+        }
+
+        if ((await linked.GetLinkedTablesAsync(cancellationToken).ConfigureAwait(false))
+            .Any(table => string.Equals(table.Name, tableName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        // Resolution can omit unusable definitions or explicitly lenient linked
+        // metadata. A known catalog identity must not become a missing table.
+        CatalogRow? unresolved = (await catalog.ReadValidatedObjectsAsync(cancellationToken).ConfigureAwait(false))
+            .Find(row => row.ObjectType is Constants.SystemObjects.UserTableType or Constants.SystemObjects.LinkedOdbcType or Constants.SystemObjects.LinkedTableType
+                && string.Equals(row.Name, tableName, StringComparison.OrdinalIgnoreCase));
+        if (unresolved is not null)
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptCatalog,
+                $"Table '{tableName}' has a catalog entry but its schema or linked-source metadata cannot be resolved.",
+                new JetErrorInfo { TableName = tableName, PageNumber = unresolved.PageNumber });
+        }
+
+        return false;
+    }
+
+    /// <summary>Refuses an absent table while preserving existing linked-table handling.</summary>
+    /// <param name="tableName">The table name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="JetObjectNotFoundException">The table is absent.</exception>
+    internal async ValueTask RequireTableAsync(string tableName, CancellationToken cancellationToken)
+    {
+        if (!await this.TryLookupTableAsync(tableName, cancellationToken).ConfigureAwait(false))
+        {
+            throw new JetObjectNotFoundException(JetErrorCode.TableNotFound, $"Table '{tableName}' was not found.", nameof(tableName), new JetErrorInfo { TableName = tableName });
+        }
+    }
+
     /// <summary>Refuses data execution for metadata-only linked sources.</summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -167,6 +218,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await this.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             long? linkedCount = await linked.TryGetRowCountAsync(tableName, cancellationToken).ConfigureAwait(false);
             return linkedCount ?? 0;
         }
@@ -222,6 +274,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await this.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             await foreach (object[] row in linked.EnumerateRowsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
@@ -271,6 +324,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await this.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             await foreach (T? row in linked.EnumerateRowsAsync<T>(tableName, progress, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
@@ -302,6 +356,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await this.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             await foreach (string[] row in linked.EnumerateRowsAsStringsAsync(tableName, progress, cancellationToken).ConfigureAwait(false))
             {
                 yield return row;
@@ -364,6 +419,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await this.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             IReadOnlyList<T>? linkedRows = await linked.TryReadTableAsync<T>(tableName, maxRows, cancellationToken).ConfigureAwait(false);
             return linkedRows ?? [];
         }
@@ -405,6 +461,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await this.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             DataTable? linkedTable = await linked.TryReadTableAsStringsAsync(tableName, maxRows, progress, cancellationToken).ConfigureAwait(false);
 
 #pragma warning disable CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
@@ -585,6 +642,7 @@ internal sealed class TableReader(
         ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
+            await this.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
             DataTable? linkedTable = await linked.TryReadDataTableAsync(tableName, maxRows, progress, cancellationToken).ConfigureAwait(false);
 
 #pragma warning disable CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.

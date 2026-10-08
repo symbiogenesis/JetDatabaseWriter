@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tables;
 
 /// <summary>
 /// Reads the items stored behind an Access 2007+ complex column: the
@@ -15,8 +16,9 @@ using JetDatabaseWriter.Models;
 /// enters the reader's operation gate so disposal waits for it.
 /// </summary>
 /// <param name="complexColumns">Finds and decodes the column's flat child table.</param>
+/// <param name="tables">Validates parent table names.</param>
 /// <param name="operations">The reader's operation gate.</param>
-internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, AsyncReentrantOperationGate operations)
+internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, TableReader tables, AsyncReentrantOperationGate operations)
 {
     /// <summary>
     /// Returns every attachment row stored in the hidden flat child table backing
@@ -32,6 +34,7 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Asyn
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         return info == null
             ? []
@@ -53,6 +56,7 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Asyn
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         return info == null
             ? []

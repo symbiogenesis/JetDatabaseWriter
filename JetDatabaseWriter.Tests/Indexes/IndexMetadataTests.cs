@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -73,11 +74,12 @@ public sealed class IndexMetadataTests(DatabaseCache db) : IClassFixture<Databas
     }
 
     [Fact]
-    public async Task ListIndexes_UnknownTable_ReturnsEmpty()
+    public async Task ListIndexes_UnknownTable_Throws()
     {
         AccessReader reader = await db.GetReaderAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
-        IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("NoSuchTable", TestContext.Current.CancellationToken);
-        Assert.Empty(indexes);
+        JetObjectNotFoundException error = await Assert.ThrowsAsync<JetObjectNotFoundException>(async () =>
+            await reader.ListIndexesAsync("NoSuchTable", TestContext.Current.CancellationToken));
+        Assert.Equal(JetErrorCode.TableNotFound, error.ErrorCode);
     }
 
     [Fact]
