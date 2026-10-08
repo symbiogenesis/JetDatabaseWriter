@@ -21,19 +21,19 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Read-Results([string] $dir) {
-    $map = [ordered]@{}
+    $map = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
     if (-not (Test-Path -LiteralPath $dir)) { return $map }
     foreach ($file in Get-ChildItem -LiteralPath $dir -Recurse -File -Filter '*-report*.json') {
-        $report = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 64
+        $report = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($file.FullName)) -Depth 64 -AsHashtable
         foreach ($b in $report.Benchmarks) {
             $label = if ($b.Type -and $b.Method) { "$($b.Type).$($b.Method)" + $(if ($b.Parameters) { "($($b.Parameters))" } else { '' }) }
                      else { $b.FullName -replace '^.*?\.(\w+\.\w+(\(.*\))?)$', '$1' }
             $map[$b.FullName] = [pscustomobject]@{
                 Label = $label
-                Mean = if ($b.Statistics) { [double]$b.Statistics.Mean } else { $null }
+                Mean = if ($null -ne $b.Statistics.Mean) { [double]$b.Statistics.Mean } else { $null }
                 # BenchmarkDotNet's Error column is the confidence interval's margin, not the standard error.
-                Error = if ($b.Statistics.ConfidenceInterval) { [double]$b.Statistics.ConfidenceInterval.Margin } else { $null }
-                Allocated = if ($b.Memory) { [double]$b.Memory.BytesAllocatedPerOperation } else { $null }
+                Error = if ($null -ne $b.Statistics.ConfidenceInterval.Margin) { [double]$b.Statistics.ConfidenceInterval.Margin } else { $null }
+                Allocated = if ($null -ne $b.Memory.BytesAllocatedPerOperation) { [double]$b.Memory.BytesAllocatedPerOperation } else { $null }
             }
         }
     }
@@ -41,7 +41,7 @@ function Read-Results([string] $dir) {
 }
 
 function Format-Time($ns) {
-    if ($null -eq $ns) { return 'n/a' }
+    if ($null -eq $ns -or -not [double]::IsFinite($ns)) { return 'n/a' }
     if ($ns -ge 1e9) { return '{0:N2} s' -f ($ns / 1e9) }
     if ($ns -ge 1e6) { return '{0:N2} ms' -f ($ns / 1e6) }
     if ($ns -ge 1e3) { return '{0:N2} μs' -f ($ns / 1e3) }
@@ -49,14 +49,14 @@ function Format-Time($ns) {
 }
 
 function Format-Bytes($bytes) {
-    if ($null -eq $bytes) { return 'n/a' }
+    if ($null -eq $bytes -or -not [double]::IsFinite($bytes)) { return 'n/a' }
     if ($bytes -ge 1MB) { return '{0:N2} MB' -f ($bytes / 1MB) }
     if ($bytes -ge 1KB) { return '{0:N2} KB' -f ($bytes / 1KB) }
     return '{0:N0} B' -f $bytes
 }
 
 function Format-Ratio($head, $base) {
-    if ($null -eq $head -or $null -eq $base) { return 'n/a' }
+    if ($null -eq $head -or $null -eq $base -or -not [double]::IsFinite($head) -or -not [double]::IsFinite($base)) { return 'n/a' }
     if ($base -eq 0) { return $(if ($head -eq 0) { '1.00' } else { 'n/a' }) }
     return '{0:N2}' -f ($head / $base)
 }

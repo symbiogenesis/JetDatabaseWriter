@@ -53,7 +53,7 @@ For a completed run, the reporting mode of the existing helper prints every step
 pwsh -NoProfile -File scripts/ci-gate.ps1 -RunId <id>
 ```
 
-Do not use the helper's `-Branch` mode: it publishes temporary branches, contrary to the main-only publication rule. If a matching run is missing, dispatch `gh workflow run ci.yml --ref main` and verify the resulting run's SHA. Keep work branches local and remove this session's eligible worktrees and branches after their changes are integrated and validated, retaining useful outputs.
+The helper never publishes or deletes Git refs. After publishing `main`, `-Sha <commit>` finds or dispatches its CI run and verifies the published main tip; `-Benchmarks`, `-Baseline` and `-Job` select hosted benchmark measurements. It checks once by default; exit code 2 means pending. Use `-WaitSeconds` only when bounded waiting is needed. Alternatively, dispatch `gh workflow run ci.yml --ref main` and verify the resulting run's SHA. Keep work branches local and remove this session's eligible worktrees and branches after their changes are integrated and validated, retaining useful outputs.
 
 ## Tests
 
@@ -132,6 +132,7 @@ BenchmarkDotNet practice, wherever the benchmarks run:
 - Do not use Python for anything in this repository: implementation, diagnostics, inspection or throwaway helpers. Use PowerShell 7, .NET tooling and `rg`.
 - In bulk PowerShell rewrites, write with `[System.IO.File]::WriteAllText(...)`. `Set-Content` after `Get-Content -Raw` adds a blank line at the end of the file.
 - Repository scripts live in `scripts/`.
+- `pwsh -NoProfile -File scripts/test-scripts.ps1` parses all PowerShell scripts and runs self-contained regression checks with synthetic inputs and mocked external commands. CI runs these checks in the library analyzer job; they do not launch real benchmarks, fuzzers or GitHub operations.
 
 ## Git
 

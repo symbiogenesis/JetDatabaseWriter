@@ -29,20 +29,37 @@ foreach ($mention in [regex]::Matches($document, 'CVE-\d{4}-\d+')) {
 
 $mapped = @{}
 $traitPattern = '\[Trait\("CveAnalogue", "(?<cve>CVE-\d{4}-\d+)"\)\](?=\s*(?:\[Trait\("CveAnalogue", "CVE-\d{4}-\d+"\)\]\s*)*public\s+(?:async\s+)?(?:Task|ValueTask|void)\s+(?<method>\w+)\s*\()'
-$testFiles = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'JetDatabaseWriter.Tests') -Filter '*.cs' -File -Recurse |
-    Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
-foreach ($file in $testFiles) {
-    $source = [IO.File]::ReadAllText($file.FullName)
+function Get-TestSource {
+    $directories = [Collections.Generic.Stack[string]]::new()
+    $directories.Push((Join-Path $repoRoot 'JetDatabaseWriter.Tests'))
+    while ($directories.Count -gt 0) {
+        $directory = $directories.Pop()
+        foreach ($file in [IO.Directory]::EnumerateFiles($directory, '*.cs')) { $file }
+        foreach ($child in [IO.Directory]::EnumerateDirectories($directory)) {
+            # Prune build outputs before traversal, including their generated source files.
+            if ([IO.Path]::GetFileName($child) -notin 'bin', 'obj' -and
+                -not ([IO.File]::GetAttributes($child) -band [IO.FileAttributes]::ReparsePoint)) {
+                $directories.Push($child)
+            }
+        }
+    }
+}
+
+Get-TestSource | ForEach-Object {
+    $file = $_
+    $source = [IO.File]::ReadAllText($file)
+    # Almost every source file has no canonical mapping; avoid all regex work for those files.
+    if (-not $source.Contains('[Trait("CveAnalogue",')) { return }
     $traits = [regex]::Matches($source, $traitPattern)
     if ([regex]::Matches($source, '\[Trait\("CveAnalogue",').Count -ne $traits.Count) {
-        throw "Unrecognized CveAnalogue attribute placement in $($file.FullName); put canonical traits immediately before the method."
+        throw "Unrecognized CveAnalogue attribute placement in $file; put canonical traits immediately before the method."
     }
     $class = [regex]::Match($source, '\bpublic\s+(?:sealed\s+)?class\s+(?<name>\w+)').Groups['name'].Value
     foreach ($trait in $traits) {
         $prefix = $source.Substring(0, $trait.Index)
         $attributes = [regex]::Match($prefix, '(?m)(?:^[ \t]*\[[^\r\n]+\][ \t]*\r?\n)+[ \t]*\z').Value
         if ($attributes -notmatch '\[(?:Fact|Theory)(?:\(|\])') {
-            throw "CveAnalogue mapping in $($file.FullName) has no adjacent Fact/Theory declaration."
+            throw "CveAnalogue mapping in $file has no adjacent Fact/Theory declaration."
         }
         $cve = $trait.Groups['cve'].Value
         $method = "$class.$($trait.Groups['method'].Value)"

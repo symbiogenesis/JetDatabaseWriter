@@ -60,6 +60,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check PowerShell scripts
+        if: matrix.pack
+        shell: pwsh
+        run: ./scripts/test-scripts.ps1
+
       # Keep each security-survey CVE linked to a canonical test or explicit N/A reason.
       - name: Check security traceability
         if: matrix.pack

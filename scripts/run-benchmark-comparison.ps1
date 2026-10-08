@@ -4,7 +4,8 @@ Runs paired benchmarks, optionally reversing order and measuring an identical-re
 .DESCRIPTION
 Used by benchmarks.yml on one hosted runner. Controlled order is baseline, head,
 head, baseline, head, head. Every invocation uses fresh BenchmarkDotNet processes
-and retains its own artifacts. SummaryOnly reports partial results after failures.
+and retains its own artifacts. Choose a fresh Results directory for every invocation.
+SummaryOnly reports partial results after failures.
 #>
 param(
     [Parameter(Mandatory)] [string] $Results,
@@ -17,20 +18,22 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Anchor paths before changing checkout directories or calling .NET file APIs.
+$Results = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Results)
 $manifestPath = Join-Path $Results 'measurement.json'
 if ($SummaryOnly) {
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         'No benchmark run manifest was produced.'
         exit 0
     }
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $manifest = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($manifestPath)) -AsHashtable
     '# Hosted benchmark measurements'
     ''
     'Head: `' + $manifest.Head + '`. Baseline: `' + $manifest.Baseline + '`.'
     'Execution order: ' + ($manifest.Runs -join ', ') + '. All runs use the same host.'
     ''
     if (-not $manifest.Baseline) {
-        Get-ChildItem (Join-Path $Results 'head/results') -Filter '*-report-github.md' -ErrorAction SilentlyContinue | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }
+        Get-ChildItem -LiteralPath (Join-Path $Results 'head/results') -File -Filter '*-report-github.md' -ErrorAction SilentlyContinue | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }
         exit 0
     }
     '## Baseline first'
@@ -46,7 +49,7 @@ if ($SummaryOnly) {
     exit 0
 }
 
-if (-not $Head -or -not $Filter) { throw 'Head and Filter are required to run benchmarks.' }
+if ([string]::IsNullOrWhiteSpace($Head) -or [string]::IsNullOrWhiteSpace($Filter)) { throw 'Head and Filter are required to run benchmarks.' }
 if ($Mode -eq 'controlled' -and -not $Baseline) { throw 'Controlled measurements require a baseline.' }
 $filters = @($Filter -split '\s+' | Where-Object { $_ })
 $jobArgs = if ($Job -ne 'default') { @('--job', $Job) } else { @() }
@@ -59,7 +62,13 @@ if ($Mode -eq 'controlled') {
     $runs['control-first'] = $Head
     $runs['control-second'] = $Head
 }
-New-Item -ItemType Directory -Force -Path $Results | Out-Null
+# Refuse stale artifacts before spending time measuring or replacing their manifest.
+foreach ($run in $runs.GetEnumerator()) {
+    if (-not (Test-Path -LiteralPath $run.Value -PathType Container)) { throw "Missing benchmark checkout: $($run.Value)." }
+    $outputPath = Join-Path $Results $run.Key
+    if (Test-Path -LiteralPath $outputPath) { throw "Benchmark artifacts already exist at '$outputPath'. Choose a fresh Results directory." }
+}
+[IO.Directory]::CreateDirectory($Results) | Out-Null
 $headSha = git -C $Head rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve the head revision.' }
 $baselineSha = if ($Baseline) {
@@ -80,14 +89,14 @@ foreach ($run in $runs.GetEnumerator()) {
     if ($reports.Count -eq 0) { throw "No benchmark results for $($run.Key)." }
     $caseCount = 0
     foreach ($reportPath in $reports) {
-        $report = Get-Content -LiteralPath $reportPath.FullName -Raw | ConvertFrom-Json -Depth 64
+        $report = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($reportPath.FullName)) -Depth 64 -AsHashtable
         foreach ($case in $report.Benchmarks) {
             $caseCount++
-            if ($null -eq $case.Statistics -or $case.Statistics.Mean -le 0) {
-                throw "Missing mean for $($case.FullName) in $($run.Key)."
+            if ($null -eq $case.Statistics.Mean -or -not [double]::IsFinite([double]$case.Statistics.Mean) -or $case.Statistics.Mean -le 0) {
+                throw "Invalid or missing mean for $($case.FullName) in $($run.Key)."
             }
-            if ($null -ne $case.Memory -and $null -eq $case.Memory.BytesAllocatedPerOperation) {
-                throw "Missing allocation measurement for $($case.FullName) in $($run.Key)."
+            if ($null -ne $case.Memory -and ($null -eq $case.Memory.BytesAllocatedPerOperation -or -not [double]::IsFinite([double]$case.Memory.BytesAllocatedPerOperation) -or $case.Memory.BytesAllocatedPerOperation -lt 0)) {
+                throw "Invalid or missing allocation measurement for $($case.FullName) in $($run.Key)."
             }
         }
     }

@@ -52,30 +52,41 @@ foreach ($kind in @('Reader', 'Writer', 'Text')) {
         $stdoutPath = Join-Path $outputPath "$caseName.stdout.log"
         $stderrPath = Join-Path $outputPath "$caseName.stderr.log"
         [IO.File]::WriteAllBytes($inputPath, $bytes)
-        $hash = (Get-FileHash -LiteralPath $inputPath -Algorithm SHA256).Hash
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
         $arguments = @('-method', $methods[$kind], '-explicit', 'only', '-parallelMode', 'none', '-noColor', '-result-xml', ('"{0}"' -f $xmlPath))
         $environment = @{ JETDATABASEWRITER_FUZZ_INPUT = $inputPath; DOTNET_GCHeapHardLimit = ('0x{0:X}' -f ($MemoryLimitMiB * 1MB)) }
+        # A prior run's XML must never certify this process.
+        [IO.File]::Delete($xmlPath)
         $process = Start-Process -FilePath $runnerPath -ArgumentList $arguments -WorkingDirectory (Split-Path $runnerPath) -Environment $environment -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
         $timer = [Diagnostics.Stopwatch]::StartNew()
         $status = 'Passed'
-        while (-not $process.WaitForExit(250)) {
-            $process.Refresh()
-            if ($timer.Elapsed.TotalSeconds -gt $TimeoutSeconds) { $status = 'Timeout'; break }
-            if ($process.PrivateMemorySize64 -gt ($MemoryLimitMiB * 1MB)) { $status = 'MemoryLimit'; break }
+        try {
+            while (-not $process.WaitForExit(250)) {
+                $process.Refresh()
+                if ($timer.Elapsed.TotalSeconds -gt $TimeoutSeconds) { $status = 'Timeout'; break }
+                if ($process.PrivateMemorySize64 -gt ($MemoryLimitMiB * 1MB)) { $status = 'MemoryLimit'; break }
+            }
+            if ($status -ne 'Passed') {
+                if (-not $process.HasExited) { $process.Kill($true) }
+                $process.WaitForExit()
+            } elseif ($process.ExitCode -ne 0) {
+                $status = 'Failed'
+            } elseif (-not (Test-Path -LiteralPath $xmlPath)) {
+                $status = 'MissingResult'
+            } else {
+                try {
+                    [xml]$result = [IO.File]::ReadAllText($xmlPath)
+                    $tests = $result.SelectNodes('//test')
+                    if ($tests.Count -ne 1 -or $tests[0].result -ne 'Pass') { $status = 'UnexpectedResult' }
+                } catch {
+                    $status = 'InvalidResult'
+                    [IO.File]::AppendAllText($stderrPath, ([Environment]::NewLine + $_.Exception.Message + [Environment]::NewLine))
+                }
+            }
+        } finally {
+            $timer.Stop()
+            $process.Dispose()
         }
-        if ($status -ne 'Passed') {
-            if (-not $process.HasExited) { $process.Kill($true) }
-            $process.WaitForExit()
-        } elseif ($process.ExitCode -ne 0) {
-            $status = 'Failed'
-        } elseif (-not (Test-Path -LiteralPath $xmlPath)) {
-            $status = 'MissingResult'
-        } else {
-            [xml]$result = [IO.File]::ReadAllText($xmlPath)
-            $tests = @($result.SelectNodes('//test'))
-            if ($tests.Count -ne 1 -or $tests[0].result -ne 'Pass') { $status = 'UnexpectedResult' }
-        }
-        $process.Dispose()
         $manifest.Add([pscustomobject]@{ Case = $caseName; Seed = $Seed; Source = $source; SHA256 = $hash; Status = $status; Seconds = $timer.Elapsed.TotalSeconds })
         Write-Host "$caseName $status"
         if ($status -eq 'Passed') {

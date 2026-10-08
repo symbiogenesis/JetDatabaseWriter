@@ -1,248 +1,296 @@
 <#
 .SYNOPSIS
-Gates one commit on GitHub CI (.github/workflows/ci.yml) instead of building and testing it locally.
+Gates a published main commit on GitHub CI instead of building and testing it locally.
 
 .DESCRIPTION
-ci.yml runs on push only for main, so this script pushes the commit to a temporary ci/* branch on origin, starts
-ci.yml there through workflow_dispatch, and waits for the run. Each call waits at most -WaitSeconds (default 480), so
-a call stays under a 10-minute tool timeout: exit code 2 means "still running, call again with the same arguments".
-Calling again never pushes or dispatches twice for the same commit on the same branch.
+Integrate and publish main before calling this helper. It never pushes branches or tags. For -Sha, it verifies
+GitHub's main tip, reuses an existing CI run for that SHA, or dispatches ci.yml on main if none exists. Benchmark
+requests dispatch benchmarks.yml on main; a baseline must already belong to published main history.
 
-When the run has finished, the script downloads its logs and prints every job and step result, the build summary,
-the test summaries of both legs, and the failing tests with their messages.
+The default checks once and returns immediately. -WaitSeconds optionally bounds polling. Exit code 2 means the
+run is pending; call again with the same arguments. State is shared by worktrees and prevents repeated dispatches
+for the same SHA and inputs. Dispatch responses identify the exact run, including concurrent benchmark requests.
+-RunId reports an existing run without dispatching anything.
 
-With -Benchmarks, the script runs .github/workflows/benchmarks.yml instead: BenchmarkDotNet on a hosted runner, for
-the given --filter patterns. With -Baseline as well, the runner benchmarks the baseline commit and then the commit
-under test back to back, and the script prints the comparison table the workflow writes. The baseline commit is
-pushed to <branch>-base first, so the runner can always fetch it.
+Completed reports print every job and step result, build and test summaries, failing-test messages and unexpected
+skip reasons. Logs are read a line at a time, and completed job metadata and downloads are cached per run attempt
+under <git common dir>/ci-gate/<owner>/<repo>. The helper uses gh or Git's github.com credential without printing it.
 
-The script uses the GitHub CLI (gh) when it is installed and logged in, and otherwise a github.com credential stored
-in git. It never prints the token. Its state and downloaded logs live in <git common dir>/ci-gate, which every
-worktree shares and git never commits.
-
-Exit codes: 0 = the run succeeded, 1 = the run failed or was cancelled, 2 = still pending (call again),
-3 = usage, git or API error.
+Exit codes: 0 = succeeded, 1 = failed or cancelled, 2 = pending, 3 = usage, git or API error.
 
 .EXAMPLE
-pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 8615e8f -Branch ci/core-split-a-3
+pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 8615e8f
 
 .EXAMPLE
-# Benchmark a branch tip against its branch point on the same runner.
-pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 519bba1 -Branch ci/bench-core-split-a -Benchmarks "*AccessWriterBenchmarks* *AccessReaderRowDecodeBenchmarks*" -Baseline 56d84f3
+pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 519bba1 -Benchmarks '*AccessWriterBenchmarks*' -Baseline 56d84f3
 
 .EXAMPLE
-# Re-run only the failed jobs of the last run on this branch, to tell a flaky failure from a real one, then wait.
-pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 8615e8f -Branch ci/core-split-a-3 -RerunFailed
+# Retry only failed jobs of the matching CI run, then report its current status.
+pwsh -NoProfile -File scripts/ci-gate.ps1 -Sha 8615e8f -RerunFailed
 
 .EXAMPLE
-# Report on an existing run without pushing anything.
 pwsh -NoProfile -File scripts/ci-gate.ps1 -RunId 37184182298
-
-.EXAMPLE
-# Delete the temporary branch when the gate is no longer needed.
-pwsh -NoProfile -File scripts/ci-gate.ps1 -Branch ci/core-split-a-3 -Delete
 #>
+[CmdletBinding()]
 param(
     [string] $Sha,
-    [string] $Branch,
     [long] $RunId,
-    [int] $WaitSeconds = 480,
+    [ValidateRange(0, 86400)] [int] $WaitSeconds = 0,
     [switch] $RerunFailed,
-    [switch] $Delete,
-    # Run the benchmarks workflow instead of ci.yml: BenchmarkDotNet --filter patterns, separated by spaces.
     [string] $Benchmarks,
-    # With -Benchmarks: the commit to benchmark first on the same runner, for a comparison.
     [string] $Baseline,
-    # With -Benchmarks: the BenchmarkDotNet job.
     [ValidateSet('default', 'short', 'medium', 'dry')] [string] $Job = 'default',
-    # owner/name of the GitHub repository; defaults to the one origin points at.
     [string] $Repo
 )
 
 $ErrorActionPreference = 'Stop'
 $gitDir = $PSScriptRoot
 
-if (-not $Repo) {
-    $origin = git -C $gitDir remote get-url origin 2>$null
-    if ($origin -match 'github\.com[/:]([^/]+/[^/]+?)(\.git)?/?$') { $Repo = $Matches[1] }
-    else { Write-Host "ERROR: cannot tell the GitHub repository from origin ('$origin'); pass -Repo owner/name."; exit 3 }
-}
-
-$api = "https://api.github.com/repos/$Repo"
-$stateDir = Join-Path (git -C $gitDir rev-parse --path-format=absolute --git-common-dir) 'ci-gate'
-New-Item -ItemType Directory -Force $stateDir | Out-Null
-
-# The GitHub CLI; a session started before it was installed may not have it on PATH.
-$gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
-if (-not $gh -and $env:ProgramFiles -and (Test-Path "$env:ProgramFiles\GitHub CLI\gh.exe")) { $gh = "$env:ProgramFiles\GitHub CLI\gh.exe" }
-
 function Get-Headers {
-    $tok = if ($gh) { (& $gh auth token 2>$null | Select-Object -First 1) } else { $null }
-    if (-not $tok) {
-        $cred = "protocol=https`nhost=github.com`n`n" | git -C $gitDir -c credential.interactive=never credential fill 2>$null
-        $tok = ($cred | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
+    $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+    if (-not $gh -and $env:ProgramFiles -and (Test-Path "$env:ProgramFiles\GitHub CLI\gh.exe")) {
+        $gh = "$env:ProgramFiles\GitHub CLI\gh.exe"
     }
-    if (-not $tok) { Write-Host 'ERROR: no GitHub token: run "gh auth login", or store a github.com credential in git.'; exit 3 }
-    return @{ Authorization = "Bearer $tok"; 'User-Agent' = 'ci-gate'; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+    $token = if ($gh) { & $gh auth token 2>$null | Select-Object -First 1 } else { $null }
+    if (-not $token) {
+        $credential = "protocol=https`nhost=github.com`n`n" | git -C $gitDir -c credential.interactive=never credential fill 2>$null
+        $token = ($credential | Where-Object { $_ -like 'password=*' }) -replace '^password=', ''
+    }
+    if (-not $token) { throw 'No GitHub token: run "gh auth login", or store a github.com credential in git.' }
+    return @{ Authorization = "Bearer $token"; 'User-Agent' = 'ci-gate'; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
 }
 
-function ConvertTo-Utc($value) {
-    if ($null -eq $value) { return $null }
-    if ($value -is [datetime]) { return $value.ToUniversalTime() }
-    return [datetime]::Parse([string]$value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+function Save-Json($value, [string] $file) {
+    $temporary = "$file.$([guid]::NewGuid().ToString('N')).tmp"
+    [IO.File]::WriteAllText($temporary, ($value | ConvertTo-Json -Depth 20))
+    [IO.File]::Move($temporary, $file, $true)
 }
 
-function Save-State($state, $file) { $state | ConvertTo-Json | Set-Content -LiteralPath $file -Encoding utf8NoBOM }
+function Get-Collection([string] $uri, [string] $property) {
+    $separator = if ($uri.Contains('?')) { '&' } else { '?' }
+    for ($page = 1; ; $page++) {
+        $response = Invoke-RestMethod -Uri "${uri}${separator}per_page=100&page=$page" -Headers $headers
+        $items = @($response.$property)
+        $items
+        if ($items.Count -lt 100 -or $page * 100 -ge $response.total_count) { break }
+    }
+}
 
-function Write-RunReport($run, $headers) {
+function Get-Archive([string] $uri, [string] $directory) {
+    if ([IO.Directory]::Exists($directory)) { return }
+    # Publish the cache directory only after extraction succeeds, so a partial download is never reused.
+    $temporary = "$directory.$([guid]::NewGuid().ToString('N'))"
+    $zip = "$temporary.zip"
+    Invoke-WebRequest -Uri $uri -Headers $headers -OutFile $zip
+    Expand-Archive -LiteralPath $zip -DestinationPath $temporary
+    try { [IO.Directory]::Move($temporary, $directory) }
+    catch [IO.IOException] {
+        if (-not [IO.Directory]::Exists($directory)) { throw }
+        # Another reporter completed the same immutable attempt while this download was in flight.
+    }
+    Remove-Item -LiteralPath $zip
+}
+
+function Write-RunStatus($run) {
     Write-Host "RUN: $($run.html_url)"
     Write-Host "HEAD: $($run.head_sha) on $($run.head_branch) (attempt $($run.run_attempt))"
     Write-Host "STATUS: $($run.status)  CONCLUSION: $($run.conclusion)"
-    $jobs = Invoke-RestMethod -Uri "$api/actions/runs/$($run.id)/jobs?filter=latest" -Headers $headers
-    foreach ($j in $jobs.jobs) {
-        Write-Host "JOB '$($j.name)': $($j.conclusion)"
-        foreach ($s in $j.steps) { Write-Host ("  step {0,2} {1}: {2}" -f $s.number, $s.name, $s.conclusion) }
+}
+
+function Write-RunReport($run) {
+    Write-RunStatus $run
+    if ($run.status -ne 'completed') { return }
+
+    $prefix = Join-Path $stateDir "run-$($run.id)-attempt$($run.run_attempt)"
+    $jobsFile = "$prefix-jobs.json"
+    if ([IO.File]::Exists($jobsFile)) { $jobs = (Get-Content -LiteralPath $jobsFile -Raw | ConvertFrom-Json).jobs }
+    else {
+        $jobs = @(Get-Collection "$api/actions/runs/$($run.id)/attempts/$($run.run_attempt)/jobs" 'jobs')
+        Save-Json @{ jobs = $jobs } $jobsFile
+    }
+    foreach ($jobResult in $jobs) {
+        Write-Host "JOB '$($jobResult.name)': $($jobResult.conclusion)"
+        foreach ($stepResult in $jobResult.steps) {
+            Write-Host ('  step {0,2} {1}: {2}' -f $stepResult.number, $stepResult.name, $stepResult.conclusion)
+        }
     }
 
-    $logDir = Join-Path $stateDir "run-$($run.id)-attempt$($run.run_attempt)"
-    if (-not (Test-Path $logDir)) {
-        $zip = "$logDir.zip"
-        Invoke-WebRequest -Uri "$api/actions/runs/$($run.id)/attempts/$($run.run_attempt)/logs" -Headers $headers -OutFile $zip
-        Expand-Archive -LiteralPath $zip -DestinationPath $logDir -Force
-        Remove-Item -LiteralPath $zip
-    }
-
-    # The archive holds one log per job; its steps start at '##[group]Run <command>' lines.
-    $jobLogs = Get-ChildItem -LiteralPath $logDir -File -Filter *.txt
+    Get-Archive "$api/actions/runs/$($run.id)/attempts/$($run.run_attempt)/logs" $prefix
+    $jobLogs = @(Get-ChildItem -LiteralPath $prefix -File -Filter '*.txt' | Sort-Object Name)
     Write-Host "LOGS: $($jobLogs.FullName -join '; ')"
     Write-Host "NOTE: 'skipped' in a test summary counts the skip-guarded DAO tests and the 3 explicit-only fuzz tests together."
-
-    foreach ($f in $jobLogs) {
-        $lines = @(Get-Content -LiteralPath $f.FullName | ForEach-Object { ($_ -replace '^\d{4}-\d\d-\d\dT[\d:.]+Z ', '') -replace '\x1B\[[0-9;]*[A-Za-z]', '' })
-        $step = ''
+    $decoration = [regex]::new('^\d{4}-\d\d-\d\dT[\d:.]+Z |\x1B\[[0-9;]*[A-Za-z]')
+    foreach ($file in $jobLogs) {
+        $isBuild = $false
+        $isTest = $false
         $after = 0
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            $line = $lines[$i]
-            if ($line -match '^##\[group\]Run (.+)$') { $step = $Matches[1]; if ($step -match 'dotnet ') { Write-Host "---- $step" }; $after = 0; continue }
-            $isBuild = $step -match 'dotnet (restore|build|pack)'
-            $isTest = $step -match 'dotnet test'
+        $skip = $null
+        foreach ($rawLine in [IO.File]::ReadLines($file.FullName)) {
+            $line = $decoration.Replace($rawLine, '')
+            if ($skip) {
+                if ($line -notmatch 'Requires Microsoft Access|explicit test filtering') {
+                    Write-Host "  NON-DAO SKIP: $skip / $($line.Trim())"
+                }
+                $skip = $null
+            }
+            if ($line -match '^##\[group\]Run (.+)$') {
+                $step = $Matches[1]
+                $isBuild = $step -match 'dotnet (restore|build|pack)'
+                $isTest = $step -match 'dotnet test'
+                if ($step -match 'dotnet ') { Write-Host "---- $step" }
+                $after = 0
+                continue
+            }
+            if ($isTest -and $line -match '^skipped ') { $skip = $line }
             if ($after -gt 0) { Write-Host "    $line"; $after--; continue }
             if ($line -match '##\[error\]') { Write-Host "  $line"; continue }
             if ($isBuild -and $line -match '(?i)^\s*\d+ (Warning|Error)\(s\)|: (error|warning) [A-Z]{2,}\d+|Build (succeeded|FAILED)') { Write-Host "  $line"; continue }
             if ($isTest -and $line -match '^failed ') { Write-Host "  $line"; $after = 12; continue }
-            if ($isTest -and $line -match '^Test run summary') { Write-Host "  $line"; $after = 5; continue }
-            if ($isTest -and $line -match '^skipped ' -and $i + 1 -lt $lines.Count -and $lines[$i + 1] -notmatch 'Requires Microsoft Access|explicit test filtering') { Write-Host "  NON-DAO SKIP: $line / $($lines[$i + 1].Trim())" }
+            if ($isTest -and $line -match '^Test run summary') { Write-Host "  $line"; $after = 5 }
         }
+        if ($skip) { Write-Host "  NON-DAO SKIP: $skip / missing skip reason" }
     }
 }
 
-# Downloads a finished run's benchmark-results artifact and prints the summary the workflow wrote.
-function Write-BenchmarkSummary($run, $headers) {
-    $artifacts = Invoke-RestMethod -Uri "$api/actions/runs/$($run.id)/artifacts" -Headers $headers
-    $artifact = $artifacts.artifacts | Where-Object { $_.name -eq 'benchmark-results' } | Select-Object -First 1
-    if (-not $artifact) { return }
-    $dir = Join-Path $stateDir "run-$($run.id)-attempt$($run.run_attempt)-benchmark-results"
-    if (-not (Test-Path $dir)) {
-        $zip = "$dir.zip"
-        Invoke-WebRequest -Uri $artifact.archive_download_url -Headers $headers -OutFile $zip
-        Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
-        Remove-Item -LiteralPath $zip
+function Write-BenchmarkSummary($run) {
+    $directory = Join-Path $stateDir "run-$($run.id)-attempt$($run.run_attempt)-benchmark-results"
+    if (-not [IO.Directory]::Exists($directory)) {
+        $artifact = Get-Collection "$api/actions/runs/$($run.id)/artifacts" 'artifacts' |
+            Where-Object { $_.name -eq 'benchmark-results' -and -not $_.expired } | Select-Object -First 1
+        if (-not $artifact) { return }
+        Get-Archive $artifact.archive_download_url $directory
     }
-    Write-Host "BENCHMARK RESULTS: $dir"
-    $summary = Get-ChildItem -LiteralPath $dir -Recurse -File -Filter 'summary.md' | Select-Object -First 1
-    if ($summary) { Get-Content -LiteralPath $summary.FullName | ForEach-Object { Write-Host $_ } }
+    Write-Host "BENCHMARK RESULTS: $directory"
+    $summary = Get-ChildItem -LiteralPath $directory -Recurse -File -Filter 'summary.md' | Select-Object -First 1
+    if ($summary) { foreach ($line in [IO.File]::ReadLines($summary.FullName)) { Write-Host $line } }
 }
 
-if ($RunId) {
+function Find-Run([string] $workflow, [string] $full) {
+    $uri = "$api/actions/workflows/$workflow/runs?branch=main&head_sha=$full&per_page=100"
+    $runs = (Invoke-RestMethod -Uri $uri -Headers $headers).workflow_runs
+    return $runs | Where-Object {
+        $_.head_sha -eq $full -and $_.head_branch -eq 'main'
+    } | Sort-Object id -Descending | Select-Object -First 1
+}
+
+function Assert-RunRevision($run, [string] $full, [string] $workflow) {
+    if ($run.head_sha -ne $full -or $run.head_branch -ne 'main' -or ($run.path -split '@', 2)[0] -ne ".github/workflows/$workflow") {
+        throw 'The discovered run does not match the requested main revision and workflow.'
+    }
+}
+
+try {
+    if ($RunId -lt 0 -or (-not $RunId -and -not $Sha)) { throw 'Specify -Sha or -RunId.' }
+    if ($RunId -and ($Sha -or $Benchmarks -or $Baseline -or $RerunFailed)) { throw '-RunId cannot be combined with dispatch or rerun arguments.' }
+    if ($Baseline -and -not $Benchmarks) { throw '-Baseline needs -Benchmarks.' }
+    if (-not $Repo) {
+        $origin = git -C $gitDir remote get-url origin 2>$null
+        if ($LASTEXITCODE -ne 0 -or $origin -notmatch 'github\.com[/:]([^/]+/[^/]+?)(\.git)?/?$') {
+            throw "Cannot tell the GitHub repository from origin ('$origin'); pass -Repo owner/name."
+        }
+        $Repo = $Matches[1]
+    }
+    if ($Repo -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw '-Repo must be owner/name.' }
+    $api = "https://api.github.com/repos/$Repo"
+    $commonDir = git -C $gitDir rev-parse --path-format=absolute --git-common-dir
+    if ($LASTEXITCODE -ne 0 -or -not $commonDir) { throw 'Cannot find the Git common directory.' }
+    $stateDir = Join-Path $commonDir "ci-gate/$Repo"
+    [IO.Directory]::CreateDirectory($stateDir) | Out-Null
     $headers = Get-Headers
-    $run = Invoke-RestMethod -Uri "$api/actions/runs/$RunId" -Headers $headers
-    Write-RunReport $run $headers
-    if ($run.status -eq 'completed') { Write-BenchmarkSummary $run $headers }
+
+    if ($RunId) {
+        $run = Invoke-RestMethod -Uri "$api/actions/runs/$RunId" -Headers $headers
+    }
+    else {
+        $full = git -C $gitDir rev-parse --verify --end-of-options "$Sha^{commit}" 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $full) { throw "$Sha is not a commit in this repository." }
+        $workflow = if ($Benchmarks) { 'benchmarks.yml' } else { 'ci.yml' }
+        $inputs = [ordered]@{}
+        if ($Benchmarks) {
+            $inputs.filter = $Benchmarks
+            $inputs.job = $Job
+            $inputs.baseline = ''
+            if ($Baseline) {
+                $inputs.baseline = git -C $gitDir rev-parse --verify --end-of-options "$Baseline^{commit}" 2>$null
+                if ($LASTEXITCODE -ne 0 -or -not $inputs.baseline) { throw "$Baseline is not a commit in this repository." }
+            }
+        }
+        $inputsJson = $inputs | ConvertTo-Json -Compress
+        $inputHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($inputsJson))).ToLowerInvariant()
+        $stateFile = Join-Path $stateDir "$workflow-$full-$inputHash.json"
+        # Serialize discovery and dispatch across worktrees without holding the lock during polling or reporting.
+        $stateLock = [IO.File]::Open("$stateFile.lock", [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        try {
+            $state = if ([IO.File]::Exists($stateFile)) { Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json } else { $null }
+            if ($state -and $state.rerunRequested -and -not $state.rerunConfirmed) {
+                throw 'The previous rerun request was not confirmed. Inspect GitHub Actions and report the intended attempt with -RunId.'
+            }
+            $run = $null
+            if ($state -and $state.runId) { $run = Invoke-RestMethod -Uri "$api/actions/runs/$($state.runId)" -Headers $headers }
+            elseif ($state) { throw 'A previous dispatch has no confirmed run ID. Inspect GitHub Actions and report the intended run with -RunId.' }
+            else {
+                $main = Invoke-RestMethod -Uri "$api/branches/main" -Headers $headers
+                if ($main.commit.sha -ne $full) { throw "$full is not GitHub's main tip. Integrate and publish main before gating it." }
+                if ($inputs.baseline) {
+                    $comparison = Invoke-RestMethod -Uri "$api/compare/$($inputs.baseline)...$full" -Headers $headers
+                    if ($comparison.status -notin 'ahead', 'identical') { throw 'The baseline must already belong to published main history.' }
+                }
+                if (-not $Benchmarks) { $run = Find-Run $workflow $full }
+                if (-not $run -and $RerunFailed) { throw 'No matching run exists to rerun.' }
+                $state = [pscustomobject]@{ sha = $full; workflow = $workflow; inputs = $inputsJson; dispatchedAt = $null; runId = $null; minimumAttempt = 1; rerunRequested = $false; rerunConfirmed = $false }
+                if (-not $run) {
+                    $state.dispatchedAt = [datetimeoffset]::UtcNow.ToString('o')
+                    $body = @{ ref = 'main' }
+                    if ($inputs.Count -gt 0) { $body.inputs = $inputs }
+                    # Save intent first: a lost HTTP response must not cause another dispatch on retry.
+                    Save-Json $state $stateFile
+                    # API 2026-03-10 returns the run ID instead of requiring timestamp-based discovery:
+                    # https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+                    $dispatch = Invoke-RestMethod -Method Post -Uri "$api/actions/workflows/$workflow/dispatches" -Headers $headers -ContentType 'application/json' -Body ($body | ConvertTo-Json)
+                    $state.runId = $dispatch.workflow_run_id
+                    Save-Json $state $stateFile
+                    if (-not $state.runId) { throw 'The dispatch response did not identify a run. Inspect GitHub Actions and use -RunId; this request will not dispatch again.' }
+                    Write-Host "Dispatched $workflow on main for ${full}: $($dispatch.html_url)"
+                    $run = Invoke-RestMethod -Uri "$api/actions/runs/$($state.runId)" -Headers $headers
+                }
+            }
+            if ($run) {
+                Assert-RunRevision $run $full $workflow
+                $state.runId = $run.id
+                if ($RerunFailed -and -not $state.rerunRequested -and $run.status -eq 'completed' -and $run.conclusion -ne 'success') {
+                    $state.minimumAttempt = $run.run_attempt + 1
+                    $state.rerunRequested = $true
+                    Save-Json $state $stateFile
+                    Invoke-RestMethod -Method Post -Uri "$api/actions/runs/$($run.id)/rerun-failed-jobs" -Headers $headers | Out-Null
+                    $state.rerunConfirmed = $true
+                    Save-Json $state $stateFile
+                    Write-Host "Re-running failed jobs of run $($run.id); waiting for attempt $($state.minimumAttempt)."
+                    $run = $null
+                }
+            }
+            Save-Json $state $stateFile
+        }
+        finally { $stateLock.Dispose() }
+
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        while ($true) {
+            if ($run -and $run.run_attempt -ge $state.minimumAttempt -and $run.status -eq 'completed') { break }
+            if ($timer.Elapsed.TotalSeconds -ge $WaitSeconds) { break }
+            Start-Sleep -Milliseconds ([int][Math]::Max(0, [Math]::Min(15000, [Math]::Ceiling(($WaitSeconds - $timer.Elapsed.TotalSeconds) * 1000))))
+            $run = Invoke-RestMethod -Uri "$api/actions/runs/$($state.runId)" -Headers $headers
+            if ($run) { Assert-RunRevision $run $full $workflow; $state.runId = $run.id }
+        }
+        if ($run -and $run.run_attempt -lt $state.minimumAttempt) { $run = $null }
+    }
+
+    if (-not $run) { Write-Host 'PENDING: the requested run or rerun has not appeared yet. Call again with the same arguments.'; exit 2 }
+    Write-RunReport $run
     if ($run.status -ne 'completed') { exit 2 }
-    if ($run.conclusion -eq 'success') { exit 0 } else { exit 1 }
+    if ($Benchmarks -or ($run.path -split '@', 2)[0] -eq '.github/workflows/benchmarks.yml') { Write-BenchmarkSummary $run }
+    if ($run.conclusion -eq 'success') { exit 0 }
+    exit 1
 }
-
-if (-not $Branch -or $Branch -notlike 'ci/*') { Write-Host 'ERROR: -Branch must be a ci/* branch; this script never pushes main or any other branch.'; exit 3 }
-$workflow = if ($Benchmarks) { 'benchmarks.yml' } else { 'ci.yml' }
-$statePrefix = if ($Benchmarks) { 'benchmarks__' } else { '' }
-$stateFile = Join-Path $stateDir ($statePrefix + ($Branch -replace '[/\\]', '_') + '.json')
-$baseBranch = "$Branch-base"
-
-if ($Delete) {
-    git -C $gitDir push origin --delete $Branch 2>&1 | ForEach-Object { Write-Host $_ }
-    if (git -C $gitDir ls-remote --heads origin $baseBranch) { git -C $gitDir push origin --delete $baseBranch 2>&1 | ForEach-Object { Write-Host $_ } }
-    Get-ChildItem -LiteralPath $stateDir -Filter ('*' + ($Branch -replace '[/\\]', '_') + '.json') | Remove-Item
-    exit 0
+catch {
+    Write-Host "ERROR: $($_.Exception.Message)"
+    exit 3
 }
-
-if (-not $Sha) { Write-Host 'ERROR: -Sha is required.'; exit 3 }
-$full = (git -C $gitDir rev-parse --verify "$Sha^{commit}" 2>$null)
-if (-not $full) { Write-Host "ERROR: $Sha is not a commit in this repository."; exit 3 }
-$inputs = [ordered]@{}
-if ($Benchmarks) {
-    $inputs.filter = $Benchmarks
-    $inputs.job = $Job
-    $inputs.baseline = ''
-    if ($Baseline) {
-        $baseFull = (git -C $gitDir rev-parse --verify "$Baseline^{commit}" 2>$null)
-        if (-not $baseFull) { Write-Host "ERROR: $Baseline is not a commit in this repository."; exit 3 }
-        $inputs.baseline = $baseFull
-    }
-}
-elseif ($Baseline) { Write-Host 'ERROR: -Baseline needs -Benchmarks.'; exit 3 }
-$inputsKey = ($inputs.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
-$headers = Get-Headers
-$state = if (Test-Path -LiteralPath $stateFile) { Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json } else { $null }
-
-if (-not $state -or $state.sha -ne $full -or [string]$state.inputs -ne $inputsKey) {
-    git -C $gitDir push --force origin "${full}:refs/heads/$Branch" 2>&1 | ForEach-Object { Write-Host $_ }
-    if ($LASTEXITCODE -ne 0) { Write-Host 'ERROR: git push failed.'; exit 3 }
-    if ($inputs.baseline) {
-        # The runner fetches the baseline from origin, so make sure origin has it.
-        git -C $gitDir push --force origin "$($inputs.baseline):refs/heads/$baseBranch" 2>&1 | ForEach-Object { Write-Host $_ }
-        if ($LASTEXITCODE -ne 0) { Write-Host 'ERROR: git push of the baseline failed.'; exit 3 }
-    }
-    $dispatchedAt = (Get-Date).ToUniversalTime()
-    if ($gh) {
-        $fields = @($inputs.GetEnumerator() | ForEach-Object { '-f'; "$($_.Key)=$($_.Value)" })
-        & $gh workflow run $workflow --repo $Repo --ref $Branch @fields 2>&1 | ForEach-Object { Write-Host $_ }
-        if ($LASTEXITCODE -ne 0) { Write-Host 'ERROR: gh workflow run failed.'; exit 3 }
-    }
-    else {
-        $body = @{ ref = $Branch }
-        if ($inputs.Count -gt 0) { $body.inputs = $inputs }
-        Invoke-RestMethod -Method Post -Uri "$api/actions/workflows/$workflow/dispatches" -Headers $headers -ContentType 'application/json' -Body ($body | ConvertTo-Json) | Out-Null
-    }
-    $state = [pscustomobject]@{ sha = $full; branch = $Branch; workflow = $workflow; inputs = $inputsKey; dispatchedAt = $dispatchedAt.ToString('o'); runId = $null }
-    Save-State $state $stateFile
-    Write-Host "Pushed $full to origin/$Branch and dispatched $workflow at $($state.dispatchedAt)."
-}
-elseif ($RerunFailed -and $state.runId) {
-    if ($gh) { & $gh run rerun $state.runId --failed --repo $Repo 2>&1 | ForEach-Object { Write-Host $_ } }
-    else { Invoke-RestMethod -Method Post -Uri "$api/actions/runs/$($state.runId)/rerun-failed-jobs" -Headers $headers | Out-Null }
-    Write-Host "Re-running the failed jobs of run $($state.runId)."
-    Start-Sleep -Seconds 10
-}
-
-$deadline = (Get-Date).AddSeconds($WaitSeconds)
-$run = $null
-while ($true) {
-    if (-not $state.runId) {
-        $since = (ConvertTo-Utc $state.dispatchedAt).AddMinutes(-1)
-        $runs = Invoke-RestMethod -Uri "$api/actions/workflows/$workflow/runs?branch=$([uri]::EscapeDataString($Branch))&event=workflow_dispatch&per_page=10" -Headers $headers
-        $run = $runs.workflow_runs | Where-Object { $_.head_sha -eq $full -and (ConvertTo-Utc $_.created_at) -ge $since } | Sort-Object { ConvertTo-Utc $_.created_at } -Descending | Select-Object -First 1
-        if ($run) { $state.runId = $run.id; Save-State $state $stateFile }
-    }
-    else {
-        $run = Invoke-RestMethod -Uri "$api/actions/runs/$($state.runId)" -Headers $headers
-    }
-    if ($run -and $run.status -eq 'completed') { break }
-    if ((Get-Date) -ge $deadline) { break }
-    Start-Sleep -Seconds 30
-}
-
-if (-not $run) { Write-Host "PENDING: dispatched at $($state.dispatchedAt); the run has not appeared yet. Call again with the same arguments."; exit 2 }
-if ($run.status -ne 'completed') { Write-Host "PENDING: $($run.html_url) is $($run.status). Call again with the same arguments."; exit 2 }
-Write-RunReport $run $headers
-if ($Benchmarks) { Write-BenchmarkSummary $run $headers }
-if ($run.conclusion -eq 'success') { exit 0 } else { exit 1 }
