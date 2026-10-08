@@ -40,7 +40,7 @@ public sealed class RowDecodeParityTests
         {
             ColumnDefinition column = calculated
                 ? new("Value", typeof(int)) { IsCalculated = true, CalculationExpression = "42" }
-                : new("Value", typeof(decimal));
+                : new("Value", typeof(decimal)) { ForceVariableLengthStorage = true };
             await writer.CreateTableAsync("Values", [column], ct);
             await writer.InsertRowAsync("Values", calculated ? [null] : [42m], ct);
         }
