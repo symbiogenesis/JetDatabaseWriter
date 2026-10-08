@@ -236,17 +236,17 @@ internal static class GeneralLegacyTextIndexEncoder
             ascending ? AscendingNonNull : DescendingNonNull,
         };
 
+#if NET8_0_OR_GREATER
+    private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes) => sink.AddRange(bytes);
+#else
     private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes)
     {
-#if NET8_0_OR_GREATER
-        sink.AddRange(bytes);
-#else
         foreach (byte value in bytes)
         {
             sink.Add(value);
         }
-#endif
     }
+#endif
 
 #if NET8_0_OR_GREATER
     private static int FindFirstLineBreak(string text) => text.AsSpan().IndexOfAny(LineBreakChars);

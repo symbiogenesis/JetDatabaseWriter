@@ -225,17 +225,17 @@ internal static class General97TextIndexEncoder
         }
     }
 
+#if NET8_0_OR_GREATER
+    private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes) => sink.AddRange(bytes);
+#else
     private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes)
     {
-#if NET8_0_OR_GREATER
-        sink.AddRange(bytes);
-#else
         foreach (byte value in bytes)
         {
             sink.Add(value);
         }
-#endif
     }
+#endif
 
     private static short[] LoadMappings(string resourceName, char firstChar, char lastChar)
     {
