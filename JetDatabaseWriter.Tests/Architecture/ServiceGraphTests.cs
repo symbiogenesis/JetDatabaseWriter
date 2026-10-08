@@ -241,6 +241,8 @@ public sealed class ServiceGraphTests
             typeof(TableCatalog),
             typeof(TableDataWriter),
             typeof(TableSchemaEditor),
+            typeof(TableRewritePlanner),
+            typeof(TableStorageEditor),
             typeof(TableRowStore),
             typeof(RelationshipManager),
             typeof(ForeignKeyMetadataEditor),
@@ -262,6 +264,19 @@ public sealed class ServiceGraphTests
         {
             Assert.Contains(service, state.Keys);
         }
+    }
+
+    [Fact]
+    public void TableRewritePlanning_DoesNotOwnStoragePublication()
+    {
+        Type[] dependencies = [.. DependenciesOf(typeof(TableRewritePlanner))];
+
+        Assert.DoesNotContain(typeof(Pager), dependencies);
+        Assert.DoesNotContain(typeof(PageAllocator), dependencies);
+        Assert.DoesNotContain(typeof(TableSchemaEditor), dependencies);
+        Assert.DoesNotContain(typeof(TableStorageEditor), dependencies);
+        Assert.Contains(typeof(TableStorageEditor), DependenciesOf(typeof(TableSchemaEditor)));
+        Assert.DoesNotContain(typeof(PageAllocator), DependenciesOf(typeof(TableSchemaEditor)));
     }
 
     [Fact]

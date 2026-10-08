@@ -120,7 +120,8 @@ internal sealed class WriterServices
             enforcer,
             this.ComplexColumns,
             snapshots);
-        this.Schema = new TableSchemaEditor(
+        this.RewritePlanner = new TableRewritePlanner(db.Format, catalog, this.Indexes, this.CatalogArtifacts, constraints, this.Relationships, snapshots, autoNumbers);
+        var tableStorage = new TableStorageEditor(
             db.Format,
             db.TableDefs,
             db.OwnedPages,
@@ -135,8 +136,22 @@ internal sealed class WriterServices
             this.ComplexColumns,
             constraints,
             this.Relationships,
-            snapshots,
             autoNumbers);
+        this.Schema = new TableSchemaEditor(
+            db.Format,
+            db.TableDefs,
+            pager,
+            catalog,
+            tableRows,
+            this.Indexes,
+            catalogWriter,
+            this.CatalogArtifacts,
+            this.ComplexColumns,
+            constraints,
+            this.Relationships,
+            snapshots,
+            this.RewritePlanner,
+            tableStorage);
     }
 
     /// <summary>Gets the explicit and auto-commit transaction lifecycle.</summary>
@@ -147,6 +162,9 @@ internal sealed class WriterServices
 
     /// <summary>Gets the table and column DDL workflows.</summary>
     internal TableSchemaEditor Schema { get; }
+
+    /// <summary>Gets validation and projection planning for table rewrites.</summary>
+    internal TableRewritePlanner RewritePlanner { get; }
 
     /// <summary>Gets the foreign-key relationship create / drop / rename workflows.</summary>
     internal RelationshipManager Relationships { get; }
