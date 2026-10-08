@@ -936,7 +936,7 @@ internal sealed class IndexMaintainer(
         }
 
         var pointers = new UsageMapPointer[numRealIdx];
-        var hasMap = new bool[numRealIdx];
+        bool[] hasMap = new bool[numRealIdx];
         for (int realIdxNum = 0; realIdxNum < numRealIdx; realIdxNum++)
         {
             if (!format.Index.TryReadRealIdxSlot(tdefBuffer, realIdxDescStart, realIdxNum, out RealIdxSlot slot)

@@ -14,6 +14,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -33,7 +34,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
     {
         await using MemoryStream stream = await cache.CopyToStreamAsync(TestDatabases.IndexTestV1997, this.ct);
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
-        CatalogEntry table = (await harness.GetCatalogEntryAsync("Table1", this.ct))!;
+        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("Table1", this.ct))!;
         DatabaseFile db = harness.Database;
         TableDef definition = (await db.TableDefs.ReadTableDefAsync(table.TDefPage, this.ct))!;
         LogicalTDefChain chain = await db.TableDefs.ReadTDefChainAsync(table.TDefPage, this.ct);
@@ -146,7 +147,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
 
             stream.Position = 0;
             await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
-            CatalogEntry table = (await harness.GetCatalogEntryAsync("Table1", this.ct))!;
+            CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("Table1", this.ct))!;
             SortedSet<long> unreachable = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct);
             if (retained is null)
             {
@@ -194,7 +195,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
 
         stream.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
-        CatalogEntry table = (await harness.GetCatalogEntryAsync("T", this.ct))!;
+        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
         Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
         foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct))
         {
