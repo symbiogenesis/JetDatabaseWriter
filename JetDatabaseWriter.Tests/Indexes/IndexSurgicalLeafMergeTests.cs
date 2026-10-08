@@ -1,23 +1,29 @@
 namespace JetDatabaseWriter.Tests.Indexes;
 
+using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
 /// Round-trip tests for the leaf-merge (leaf merge on delete underflow) path
-/// inside <c>AccessWriter.TrySurgicalCrossLeafMaintainAsync</c>. When a
+/// inside <c>IndexBTreeEditor.TrySurgicalCrossLeafMaintainAsync</c>. When a
 /// per-leaf splice empties the affected leaf, the cross-leaf path drops
 /// the leaf from its parent intermediate and patches the leaf-sibling
-/// chain to skip it — the dead leaf is orphaned (Compact &amp; Repair
-/// reclaims it). Bails to bulk rebuild when the dead leaf was its parent's
-/// rightmost child (would shrink ancestor <c>tail_page</c>) or when the
-/// parent has only one child (would cascade-collapse the parent).
+/// chain to skip it. Successful maintenance reclaims detached pages after
+/// linking the live root and usage map. The rightmost child updates its
+/// parent's <c>tail_page</c>; a parent with only one child still requires
+/// the bulk fallback.
 /// </summary>
 public sealed class IndexSurgicalLeafMergeTests
 {
@@ -26,12 +32,11 @@ public sealed class IndexSurgicalLeafMergeTests
     [Fact]
     public async Task DeleteAllInLeftmostLeaf_MergesIntoRightSibling_AppendsZeroIndexPages()
     {
-        // Non-unique index on Tag. 800 rows split 400/400 across Tag=0 and
-        // Tag=1 → leaf 0 holds Tag=0, leaf 1 holds Tag=1; one intermediate
-        // root with 2 entries. Deleting all Tag=0 empties leaf 0 (the
-        // leftmost). leaf-merge conditions: parent count 2 (>= 2), deadIdx 0
-        // (!= last) → merge engages. Dead leaf is orphaned (still 0x04
-        // 0x01-tagged) so CountIndexPages stays equal.
+        // Non-unique Tag keys repeat across 800 rows. Packing does not
+        // guarantee a leaf boundary between the two Tag values. Removing
+        // Tag=0 must preserve the remaining Tag=1 rows without appending
+        // index pages; the sparse unique-key cases below force full leaves
+        // to detach and verify their reclamation.
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -157,8 +162,8 @@ public sealed class IndexSurgicalLeafMergeTests
         // the parent intermediate (= root) drops
         // its rightmost child entry AND its tail_page header is recomputed
         // to point at the surviving (former middle) leaf. Surgical engages
-        // → zero new index pages appended (the orphaned dead leaf is
-        // reclaimed by Compact & Repair).
+        // → zero new index pages appended, and the detached leaf is returned
+        // to the allocator after the live root and usage map are linked.
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
 
         const int total = 1200;
@@ -185,6 +190,7 @@ public sealed class IndexSurgicalLeafMergeTests
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
+        (long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength) treeBefore = await this.ReadMergeSnapshotAsync(stream);
 
         const int expectedDeletes = total - leftAndMidCount; // 398
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -194,7 +200,8 @@ public sealed class IndexSurgicalLeafMergeTests
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
-        Assert.Equal(idxBefore, idxAfter);
+        Assert.Equal(idxBefore - 1, idxAfter);
+        await this.AssertDetachedTailReclaimedAsync(stream, treeBefore, leftAndMidCount);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
@@ -369,6 +376,7 @@ public sealed class IndexSurgicalLeafMergeTests
         }
 
         int idxBefore = CountIndexPages(stream.ToArray());
+        (long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength) treeBefore = await this.ReadMergeSnapshotAsync(stream);
 
         const int expectedDeletes = total - leftLeafCount; // 399
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -378,7 +386,8 @@ public sealed class IndexSurgicalLeafMergeTests
         }
 
         int idxAfter = CountIndexPages(stream.ToArray());
-        Assert.Equal(idxBefore, idxAfter);
+        Assert.Equal(idxBefore - 1, idxAfter);
+        await this.AssertDetachedTailReclaimedAsync(stream, treeBefore, leftLeafCount);
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
@@ -387,6 +396,55 @@ public sealed class IndexSurgicalLeafMergeTests
         foreach (DataRow r in dt.Rows)
         {
             Assert.Equal("A", (string)r["Region"]);
+        }
+    }
+
+    private async Task<(long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength)> ReadMergeSnapshotAsync(MemoryStream stream)
+    {
+        stream.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
+        long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
+        byte[] rootPage = await harness.Database.Pages.ReadPageCopyAsync(root, this.ct);
+        long tail = IndexPageCodec.ReadTailPage(harness.Database.Format.IndexPage, rootPage);
+        HashSet<long> pages = await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct);
+        Assert.Contains(tail, pages);
+        List<IndexEntry> entries = await IndexLeafChain.ReadEntriesAsync(harness.Database, table.TDefPage, root, this.ct);
+        return (root, tail, pages, entries, stream.Length);
+    }
+
+    private async Task AssertDetachedTailReclaimedAsync(
+        MemoryStream stream,
+        (long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength) before,
+        int remainingRows)
+    {
+        // No page appended and exactly the detached leaf removed from the
+        // tree: all surviving root/child pages retain their identities.
+        Assert.Equal(before.FileLength, stream.Length);
+        stream.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
+        long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
+        Assert.Equal(before.Root, root);
+        HashSet<long> pages = await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct);
+        var expectedPages = new HashSet<long>(before.Pages);
+        Assert.True(expectedPages.Remove(before.Tail));
+        Assert.True(expectedPages.SetEquals(pages));
+        Assert.True(await harness.Services.PageAllocator.IsPageFreeAsync(before.Tail, this.ct));
+        Assert.Equal(Constants.PageTypes.Freed, (await harness.Database.Pages.ReadPageCopyAsync(before.Tail, this.ct))[0]);
+        foreach (long page in pages)
+        {
+            Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(page, this.ct));
+        }
+
+        Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
+        List<IndexEntry> entries = await IndexLeafChain.ReadEntriesAsync(harness.Database, table.TDefPage, root, this.ct);
+        Assert.Equal(remainingRows, entries.Count);
+        for (int i = 0; i < remainingRows; i++)
+        {
+            Assert.Equal(before.Entries[i].Key, entries[i].Key);
+            Assert.Equal(before.Entries[i].DataPage, entries[i].DataPage);
+            Assert.Equal(before.Entries[i].DataRow, entries[i].DataRow);
         }
     }
 

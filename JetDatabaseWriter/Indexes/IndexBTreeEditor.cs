@@ -1240,8 +1240,8 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
 
             if (spliced.Count == 0)
             {
-                // Leaf merges out: drop it (orphaned for Compact & Repair,
-                // like the bulk path) and stage a parent Remove. tail_page
+                // Leaf merges out: detach it and stage a parent Remove. The
+                // maintainer reclaims it after linking metadata. tail_page
                 // fix-up for a rightmost dead leaf is handled in
                 // TryStageIntermediateRewrites. Bail when the parent has only
                 // one child (would cascade-collapse the parent) or when a
