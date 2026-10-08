@@ -24,6 +24,84 @@ public sealed class SchemaEvolutionTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task RewritePreparation_CancelledAfterProjection_DoesNotCreateReplacement(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("Original", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Original", [7], TestContext.Current.CancellationToken);
+        }
+
+        byte[] original = stream.ToArray();
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        using var cancellation = new System.Threading.CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await harness.Services.RewritePlanner.PrepareAsync(
+                "Original",
+                static (columns, _) => columns,
+                (values, _) =>
+                {
+                    cancellation.Cancel();
+                    return values;
+                },
+                static name => name,
+                cancellation.Token));
+        Assert.Equal(original, stream.ToArray());
+        Assert.Equal(["Original"], (await harness.Services.Catalog.GetUserTablesAsync(TestContext.Current.CancellationToken)).Select(static entry => entry.Name));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task RewritePreparation_RefusedProjection_DoesNotCreateReplacement(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("Original", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Original", [7], TestContext.Current.CancellationToken);
+        }
+
+        byte[] original = stream.ToArray();
+        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        JetOperationException error = await Assert.ThrowsAsync<JetOperationException>(async () =>
+            await harness.Services.RewritePlanner.PrepareAsync(
+                "Original",
+                static (_, _) => [],
+                static (values, _) => values,
+                static name => name,
+                TestContext.Current.CancellationToken));
+        Assert.Equal(JetErrorCode.LastColumn, error.ErrorCode);
+        Assert.Equal(original, stream.ToArray());
+        Assert.Equal(["Original"], (await harness.Services.Catalog.GetUserTablesAsync(TestContext.Current.CancellationToken)).Select(static entry => entry.Name));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CancelledRewrite_PreservesOriginalSchemaAndRows(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("Original", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Original", [7], TestContext.Current.CancellationToken);
+            using var cancelled = new System.Threading.CancellationTokenSource();
+            await cancelled.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await writer.AddColumnAsync("Original", new ColumnDefinition("Added", typeof(int)), cancelled.Token));
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        using DataTable rows = await reader.ReadTableAsync("Original", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Single(rows.Columns.Cast<DataColumn>());
+        Assert.Equal(7, rows.Rows[0][0]);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     public async Task AddColumnAsync_AppendsColumn_ExistingRowsBecomeNull(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
