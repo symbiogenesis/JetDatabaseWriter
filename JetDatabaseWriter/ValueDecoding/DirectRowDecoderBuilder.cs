@@ -338,6 +338,15 @@ internal static class DirectRowDecoderBuilder
             // Gate by slice kind / size sanity to mimic the per-kind switch in
             // TryCrackRowSync. Empty/Null leave the property at its default.
             Expression kindGate = BuildKindGate(col.Type, kindExpr, dataLenExpr);
+            if (!col.IsFixed && JetTypeInfo.TryGetVariableSlotFixedPayloadSize(col.Type, out _))
+            {
+                Expression validPayload = Expression.Call(
+                    decodePlanParam,
+                    GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.ValidateDirectVariableSlot), InstanceNonPublic),
+                    Expression.Constant(col),
+                    dataLenExpr);
+                kindGate = Expression.AndAlso(validPayload, kindGate);
+            }
 
             statements.Add(Expression.IfThen(kindGate, safeAssign));
         }

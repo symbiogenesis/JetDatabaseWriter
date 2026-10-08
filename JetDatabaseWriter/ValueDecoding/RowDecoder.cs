@@ -515,10 +515,17 @@ internal sealed class RowDecoder(JetFormat format, OwnedDataPages ownedPages, Re
             }
         }
 
-        byte[] payload = CalculatedColumnUtil.Unwrap(raw);
-        return reference.IsOle
-            ? payload
-            : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+        try
+        {
+            byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(raw);
+            return reference.IsOle
+                ? payload
+                : longValues.DecodeLongValue(payload, 0, payload.Length, isOle: false);
+        }
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
+        {
+            return decodePlan.MalformedColumnValue(columnIndex, exception);
+        }
     }
 
     /// <summary>

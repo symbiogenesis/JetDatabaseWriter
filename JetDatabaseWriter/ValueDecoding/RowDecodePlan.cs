@@ -274,6 +274,12 @@ internal sealed class RowDecodePlan
     /// <param name="columnIndex">The column index.</param>
     internal string GetColumnName(int columnIndex) => this.columns[columnIndex].Name;
 
+    internal object MalformedColumnValue(int columnIndex, Exception exception)
+        => this.MalformedVariableValue(this.columns[columnIndex], exception);
+
+    internal bool ValidateDirectVariableSlot(ColumnInfo column, int length)
+        => length <= 0 || RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing);
+
     internal bool TryDecodeDirect<T>(
         JetFormat source,
         byte[] page,
@@ -562,7 +568,7 @@ internal sealed class RowDecodePlan
         {
             ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
-            ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, strictNumeric: true),
+            ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
                 source,
                 page,
@@ -604,8 +610,8 @@ internal sealed class RowDecodePlan
         {
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                return length >= required
-                    ? JetTypeInfo.ReadFixedString(page, start, column, required, strictNumeric: true)
+                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
+                    ? JetTypeInfo.ReadFixedString(page, start, column, required, this.strictParsing)
                     : string.Empty;
             }
 
@@ -635,17 +641,14 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (InvalidDataException exception)
+        catch (InvalidDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;
         }
-        catch (ArgumentException)
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
+            _ = RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing);
             return string.Empty;
         }
     }
@@ -667,26 +670,28 @@ internal sealed class RowDecodePlan
             ColumnType valueType = JetTypeInfo.ResolveValueType(column);
             if (valueType == TextType)
             {
-                byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
+                byte[] textPayload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
                 return source.DecodeText(textPayload, 0, textPayload.Length);
             }
 
             if (valueType == BinaryType)
             {
-                return JetTypeInfo.ToHexStringNoSeparator(CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)));
+                return JetTypeInfo.ToHexStringNoSeparator(RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length)));
             }
 
             if (valueType is MemoType or OleType)
             {
                 byte[] raw = await longValueDecoder.ReadLongValueRawBytesAsync(page, start, length, cancellationToken).ConfigureAwait(false);
-                byte[] payload = CalculatedColumnUtil.Unwrap(raw);
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(raw);
                 return longValueDecoder.DecodeLongValue(payload, 0, payload.Length, valueType == OleType);
             }
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                RowValueDecodePolicy.ValidateCalculatedPayload(payload, valueType);
                 return CalculatedColumnUtil.ReadPayloadString(
-                    CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
+                    payload,
                     valueType,
                     this.strictParsing);
             }
@@ -697,17 +702,14 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (InvalidDataException exception)
+        catch (InvalidDataException exception) when (JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             _ = LongValueReadPolicy.MissingValue(column.Name, exception, this.strictParsing);
             return null!;
         }
-        catch (ArgumentException)
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
-            return string.Empty;
-        }
-        catch (IndexOutOfRangeException)
-        {
+            _ = RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing);
             return string.Empty;
         }
     }
@@ -747,7 +749,7 @@ internal sealed class RowDecodePlan
     {
         if (length <= 0)
         {
-            return TypedRowFallbackPolicy.EmptyVariableValue(column);
+            return RowValueDecodePolicy.EmptyVariableValue(column);
         }
 
         if (column.IsCalculated)
@@ -759,9 +761,9 @@ internal sealed class RowDecodePlan
         {
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                return length >= required
+                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
                     ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing)
-                    : TypedRowFallbackPolicy.FixedVariableSlotTooShort(column, length, required, this.strictParsing);
+                    : DBNull.Value;
             }
 
             if (column.Type == TextType)
@@ -790,15 +792,7 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (ArgumentException exception)
-        {
-            return this.MalformedVariableValue(column, exception);
-        }
-        catch (IndexOutOfRangeException exception)
-        {
-            return this.MalformedVariableValue(column, exception);
-        }
-        catch (OverflowException exception)
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
             return this.MalformedVariableValue(column, exception);
         }
@@ -808,12 +802,12 @@ internal sealed class RowDecodePlan
     {
         // A write-back snapshot must not turn an unreadable MEMO / OLE value
         // into DBNull, which an update or schema rewrite would then store.
-        if (this.PreservesLongValueBytes && column.Type is MemoType or OleType)
+        if (this.PreservesLongValueBytes && JetTypeInfo.ResolveValueType(column) is MemoType or OleType)
         {
             return new UnreadableLongValue(column.Name, exception.Message);
         }
 
-        return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
+        return RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing);
     }
 
     private object? DecodeCalculatedTypedVariableValue(
@@ -831,13 +825,13 @@ internal sealed class RowDecodePlan
             ColumnType valueType = JetTypeInfo.ResolveValueType(column);
             if (valueType == TextType)
             {
-                byte[] textPayload = CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
+                byte[] textPayload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
                 return source.DecodeText(textPayload, 0, textPayload.Length);
             }
 
             if (valueType == BinaryType)
             {
-                return CalculatedColumnUtil.Unwrap(page.AsSpan(start, length));
+                return RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
             }
 
             if (valueType is MemoType or OleType)
@@ -848,8 +842,10 @@ internal sealed class RowDecodePlan
 
             if (valueType == BooleanType || valueType == NumericType || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
             {
+                byte[] payload = RowValueDecodePolicy.UnwrapCalculatedPayload(page.AsSpan(start, length));
+                RowValueDecodePolicy.ValidateCalculatedPayload(payload, valueType);
                 return CalculatedColumnUtil.ReadPayloadTyped(
-                    CalculatedColumnUtil.Unwrap(page.AsSpan(start, length)),
+                    payload,
                     valueType,
                     this.strictParsing);
             }
@@ -860,17 +856,9 @@ internal sealed class RowDecodePlan
         {
             throw;
         }
-        catch (ArgumentException exception)
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
-        }
-        catch (IndexOutOfRangeException exception)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
-        }
-        catch (OverflowException exception)
-        {
-            return TypedRowFallbackPolicy.MalformedVariableValue(column, exception, this.strictParsing);
+            return this.MalformedVariableValue(column, exception);
         }
     }
 }

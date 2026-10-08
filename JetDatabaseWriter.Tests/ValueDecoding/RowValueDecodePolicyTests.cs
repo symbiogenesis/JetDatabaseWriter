@@ -8,26 +8,38 @@ using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
 
-public sealed class TypedRowFallbackPolicyTests
+public sealed class RowValueDecodePolicyTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void MalformedValueFilter_ExcludesIoAndCancellation(bool strict)
+    {
+        Assert.False(RowValueDecodePolicy.IsMalformedValueException(new IOException("disk failure")));
+        Assert.False(RowValueDecodePolicy.IsMalformedValueException(new OperationCanceledException()));
+        Assert.True(RowValueDecodePolicy.IsMalformedValueException(new ArgumentException("invalid bytes")));
+        Assert.True(RowValueDecodePolicy.IsMalformedValueException(new IndexOutOfRangeException()));
+        Assert.True(RowValueDecodePolicy.IsMalformedValueException(new OverflowException()));
+        Assert.True(RowValueDecodePolicy.HasFixedPayload(new ColumnInfo { Type = MoneyType }, 8, strict));
+    }
     [Fact]
     public void EmptyVariableValue_TextAndMemo_ReturnsEmptyString()
     {
-        Assert.Equal(string.Empty, TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = TextType }));
-        Assert.Equal(string.Empty, TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = MemoType }));
+        Assert.Equal(string.Empty, RowValueDecodePolicy.EmptyVariableValue(new ColumnInfo { Type = TextType }));
+        Assert.Equal(string.Empty, RowValueDecodePolicy.EmptyVariableValue(new ColumnInfo { Type = MemoType }));
     }
 
     [Fact]
     public void EmptyVariableValue_BinaryAndOle_ReturnsEmptyByteArray()
     {
-        Assert.Same(Array.Empty<byte>(), TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = BinaryType }));
-        Assert.Same(Array.Empty<byte>(), TypedRowFallbackPolicy.EmptyVariableValue(new ColumnInfo { Type = OleType }));
+        Assert.Same(Array.Empty<byte>(), RowValueDecodePolicy.EmptyVariableValue(new ColumnInfo { Type = BinaryType }));
+        Assert.Same(Array.Empty<byte>(), RowValueDecodePolicy.EmptyVariableValue(new ColumnInfo { Type = OleType }));
     }
 
     [Fact]
     public void FixedVariableSlotTooShort_NonStrict_ReturnsDBNull()
     {
-        object value = TypedRowFallbackPolicy.FixedVariableSlotTooShort(
+        object value = RowValueDecodePolicy.FixedVariableSlotTooShort(
             new ColumnInfo { Name = "Amount", Type = MoneyType },
             actualLength: 3,
             requiredLength: 8,
@@ -40,7 +52,7 @@ public sealed class TypedRowFallbackPolicyTests
     public void FixedVariableSlotTooShort_Strict_ThrowsInvalidDataException()
     {
         InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
-            TypedRowFallbackPolicy.FixedVariableSlotTooShort(
+            RowValueDecodePolicy.FixedVariableSlotTooShort(
                 new ColumnInfo { Name = "Amount", Type = MoneyType },
                 actualLength: 3,
                 requiredLength: 8,
@@ -52,7 +64,7 @@ public sealed class TypedRowFallbackPolicyTests
     [Fact]
     public void MalformedVariableValue_NonStrict_ReturnsDBNull()
     {
-        object value = TypedRowFallbackPolicy.MalformedVariableValue(
+        object value = RowValueDecodePolicy.MalformedVariableValue(
             new ColumnInfo { Name = "When", Type = DateTimeType },
             new ArgumentException("bad date"),
             strictParsing: false);
@@ -65,7 +77,7 @@ public sealed class TypedRowFallbackPolicyTests
     {
         var inner = new ArgumentException("bad date");
         InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
-            TypedRowFallbackPolicy.MalformedVariableValue(
+            RowValueDecodePolicy.MalformedVariableValue(
                 new ColumnInfo { Name = "When", Type = DateTimeType },
                 inner,
                 strictParsing: true));
@@ -80,7 +92,7 @@ public sealed class TypedRowFallbackPolicyTests
         var limitation = new JetLimitationException("numeric overflow");
 
         JetLimitationException ex = Assert.Throws<JetLimitationException>(() =>
-            TypedRowFallbackPolicy.MalformedVariableValue(
+            RowValueDecodePolicy.MalformedVariableValue(
                 new ColumnInfo { Name = "DecimalValue", Type = NumericType },
                 limitation,
                 strictParsing: false));
