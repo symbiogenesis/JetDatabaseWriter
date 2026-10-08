@@ -60,6 +60,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Keep each security-survey CVE linked to a canonical test or explicit N/A reason.
+      - name: Check security traceability
+        if: matrix.pack
+        shell: pwsh
+        run: ./scripts/check-security-traceability.ps1
+
       # global.json pins the .NET 10 SDK that builds everything.
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0

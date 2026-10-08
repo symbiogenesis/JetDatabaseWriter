@@ -12,11 +12,10 @@ using JetDatabaseWriter.Infrastructure;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
-/// ECMA-376 §2.3.4.10–.13 ("Agile") encryption support — used by Office
-/// Crypto API encrypted .accdb files (Access 2010 SP1 and later, and
-/// Microsoft 365). Reads the EncryptionInfo descriptor, derives the
-/// intermediate key from the user password, verifies the password, and
-/// decrypts the EncryptedPackage stream in 4096-byte AES-CBC segments.
+/// Office Agile package encryption primitives and shared descriptor/password
+/// handling for native ACE page encryption. Package decryption uses 4096-byte
+/// AES-CBC segments; native ACE pages use a separate page codec and do not
+/// acquire package HMAC authentication from these shared primitives.
 /// </summary>
 internal static class OfficeCryptoAgile
 {

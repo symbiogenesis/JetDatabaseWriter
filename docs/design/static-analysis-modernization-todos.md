@@ -19,6 +19,17 @@ build-time or coverage concern reopens them.
 
 ## Current Posture
 
+Security coverage clarification (2026-10-07): enabled rules and a warning-free
+build do not establish hostile-file safety. The SDK's
+[CA3001](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca3001)
+and [CA3003](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca3003)
+track recognized HTTP-request sources with bounded interprocedural analysis;
+they do not prove that database bytes, catalog paths, or cross-assembly flows
+are safe. Banned APIs enforce symbol policy, not allocation budgets, traversal
+termination, or authorization of opened files. The rule matrix below records
+the removal decision, not equivalent taint coverage. Current evidence and
+remaining gaps are in the [vulnerability review](../cve-vulnerability-analysis.md).
+
 - [Directory.Build.props](../../Directory.Build.props) enables nullable,
   `WarningLevel 9999`, `AnalysisLevel latest-all`, .NET analyzers,
   warnings-as-errors, build-time code style, XML documentation generation, and
@@ -206,8 +217,8 @@ slower CI/security-lane decision.
 Why:
 
 - `SecurityCodeScan.VS2019` is expensive in both library and test measurements.
-- The official `SecurityCodeScan.VS2019` package is at its latest version
-  (`5.6.7`). `dotnet package search` also shows the older base
+- At the 2026-05-27 removal review, the official `SecurityCodeScan.VS2019`
+  package search returned version `5.6.7`. That search also showed the older base
   `SecurityCodeScan` package and a third-party `AdaskoTheBeAsT.SecurityCodeScan.VS2022`
   repack, but not an obvious official modern successor that changes the
   cost/value equation.
@@ -246,7 +257,7 @@ Rule-level coverage review from 2026-05-27:
 | `SCS0015` | Hardcoded password passed to known password APIs. | Not well covered by BannedApi unless banning specific password setter APIs. Meziantou does not replace this. Secret scanning or CodeQL/Sonar-style scanning is a better slower-lane fit. | Low local value; use slower-lane secret scanning if desired. |
 | `SCS0016` | Missing anti-forgery token on ASP.NET POST actions. | ASP.NET-specific. | No fit for this library. |
 | `SCS0017` | ASP.NET request validation disabled by attribute. | ASP.NET-specific. | No fit for this library. |
-| `SCS0018` | Path traversal. | SDK security taint analyzers cover file-path injection. BannedApi is a poor replacement because file/path APIs are central to the library and cannot encode trust boundaries. Meziantou does not replace this. | The most plausible lost SCS check, but host applications own user-controlled paths; rely on SDK/local API design. |
+| `SCS0018` | Path traversal. | SDK CA3003 recognizes HTTP-request taint; it does not establish safety for paths read from database catalog metadata. BannedApi cannot encode path authorization or filesystem identity. Meziantou does not replace this. | The library owns authorization of linked paths obtained from untrusted databases. Retain explicit access-policy regressions and the S6 handle/alias review; host path validation and a clean analyzer run are insufficient. |
 | `SCS0019` | ASP.NET output cache conflicts with authorization. | ASP.NET MVC-specific. | No fit for this library. |
 | `SCS0021` | `validateRequest=false` in Web.config. | ASP.NET/Web.config-specific. | No fit for this library. |
 | `SCS0022` | ASP.NET event validation disabled. | ASP.NET/Web.config-specific. | No fit for this library. |

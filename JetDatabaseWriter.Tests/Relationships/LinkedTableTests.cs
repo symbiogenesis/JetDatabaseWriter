@@ -244,6 +244,7 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
+    [Trait("CveAnalogue", "CVE-2021-28455")]
     public async Task LinkedTable_ReadLinkedOdbcTable_ThrowsNotSupportedWithoutOpeningOdbc()
     {
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedOdbcRead");
@@ -446,6 +447,7 @@ public sealed class LinkedTableTests : IDisposable
     [InlineData(@"..\..\sensitive.accdb")]
     [InlineData("../../sensitive.accdb")]
     [InlineData(@"../..\sensitive.accdb")]
+    [Trait("CveAnalogue", "CVE-2025-62552")]
     public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_IsBlockedByDefault(string sourcePath)
     {
         // A malicious relative path that escapes the host DB directory should be blocked.

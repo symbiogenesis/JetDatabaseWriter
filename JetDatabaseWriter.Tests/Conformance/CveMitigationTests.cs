@@ -25,8 +25,8 @@ using Xunit;
 /// </summary>
 /// <param name="db">The database input.</param>
 /// <remarks>
-/// Related CVEs:
-///   CVE-2005-0944 / CVE-2007-6026 / CVE-2008-1092 (crafted column counts),
+/// CveAnalogue traits identify canonical weakness-class correspondences in
+/// docs/cve-vulnerability-analysis.md, not reproductions of native Microsoft exploits.
 /// </remarks>
 public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
@@ -38,6 +38,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
     /// either be skipped or produce an error/empty result.
     /// </summary>
     [Fact]
+    [Trait("CveAnalogue", "CVE-2007-6026")]
     public async Task ReadTable_CorruptNumCols_0xFFFF_DoesNotCrashOrOom()
     {
         string path = TestDatabases.NorthwindTraders;
@@ -79,6 +80,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
     /// Verifies the 4096-column cap rejects this cleanly.
     /// </summary>
     [Fact]
+    [Trait("CveAnalogue", "CVE-2008-1092")]
     public async Task ReadTable_CorruptNumCols_4097_DoesNotCrashOrOom()
     {
         string path = TestDatabases.NorthwindTraders;
@@ -120,6 +122,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
     /// value. The reader clamps this to [0, 1000]; verify no crash/OOM.
     /// </summary>
     [Fact]
+    [Trait("CveAnalogue", "CVE-2018-8423")]
     public async Task ReadTable_CorruptNumRealIdx_0x7FFFFFFF_DoesNotCrashOrOom()
     {
         string path = TestDatabases.NorthwindTraders;
@@ -370,6 +373,8 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
     /// the root cause of CVE-2020-1400.
     /// </summary>
     [Fact]
+    [Trait("CveAnalogue", "CVE-2019-0583")]
+    [Trait("CveAnalogue", "CVE-2020-1400")]
     public void ReadTable_CorruptVarColOffsets_IntegerUnderflow_DoesNotCrash()
     {
         // Security regression: ROW-VAR-OFFSET-UNDERFLOW
