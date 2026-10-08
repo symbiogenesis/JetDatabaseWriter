@@ -1078,12 +1078,14 @@ The library parses JET pages directly, based on the [mdbtools format specificati
 
 Issues and pull requests are welcome. Please open an issue to discuss larger changes before submitting a PR.
 
-CI runs the same commands you can run locally; a PR needs them to pass:
+Local builds and targeted tests are welcome, for example:
 
 ```bash
 dotnet build JetDatabaseWriter.slnx -c Release
-dotnet test --project JetDatabaseWriter.Tests -c Release --no-build
+dotnet test --project JetDatabaseWriter.Tests -c Release -f net10.0 --no-build --filter-class "JetDatabaseWriter.Tests.Indexes.IndexWriterTests"
 ```
+
+Full test suites run only on CI, including a full run of one target framework. All benchmarks also run only on CI, even single-case, short, or dry runs. Local builds and selected tests do not replace the required CI gate. See [AGENTS.md](AGENTS.md#local-execution-and-ci) for the execution policy and hosted workflow commands.
 
 Releases are published from version tags; [PUBLISH.md](PUBLISH.md) describes the steps.
 

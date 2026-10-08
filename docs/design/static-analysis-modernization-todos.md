@@ -456,6 +456,8 @@ dotnet build JetDatabaseWriter.slnx --configuration Release --no-restore -m
 dotnet test --project JetDatabaseWriter.Tests --filter-not-trait Category=Fuzz
 ```
 
+These commands record historical validation. For future work, local builds and targeted tests are allowed, but the full-suite test command above is CI-only; excluding fuzz tests does not make it a targeted run. All benchmark runs are also CI-only. See [AGENTS.md](../../AGENTS.md#local-execution-and-ci).
+
 ### 4. Tune SDK Code Style and `AnalysisLevel latest-all` Last
 
 Verdict: biggest potential speed lever, but highest policy risk.

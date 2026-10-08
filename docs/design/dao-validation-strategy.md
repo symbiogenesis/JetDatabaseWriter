@@ -4,6 +4,10 @@
 
 This note holds durable validation rules for writer-emitted Access disk-format bytes. The cross-feature coverage map lives in [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
+## Execution policy
+
+Local builds and targeted test runs are allowed for both ordinary regressions and DAO checks. Select the methods or classes relevant to the change; DAO tests need an Access-equipped host and may use locally built or matching CI-built binaries. Full test suites and all benchmarks run only on CI. Required hosted acceptance gates still apply; see [AGENTS.md](../../AGENTS.md#local-execution-and-ci).
+
 ## Validation Ladder
 
 Use the strongest feasible automated signal for the mutation under test:

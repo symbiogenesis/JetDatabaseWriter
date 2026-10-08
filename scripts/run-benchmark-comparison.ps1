@@ -5,7 +5,8 @@ Runs paired benchmarks, optionally reversing order and measuring an identical-re
 Used by benchmarks.yml on one hosted runner. Controlled order is baseline, head,
 head, baseline, head, head. Every invocation uses fresh BenchmarkDotNet processes
 and retains its own artifacts. Choose a fresh Results directory for every invocation.
-SummaryOnly reports partial results after failures.
+Execute benchmarks only on CI, including short and dry jobs.
+SummaryOnly reports partial results after failures and may run locally without executing benchmarks.
 #>
 param(
     [Parameter(Mandatory)] [string] $Results,

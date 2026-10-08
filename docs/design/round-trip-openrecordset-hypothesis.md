@@ -188,6 +188,8 @@ output.
 
 ## 8. Verification Commands
 
+Local builds and the targeted test commands below are allowed. Historical full-suite results above record past validation; future full-suite runs belong on CI under [the execution policy](../../AGENTS.md#local-execution-and-ci).
+
 ```pwsh
 dotnet test --project JetDatabaseWriter.Tests --filter-class "JetDatabaseWriter.Tests.RoundTrip.DaoValidationTests"
 ```
@@ -197,9 +199,14 @@ dotnet test --project JetDatabaseWriter.Tests --filter-method "JetDatabaseWriter
 dotnet test --project JetDatabaseWriter.Tests --filter-method "JetDatabaseWriter.Tests.RoundTrip.AccessRoundTripTests.CompositePk_AndMultiColumnFk_SurviveCompactAndRepair"
 ```
 
+For the full suite, use the CI run triggered by publishing the settled `main`
+revision, or dispatch CI on that published revision:
+
 ```pwsh
-dotnet test --project JetDatabaseWriter.Tests
+gh workflow run ci.yml --ref main
 ```
+
+Record the run URL, tested SHA, and completed verdict as described in [AGENTS.md](../../AGENTS.md#gating-a-commit-on-ci).
 
 Useful probes remain available for future regressions:
 

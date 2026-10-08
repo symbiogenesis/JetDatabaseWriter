@@ -583,9 +583,9 @@ Windows the I/O manager serializes I/O on a synchronous file object, so the
 read-ahead pair and concurrent scans on one reader queue their reads in the
 kernel instead of overlapping them; they still overlap reads with decode. All
 of this was measured on one Arm64 machine with local NVMe storage. Re-run
-`AccessReaderColdScanBenchmarks` on x64, a hard disk or a network share before
-changing the options again; with many concurrent scans on slow storage, open
-more readers. The writer still opens an overlapped handle with the
+`AccessReaderColdScanBenchmarks` on CI runners with x64, a hard disk or a network
+share before changing the options again; with many concurrent scans on slow
+storage, open more readers. The writer still opens an overlapped handle with the
 `RandomAccess` hint, which a separate, measured change would revisit.
 
 A caller that opens the `FileStream` itself for
@@ -808,21 +808,28 @@ real workload before changing the core decoder again. Useful comparisons:
 
 ## Measurement commands
 
-These are the commands used for the focused refresh; omit `--job short` for a
-release-quality full BenchmarkDotNet run.
+Run all future measurements on CI, including focused refreshes and single-case,
+short, or dry runs. Local builds and targeted correctness tests are allowed;
+see [AGENTS.md](../../AGENTS.md#local-execution-and-ci).
+
+After integrating and publishing `main`, dispatch the benchmark groups below.
+Use `-f job=default` for release-quality adaptive measurements, and add
+`-f baseline="<published branch point SHA>"` for a paired comparison. Verify the
+run's tested SHA and record its URL and completed verdict before claiming
+benchmark acceptance.
 
 ```powershell
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderRowDecodeBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *DataTableMaterializationBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderOwnedPageDiscoveryBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderTableScanReadAheadBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderReadAheadEligibilityBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderLargeLongValueBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderConcurrentScanBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *QueryIncludeBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *ComplexColumnReadBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *PublicSeekBenchmarks* --job short
-dotnet run --project JetDatabaseWriter.Benchmarks -c Release -- --filter *AccessReaderColdScanBenchmarks* --job short
+gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderRowDecodeBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*DataTableMaterializationBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderOwnedPageDiscoveryBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderTableScanReadAheadBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderReadAheadEligibilityBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderLargeLongValueBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderConcurrentScanBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*QueryIncludeBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*ComplexColumnReadBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*PublicSeekBenchmarks*" -f job=short
+gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderColdScanBenchmarks*" -f job=short
 ```
 
 Summary decisions from the refresh:

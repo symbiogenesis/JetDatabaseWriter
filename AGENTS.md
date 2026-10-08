@@ -26,6 +26,14 @@ Version 4.0.0 has never been released. The tags v1.0.0 to v2.2.0 are upstream hi
 
 When a design decision is left to you, choose what Microsoft Access does, then the safest option, and state the choice briefly.
 
+## Local execution and CI
+
+- Local builds are allowed, including full solution builds and Release analyzer checks.
+- Specific tests may run locally, including ordinary regression tests and DAO tests. Select the relevant methods, classes, or a focused namespace; a framework filter alone or excluding fuzz tests still runs a full test leg.
+- Full test suites run only on CI, including a full run of just one target framework. Do not run the whole suite locally in batches of filtered tests.
+- All benchmarks run only on CI, including a single benchmark, short/medium/dry jobs, smoke checks, and debugging runs. Building the benchmark project locally is allowed; executing benchmarks is not.
+- Local builds and targeted tests provide development feedback. Required acceptance gates still run on CI against the settled `main` revision.
+
 ## Build
 
 - `dotnet build JetDatabaseWriter.slnx -c Release` must report 0 warnings and 0 errors. `Directory.Build.props` turns on `TreatWarningsAsErrors`, `AnalysisLevel` latest-all, `EnforceCodeStyleInBuild`, XML documentation and nullable reference types for every project. CI analyzes every project and target framework in Release, so an analyzer finding in test code fails it too.
@@ -36,7 +44,7 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 
 ## Gating a commit on CI
 
-Gate every commit that can change the build or the tests on GitHub CI, not with local builds and test runs. A commit that touches only docs or scripts outside the build needs no gate. Several agents often share one machine, and long local runs slow everyone down and stall agents. A local run is fine for debugging one test; report gate results from CI.
+Gate every commit that can change the build or the tests on GitHub CI. Local builds and targeted test runs are allowed during development, but do not replace that gate. A commit that touches only docs or scripts outside the build needs no gate. Several agents often share one machine, so full test suites and all benchmark runs stay on CI. Report gate results from CI.
 
 `ci.yml` runs on a push to `main`. Integrate the reviewed work into local `main`, then publish only that branch:
 
@@ -60,18 +68,18 @@ The helper never publishes or deletes Git refs. After publishing `main`, `-Sha <
 Expected results on both legs:
 
 - Nothing fails.
-- Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is absent on hosted CI, so those cases skip there. A local DAO host can run them with CI-built binaries when authorized; engine-specific skips remain evidence gaps.
+- Every skipped test is a skip-guarded DAO test ("Requires Microsoft Access (DAO.DBEngine.120)"). Microsoft Access is absent on hosted CI, so those cases skip there. Selected DAO tests can run locally on an Access-equipped host using locally built binaries or CI-built binaries from the matching revision; engine-specific skips remain evidence gaps.
 - 3 explicit-only fuzz tests are not run.
 
 The Microsoft Testing Platform summary counts guarded DAO cases and the three explicit-only fuzz harnesses together as skipped. Check the skip reasons against the current guarded cases; any other skip is a regression.
 
-For a quick local loop, build in Release and run the test executable directly. `JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -longRunning 300` runs one leg in about 1.5 minutes; add `-method "<Namespace.Class.Method>"` to run one test.
+For a quick local loop, build in Release and run a selected test: `dotnet test --project JetDatabaseWriter.Tests -c Release -f net10.0 --filter-method "<Namespace.Class.Method>"`. To use an existing build directly, run `JetDatabaseWriter.Tests/bin/Release/<tf>/JetDatabaseWriter.Tests.exe -method "<Namespace.Class.Method>" -longRunning 300`. Always include a focused test selection for local execution; unfiltered test runs belong on CI.
 
 xUnit v3 on Microsoft Testing Platform:
 
 - Use xUnit v3 (`xunit.v3`, stable 3.x), not the 4.x prerelease line. Test projects are executables: keep `<OutputType>Exe</OutputType>`.
 - Use `using Xunit;`. Do not add `Xunit.Abstractions`, `xunit.runner.visualstudio`, `xunit.abstractions` or `xunit.assert`.
-- The base command is `dotnet test --project JetDatabaseWriter.Tests`. Pass Microsoft Testing Platform options straight to `dotnet test`, with no `--` separator. Do not use VSTest filters (`--filter "FullyQualifiedName~..."`) or `--nologo`; use `--verbosity quiet` for quieter output.
+- The base command is `dotnet test --project JetDatabaseWriter.Tests`; locally, add a focused inclusion filter such as `--filter-method` or `--filter-class`. The unfiltered command is for CI only. Pass Microsoft Testing Platform options straight to `dotnet test`, with no `--` separator. Do not use VSTest filters (`--filter "FullyQualifiedName~..."`) or `--nologo`; use `--verbosity quiet` for quieter output.
   - One target framework: `-f net10.0`.
   - One method: `--filter-method "<Namespace.Class.Method>"`.
   - One class: `--filter-class "<Namespace.Class>"`.
@@ -92,7 +100,7 @@ xUnit v3 on Microsoft Testing Platform:
 
 ## Benchmarks
 
-Run benchmarks on GitHub Actions (`.github/workflows/benchmarks.yml`), not on a shared development machine:
+Run every benchmark on GitHub Actions (`.github/workflows/benchmarks.yml`). Never execute benchmarks locally, even for a single case, a short/dry smoke check, or debugging:
 
 ```
 gh workflow run benchmarks.yml --ref main -f filter="<filter patterns>" -f baseline="<branch point SHA>" -f job=default
@@ -105,10 +113,10 @@ gh workflow run benchmarks.yml --ref main -f filter="<filter patterns>" -f basel
 - The full results are in the run's `benchmark-results` artifact.
 - Hosted runners are noisy: treat a difference of a few percent as noise unless it is well outside both error columns (BenchmarkDotNet's Error, half the 99.9% confidence interval).
 
-BenchmarkDotNet practice, wherever the benchmarks run:
+BenchmarkDotNet practice on CI:
 
 - BenchmarkDotNet warms up by default; do not add a separate warmup run.
-- Keep the default adaptive job for release-quality numbers. Use `--job short` only for a focused refresh. Narrow a run with `--filter` (plus `dotnet run --no-restore`) instead of lowering iteration or warmup counts.
+- Keep the default adaptive job for release-quality numbers. Use the workflow input `job=short` only for a focused refresh. Narrow a CI run with its `filter` input instead of lowering iteration or warmup counts.
 - BenchmarkDotNet already switches Windows to the High performance power plan during runs; add no boilerplate for it.
 - `[IterationSetup]` suits destructive writer benchmarks that need a fresh database per operation, but it forces `InvocationCount=1` and `UnrollFactor=1`. Copy from an unmeasured baseline fixture instead of rebuilding the schema in each benchmark.
 - A `Mean` or `Allocated` of `NA`, or a "Benchmarks with issues" section in `BenchmarkDotNet.Artifacts/results/*-report-github.md`, means the benchmark is broken; fix it before tuning anything. `--job dry` reports `Error = NA` from its single measurement, which is expected.
@@ -132,7 +140,7 @@ BenchmarkDotNet practice, wherever the benchmarks run:
 - Do not use Python for anything in this repository: implementation, diagnostics, inspection or throwaway helpers. Use PowerShell 7, .NET tooling and `rg`.
 - In bulk PowerShell rewrites, write with `[System.IO.File]::WriteAllText(...)`. `Set-Content` after `Get-Content -Raw` adds a blank line at the end of the file.
 - Repository scripts live in `scripts/`.
-- `pwsh -NoProfile -File scripts/test-scripts.ps1` parses all PowerShell scripts and runs self-contained regression checks with synthetic inputs and mocked external commands. CI runs these checks in the library analyzer job; they do not launch real benchmarks, fuzzers or GitHub operations.
+- CI runs `pwsh -NoProfile -File scripts/test-scripts.ps1` in the library analyzer job to parse all PowerShell scripts and run their regression suite with synthetic inputs and mocked external commands. For targeted local checks, invoke only the relevant file under `scripts/tests/`; these checks do not launch real benchmarks, fuzzers or GitHub operations.
 
 ## Git
 

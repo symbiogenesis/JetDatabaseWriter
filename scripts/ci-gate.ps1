@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Gates a published main commit on GitHub CI instead of building and testing it locally.
+Gates a published main commit on GitHub CI. Local builds and targeted tests are allowed.
 
 .DESCRIPTION
 Integrate and publish main before calling this helper. It never pushes branches or tags. For -Sha, it verifies
