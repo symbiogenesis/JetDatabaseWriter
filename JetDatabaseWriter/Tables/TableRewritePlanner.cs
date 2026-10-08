@@ -46,6 +46,19 @@ internal sealed class TableRewritePlanner(
     /// <param name="mapColumnName">The column identity projection.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The validated replacement and dependent metadata.</returns>
+    /// <exception cref="JetOperationException">The projection removes the last column.</exception>
+    /// <exception cref="JetLimitationException">The projection exceeds the column limit.</exception>
+    /// <remarks>
+    /// Preparation can reserve complex references in the constraint registry when
+    /// no surviving column supplies a row's reference. It writes no pages, but it
+    /// is part of the caller's serialized mutation, not a reusable read-only query.
+    /// Callers must prepare and apply the replacement within the same
+    /// <see cref="JetDatabaseWriter.Transactions.TransactionLifecycle"/> statement
+    /// or savepoint, whose registry snapshot restores reservations on refusal,
+    /// cancellation or failure. A caller using an explicit transaction must retain
+    /// that checkpoint through preparation and replacement, and roll it back when
+    /// abandoning the plan.
+    /// </remarks>
     internal async ValueTask<TableRewritePlan> PrepareAsync(
         string tableName,
         Func<List<ColumnDefinition>, TableDef, List<ColumnDefinition>> projectColumns,
@@ -215,8 +228,23 @@ internal sealed class TableRewritePlanner(
         long autoNumberHighWater = await autoNumbers.ReadHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         long complexHighWater = await autoNumbers.ReadComplexHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        return new TableRewritePlan(tableName, entry, tableDef, newDefs, projectedIndexes, persistedProperties,
-            persistedLvProp, projectedRows, relationshipState, mapColumnName, newComplexById, droppedComplex, renamedComplex, autoNumberHighWater, complexHighWater, transplant);
+        return new TableRewritePlan(
+            tableName,
+            entry,
+            tableDef,
+            newDefs,
+            projectedIndexes,
+            persistedProperties,
+            persistedLvProp,
+            projectedRows,
+            relationshipState,
+            mapColumnName,
+            newComplexById,
+            droppedComplex,
+            renamedComplex,
+            autoNumberHighWater,
+            complexHighWater,
+            transplant);
     }
 
     /// <summary>
@@ -572,6 +600,8 @@ internal sealed class TableRewritePlanner(
             return;
         }
 
+        // The enclosing mutation owns this reservation; its constraint snapshot
+        // restores the cached counter if preparation or replacement is abandoned.
         int first = await constraints.AllocateComplexReferencesAsync(tableName, tableDef, needing.Count, cancellationToken).ConfigureAwait(false);
         for (int k = 0; k < needing.Count; k++)
         {
