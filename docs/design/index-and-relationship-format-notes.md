@@ -871,7 +871,7 @@ What did NOT change:
 
 Validation:
 
-- Two existing tests in [`IndexSurgicalLeafMergeTests`](../../JetDatabaseWriter.Tests/Indexes/IndexSurgicalLeafMergeTests.cs) flipped from "asserts W4-D bail (page count strictly increases)" to "asserts surgical merge engaged (page count unchanged)":
+- Two existing tests in [`IndexSurgicalLeafMergeTests`](../../JetDatabaseWriter.Tests/Indexes/IndexSurgicalLeafMergeTests.cs) verify that surgical merging appends no pages, reclaims exactly the detached leaf, and preserves the root, surviving page identities and ordered entries:
   - `DeleteAllInTailLeaf_MergesAndPropagatesTailPage_AppendsZeroIndexPages` — 3-leaf tree, deleting the rightmost leaf's contents propagates the new tail through the captured root; `tail_page` on the (now 2-entry) root points at the surviving (former middle) leaf.
   - `DeleteAllInRightmostLeaf_MergesAndShrinksRoot_AppendsZeroIndexPages` — 2-leaf tree → 1-leaf single-entry root with `tail_page` pointing at the surviving leaf. Verifies single-entry intermediates are still navigable by the cursor.
 - Both tests use a unique sparse INT index keyed on `Id` plus a non-indexed `Region` predicate column, so the per-key descent groups deterministically into one leaf (non-unique keys can spill across a leaf boundary, which would route deletes into multiple groups and trigger the "leafPrev/leafNext is in groups" bail before the merge can engage).
