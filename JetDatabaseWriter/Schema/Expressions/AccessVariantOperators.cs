@@ -140,7 +140,15 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        return value is DateTime ? FromOleDate(-ToDateSerial(value)) : -ToDecimal(value);
+        return value switch
+        {
+            short number when number != short.MinValue => (short)-number,
+            short number => -number,
+            int number when number != int.MinValue => -number,
+            int number => -(double)number,
+            DateTime => FromOleDate(-ToDateSerial(value)),
+            _ => -ToDecimal(value),
+        };
     }
 
     /// <summary>Returns <c>+value</c>; a date stays a date.</summary>
@@ -153,7 +161,7 @@ internal static class AccessVariantOperators
             return DBNull.Value;
         }
 
-        return value is DateTime ? value : ToDecimal(value);
+        return value is DateTime or short or int ? value : ToDecimal(value);
     }
 
     /// <summary>

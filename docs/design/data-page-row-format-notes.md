@@ -10,9 +10,20 @@ Jet3, Jet4 and ACE apart from the header offsets. The reference is
 `findRowEnd`, `positionAtRowData`, `deleteRow`, `updateRow`), checked against
 the Access-authored fixtures in `JetDatabaseWriter.Tests/Databases`.
 
-## Variable-value decode policy
+## Value decode policy
 
 `RowValueDecodePolicy` validates nonempty fixed-size payloads stored in variable slots and calculated envelopes before the string, typed or compiled POCO decoder reads them. Strict parsing reports malformed values with the column name; lenient parsing returns empty text for string output, `DBNull.Value` for typed rows and an unassigned/default POCO property. A valid zero-length Text or binary value retains its normal empty representation. A validated calculated scalar envelope with no cached payload represents null; a nonempty payload shorter than its scalar type requires is malformed. Calculated MEMO/OLE envelopes use the same validation after exact long-value retrieval. Write-back snapshots retain the unreadable-long-value sentinel, and storage I/O failures propagate.
+
+Fixed native Date/Time slots use the same public failure policy when their OLE
+Automation date cannot be decoded. Strict string, typed, direct POCO and hybrid
+POCO reads throw `JetCorruptDataException` with `MalformedValue`, the column
+name and the original cause. Explicitly lenient reads return empty text,
+`DBNull.Value` or an unassigned/default property and emit a Trace warning;
+listener failures do not abort the read. Valid negative dates, range boundaries
+and null slots retain their normal representations. Writer snapshots refuse an
+unreadable fixed date even for an unrelated field update, leaving the database
+bytes unchanged. Storage I/O exceptions propagate unchanged. The malformed
+fixtures in `FixedDateDecodePolicyTests` are synthetic corruption evidence.
 
 ## Long-value integrity
 

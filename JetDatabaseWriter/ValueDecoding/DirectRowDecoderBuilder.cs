@@ -247,6 +247,7 @@ internal static class DirectRowDecoderBuilder
 
         ParameterExpression layoutLocal = Expression.Variable(typeof(RowLayout), "layout");
         ParameterExpression sliceLocal = Expression.Variable(typeof(ColumnSlice), "slice");
+        var locals = new List<ParameterExpression> { layoutLocal, sliceLocal };
         LabelTarget returnLabel = Expression.Label(typeof(bool), "ret");
 
         var statements = new List<Expression>(8 + (bound.Count * 3))
@@ -305,6 +306,14 @@ internal static class DirectRowDecoderBuilder
                 boolValueExpr,
                 formatParam);
 
+            ParameterExpression? fixedDate = null;
+            if (col.IsFixed && col.Type == DateTimeType)
+            {
+                fixedDate = Expression.Variable(typeof(DateTime), "fixedDate");
+                locals.Add(fixedDate);
+                readExpr = fixedDate;
+            }
+
             // target.Prop = (PropType)readExpr;
             // Compose the raw read — which yields the column's natural CLR type —
             // up to the property type in two steps so a lossless widening
@@ -349,6 +358,17 @@ internal static class DirectRowDecoderBuilder
                 kindGate = Expression.AndAlso(validPayload, kindGate);
             }
 
+            if (fixedDate is not null)
+            {
+                kindGate = Expression.AndAlso(kindGate, Expression.Call(
+                    decodePlanParam,
+                    GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.TryReadFixedDate), InstanceNonPublic),
+                    pageParam,
+                    offsetExpr,
+                    colExpr,
+                    fixedDate));
+            }
+
             statements.Add(Expression.IfThen(kindGate, safeAssign));
         }
 
@@ -357,7 +377,7 @@ internal static class DirectRowDecoderBuilder
 
         BlockExpression body = Expression.Block(
             typeof(bool),
-            [layoutLocal, sliceLocal],
+            locals,
             statements);
 
         ParameterExpression[] parameters = hybrid

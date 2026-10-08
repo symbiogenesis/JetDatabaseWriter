@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.ExceptionServices;
 using JetDatabaseWriter.Enums;
@@ -11,6 +12,31 @@ using static JetDatabaseWriter.Enums.ColumnType;
 
 internal static class RowValueDecodePolicy
 {
+    internal static object MalformedFixedDate(ColumnInfo column, Exception exception, bool strictParsing)
+    {
+        if (strictParsing)
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.MalformedValue,
+                $"Malformed fixed Date/Time payload for column '{column.Name}'.",
+                new JetErrorInfo { ColumnName = column.Name, Reason = exception.Message },
+                exception);
+        }
+
+        try
+        {
+            Trace.TraceWarning("The fixed Date/Time value for column '{0}' is unreadable and was returned as a missing value.", column.Name);
+        }
+#pragma warning disable CA1031 // A diagnostic listener must not turn an explicitly lenient read into a failure.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return DBNull.Value;
+        }
+
+        return DBNull.Value;
+    }
+
     internal static bool IsMalformedValueException(Exception exception)
         => exception is ArgumentException or IndexOutOfRangeException or OverflowException;
 

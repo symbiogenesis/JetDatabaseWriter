@@ -160,9 +160,9 @@ public sealed class DaoTextCollationTests(ITestOutputHelper output)
         Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
-    public async Task TableValidationRule_NativePartitionExpressionIsPreservedOnRefusal()
+    public async Task TableValidationRule_NativePartitionExpressionIsEvaluated()
     {
-        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.UnsupportedTableRule");
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.PartitionTableRule");
         string literal = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
         AccessRoundTripEnvironment.CompactResult created = session.RunDaoEngineScript(
             $$"""
@@ -174,17 +174,24 @@ public sealed class DaoTextCollationTests(ITestOutputHelper output)
                 $tdf.ValidationText = 'partition required'
                 $tdf = $null
                 $db.Execute('INSERT INTO [Rules] VALUES (1,0)', 128)
+                foreach ($expr in @('Partition(-1,0,99,5)', 'Partition(1001,100,1010,20)', 'Partition(1.5,0,10,2)', 'Partition(-1,0,10,1)', 'Partition(2147483647,0,2147483647,2)')) {
+                    $rs = $db.OpenRecordset("SELECT $expr AS Result")
+                    try { Write-Output "$expr=[$($rs.Fields(0).Value)]" } finally { $rs.Close() }
+                }
             } finally { $db.Close() }
             """,
             TimeSpan.FromMinutes(1));
         Assert.True(created.ExitCode == 0, $"DAO failed: {created.StdOut}\n{created.StdErr}");
-        byte[] before = await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken);
+        Assert.Contains("Partition(-1,0,99,5)=[   : -1]", created.StdOut, StringComparison.Ordinal);
+        Assert.Contains("Partition(1001,100,1010,20)=[1000:1010]", created.StdOut, StringComparison.Ordinal);
+        Assert.Contains("Partition(1.5,0,10,2)=[ 2: 3]", created.StdOut, StringComparison.Ordinal);
+        Assert.Contains("Partition(-1,0,10,1)=[  :-1]", created.StdOut, StringComparison.Ordinal);
+        Assert.Contains("Partition(2147483647,0,2147483647,2)=[2147483646:2147483647]", created.StdOut, StringComparison.Ordinal);
         await using (AccessWriter writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
         {
-            _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.UpdateRowsAsync("Rules", RowCriteria.Where("Id", 1), new RowValues { ["Other"] = 2 }, TestContext.Current.CancellationToken));
+            Assert.Equal(1, await writer.UpdateRowsAsync("Rules", RowCriteria.Where("Id", 1), new RowValues { ["Other"] = 2 }, TestContext.Current.CancellationToken));
         }
 
-        Assert.Equal(before, await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoDatabaseScriptThenCompact(
             """
             $tdf = $db.TableDefs('Rules')

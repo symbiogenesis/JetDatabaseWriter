@@ -278,6 +278,33 @@ internal sealed class RowDecodePlan
     internal object MalformedColumnValue(int columnIndex, Exception exception)
         => this.MalformedVariableValue(this.columns[columnIndex], exception);
 
+    private object MalformedFixedDate(ColumnInfo column, Exception exception)
+        => RowValueDecodePolicy.MalformedFixedDate(column, exception, this.strictParsing || this.PreservesLongValueBytes);
+
+    internal bool TryReadFixedDate(byte[] page, int start, ColumnInfo column, out DateTime value)
+    {
+        try
+        {
+            value = JetTypeInfo.ReadDateTimeLE(page, start);
+            return true;
+        }
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
+        {
+            _ = this.MalformedFixedDate(column, exception);
+            value = default;
+            return false;
+        }
+    }
+
+    private object DecodeFixedDate(byte[] page, int start, ColumnInfo column)
+        => this.TryReadFixedDate(page, start, column, out DateTime value) ? value : DBNull.Value;
+
+    private string DecodeFixedDateString(byte[] page, int start, ColumnInfo column)
+    {
+        object value = this.DecodeFixedDate(page, start, column);
+        return value is DateTime date ? date.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+    }
+
     internal bool ValidateDirectVariableSlot(ColumnInfo column, int length)
         => length <= 0 || RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing);
 
@@ -569,6 +596,7 @@ internal sealed class RowDecodePlan
         {
             ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
+            ColumnSliceKind.Fixed when column.Type == DateTimeType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
                 source,
@@ -738,6 +766,7 @@ internal sealed class RowDecodePlan
                     Reason = "The native fixed BIGBINARY slot is malformed or truncated.",
                 }),
             ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
+            ColumnSliceKind.Fixed when column.Type == DateTimeType => this.DecodeFixedDate(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
             _ => DBNull.Value,

@@ -11,6 +11,7 @@ internal static class CalculatedExpressionNumericFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
+        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "PARTITION", 4, 4, static function => EvaluatePartition(function)));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "MOD", 2, 2, static function => AccessVariantOperators.Modulo(function.Arg(0), function.Arg(1))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "INTDIV", 2, 2, static function => AccessVariantOperators.IntegerDivide(function.Arg(0), function.Arg(1))));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "ABS", 1, 1, static function => Math.Abs(ToDecimal(function.Arg(0)))));
@@ -33,6 +34,53 @@ internal static class CalculatedExpressionNumericFunctions
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CDEC", 1, 1, static function => ToDecimal(function.Arg(0)), "CCUR"));
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Numeric, "CBYTE", 1, 1, static function => ToByte(function.Arg(0))));
     }
+
+#pragma warning disable CA1859 // Partition returns either a range string or Access Null (DBNull).
+    private static object EvaluatePartition(CalculatedFunctionInvocation function)
+    {
+        object numberValue = function.Arg(0);
+        object startValue = function.Arg(1);
+        object stopValue = function.Arg(2);
+        object intervalValue = function.Arg(3);
+        if (IsNull(numberValue) || IsNull(startValue) || IsNull(stopValue) || IsNull(intervalValue))
+        {
+            return DBNull.Value;
+        }
+
+        long number = Convert.ToInt32(AsAccessNumber(numberValue), CultureInfo.InvariantCulture);
+        long start = Convert.ToInt32(AsAccessNumber(startValue), CultureInfo.InvariantCulture);
+        long stop = Convert.ToInt32(AsAccessNumber(stopValue), CultureInfo.InvariantCulture);
+        long interval = Convert.ToInt32(AsAccessNumber(intervalValue), CultureInfo.InvariantCulture);
+        if (start < 0 || stop <= start || interval < 1)
+        {
+            throw new ArgumentException("Partition requires start >= 0, stop > start and interval >= 1.");
+        }
+
+        string lower;
+        string upper;
+        if (number < start)
+        {
+            lower = string.Empty;
+            upper = (start - 1).ToString(CultureInfo.InvariantCulture);
+        }
+        else if (number > stop)
+        {
+            lower = (stop + 1).ToString(CultureInfo.InvariantCulture);
+            upper = string.Empty;
+        }
+        else
+        {
+            long lowerBound = start + ((number - start) / interval * interval);
+            long upperBound = Math.Min(stop, lowerBound + interval - 1);
+            lower = lowerBound.ToString(CultureInfo.InvariantCulture);
+            upper = upperBound.ToString(CultureInfo.InvariantCulture);
+        }
+
+        int width = Math.Max((stop + 1).ToString(CultureInfo.InvariantCulture).Length, (start - 1).ToString(CultureInfo.InvariantCulture).Length);
+        return lower.PadLeft(width) + ":" + upper.PadLeft(width);
+    }
+
+#pragma warning restore CA1859
 
     private static decimal EvaluateFix(CalculatedFunctionInvocation function)
     {

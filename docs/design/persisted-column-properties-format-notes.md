@@ -168,9 +168,12 @@ references, and dropping a referenced column is refused.
 
 The guarded `DaoTextCollationTests` table-rule cases compare writer output with
 DAO120. They cover unrelated updates, Null-result rows, cascade acceptance and
-refusal, rollback of cascades and rule/text changes, and native `Partition(...)`
-expressions that the library cannot evaluate. The latter remain byte-identical
-after a refused update, then accept a DAO update and Compact & Repair. The
+refusal, rollback of cascades and rule/text changes, and a native `Partition(...)`
+rule that the writer evaluates before an unrelated update. The Partition case
+also checks selected native formatting boundaries, DAO updates and Compact &
+Repair. `PartitionTableValidationRuleTests` separately verify reopened writers
+and byte-identical rejected inserts/updates across Jet3, Jet4 and ACE; those
+fixtures establish library behavior. The
 property-migration case changes a DAO source rule to Text synthetically; it
 establishes native acceptance of the edited output, not native provenance of
 that encoding. Access97-engine coverage remains part of the corpus requirements.

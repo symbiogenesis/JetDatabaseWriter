@@ -405,7 +405,7 @@ internal static class CalculatedExpressionNormalizer
         /// <param name="expression">The prepared expression text.</param>
         /// <param name="charIndex">The index of the <c>&amp;</c>; advanced past the literal when one is read.</param>
         /// <param name="originalExpression">The expression as written, for error messages.</param>
-        /// <param name="literal">The literal's value as decimal text, parenthesized when negative.</param>
+        /// <param name="literal">The literal's value as a typed Integer or Long conversion.</param>
         /// <returns><see langword="false"/> when no radix literal starts here.</returns>
         /// <exception cref="ArgumentException"><c>&amp;H</c> or <c>&amp;O</c> has no digits, or the value needs more than 32 bits.</exception>
         private static bool TryReadRadixLiteral(string expression, ref int charIndex, string originalExpression, out string literal)
@@ -474,7 +474,10 @@ internal static class CalculatedExpressionNormalizer
                 ? unchecked((int)(uint)value)
                 : unchecked((short)(ushort)value);
             string text = number.ToString(CultureInfo.InvariantCulture);
-            literal = number < 0 ? "(" + text + ")" : text;
+
+            // Preserve the Variant subtype across the downstream numeric parser,
+            // which otherwise turns every numeric token into a Double.
+            literal = (longSuffix || value > ushort.MaxValue ? "CLNG(" : "CINT(") + text + ")";
             charIndex = index;
             return true;
         }

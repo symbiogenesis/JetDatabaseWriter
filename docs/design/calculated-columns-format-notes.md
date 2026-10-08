@@ -259,7 +259,7 @@ Delivered:
   while DateValue removes the time. DateSerial rounds each argument half to even
   to a VBA Integer; Now and Time use whole seconds, while Timer retains fractional seconds.
   Single-quoted text (`'it''s'`, where `''` is a quote) becomes the
-  double-quoted literal, `&H`/`&O` radix literals become decimal numbers, and
+  double-quoted literal, `&H`/`&O` radix literals become typed `CINT`/`CLNG` calls, and
   Access word operators are lowered into evaluator functions before the
   ClosedXML.Parser pass. The expression text persisted in the file is never
   rewritten.
@@ -271,6 +271,14 @@ Delivered:
   literal only where an operand is expected; after an operand it joins text,
   so `[A]&10` is concatenation. A literal wider than 32 bits, or `&H`/`&O`
   without digits, throws `ArgumentException` naming the expression.
+  The typed normalization preserves `TypeName`/`VarType` and bitwise operand
+  subtypes. Unary plus keeps Integer/Long; negating the minimum Integer promotes
+  to Long, and negating the minimum Long promotes to Double, as measured with
+  native `oleaut32!VarNeg`. Literal typing follows Microsoft's
+  [MS-VBAL number tokens](https://learn.microsoft.com/en-us/openspecs/microsoft_general_purpose_programming_languages/ms-vbal/685ad840-accb-4bdb-8bfd-f3d88498547a).
+  Access Eval refused `TypeName(&H10)` syntax in the local probe; native Access
+  acceptance of these literals remains unverified. Binary arithmetic and
+  subtype-sensitive functions still have separate Variant subtype gaps.
 - Every expression is parsed with Access (VBA) operator precedence by
   `CalculatedExpressionNormalizer` before ClosedXML.Parser sees it; the
   normalizer emits a formula parenthesized wherever Excel's grammar would
@@ -413,7 +421,7 @@ Supported subset:
   `Weekday`, `WeekdayName`, `CInt`, `CLng`, `CDbl`, `CSng`, `CCur`/`CDec`,
   `CStr`, `CDate`/`CVDate`, `CBool`, `CByte`, `CVar`, `VarType`, `TypeName`,
   `Hex`, `Oct`, `Val`, common financial helpers (`FV`, `PV`, `Pmt`, `NPer`,
-  `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose`, and `Switch`.
+  `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose`, `Switch`, and `Partition`.
 
 Still intentionally out of scope: domain aggregate functions (`DLookup`,
 `DCount`, `DSum`, `DAvg`, `DMin`, `DMax`) because DAO/Access rejects them in
@@ -436,9 +444,16 @@ every Access-authored fixture expression against the values Access cached.
   rejects each with "cannot be used in a calculated column". SQL/query
   evaluation and cross-record / cross-table lookup context remain outside the
   row-local evaluator.
-- `Partition` and the long tail of highly specialized VBA functions can be
-  added if real Access-authored calculated-column fixtures show they are valid
-  in this context.
+- `Partition(number, start, stop, interval)` is interpreted with bounded Long
+  coercion and constant work. It propagates Null, rounds numeric arguments half
+  to even, rejects invalid ranges/intervals, clips the final interval at `stop`,
+  and pads each side to the width of `stop + 1` and `start - 1`. Below/above-range
+  labels have one blank side, including when the interval is one. The guarded
+  `DaoTextCollationTests` case verifies a native table validation rule, selected
+  formatting boundaries and DAO write/compact after a writer update. Library
+  regressions cover persisted rules on Jet3/Jet4/ACE, int32 bounds, coercion and
+  byte-preserving rejected writes. Native table calculated-column acceptance
+  still needs real fixture evidence; specialized functions remain separate work.
 
 ## Why phased
 
