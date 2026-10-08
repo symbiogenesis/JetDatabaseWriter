@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Pages.Paging;
 
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -30,14 +31,32 @@ public sealed class PageStoreTests
     }
 
     /// <summary>A short read releases the seek gate so the store remains usable.</summary>
-    [Fact]
-    public async Task ShortRead_DoesNotLeakGate()
+    /// <param name="inline">Whether to use synchronous reads.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ShortRead_DoesNotLeakGate(bool inline)
     {
         await using var stream = new MemoryStream();
         await using var store = new MemoryPageStore(stream, leaveOpen: true);
-        _ = await Assert.ThrowsAsync<EndOfStreamException>(async () => await store.ReadAsync(0, new byte[16], false, TestContext.Current.CancellationToken));
+        _ = await Assert.ThrowsAsync<EndOfStreamException>(async () => await store.ReadAsync(0, new byte[16], inline, TestContext.Current.CancellationToken));
         await store.WriteAsync(0, new byte[16], TestContext.Current.CancellationToken);
-        await store.ReadAsync(0, new byte[16], false, TestContext.Current.CancellationToken);
+        await store.ReadAsync(0, new byte[16], inline, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Both read paths fill the requested buffer when a stream returns partial reads.</summary>
+    /// <param name="inline">Whether to use synchronous reads.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PartialReads_FillRequestedSlice(bool inline)
+    {
+        await using var stream = new ChunkedReadStream([1, 2, 3, 4, 5, 6, 7]);
+        await using var store = new StreamPageStore(stream, leaveOpen: true);
+        byte[] page = [99, 99, 99, 99, 99, 99, 99];
+        await store.ReadAsync(1, page.AsMemory(1, 5), inline, TestContext.Current.CancellationToken);
+        Assert.Equal(new byte[] { 99, 2, 3, 4, 5, 6, 99 }, page);
+        Assert.Equal(6, stream.Position);
     }
 
     /// <summary>Seek-based operations cannot corrupt each other's stream position.</summary>
@@ -96,5 +115,13 @@ public sealed class PageStoreTests
         store.DisposeManagedResources();
         store.DisposeManagedResources();
         Assert.True(stream.CanRead);
+    }
+
+    private sealed class ChunkedReadStream(byte[] buffer) : MemoryStream(buffer)
+    {
+        public override int Read(Span<byte> buffer) => base.Read(buffer[..Math.Min(buffer.Length, 2)]);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => base.ReadAsync(buffer[..Math.Min(buffer.Length, 2)], cancellationToken);
     }
 }

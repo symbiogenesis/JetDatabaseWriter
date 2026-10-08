@@ -378,19 +378,18 @@ internal static class IndexKeyEncoder
                 nameof(value)),
         };
 
-        // .NET Guid.ToByteArray() matches Jet GUID storage: the first three
-        // groups are little-endian, the trailing 8 bytes are raw. Reorder to
-        // display (big-endian) order so byte comparisons match canonical
-        // string ordering.
-        byte[] storage = g.ToByteArray();
-        byte[] display =
-        [
-            storage[3], storage[2], storage[1], storage[0],
-            storage[5], storage[4],
-            storage[7], storage[6],
-            storage[8], storage[9], storage[10], storage[11],
-            storage[12], storage[13], storage[14], storage[15],
-        ];
+        // Display (big-endian) order makes byte comparisons match canonical
+        // string ordering. The older overload writes the first three groups
+        // little-endian, so reverse those groups on the compatibility target.
+        Span<byte> display = stackalloc byte[16];
+#if NET8_0_OR_GREATER
+        _ = g.TryWriteBytes(display, bigEndian: true, out _);
+#else
+        _ = g.TryWriteBytes(display);
+        display[..4].Reverse();
+        display.Slice(4, 2).Reverse();
+        display.Slice(6, 2).Reverse();
+#endif
 
         return EncodeGeneralBinaryEntry(display, ascending);
     }
@@ -772,6 +771,9 @@ internal static class IndexKeyEncoder
     {
         Guard.NotNull(values, nameof(values));
         int max = 0;
+#if NET5_0_OR_GREATER
+        Span<int> bits = stackalloc int[4];
+#endif
         foreach (object? v in values)
         {
             if (v is null or DBNull)
@@ -780,7 +782,12 @@ internal static class IndexKeyEncoder
             }
 
             decimal d = ToDecimal(v);
-            int scale = (decimal.GetBits(d)[3] >> 16) & 0x7F;
+#if NET5_0_OR_GREATER
+            _ = decimal.GetBits(d, bits);
+#else
+            int[] bits = decimal.GetBits(d);
+#endif
+            int scale = (bits[3] >> 16) & 0x7F;
             if (scale > max)
             {
                 max = scale;

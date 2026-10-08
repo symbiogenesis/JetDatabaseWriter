@@ -112,4 +112,49 @@ public sealed class NumericEncoderTests
         Assert.Equal(57, payload.DigitCount);
         Assert.True(payload.MagnitudeByteCount > 16);
     }
+
+    [Theory]
+    [InlineData(128, 1, "00000000000000000000000000000080")]
+    [InlineData(255, 1, "000000000000000000000000000000FF")]
+    [InlineData(256, 2, "00000000000000000000000000000100")]
+    public void FixedPointPayload_UnsignedMagnitude_DoesNotIncludeSignPadding(int value, int byteCount, string expectedHex)
+    {
+        byte[] magnitude = new byte[16];
+
+        bool fits = NumericEncoder.TryEncodeFixedPointPayload(value, targetScale: 0, magnitude, out FixedPointPayload payload);
+
+        Assert.True(fits);
+        Assert.Equal(byteCount, payload.MagnitudeByteCount);
+        Assert.Equal(Convert.FromHexString(expectedHex), magnitude);
+    }
+
+    [Fact]
+    public void FixedPointPayload_SixteenByteMagnitudeWithHighBitSet_FitsUnsignedSlot()
+    {
+        byte[] magnitude = new byte[16];
+
+        bool fits = NumericEncoder.TryEncodeFixedPointPayload(
+            20000000000000000000000000000m,
+            targetScale: 10,
+            magnitude,
+            out FixedPointPayload payload);
+
+        Assert.True(fits);
+        Assert.Equal(16, payload.MagnitudeByteCount);
+        Assert.Equal(Convert.FromHexString("96769950B50D88F41314448000000000"), magnitude);
+    }
+
+    [Fact]
+    public void FixedPointPayload_Zero_ClearsOnlyMagnitudeSlot()
+    {
+        byte[] magnitude = new byte[18];
+        Array.Fill(magnitude, (byte)0xA5);
+
+        bool fits = NumericEncoder.TryEncodeFixedPointPayload(0m, targetScale: 2, magnitude, out FixedPointPayload payload);
+
+        Assert.True(fits);
+        Assert.Equal(0, payload.MagnitudeByteCount);
+        Assert.Equal(new byte[16], magnitude[..16]);
+        Assert.Equal(new byte[] { 0xA5, 0xA5 }, magnitude[16..]);
+    }
 }

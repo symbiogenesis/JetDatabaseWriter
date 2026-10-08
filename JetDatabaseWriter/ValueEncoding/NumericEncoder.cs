@@ -26,7 +26,12 @@ internal static class NumericEncoder
     /// <param name="scale">The scale.</param>
     public static void Decompose(decimal value, Span<byte> mantissaLe, out bool negative, out int scale)
     {
+#if NET5_0_OR_GREATER
+        Span<int> bits = stackalloc int[4];
+        _ = decimal.GetBits(value, bits);
+#else
         int[] bits = decimal.GetBits(value);
+#endif
         int flags = bits[3];
         negative = (flags & unchecked((int)0x80000000)) != 0;
         scale = (flags >> 16) & 0x7F;
@@ -65,8 +70,8 @@ internal static class NumericEncoder
         bool negative = value < 0;
         decimal magnitudeValue = negative ? decimal.Negate(value) : value;
 
-        byte[] leMantissa = new byte[13];
-        Decompose(magnitudeValue, leMantissa.AsSpan(0, 12), out _, out int naturalScale);
+        Span<byte> leMantissa = stackalloc byte[12];
+        Decompose(magnitudeValue, leMantissa, out _, out int naturalScale);
         if (targetScale < naturalScale)
         {
             throw new ArgumentException(
@@ -74,19 +79,14 @@ internal static class NumericEncoder
                 nameof(targetScale));
         }
 
-        var magnitude = new BigInteger(leMantissa);
+        var magnitude = new BigInteger(leMantissa, isUnsigned: true);
         if (targetScale > naturalScale)
         {
             magnitude *= BigInteger.Pow(10, targetScale - naturalScale);
         }
 
         int digitCount = magnitude.IsZero ? 1 : magnitude.ToString(CultureInfo.InvariantCulture).Length;
-        byte[] magnitudeLe = magnitude.ToByteArray();
-        int magnitudeLength = magnitudeLe.Length;
-        while (magnitudeLength > 0 && magnitudeLe[magnitudeLength - 1] == 0)
-        {
-            magnitudeLength--;
-        }
+        int magnitudeLength = magnitude.IsZero ? 0 : magnitude.GetByteCount(isUnsigned: true);
 
         payload = new FixedPointPayload(negative, naturalScale, digitCount, magnitudeLength);
         if (magnitudeLength > 16)
@@ -94,12 +94,8 @@ internal static class NumericEncoder
             return false;
         }
 
-        for (int i = 0; i < magnitudeLength; i++)
-        {
-            output[16 - 1 - i] = magnitudeLe[i];
-        }
-
-        return true;
+        return magnitudeLength == 0
+            || magnitude.TryWriteBytes(output[(16 - magnitudeLength)..], out _, isUnsigned: true, isBigEndian: true);
     }
 
     /// <summary>

@@ -154,6 +154,29 @@ public sealed class CompoundFileWriterTests
     public void BuildOfficeCrypto_SmallRegularStream_Throws() => _ = Assert.Throws<ArgumentException>(() =>
                                                                           CompoundFileWriter.BuildOfficeCrypto([new("S", CreatePatternedBuffer(64))]));
 
+    [Theory]
+    [InlineData("1234567890123456789012345678901")]
+    [InlineData("12345678901234567890123456789\U0001F600")]
+    [InlineData("\u00C9\u03A9\u4E2D")]
+    public async Task RoundTrip_Utf16StreamName_PreservesCodeUnits(string name)
+    {
+        byte[] payload = CreatePatternedBuffer(64);
+        byte[] cfb = CompoundFileWriter.Build([new(name, payload)]);
+
+        await using var ms = new MemoryStream(cfb);
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
+
+        Assert.Equal(payload, streams[name]);
+    }
+
+    [Fact]
+    public void Build_StreamNameAboveThirtyOneUtf16CodeUnits_Throws()
+    {
+        string name = new('A', 32);
+
+        _ = Assert.Throws<ArgumentException>(() => CompoundFileWriter.Build([new(name, CreatePatternedBuffer(64))]));
+    }
+
     [Fact]
     public async Task RoundTrip_PreservesEnumerationOrder()
     {

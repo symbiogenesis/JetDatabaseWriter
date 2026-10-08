@@ -39,6 +39,13 @@ public sealed class HyperlinkEncodingTests
     [InlineData("Docs#https://example.com#intro#tooltip", "Docs", "https://example.com", "intro", "tooltip")]
     [InlineData("Click##anchor#", "Click", "", "anchor", "")]
     [InlineData("##anchor", "", "", "anchor", "")]
+    [InlineData("#", "", "", "", "")]
+    [InlineData("##", "", "", "", "")]
+    [InlineData("###", "", "", "", "")]
+    [InlineData("####", "", "", "", "#")]
+    [InlineData("Docs#url#anchor#tip##tail#", "Docs", "url", "anchor", "tip##tail#")]
+    [InlineData("Title%23part#https://x/%23#frag%23ment#tip%23#tail%23", "Title#part", "https://x/#", "frag#ment", "tip##tail#")]
+    [InlineData("%23", "", "#", "", "")]
     public void Parse_DecomposesAccessFormat(string raw, string display, string address, string sub, string tip)
     {
         var h = Hyperlink.Parse(raw);

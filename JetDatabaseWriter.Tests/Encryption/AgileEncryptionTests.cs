@@ -66,6 +66,28 @@ public sealed class AgileEncryptionTests
         Assert.Throws<UnauthorizedAccessException>(() => OfficeCryptoAgile.Decrypt(encryptionInfo, encryptedPackage, "not_the_password"));
     }
 
+    /// <summary>Package encryption preserves zero padding and segment boundaries.</summary>
+    /// <param name="length">The plaintext length around AES and Agile segment boundaries.</param>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(15)]
+    [InlineData(16)]
+    [InlineData(4096)]
+    [InlineData(4097)]
+    [InlineData(8193)]
+    public void Agile_EncryptPrimitive_RoundTripsSegmentBoundaries(int length)
+    {
+        byte[] plaintext = new byte[length];
+        for (int i = 0; i < plaintext.Length; i++)
+        {
+            plaintext[i] = (byte)(i % 251);
+        }
+
+        OfficeEncryptedPackage package = OfficeCryptoAgile.Encrypt(plaintext, "segment password");
+        Assert.Equal(8 + ((length + 15) / 16 * 16), package.EncryptedPackage.Length);
+        Assert.Equal(plaintext, OfficeCryptoAgile.Decrypt(package.EncryptionInfo, package.EncryptedPackage, "segment password"));
+    }
+
     /// <summary>The Office package primitive authenticates its ciphertext before decryption.</summary>
     [Fact]
     public void Agile_TamperedPackagePrimitive_RejectsIntegrityFailure()

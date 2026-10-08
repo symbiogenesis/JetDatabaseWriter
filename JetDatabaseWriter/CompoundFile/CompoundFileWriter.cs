@@ -385,14 +385,14 @@ internal static class CompoundFileWriter
         Span<byte> e = file.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
 
-        byte[] nameBytes = Encoding.Unicode.GetBytes(name);
-        if (nameBytes.Length > 62)
+        int nameByteCount = Encoding.Unicode.GetByteCount(name);
+        if (nameByteCount > 62)
         {
             throw new ArgumentException("Directory entry name too long (max 31 UTF-16 code units).", nameof(name));
         }
 
-        nameBytes.CopyTo(e);
-        ushort nameLen = (ushort)(nameBytes.Length + 2); // include UTF-16 NUL terminator
+        _ = Encoding.Unicode.GetBytes(name.AsSpan(), e[..62]);
+        ushort nameLen = (ushort)(nameByteCount + 2); // include UTF-16 NUL terminator
         BinaryPrimitives.WriteUInt16LittleEndian(e.Slice(0x40, 2), nameLen);
 
         e[0x42] = objectType;

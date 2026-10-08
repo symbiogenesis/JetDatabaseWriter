@@ -1,6 +1,9 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
 using System;
+#if NET8_0_OR_GREATER
+using System.Collections.Frozen;
+#endif
 using System.Collections.Generic;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
@@ -8,7 +11,11 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
 internal static class CalculatedExpressionFunctionRegistry
 {
+#if NET8_0_OR_GREATER
+    private static readonly FrozenDictionary<string, CalculatedFunctionDescriptor> FunctionDescriptors = BuildFunctionDescriptors();
+#else
     private static readonly Dictionary<string, CalculatedFunctionDescriptor> FunctionDescriptors = BuildFunctionDescriptors();
+#endif
 
     public static object Evaluate(
         string name,
@@ -41,7 +48,11 @@ internal static class CalculatedExpressionFunctionRegistry
         }
     }
 
+#if NET8_0_OR_GREATER
+    private static FrozenDictionary<string, CalculatedFunctionDescriptor> BuildFunctionDescriptors()
+#else
     private static Dictionary<string, CalculatedFunctionDescriptor> BuildFunctionDescriptors()
+#endif
     {
         var descriptors = new Dictionary<string, CalculatedFunctionDescriptor>(StringComparer.OrdinalIgnoreCase);
         CalculatedExpressionLogicalFunctions.AddFunctions(descriptors);
@@ -51,6 +62,10 @@ internal static class CalculatedExpressionFunctionRegistry
         CalculatedExpressionFormattingFunctions.AddFunctions(descriptors);
         CalculatedExpressionFinancialFunctions.AddFunctions(descriptors);
         CalculatedExpressionMetadataFunctions.AddFunctions(descriptors);
+#if NET8_0_OR_GREATER
+        return descriptors.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+#else
         return descriptors;
+#endif
     }
 }

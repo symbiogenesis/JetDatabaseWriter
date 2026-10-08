@@ -86,17 +86,7 @@ internal class StreamPageStore : IPageStore
             _ = this.Stream.Seek(offset, SeekOrigin.Begin);
             if (inline)
             {
-                int total = 0;
-                while (total < buffer.Length)
-                {
-                    int read = this.Stream.Read(buffer.Span[total..]);
-                    if (read == 0)
-                    {
-                        throw new EndOfStreamException();
-                    }
-
-                    total += read;
-                }
+                this.Stream.ReadExactly(buffer.Span);
             }
             else
             {

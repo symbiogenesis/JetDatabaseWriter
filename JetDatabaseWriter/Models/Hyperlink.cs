@@ -79,17 +79,28 @@ public sealed record Hyperlink
             return null;
         }
 
-        // Up to 4 parts separated by '#'. Extra '#'-delimited parts are joined
-        // back into the screentip slot so no information is lost on round-trip.
+        // Up to 4 parts separated by '#'. Extra delimiters stay in the
+        // screentip slot so no information is lost on round-trip.
+#if NET8_0_OR_GREATER
+        ReadOnlySpan<char> source = value.AsSpan();
+        Span<Range> parts = stackalloc Range[4];
+        int partCount = source.Split(parts, '#');
+        string display = Decode(source[parts[0]].ToString());
+        string address = partCount > 1 ? Decode(source[parts[1]].ToString()) : string.Empty;
+        string subAddr = partCount > 2 ? Decode(source[parts[2]].ToString()) : string.Empty;
+        string tip = partCount > 3 ? Decode(source[parts[3]].ToString()) : string.Empty;
+#else
         string[] parts = value.Split('#');
-        string display = parts.Length > 0 ? Decode(parts[0]) : string.Empty;
+        int partCount = parts.Length;
+        string display = Decode(parts[0]);
         string address = parts.Length > 1 ? Decode(parts[1]) : string.Empty;
         string subAddr = parts.Length > 2 ? Decode(parts[2]) : string.Empty;
         string tip = parts.Length > 3 ? Decode(string.Join("#", parts, 3, parts.Length - 3)) : string.Empty;
+#endif
 
         // Bare address shortcut: a single token with no delimiters is the
         // address, not the display text. Matches DAO behaviour.
-        if (parts.Length == 1)
+        if (partCount == 1)
         {
             return new Hyperlink(string.Empty, display);
         }

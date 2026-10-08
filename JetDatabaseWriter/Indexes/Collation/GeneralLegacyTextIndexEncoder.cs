@@ -238,10 +238,14 @@ internal static class GeneralLegacyTextIndexEncoder
 
     private static void AppendBytes(List<byte> sink, ReadOnlySpan<byte> bytes)
     {
+#if NET8_0_OR_GREATER
+        sink.AddRange(bytes);
+#else
         foreach (byte value in bytes)
         {
             sink.Add(value);
         }
+#endif
     }
 
 #if NET8_0_OR_GREATER

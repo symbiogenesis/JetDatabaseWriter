@@ -1071,18 +1071,17 @@ internal static class OfficeCryptoAgile
                 int segLen = Math.Min(Constants.AgileEncryption.SegmentSize, plaintext.Length - offset);
                 int paddedLen = (segLen + Constants.AgileEncryption.BlockSize - 1) / Constants.AgileEncryption.BlockSize * Constants.AgileEncryption.BlockSize;
 
-                byte[] block = new byte[paddedLen];
-                Buffer.BlockCopy(plaintext, offset, block, 0, segLen);
-
                 byte[] iv = SegmentIv(keyDataSalt, seg, Constants.AgileEncryption.BlockSize);
 #if NET6_0_OR_GREATER
-                byte[] cipher = aes.EncryptCbc(block, iv, PaddingMode.None);
+                _ = aes.EncryptCbc(plaintext.AsSpan(offset, segLen), iv, result.AsSpan(writeOffset, paddedLen), PaddingMode.Zeros);
 #else
+                byte[] block = new byte[paddedLen];
+                Buffer.BlockCopy(plaintext, offset, block, 0, segLen);
                 aes.IV = iv;
                 using ICryptoTransform t = OfficeCryptoPrimitives.CreateAesTransform(aes, encrypt: true);
                 byte[] cipher = t.TransformFinalBlock(block, 0, paddedLen);
-#endif
                 Buffer.BlockCopy(cipher, 0, result, writeOffset, paddedLen);
+#endif
 
                 writeOffset += paddedLen;
             }

@@ -8,6 +8,22 @@ using System.Threading.Tasks;
 
 internal static class StreamReadExtensions
 {
+    public static void ReadExactly(this Stream stream, Span<byte> buffer)
+    {
+        Guard.NotNull(stream, nameof(stream));
+        int totalRead = 0;
+        while (totalRead < buffer.Length)
+        {
+            int bytesRead = stream.Read(buffer[totalRead..]);
+            if (bytesRead == 0)
+            {
+                throw new EndOfStreamException();
+            }
+
+            totalRead += bytesRead;
+        }
+    }
+
     public static async ValueTask ReadExactlyAsync(
         this Stream stream,
         Memory<byte> buffer,
