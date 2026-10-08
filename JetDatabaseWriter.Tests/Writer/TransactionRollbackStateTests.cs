@@ -398,7 +398,9 @@ public sealed class TransactionRollbackStateTests
 
         try
         {
-            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.AceAccdb, options, TestContext.Current.CancellationToken))
+            // Explicit sharing permits the competing test handle; path writers are exclusive.
+            await using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite))
+            await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, options, leaveOpen: true, TestContext.Current.CancellationToken))
             {
                 await writer.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
 

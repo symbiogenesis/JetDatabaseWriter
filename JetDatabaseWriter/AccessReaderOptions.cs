@@ -84,10 +84,11 @@ public sealed class AccessReaderOptions : AccessOptions
     public FileAccess FileAccess { get; init; } = FileAccess.Read;
 
     /// <summary>
-    /// Gets the file sharing mode. Default: ReadWrite (other processes may read or write while the database is open).
-    /// Set to <see cref="FileShare.Read"/> to block other writers while this reader has the file open.
+    /// Gets the requested file sharing mode. Default: Read. Write and delete sharing are excluded.
+    /// File-backed readers additionally hold a read-only lease that excludes writers
+    /// for their lifetime, so cached pages remain a consistent database snapshot.
     /// </summary>
-    public FileShare FileShare { get; init; } = FileShare.ReadWrite;
+    public FileShare FileShare { get; init; } = FileShare.Read;
 
     /// <summary>
     /// Gets an optional allowlist of directories that linked-table source paths must stay under.

@@ -65,7 +65,7 @@ If you open a `FileStream` yourself for `AccessReader`, open it without `FileOpt
 
 ## Transactions
 
-Row, table-schema, relationship and complex-item mutations are statement-atomic by default. Each call buffers a bounded batch of changed pages and spills it when it reaches `max(64, PageCacheSize / 2)` pages. Undo retains each page's original stored bytes and the original file length, so a work-phase failure, cancellation or write-back failure restores the call. On file-backed stores that support in-place page writes, larger undo logs use a temporary file deleted on close; encrypted pages remain encrypted in that log. Other stores retain undo in memory. `UseTransactionalWrites = true` additionally requests a durable device flush after each successful call. Explicit transactions group several calls into one durable commit and remain subject to `MaxTransactionPageBudget`. Database creation, physical tail shrinking and encrypted-container rewrapping have separate lifecycles.
+Row, table-schema, relationship and complex-item mutations are statement-atomic by default. Each call buffers a bounded batch of changed pages and spills it when it reaches `max(64, PageCacheSize / 2)` pages. Undo retains each page's original stored bytes and the original file length, so a work-phase failure, cancellation or write-back failure restores the call. On file-backed stores that support in-place page writes, larger undo logs use a temporary file deleted on close; encrypted pages remain encrypted in that log. Other stores retain undo in memory. File-backed statement commits always flush the journal and database to the device. For other stores, `UseTransactionalWrites = true` additionally requests a durable flush when supported. Explicit transactions group several calls into one durable commit and remain subject to `MaxTransactionPageBudget`. Database creation, physical tail shrinking and encrypted-container rewrapping have separate lifecycles.
 
 `AccessWriter` supports explicit page-buffered transactions for multi-row/page operations. All page mutations are buffered in memory until committed or rolled back.
 
@@ -82,12 +82,20 @@ Each mutation inside an explicit transaction has an internal savepoint. If the c
 
 `CommitAsync` captures the original bytes of pages it will overwrite, then writes the new pages in page-number order and flushes the stream. The transaction ends whether or not `CommitAsync` succeeds:
 
-- If it fails before the first page write starts, the file is unchanged and `IsRolledBack` is `true`.
+- If it fails before the first page write starts, the file is unchanged and `IsRolledBack` is `true`, unless preparing the persistent journal faults the writer.
 - Once the first page write starts, cancellation is ignored through replay and recovery.
-- If a stream write or flush fails, commit restores the original page bytes and file length. Successful recovery sets `IsRolledBack` to `true`, restores the writer's cached state and AutoNumber counters, and surfaces the original failure. The writer remains usable.
-- If recovery also fails, both `IsCommitted` and `IsRolledBack` remain `false`. Further mutations, transaction starts and maintenance throw with `WriterFaulted`; disposal releases resources without flushing or rewriting the file. Restore the database from a known-good copy before reopening it.
+- If a stream write or flush fails before recording the commit decision, commit restores the original page bytes and file length. Successful recovery sets `IsRolledBack` to `true`, restores the writer's cached state and AutoNumber counters, and surfaces the original failure. The writer remains usable.
+- If recovery also fails, both `IsCommitted` and `IsRolledBack` remain `false`. Further mutations, transaction starts and maintenance throw with `WriterFaulted`; disposal releases resources without flushing or rewriting the file. For a file-backed transaction, retain its recovery journal and reopen with `AccessWriter`; if validation refuses recovery, retain both files and restore from a known-good copy. Custom streams need caller-managed restoration.
 
-Recovery uses in-process before-images. It cannot recover from a process crash or power loss; there is no persistent rollback journal.
+File-backed transactions also create an adjacent `<database>.jdw-journal` before their first physical write. It contains a complete raw snapshot and checksummed write intents, including ciphertext for encrypted pages. Each intent is flushed before its database write. This covers bounded statement spills as well as explicit commits. Successful commits flush the database before recording the commit decision. Initial snapshots are prepared in `.jdw-journal.preparing` and promoted only after flushing; an abandoned preparation file never authorizes writes and does not block reads.
+
+After a process crash, open the database with `AccessWriter.OpenAsync` at its original path. Recovery runs before header parsing or password validation, checks the journal and all current database bytes, and either restores the exact original bytes and length or retains a verified committed image. Readers refuse a pending journal. Invalid or conflicting journal data is refused without replay; retain both files for diagnosis. A failed commit-decision flush leaves an uncertain outcome and faults the writer instead of overwriting a possibly committed result. Reopening resolves a valid journal's decision. Abandoned Access lockfiles are removed after successful recovery only if they can be opened exclusively.
+
+The snapshot uses bounded buffers but copies the entire database once per statement or explicit transaction, and commit hashes the resulting file. Allow disk space for the snapshot and page write records; grouping changes in an explicit transaction amortizes this cost. Databases are bounded to 2 GiB and journals to 16 GiB. Recovery may scan the intent log repeatedly for changed pages.
+
+Keep the journal beside the database at its original path until recovery completes. Microsoft Access does not understand this sidecar: recover with the library before opening an interrupted database in Access. Do not rename, replace, edit or copy the database independently of a pending journal. Identity validation uses the full path and raw contents; it is not a persistent operating-system file identifier or authentication against a maliciously replaced journal.
+
+These guarantees cover process termination under exclusive file access. File and journal flushes do not establish journal directory-entry persistence across power loss. A non-`FileStream` caller stream has only in-process rollback; no persistent journal-stream API is available. Creation, physical shrinking and container replacement retain their separate guarantees. See the [recovery protocol](design/transaction-crash-recovery.md) for ordering and limits.
 
 ## Trimming and NativeAOT
 
@@ -184,17 +192,17 @@ For native Jet4, password verification uses the creation-date-masked header inde
 
 A shared `AccessReader` supports concurrent scans while the database remains unchanged. Eligible path-based reads on the .NET 10 build use positional I/O; stream reads and the .NET Standard build serialize access to the stream position.
 
-Readers cache the table list, table definitions, owned data pages and up to `PageCacheSize` recently read pages. They do not refresh those caches. The default `FileShare.ReadWrite` permits another process to have the file open for writing, but a read can then mix cached data with newer pages. This is not a consistent snapshot. Open a new reader after changes have finished.
+Readers cache the table list, table definitions, owned data pages and up to `PageCacheSize` recently read pages. They do not refresh those caches. Path-based readers restrict sharing to read access for their lifetime, and refuse a pending recovery journal. A caller-supplied `FileStream` reader acquires an additional read-only lease; a writable or exclusively shared supplied handle can conflict with that lease and is refused. Prefer the path overload for file databases. Custom streams require caller-managed isolation.
 
 Use one writer per file and keep external writers away for its entire lifetime. `AccessWriter` serializes its own mutation and lifecycle calls, and supports one active explicit transaction. It caches table metadata, AutoNumber counters and enforced relationships; competing writers can corrupt the database.
 
-Path-based writers request read-only sharing, which Windows enforces. Unix sharing and locks depend on cooperating processes. With a caller-supplied stream, excluding other writers is the caller's responsibility.
+Path-based writers request exclusive file sharing, which Windows enforces. Unix sharing and locks depend on cooperating processes. With a caller-supplied stream, excluding other readers and writers is the caller's responsibility. Path aliases and non-cooperating processes must not bypass that coordination.
 
 `UseLockFile` and `RespectExistingLockFile` default to `true`; keep them enabled to refuse an existing lockfile. Page byte-range locks are used on Windows, Linux and Android; they are a no-op on unsupported platforms such as macOS, iOS and tvOS. Lockfiles and page locks do not replace exclusive writer coordination. See the [concurrency design](design/concurrency-and-lock-ordering.md).
 
 ### Transaction durability
 
-- There is no crash recovery. Undo belongs to the open writer; temporary undo files are not recoverable journals. A crash or power loss during a spill or final write-back can leave a partial database.
+- File transactions recover after process termination using the adjacent `.jdw-journal`. Preserve it and reopen with `AccessWriter` before using Access or other readers. Recovery refuses an invalid or conflicting journal. Custom streams and power loss are outside this guarantee.
 - Statement page buffers are bounded. File-backed stores that support in-place writes spill large undo logs to temporary files; other stores retain undo in memory. `MaxTransactionPageBudget` limits explicit transactions only.
 - Cancellation is checked between spill batches and before final write-back. Started physical batches and recovery finish without cancellation. A cancelled mutation restores earlier spills; inside an explicit transaction, it rolls back to an internal savepoint and leaves earlier successful calls intact.
 - Database creation and physical shrinking have separate lifecycles and are not made crash-safe by statement rollback.

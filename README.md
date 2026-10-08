@@ -37,7 +37,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 | ✅ | **Complex&nbsp;columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ | **Calculated&nbsp;columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
 | ✅ | **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
-| ✅ | **Transactions** | Group changes with `CommitAsync` / `RollbackAsync`; no crash recovery (see [Limitations](#limitations)) |
+| ✅ | **Transactions** | Group changes with `CommitAsync` / `RollbackAsync`; file transactions recover after process crashes (see [guarantees](docs/operations.md#transactions)) |
 | ✅ | **Storage&nbsp;maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
 | ✅ | **Performance** | Configurable LRU page cache, default parallel read-ahead for eligible page scans, streams millions of rows without loading the file |
 
@@ -173,7 +173,7 @@ Office encrypted compound packages are not supported database inputs. See the [n
 ## Limitations
 
 - **Keep the file stable while reading, and use one writer per file.** A reader caches data and does not refresh it or provide a consistent snapshot of a changing file. Reopen it after changes. Lockfiles help coordinate access but do not exclude every external writer on every platform.
-- **Transactions have no crash recovery.** Commit and rollback handle failures while the process is running; a process crash or power loss during writes can leave a partial database. See [transaction guarantees](docs/operations.md#transactions).
+- **Crash recovery requires the database and its journal.** File transactions recover interrupted writes on writer reopen; keep the adjacent `.jdw-journal` with the database until recovery finishes. Custom streams and power loss have narrower guarantees. See [transaction guarantees](docs/operations.md#transactions).
 - **Access feature coverage varies.** Some encryption providers, index formats and expressions are unsupported. For example, a default or validation rule using `DLookUp` refuses the write. See the [compatibility evidence](docs/design/writer-disk-format-validation-matrix.md) and [detailed limits](docs/operations.md#limitations).
 - **Access size and encoding constraints still apply.** Tables are limited to 255 columns; rows must fit the supported page layout. Jet3 text must fit the database's code page. Large MEMO and binary OLE values can use separate pages; see [size limits](docs/operations.md#table-and-row-size).
 - **Storage maintenance is limited.** `ShrinkDatabaseAsync` removes free pages at the end of a file; it does not perform a full Access Compact & Repair. Deleted data is not securely erased by default; see [storage maintenance](docs/writing.md#storage-maintenance-and-secure-erase).

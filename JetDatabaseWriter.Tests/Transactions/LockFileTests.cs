@@ -380,10 +380,9 @@ public sealed class LockFileTests : IDisposable
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task Writer_RespectExistingLockFile_SucceedsWhenReaderHoldsLockFile(string path)
+    public async Task Writer_RespectExistingLockFile_RefusesWhileReaderHoldsDatabase(string path)
     {
-        // A reader holding a lockfile should NOT block a writer that also uses
-        // lock files — the lock file is cooperative, not exclusive.
+        // The database sharing lease excludes physical mutations for the reader's lifetime.
         string temp = this.CopyToTemp(path);
 
         await using AccessReader reader = await AccessReader.OpenAsync(
@@ -391,14 +390,13 @@ public sealed class LockFileTests : IDisposable
             new AccessReaderOptions { UseLockFile = true },
             TestContext.Current.CancellationToken);
 
-        // Writer with RespectExistingLockFile=true should still open because
-        // the lockfile is shared (both append a slot).
-        await using AccessWriter writer = await AccessWriter.OpenAsync(
-            temp,
-            new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = true },
-            TestContext.Current.CancellationToken);
-
-        Assert.NotNull(writer);
+        await Assert.ThrowsAnyAsync<IOException>(async () =>
+        {
+            await using AccessWriter writer = await AccessWriter.OpenAsync(
+                temp,
+                new AccessWriterOptions { UseLockFile = true, RespectExistingLockFile = true },
+                TestContext.Current.CancellationToken);
+        });
     }
 
     // ── Options default ───────────────────────────────────────────────

@@ -36,6 +36,9 @@ internal class StreamPageStore : IPageStore
     /// <summary>Gets the backing stream for container maintenance.</summary>
     internal Stream Stream { get; }
 
+    /// <summary>Gets or sets the crash journal active during physical transaction writes.</summary>
+    internal PersistentRollbackJournal? RollbackJournal { get; set; }
+
     /// <summary>Gets a value indicating whether positional reads are enabled.</summary>
     internal bool PositionalReads { get; private set; }
 
@@ -110,6 +113,7 @@ internal class StreamPageStore : IPageStore
             await this.ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                this.RollbackJournal?.RecordBeforeWrite(offset, buffer.Span);
                 _ = this.Stream.Seek(offset, SeekOrigin.Begin);
                 await this.Stream.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
             }

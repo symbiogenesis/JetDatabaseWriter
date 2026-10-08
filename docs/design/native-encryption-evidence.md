@@ -82,7 +82,7 @@ unchanged page 0. On both target frameworks, DAO120 reads, writes and compacts
 the native JET4 RC4 and ACE Agile fixtures after this maintenance. Separate
 write, torn-write and flush fault tests restore the original Agile ciphertext
 and reuse the writer successfully; these are library rollback checks, not
-native crash-recovery evidence. Other algorithms and physical shrink faults
+native crash-recovery evidence. Separate library subprocess tests now verify exact ciphertext restoration after process termination through the persistent sidecar protocol; this does not establish Access-native or power-loss recovery. Other algorithms and physical shrink faults
 still need their own coverage.
 
 ## File replacement guarantees
@@ -101,9 +101,9 @@ operations that are still refused above.
 
 The DAO fixtures do not establish native JET3 producer interoperability, RC4 CryptoAPI or Standard ACE
 providers, every Agile algorithm combination, workgroup security, native
-password maintenance, encrypted creation, crash recovery or complete hostile
+password maintenance, encrypted creation, power-loss recovery or complete hostile
 input resistance. Required work remains in `docs/todo.md` (E1, E2, F3, F4, F6,
-S1-S2 and I4). The older library-generated encryption files are not native
+S1-S2 and I15). The older library-generated encryption files are not native
 interoperability oracles.
 
 ## Upstream JET3 oracle

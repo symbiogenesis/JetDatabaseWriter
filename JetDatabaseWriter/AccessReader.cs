@@ -62,6 +62,8 @@ using JetDatabaseWriter.Transactions;
 public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly LockFileCoordinator lockFile;
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync after the database closes; failed open disposes the lease in OpenAsync.")]
+    private readonly FileStream? snapshotLease;
 
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, passed as a step to LockFileCoordinator.DisposeAfterAsync; failed construction disposes it in the constructor.")]
     private readonly ReaderServices services;
@@ -74,6 +76,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="options">Options for configuring the AccessReader.</param>
     /// <param name="stream">An open, seekable stream for the database file.</param>
     /// <param name="header">Header bytes read from page 0.</param>
+    /// <param name="snapshotLease">The read-only file handle that excludes writers during the reader lifetime.</param>
     /// <param name="leaveOpen">Whether the caller retains ownership of the stream. If false, the stream is disposed when the reader is disposed.</param>
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "AccessBase takes ownership of the database file; DisposeAsync disposes it after the reader's services.")]
     private AccessReader(
@@ -81,10 +84,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
         AccessReaderOptions options,
         Stream stream,
         byte[] header,
+        FileStream? snapshotLease,
         bool leaveOpen = false)
         : base(DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options))
     {
         Guard.NotNull(options, nameof(options));
+        this.snapshotLease = snapshotLease;
 
         this.lockFile = LockFileCoordinator.ForReader(path, options);
         this.DiagnosticsEnabled = options.DiagnosticsEnabled;
@@ -154,7 +159,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 #pragma warning disable CA2000
         FileStream fs = CreateStream(path, options);
 #pragma warning restore CA2000
-        AccessReader reader = await OpenAsync(fs, options, leaveOpen: false, cancellationToken).ConfigureAwait(false);
+        AccessReader reader = await OpenCoreAsync(fs, options, leaveOpen: false, acquireLease: false, cancellationToken).ConfigureAwait(false);
         if (options.UsesPositionalPageReads(openedFromPath: true))
         {
             reader.Database.Pages.EnableRandomAccessPageReadsIfSupported();
@@ -185,21 +190,40 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// overload opens its file that way.
     /// </remarks>
     /// <exception cref="NotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
-    public static async ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+    public static ValueTask<AccessReader> OpenAsync(Stream stream, AccessReaderOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
+        => OpenCoreAsync(stream, options, leaveOpen, acquireLease: true, cancellationToken);
+
+    private static async ValueTask<AccessReader> OpenCoreAsync(Stream stream, AccessReaderOptions? options, bool leaveOpen, bool acquireLease, CancellationToken cancellationToken)
     {
         Guard.RequireReadableSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
         options ??= new AccessReaderOptions();
+        FileStream? snapshotLease = null;
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
+            if (stream is FileStream recoveryFile)
+            {
+                if (acquireLease)
+                {
+                    snapshotLease = new FileStream(recoveryFile.Name, FileMode.Open, FileAccess.Read, FileShare.Read);
+                }
+
+                PersistentRollbackJournal.RejectHotJournal(recoveryFile);
+            }
+
             byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
 
-            return new AccessReader(path, options, stream, header, leaveOpen);
+            return new AccessReader(path, options, stream, header, snapshotLease, leaveOpen);
         }
         catch
         {
+            if (snapshotLease is not null)
+            {
+                await snapshotLease.DisposeAsync().ConfigureAwait(false);
+            }
+
             if (!leaveOpen)
             {
                 await stream.DisposeAsync().ConfigureAwait(false);
@@ -422,12 +446,22 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="options">The reader options, which supply the file access and sharing.</param>
     /// <returns>The opened stream.</returns>
     private static FileStream CreateStream(string path, AccessReaderOptions options) =>
-        PageFile.OpenFileStream(path, options.FileAccess, options.FileShare, FileOptions.None);
+        PageFile.OpenFileStream(path, options.FileAccess, options.FileShare & FileShare.Read, FileOptions.None);
 
     private async ValueTask DisposeReaderResourcesAsync()
     {
         this.services.Dispose();
-        await this.Database.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await this.Database.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            if (this.snapshotLease is not null)
+            {
+                await this.snapshotLease.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private void ValidateDatabaseFormat()

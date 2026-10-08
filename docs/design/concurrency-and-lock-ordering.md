@@ -101,7 +101,7 @@ CommitTransactionAsync
   │         final cancellation check, then CancellationToken.None:
   │           foreach buffered page (ascending page order):
   │             encode one page; ByteRangeLock per-page ──▶ store ioGate ──▶ seek/write
-  │           one store flush (durable for explicit commits or UseTransactionalWrites)
+  │           durable store flush for file transactions, then durable journal decision
   │         on a storage failure: restore raw bytes, original length, and flush
   └─ release commit-lock (finally)
 
@@ -127,7 +127,7 @@ mutations with `WriterFaulted`. Disposal skips pending writes and container
 rewrap. Before-images use bounded memory followed by a DeleteOnClose temporary
 file on file-backed stores with in-place pages; other stores keep them in memory.
 Only raw stored bytes enter the log, so encrypted pages remain encrypted.
-This private log has no process-crash or power-loss recovery protocol.
+File transactions additionally retain a persistent raw snapshot and flushed write intents in an adjacent `.jdw-journal`. The store records each encoded write before it reaches the database. In-process undo bypasses new intents because original bytes are already represented by the snapshot. Recovery validates all journal and database content before replay; an uncertain commit-decision failure preserves both files and faults the writer. See [transaction crash recovery](transaction-crash-recovery.md). The private temporary undo log alone remains insufficient for custom-stream or power-loss recovery.
 
 ### Failed calls inside an explicit transaction
 
@@ -135,11 +135,13 @@ Under `mutationGate`, `RunInSavepointAsync` captures the insert hint, owned-map 
 
 ### Default writer statements (`UseTransactionalWrites = false`)
 
-Default row, table-schema, relationship and complex-item calls use the same private journal and commit-lock sequence above. At `max(64, PageCacheSize / 2)` buffered pages, the pager captures each page's first raw before-image and writes the batch, then releases its replay images. Work-phase failures and cancellation restore earlier spills and writer state; replay failures restore the original bytes and length. Each started physical batch and restoration ignores cancellation, while work and preparation between batches remain cancellable. The successful store flush does not request a device flush unless `UseTransactionalWrites` is true. Private statements are exempt from the explicit transaction page budget; provisional zero reservations keep metadata without allocating page buffers.
+Default row, table-schema, relationship and complex-item calls use the same private journal and commit-lock sequence above. At `max(64, PageCacheSize / 2)` buffered pages, the pager captures each page's first raw before-image and writes the batch, then releases its replay images. Work-phase failures and cancellation restore earlier spills and writer state; replay failures restore the original bytes and length. Each started physical batch and restoration ignores cancellation, while work and preparation between batches remain cancellable. File-backed statements always request a device flush before the journal commit decision. Other stores request it when `UseTransactionalWrites` is true. Private statements are exempt from the explicit transaction page budget; provisional zero reservations keep metadata without allocating page buffers.
 
 Initial database creation and physical tail shrinking still use reference-counted write scopes with a separate lifecycle. Container rewrapping also sits outside this statement path. Their failure and crash guarantees do not follow from the statement journal.
 
 ### Reader operation
+
+File readers retain read-only sharing for their lifetime; path writers request exclusive sharing. A caller-supplied file reader also holds a separate read lease. Readers refuse any pending `.jdw-journal` before parsing the header. Caller-provided streams and non-cooperating Unix processes still need external coordination; cached readers are not refreshable views of concurrent mutations.
 
 Every public reader operation opens with
 `using AsyncReentrantOperationGate.Lease operation = operations.Enter();` in the

@@ -20,9 +20,10 @@ using JetDatabaseWriter.Transactions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Commit keeps raw before-images in memory and restores them after a write or
-/// flush failure. It is not crash-atomic: a process or device failure can
-/// leave part of the transaction on disk, with no recovery on reopen.
+/// Commit retains raw before-images and restores them after a write or flush
+/// failure. File-backed transactions persist recovery images beside the database;
+/// the next writer open recovers an interrupted commit. Other caller-supplied
+/// streams cannot recover after a process crash.
 /// </para>
 /// <para>
 /// Only one transaction may be active at a time per <see cref="AccessWriter"/>;
@@ -89,17 +90,22 @@ public sealed class JetTransaction : IAsyncDisposable
     /// If the commit fails before the first page write starts (for example
     /// because <paramref name="cancellationToken"/> was cancelled, or the
     /// commit lock timed out), the file is unchanged and
-    /// <see cref="IsRolledBack"/> is <see langword="true"/>.
+    /// <see cref="IsRolledBack"/> is <see langword="true"/>. Failure to prepare
+    /// the persistent journal instead faults the writer.
     /// </para>
     /// <para>
     /// Once the first page write starts, cancellation is ignored and the
     /// commit runs to completion, because stopping partway would leave the
-    /// file holding only part of the transaction. A write or flush failure
+    /// file holding only part of the transaction. A write or flush failure before
+    /// recording the commit decision
     /// restores the raw original page images and file length, marks the
     /// transaction rolled back, and propagates the original exception. If
     /// restoration also fails, an <see cref="AggregateException"/> carries both
     /// failures and the writer rejects further mutations. Dispose then only
-    /// releases handles; restore the database from a known good copy.
+    /// releases handles. For files, retain the journal and reopen with the writer
+    /// to attempt validated recovery; custom streams need caller-managed recovery.
+    /// A failed commit-decision flush also faults the writer and preserves the
+    /// database and journal, because the committed outcome is uncertain.
     /// </para>
     /// </remarks>
     /// <param name="cancellationToken">A token used to cancel the commit before it starts writing pages.</param>

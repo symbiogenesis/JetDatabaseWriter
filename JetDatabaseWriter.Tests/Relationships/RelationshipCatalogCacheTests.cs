@@ -219,7 +219,9 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
                 await File.WriteAllBytesAsync(path, ms.ToArray(), Ct);
             }
 
-            await using (AccessWriter writer = await AccessWriter.OpenAsync(path, options, Ct))
+            // Explicit sharing permits the competing test handle; path writers are exclusive.
+            await using (var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+            await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, Ct))
             {
                 await writer.InsertRowAsync("C", [1, 1], Ct);
 

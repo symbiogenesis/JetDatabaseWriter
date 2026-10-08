@@ -60,11 +60,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <remarks>
     /// The file is opened once, for reading and writing, and page 0 is read
     /// once: the flat Agile check and the password check both use it, before
-    /// the lock-file slot is taken or anything is written. A file that cannot
+    /// the lock-file slot is taken. Pending recovery runs before this header read.
+    /// A file that cannot
     /// be opened for writing (read-only, or locked by another process) reports
     /// that error before any encryption or password error.
     /// </remarks>
-    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. The file is not modified.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong, or when the file cannot be opened for writing. A pending transaction journal is recovered before password validation.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The file is not opened.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(string path, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -88,7 +89,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="leaveOpen">If <c>true</c>, the stream is not disposed when the writer is disposed. Default is <c>false</c>.</param>
     /// <param name="cancellationToken">A token used to cancel the open operation.</param>
     /// <returns>A <see cref="ValueTask{TResult}"/> that yields an <see cref="AccessWriter"/> for the database.</returns>
-    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. Nothing is written to the stream.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown when the database needs a password and the options' <see cref="AccessOptions.Password"/> is missing or wrong. A pending file-backed transaction journal is recovered before password validation.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. The stream is not read, written or disposed.</exception>
     /// <exception cref="NotSupportedException">Office compound packages are not native Microsoft Access database inputs.</exception>
     public static async ValueTask<AccessWriter> OpenAsync(Stream stream, AccessWriterOptions? options = null, bool leaveOpen = false, CancellationToken cancellationToken = default)
@@ -101,6 +102,16 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
+
+            if (stream is FileStream recoveryFile)
+            {
+                bool recovering = File.Exists(PersistentRollbackJournal.JournalPath(recoveryFile.Name));
+                PersistentRollbackJournal.Recover(recoveryFile);
+                if (recovering)
+                {
+                    RemoveAbandonedLockFile(recoveryFile.Name);
+                }
+            }
 
             // One read of page 0 serves the header and the flat Agile probe.
             byte[] headerPage = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
@@ -643,9 +654,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Begins a transaction with bounded page buffering. Changed pages may
     /// spill to the database before commit; before-images are retained in
-    /// memory or a temporary undo file. <see cref="JetTransaction.CommitAsync"/>
-    /// writes the remaining pages in place. This is not crash-atomic: a crash
-    /// during a spill or commit can leave partial transaction contents.
+    /// memory or a temporary undo file. File-backed transactions also persist raw
+    /// recovery images beside the database. <see cref="JetTransaction.CommitAsync"/>
+    /// writes the remaining pages in place. Opening a file-backed writer recovers
+    /// interrupted spills or commits before parsing the database. Caller-supplied
+    /// streams other than FileStream cannot recover after a process crash.
     /// <see cref="JetTransaction.RollbackAsync"/> (and disposal of an uncommitted
     /// transaction) restores early writes and cached state. An I/O failure also
     /// attempts restoration; if undo fails, the writer rejects further mutations.
@@ -674,8 +687,21 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         this.lockFileCoordinator.Dispose();
     }
 
+    private static void RemoveAbandonedLockFile(string databasePath)
+    {
+        string lockPath = LockFileSlotWriter.GetLockFilePath(databasePath);
+        if (!File.Exists(lockPath))
+        {
+            return;
+        }
+
+        // Successful recovery establishes journal ownership. Exclusive opening
+        // additionally proves the old lock file has no surviving holders.
+        using FileStream abandoned = new(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.DeleteOnClose);
+    }
+
     private static FileStream CreateStream(string path) =>
-        PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.Read, FileOptions.Asynchronous | FileOptions.RandomAccess);
+        PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.None, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
     private ValueTask DisposeCoreAsync()
         => this.services.Transactions.IsFaulted

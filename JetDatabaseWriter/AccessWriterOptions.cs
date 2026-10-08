@@ -73,14 +73,14 @@ public sealed class AccessWriterOptions : AccessOptions
     /// mutations use a private statement transaction regardless of this option:
     /// a work-phase failure or cancellation discards its pages, and a write or
     /// flush failure restores the original bytes and length. Explicit transaction
-    /// commits always request a durable flush.
+    /// commits always request a durable flush. File-backed statement transactions
+    /// also always flush durably before completing their persistent recovery journal.
     /// <para>
     /// Cancellation is ignored once physical write-back starts. If restoration
     /// also fails, the writer rejects further mutations with <c>WriterFaulted</c>.
-    /// The undo images are held in memory: process or power loss during replay
-    /// can leave a partial transaction on disk, with no crash recovery. Compound
-    /// encrypted containers are rewrapped on disposal; this option does not make
-    /// their individual statements durable. Creation and physical shrinking use
+    /// File-backed transactions recover interrupted physical writes on writer open.
+    /// Other caller-supplied streams retain undo images only for in-process failures.
+    /// Creation and physical shrinking use
     /// their separate maintenance paths.
     /// </para>
     /// <para>Default: <see langword="false"/>.</para>

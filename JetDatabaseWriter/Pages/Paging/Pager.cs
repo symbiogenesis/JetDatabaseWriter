@@ -629,6 +629,7 @@ internal sealed class Pager : PageFile
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         StatementUndoLog? image = null;
+        bool recordingCommitDecision = false;
         try
         {
             image = transaction.UndoLog ??= new StatementUndoLog(transaction.BaseFileLengthBytes, this.Store.Capabilities.IsFileBacked && this.Store.Capabilities.InPlacePages, Math.Max(64, this.cacheSize / 2));
@@ -639,6 +640,7 @@ internal sealed class Pager : PageFile
 
             cancellationToken.ThrowIfCancellationRequested();
             beforeFirstWrite();
+            this.EnsureRecoveryJournal(transaction);
             image.HasWrites = true;
             foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
             {
@@ -646,16 +648,29 @@ internal sealed class Pager : PageFile
                 await this.Store.WriteAsync(checked(entry.Key * this.PageSize), encoded.AsMemory(0, this.PageSize), CancellationToken.None).ConfigureAwait(false);
             }
 
-            await this.Store.FlushAsync(durable, CancellationToken.None).ConfigureAwait(false);
+            await this.Store.FlushAsync(durable || transaction.RecoveryJournal is not null, CancellationToken.None).ConfigureAwait(false);
+            recordingCommitDecision = transaction.RecoveryJournal is not null;
+            transaction.RecoveryJournal?.MarkCommitted();
             image.HasWrites = false;
         }
         catch (Exception failure)
         {
+            if (recordingCommitDecision)
+            {
+                // A failed marker flush has an uncertain durable outcome. Preserve
+                // the database and sidecar so reopen can resolve that decision.
+                this.IsFaulted = true;
+                this.InvalidateAll();
+                throw;
+            }
+
             try
             {
                 if (image?.HasWrites == true)
                 {
-                    await image.RestoreAsync(this.Store, durable).ConfigureAwait(false);
+                    this.DetachRecoveryJournal();
+                    await image.RestoreAsync(this.Store, durable || transaction.RecoveryJournal is not null).ConfigureAwait(false);
+                    transaction.RecoveryJournal?.CompleteRollback();
                 }
             }
             catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
@@ -681,8 +696,15 @@ internal sealed class Pager : PageFile
             }
             finally
             {
-                transaction.UndoLog = null;
-                _ = this.frameGate.Release();
+                try
+                {
+                    this.CloseRecoveryJournal(transaction);
+                }
+                finally
+                {
+                    transaction.UndoLog = null;
+                    _ = this.frameGate.Release();
+                }
             }
         }
     }
@@ -702,7 +724,9 @@ internal sealed class Pager : PageFile
         {
             if (undo.HasWrites)
             {
-                await undo.RestoreAsync(this.Store, false).ConfigureAwait(false);
+                this.DetachRecoveryJournal();
+                await undo.RestoreAsync(this.Store, transaction.RecoveryJournal is not null).ConfigureAwait(false);
+                transaction.RecoveryJournal?.CompleteRollback();
             }
         }
         catch
@@ -718,9 +742,16 @@ internal sealed class Pager : PageFile
             }
             finally
             {
-                transaction.UndoLog = null;
-                this.InvalidateAll();
-                _ = this.frameGate.Release();
+                try
+                {
+                    this.CloseRecoveryJournal(transaction);
+                }
+                finally
+                {
+                    transaction.UndoLog = null;
+                    this.InvalidateAll();
+                    _ = this.frameGate.Release();
+                }
             }
         }
     }
@@ -745,6 +776,7 @@ internal sealed class Pager : PageFile
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        this.EnsureRecoveryJournal(transaction);
         undo.HasWrites = true;
         foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
         {
@@ -753,6 +785,44 @@ internal sealed class Pager : PageFile
         }
 
         transaction.DiscardReplayImages();
+    }
+
+    private void EnsureRecoveryJournal(PagerTransaction transaction)
+    {
+        if (this.Store is StreamPageStore { Stream: FileStream database } store)
+        {
+            try
+            {
+                transaction.RecoveryJournal ??= PersistentRollbackJournal.Create(database, this.PageSize);
+                store.RollbackJournal = transaction.RecoveryJournal;
+            }
+            catch
+            {
+                // Failed creation can leave incomplete recovery evidence. Exclude
+                // further writes rather than replace a journal of uncertain state.
+                this.IsFaulted = true;
+                throw;
+            }
+        }
+    }
+
+    private void DetachRecoveryJournal()
+    {
+        if (this.Store is StreamPageStore store)
+        {
+            store.RollbackJournal = null;
+        }
+    }
+
+    private void CloseRecoveryJournal(PagerTransaction transaction)
+    {
+        if (this.Store is StreamPageStore store)
+        {
+            store.RollbackJournal = null;
+        }
+
+        transaction.RecoveryJournal?.Dispose();
+        transaction.RecoveryJournal = null;
     }
 
     /// <summary>Rejects mutations after an unsuccessful commit undo.</summary>
