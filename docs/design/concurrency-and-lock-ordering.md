@@ -2,7 +2,7 @@
 
 Status: active reference
 Date: 2026-06-16
-Last updated: 2026-10-05
+Last updated: 2026-10-07
 
 This note is the single, canonical description of the synchronization model used
 by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
@@ -14,10 +14,9 @@ question that the code alone makes hard to verify: **when more than one
 synchronization primitive is involved, which one is outer and which is inner?**
 
 Read this before adding a new lock, taking an existing lock from a new call
-site, or moving an `await` inside a critical section. The
-[code-quality audit](../code-quality-audit.md) finding #7 ("sprawling,
-overlapping concurrency model") is resolved by this document plus the decision
-recorded in [Why these are not consolidated](#why-these-are-not-consolidated).
+site, or moving an `await` inside a critical section. See
+[Why these are not consolidated](#why-these-are-not-consolidated) for the rationale
+behind the separate primitives.
 
 ## The primitives
 
