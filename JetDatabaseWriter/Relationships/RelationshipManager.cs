@@ -11,9 +11,9 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
-using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
 
 #pragma warning disable SA1204

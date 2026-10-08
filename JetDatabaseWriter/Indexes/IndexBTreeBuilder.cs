@@ -66,6 +66,7 @@ internal static class IndexBTreeBuilder
     /// <param name="entries">The entries.</param>
     /// <param name="firstPageNumber">The first page number.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry size, or allocated page range cannot fit the B-tree format.</exception>
+    /// <exception cref="IndexCapacityException">Valid entries exceed the available index page capacity.</exception>
     public static IndexBTreeBuildResult Build(
         IndexPageLayout layout,
         int pageSize,

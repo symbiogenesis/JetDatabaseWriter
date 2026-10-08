@@ -165,6 +165,7 @@ internal sealed class TableStorageEditor(
         TableDef tempDef = copy.Definition;
         long finalTdefPage = copy.FinalTDefPage;
         IReadOnlyDictionary<int, int> fkIndexNumbers = copy.FkIndexNumbers;
+
         // Drop the original table, then rename the temp catalog entry to take its place.
         // Either way the table's catalog row carries the projected persisted properties.
         if (transplant)

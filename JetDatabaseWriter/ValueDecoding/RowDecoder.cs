@@ -11,7 +11,6 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
-using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.ValueDecoding.Models;
 
 /// <summary>

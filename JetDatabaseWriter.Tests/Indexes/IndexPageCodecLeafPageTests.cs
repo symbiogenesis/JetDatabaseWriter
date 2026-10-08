@@ -20,6 +20,13 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// </summary>
 public sealed class IndexPageCodecLeafPageTests
 {
+    [Fact]
+    public void TryBuild_InvalidLayout_IsNotCapacityRefusal()
+    {
+        var layout = new IndexPageLayout(8, 16, int.MaxValue, 8, 8, 8);
+        Assert.Throws<ArgumentOutOfRangeException>(() => IndexPageCodec.TryBuildLeafPage(layout, 64, 1, []));
+    }
+
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]

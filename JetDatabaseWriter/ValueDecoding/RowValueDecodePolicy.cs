@@ -43,8 +43,12 @@ internal static class RowValueDecodePolicy
 
     internal static void ValidateCalculatedPayload(ReadOnlySpan<byte> payload, ColumnType type)
     {
-        int required = type == BooleanType ? 1 : type == NumericType ? 4
-            : JetTypeInfo.TryGetVariableSlotFixedPayloadSize(type, out int size) ? size : 0;
+        int required = type switch
+        {
+            BooleanType => 1,
+            NumericType => 4,
+            _ => JetTypeInfo.TryGetVariableSlotFixedPayloadSize(type, out int size) ? size : 0,
+        };
         if (payload.Length < required)
         {
             throw new ArgumentException($"Calculated payload needs {required} byte(s), found {payload.Length}.", nameof(payload));

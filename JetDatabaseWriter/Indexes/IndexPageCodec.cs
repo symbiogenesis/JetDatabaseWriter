@@ -54,6 +54,7 @@ internal static class IndexPageCodec
     /// <param name="enablePrefixCompression">Whether prefix compression is enabled.</param>
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
+    /// <exception cref="IndexCapacityException">Valid entries exceed the available index page capacity.</exception>
     public static byte[] BuildLeafPage(
         IndexPageLayout layout,
         int pageSize,
@@ -236,11 +237,9 @@ internal static class IndexPageCodec
         long tailPage,
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
-    {
-        return CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
+        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
             ? BuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
             : null;
-    }
 
     /// <summary>
     /// Builds an intermediate index page using the supplied per-format layout.
@@ -254,6 +253,7 @@ internal static class IndexPageCodec
     /// <param name="tailPage">The tail page.</param>
     /// <param name="maxPrefixLength">The maximum prefix length.</param>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the page size, entry payload, or page-number fields exceed format limits.</exception>
+    /// <exception cref="IndexCapacityException">Valid entries exceed the available index page capacity.</exception>
     public static byte[] BuildIntermediatePage(
         IndexPageLayout layout,
         int pageSize,
@@ -379,11 +379,9 @@ internal static class IndexPageCodec
         long nextPage,
         long tailPage,
         int? maxPrefixLength = null)
-    {
-        return CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength)
+        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength)
             ? BuildIntermediatePage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, maxPrefixLength)
             : null;
-    }
 
     /// <summary>
     /// Writes all sibling pointer fields in an index page header.
@@ -439,7 +437,7 @@ internal static class IndexPageCodec
     /// <param name="page">The page bytes.</param>
     public static long ReadNextPage(IndexPageLayout layout, byte[] page)
     {
-        if (page == null || page.Length < layout.NextPageOffset + 4)
+        if (page == null || page.Length < (long)layout.NextPageOffset + 4)
         {
             return 0;
         }
@@ -454,7 +452,7 @@ internal static class IndexPageCodec
     /// <param name="page">The page bytes.</param>
     public static long ReadTailPage(IndexPageLayout layout, byte[] page)
     {
-        if (page == null || page.Length < layout.TailPageOffset + 4)
+        if (page == null || page.Length < (long)layout.TailPageOffset + 4)
         {
             return 0;
         }
@@ -469,7 +467,7 @@ internal static class IndexPageCodec
     /// <param name="page">The page bytes.</param>
     public static long ReadPrevPage(IndexPageLayout layout, byte[] page)
     {
-        if (page == null || page.Length < layout.PrevPageOffset + 4)
+        if (page == null || page.Length < (long)layout.PrevPageOffset + 4)
         {
             return 0;
         }
@@ -486,7 +484,7 @@ internal static class IndexPageCodec
         IndexPageLayout layout,
         byte[] page)
     {
-        if (page == null || page.Length < layout.TailPageOffset + 4)
+        if (page == null || page.Length < (long)layout.TailPageOffset + 4)
         {
             return (0, 0, 0);
         }
@@ -505,7 +503,7 @@ internal static class IndexPageCodec
     /// <param name="page">The page bytes.</param>
     public static bool IsSingleRootLeaf(IndexPageLayout layout, byte[] page)
     {
-        if (!IsLeaf(page) || page.Length < layout.TailPageOffset + 4)
+        if (!IsLeaf(page) || page.Length < (long)layout.TailPageOffset + 4)
         {
             return false;
         }
@@ -1091,15 +1089,15 @@ internal static class IndexPageCodec
         ValidatePageNumber(prevPage, nameof(prevPage));
         ValidatePageNumber(nextPage, nameof(nextPage));
         ValidatePageNumber(tailPage, nameof(tailPage));
-        if (layout.PrevPageOffset < 0 || layout.PrevPageOffset + 4 > layout.FirstEntryOffset
-            || layout.NextPageOffset < 0 || layout.NextPageOffset + 4 > layout.FirstEntryOffset
-            || layout.TailPageOffset < 0 || layout.TailPageOffset + 4 > layout.FirstEntryOffset)
+        if (layout.PrevPageOffset < 0 || (long)layout.PrevPageOffset + 4 > layout.FirstEntryOffset
+            || layout.NextPageOffset < 0 || (long)layout.NextPageOffset + 4 > layout.FirstEntryOffset
+            || layout.TailPageOffset < 0 || (long)layout.TailPageOffset + 4 > layout.FirstEntryOffset)
         {
             throw new ArgumentOutOfRangeException(nameof(layout));
         }
 
         if (layout.BitmaskOffset < 0 || layout.BitmaskOffset >= layout.FirstEntryOffset
-            || layout.PrefLenOffset < 0 || layout.PrefLenOffset + 2 > layout.FirstEntryOffset)
+            || layout.PrefLenOffset < 0 || (long)layout.PrefLenOffset + 2 > layout.FirstEntryOffset)
         {
             throw new ArgumentOutOfRangeException(nameof(layout));
         }
@@ -1145,7 +1143,7 @@ internal static class IndexPageCodec
                 return false;
             }
 
-            cursor += getEntry(entries[i]).Key.Length - (i == 0 ? 0 : prefix) + (getChild is null ? LeafTrailerSize : IntermediateTrailerSize);
+            cursor += (long)getEntry(entries[i]).Key.Length - (i == 0 ? 0 : prefix) + (getChild is null ? LeafTrailerSize : IntermediateTrailerSize);
             if (cursor > pageSize)
             {
                 return false;
