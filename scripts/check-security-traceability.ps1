@@ -39,6 +39,11 @@ foreach ($file in $testFiles) {
     }
     $class = [regex]::Match($source, '\bpublic\s+(?:sealed\s+)?class\s+(?<name>\w+)').Groups['name'].Value
     foreach ($trait in $traits) {
+        $prefix = $source.Substring(0, $trait.Index)
+        $attributes = [regex]::Match($prefix, '(?m)(?:^[ \t]*\[[^\r\n]+\][ \t]*\r?\n)+[ \t]*\z').Value
+        if ($attributes -notmatch '\[(?:Fact|Theory)(?:\(|\])') {
+            throw "CveAnalogue mapping in $($file.FullName) has no adjacent Fact/Theory declaration."
+        }
         $cve = $trait.Groups['cve'].Value
         $method = "$class.$($trait.Groups['method'].Value)"
         if (-not $inventory.ContainsKey($cve)) { throw "$cve on $method has no inventory row." }
