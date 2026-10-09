@@ -599,6 +599,165 @@ public sealed class PersistentRollbackJournalTests
         }
     }
 
+    /// <summary>Disposing an old completed transaction preserves a later transaction's recovery evidence.</summary>
+    /// <param name="commit">Whether the old transaction committed rather than rolled back.</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Dispose_CompletedJournal_PreservesSuccessorJournal(bool commit)
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        byte[] original = new byte[8192];
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using var completed = PersistentRollbackJournal.Create(database, 2048);
+            if (commit)
+            {
+                completed.MarkCommitted();
+            }
+            else
+            {
+                completed.CompleteRollback();
+            }
+
+            using (var successor = PersistentRollbackJournal.Create(database, 2048))
+            {
+                byte[] changed = new byte[2048];
+                Array.Fill(changed, (byte)7);
+                successor.RecordBeforeWrite(0, changed);
+                database.Position = 0;
+                database.Write(changed, 0, changed.Length);
+                database.Flush(true);
+            }
+
+            completed.Dispose();
+            Assert.True(File.Exists(path + ".jdw-journal"));
+            PersistentRollbackJournal.Recover(database);
+            database.Position = 0;
+            byte[] restored = new byte[original.Length];
+            Assert.Equal(restored.Length, database.Read(restored, 0, restored.Length));
+            Assert.Equal(original, restored);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".jdw-journal");
+        }
+    }
+
+    /// <summary>Cleanup refusal retains a durable decision that later retries validate without replaying.</summary>
+    [Fact]
+    public void Recover_CleanupRefusal_RetainsStableDecisionUntilSuccessfulRetry()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = path + ".jdw-journal";
+        byte[] original = new byte[8192];
+        RandomNumberGenerator.Fill(original);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+                byte[] changed = new byte[2048];
+                Array.Fill(changed, (byte)7);
+                journal.RecordBeforeWrite(0, changed);
+                database.Position = 0;
+                database.Write(changed, 0, changed.Length);
+                database.Flush(true);
+            }
+
+            int callbacks = 0;
+            void RefuseCleanup()
+            {
+                callbacks++;
+#pragma warning disable RCS1140 // A local callback injects failure; it is not a documented API.
+                throw new IOException("Injected coordinated cleanup refusal.");
+#pragma warning restore RCS1140
+            }
+
+            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database, RefuseCleanup));
+            Assert.Equal(1, callbacks);
+            Assert.True(File.Exists(sidecar));
+            byte[] decision = File.ReadAllBytes(sidecar);
+            byte[] restored = new byte[original.Length];
+            database.Position = 0;
+            Assert.Equal(restored.Length, database.Read(restored, 0, restored.Length));
+            Assert.Equal(original, restored);
+
+            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database, RefuseCleanup));
+            Assert.Equal(2, callbacks);
+            Assert.Equal(decision, File.ReadAllBytes(sidecar));
+            database.Position = 0;
+            Assert.Equal(restored.Length, database.Read(restored, 0, restored.Length));
+            Assert.Equal(original, restored);
+
+            PersistentRollbackJournal.Recover(database, () => callbacks++);
+            Assert.Equal(3, callbacks);
+            Assert.False(File.Exists(sidecar));
+            PersistentRollbackJournal.Recover(database, () => callbacks++);
+            Assert.Equal(3, callbacks);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+        }
+    }
+
+    /// <summary>Invalid recovery content preserves evidence and never authorizes coordinated cleanup.</summary>
+    /// <param name="corruptSnapshot">Whether the snapshot is corrupted rather than the database.</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Recover_InvalidContent_DoesNotInvokeCleanup(bool corruptSnapshot)
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        string sidecar = path + ".jdw-journal";
+        byte[] original = new byte[8192];
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+                journal.RecordBeforeWrite(0, original.AsSpan(0, 2048));
+            }
+
+            if (corruptSnapshot)
+            {
+                using var journal = new FileStream(sidecar, FileMode.Open, FileAccess.Write, FileShare.None);
+                journal.Position = 128;
+                journal.WriteByte(99);
+                journal.Flush(true);
+            }
+            else
+            {
+                original[40] = 99;
+                database.Position = 40;
+                database.WriteByte(99);
+                database.Flush(true);
+            }
+
+            byte[] evidence = File.ReadAllBytes(sidecar);
+            int callbacks = 0;
+            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database, () => callbacks++));
+            Assert.Equal(0, callbacks);
+            Assert.Equal(evidence, File.ReadAllBytes(sidecar));
+            byte[] current = new byte[original.Length];
+            database.Position = 0;
+            Assert.Equal(current.Length, database.Read(current, 0, current.Length));
+            Assert.Equal(original, current);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(sidecar);
+        }
+    }
+
     private sealed class ReplayFaultStream(string path) : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
     {
         internal int ReplayWrites { get; private set; }

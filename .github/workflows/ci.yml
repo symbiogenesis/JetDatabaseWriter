@@ -202,4 +202,7 @@ jobs:
           JetDatabaseWriter.Tests.Pages.Paging.PersistentRollbackJournalTests
           JetDatabaseWriter.Tests.Writer.CreateDatabaseTests
           JetDatabaseWriter.Tests.Writer.ShrinkCrashRecoveryTests
+          JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests
+          JetDatabaseWriter.Tests.Writer.CreationCrashRecoveryTests
+          JetDatabaseWriter.Tests.Writer.RecoveryLockFileTests
           JetDatabaseWriter.Tests.Architecture.ManagedImplementationTests

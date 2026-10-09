@@ -106,12 +106,10 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
             if (stream is FileStream recoveryFile)
             {
-                bool recovering = File.Exists(PersistentRollbackJournal.JournalPath(recoveryFile.Name));
-                PersistentRollbackJournal.Recover(recoveryFile);
-                if (recovering)
-                {
-                    RemoveAbandonedLockFile(recoveryFile.Name);
-                }
+                // Retain the durable recovery decision until lock-file cleanup succeeds.
+                PersistentRollbackJournal.Recover(
+                    recoveryFile,
+                    () => RemoveAbandonedLockFile(recoveryFile.Name));
             }
 
             // One read of page 0 serves the header and the flat Agile probe.

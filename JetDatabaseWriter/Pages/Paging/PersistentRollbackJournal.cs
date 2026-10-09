@@ -20,6 +20,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     private readonly FileStream journal;
     private readonly int pageSize;
     private bool completed;
+    private bool cleanupAttempted;
 
     /// <summary>Gets a value indicating whether the commit decision is durably recorded.</summary>
     internal bool IsCommitted { get; private set; }
@@ -122,8 +123,9 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     /// <summary>Validates all original and current content before idempotently restoring an undecided transaction.</summary>
     /// <param name="database">The exclusively coordinated writable database.</param>
+    /// <param name="beforeCleanup">An optional coordinated cleanup performed before recovery evidence is removed.</param>
     /// <exception cref="IOException">The journal or database does not validate.</exception>
-    internal static void Recover(FileStream database)
+    internal static void Recover(FileStream database, Action? beforeCleanup = null)
     {
         string path = JournalPath(database.Name);
         if (!File.Exists(path))
@@ -295,6 +297,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             }
         }
 
+        beforeCleanup?.Invoke();
         File.Delete(path);
     }
 
@@ -476,6 +479,13 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     private void CleanupCompleted()
     {
+        if (this.cleanupAttempted)
+        {
+            return;
+        }
+
+        // A later transaction may own this path once our handle closes. Recovery retries stale cleanup.
+        this.cleanupAttempted = true;
         try
         {
             this.journal.Dispose();
