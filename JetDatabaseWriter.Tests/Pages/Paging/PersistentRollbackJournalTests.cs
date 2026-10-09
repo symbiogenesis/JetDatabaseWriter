@@ -283,10 +283,15 @@ public sealed class PersistentRollbackJournalTests
                 journal.RecordBeforeWrite(2048, new byte[2048]);
             }
 
-            using (var journal = new FileStream(path + ".jdw-journal", FileMode.Open, FileAccess.Write, FileShare.None))
+            using (var journal = new FileStream(path + ".jdw-journal", FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
                 journal.Position = location;
-                journal.WriteByte(255);
+                int originalByte = journal.ReadByte();
+                Assert.NotEqual(-1, originalByte);
+                byte corruptByte = checked((byte)(originalByte ^ 1));
+                Assert.NotEqual(originalByte, corruptByte);
+                journal.Position = location;
+                journal.WriteByte(corruptByte);
                 journal.Flush(true);
             }
 
