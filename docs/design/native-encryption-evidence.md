@@ -95,23 +95,30 @@ native crash-recovery evidence. Separate library subprocess tests now verify exa
 
 ## File replacement guarantees
 
-Native maintenance streams pages into a unique adjacent staging file. Staging
-and retained originals use private permissions. Pre-canceled operations stop
-before creating the file; conversion/cancellation failures clean up only that
-operation's incomplete staging file. After successful conversion, the staging
-file and a separate copy of the original are flushed before `File.Replace`.
-The original backup needs approximately one additional source-file-sized disk
-allocation during commit. Successful replacement preserves Windows destination
-ACL semantics; it does not change the source provider until the staged image
-is ready.
+Native maintenance streams pages into a unique adjacent staging file using
+managed .NET APIs. Callers must protect the containing directory from untrusted
+access: staged output or original backups can contain plaintext. Windows files
+receive a protected owner-only ACL at creation through `FileSystemAclExtensions`.
+The .NET 10 build requests Unix mode `0600`; inherited macOS ACL grants are not
+suppressed. The .NET Standard build uses host-default Unix creation permissions.
+Unix confidentiality therefore depends on the directory permissions and ACLs,
+not on `FileShare.None`, which is advisory there.
 
-On Linux and macOS the parent directory is flushed before and after replacement,
-and again after original-backup cleanup. On Windows the replacement contents
-are flushed; there is no supported directory-fsync equivalent used here.
-These are OS ordering guarantees, not proof of hardware power-loss persistence.
-The same `File.Replace` path is used by both library targets; an unsupported
-platform fails before replacement. Windows handles without delete sharing
-refuse replacement; Unix readers can retain the previous inode.
+Pre-canceled operations stop before creating the file; conversion/cancellation
+failures clean up only that operation's incomplete staging file. After conversion,
+the staging file and a separate copy of the original are flushed before
+`File.Replace`, and replacement contents are flushed afterward. The backup
+requires approximately one additional source-file-sized disk allocation.
+Successful replacement preserves Windows destination ACL semantics; Unix
+replacement uses the staged file's permissions.
+
+Both library targets use [`FileStream.Flush(true)`](https://learn.microsoft.com/en-us/dotnet/api/system.io.filestream.flush) and `File.Replace`, with no
+library P/Invoke, COM or native helper binary. .NET handles the underlying OS
+calls. The containing directory is not flushed; renamed directory entries and
+backup cleanup are not guaranteed to persist across power loss. Unsupported
+filesystem operations fail while retaining recovery copies when available.
+Windows handles without delete sharing refuse replacement; Unix readers can
+retain the previous inode.
 
 Commit refusal/failure retains complete staged output and the original backup
 when available. `IOException.Data["JetDatabaseWriter.ReplacementFile"]` identifies
@@ -141,8 +148,8 @@ See [MS-OFFCRYPTO extensible encryption](https://learn.microsoft.com/en-us/opens
 
 Workgroup identity preservation is not workgroup-user authentication. Native
 engine evidence is specific to the pinned fixtures, not every possible custom
-security configuration or every Cartesian product of algorithms. Windows
-namespace power-loss durability, native crash semantics for physical shrink,
+security configuration or every Cartesian product of algorithms. Directory-entry
+power-loss durability, native crash semantics for physical shrink,
 and complete hostile-input resistance remain separate gaps in `docs/todo.md`
 (E1, E2, F3, F6, S1-S2 and I5). Library-generated round trips alone are not native
 interoperability oracles.
@@ -255,7 +262,7 @@ they are synthetic index cases, not a claim that DAO created those indexes.
 ## Physical shrink failure handling
 
 Physical tail shrink keeps raw before-images of the removed pages and spills
-them to a private temporary undo file above the bounded memory threshold.
+them to a temporary undo file above the bounded memory threshold.
 Secure erase, truncate and flush failures restore the original bytes and length;
 encrypted ciphertext is restored exactly. Tests cover write refusal, torn writes,
 erase flush, post-truncate flush and failure before or after truncation for

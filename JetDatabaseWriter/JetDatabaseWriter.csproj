@@ -4,7 +4,7 @@
     <PackageId>JetDatabaseWriter</PackageId>
     <Authors>Diego Ripera, Edward Miller</Authors>
     <Company>Ripera</Company>
-    <Description>Managed database reader and writer for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required.</Description>
+    <Description>Pure-managed .NET reader and writer for Microsoft Access JET databases (.mdb/.accdb). No OleDB, ODBC, or ACE drivers required.</Description>
     <PackageTags>access;jet;mdb;accdb;database;microsoft-access</PackageTags>
     <PackageProjectUrl>https://github.com/symbiogenesis/JetDatabaseWriter</PackageProjectUrl>
     <RepositoryUrl>https://github.com/symbiogenesis/JetDatabaseWriter</RepositoryUrl>
@@ -62,10 +62,12 @@
     without requiring downstream projects to add the package themselves.
     The System.ComponentModel.DataAnnotations.Schema attributes the POCO mapping model honors
     ([Column], [NotMapped], and [Table]) are likewise in-box on .NET 10+ but live in
-    System.ComponentModel.Annotations for netstandard2.1.
+    System.ComponentModel.Annotations for netstandard2.1. Windows maintenance-file ACLs
+    use the managed System.IO.FileSystem.AccessControl API, likewise in-box on .NET 10+.
   -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
     <PackageReference Include="System.ComponentModel.Annotations" />
+    <PackageReference Include="System.IO.FileSystem.AccessControl" />
     <PackageReference Include="System.Linq.Async" />
     <PackageReference Include="System.Text.Encoding.CodePages" />
   </ItemGroup>

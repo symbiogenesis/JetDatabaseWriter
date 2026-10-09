@@ -5,7 +5,7 @@
 [![Targets](https://img.shields.io/badge/targets-net10.0%20%7C%20netstandard2.1-blue)](#nuget-target-compatibility)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-.NET library for reading and writing Microsoft Access (JET/ACE) databases — no OleDB, ODBC, or ACE/Jet driver installation required.
+Fully managed .NET library for reading and writing Microsoft Access (JET/ACE) databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
 Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from your .NET applications and tools, without installing Microsoft Access.
 
@@ -24,7 +24,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 
 | Support | Feature | Description |
 |:---:|---|---|
-| ✅ | **Managed&nbsp;database&nbsp;engine** | No OleDB, ODBC, or ACE/Jet driver; file maintenance uses host filesystem primitives |
+| ✅ | **Pure&nbsp;managed&nbsp;.NET** | Uses .NET APIs; no OleDB, ODBC, ACE/Jet driver, library P/Invoke, or native helper binaries |
 | Partial | **JET/ACE&nbsp;formats** | Jet3, Jet4 and ACE `.mdb` / `.accdb` files; feature and generation coverage is incomplete. Pre-Jet3 formats are not supported. See the [validation matrix](docs/design/writer-disk-format-validation-matrix.md). |
 | ✅ | **Read&nbsp;&&nbsp;write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ | **Typed&nbsp;values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
@@ -166,7 +166,7 @@ Writers accept the password through `AccessWriterOptions`.
 | Jet3 RC4 encryption and password protection | Native code-page passwords, page updates and maintenance; DAO 3.6 fixtures and read/write/compact checks cover Access 97. |
 | ACE Standard and RC4 CryptoAPI providers | Read and update native pages, including 50,000-iteration Standard and compatibility AES. Microsoft DAO read/write/compact checks and a native Standard output fixture verify interoperability. |
 
-`AccessWriter.CreateDatabaseAsync` encrypts a new database when `AccessWriterOptions.Password` is nonempty, before writing the initial database image. Use `AccessDatabaseEncryption.EncryptAsync`, `DecryptAsync` and `ChangePasswordAsync` for file maintenance. These operations stream pages into an adjacent temporary file and replace the original after successful completion. Ordinary updates preserve the original encryption provider and key. Password maintenance preserves JET password-only mode; ACE password changes use fresh AES-256-CBC/SHA-512 encryption.
+`AccessWriter.CreateDatabaseAsync` encrypts a new database when `AccessWriterOptions.Password` is nonempty, before writing the initial database image. Use `AccessDatabaseEncryption.EncryptAsync`, `DecryptAsync` and `ChangePasswordAsync` for file maintenance. These fully managed operations stream pages into an adjacent temporary file and replace the original after successful completion. Use a containing directory protected from untrusted access; see [maintenance permissions and durability](docs/operations.md#encryption-options). Ordinary updates preserve the original encryption provider and key. Password maintenance preserves JET password-only mode; ACE password changes use fresh AES-256-CBC/SHA-512 encryption.
 
 The support status covers the built-in providers listed above. Third-party extensible providers, non-AES Agile ciphers and Office encrypted compound packages are not supported database inputs. Custom workgroup identities are preserved; the library does not authenticate workgroup users. See the [native encryption evidence](docs/design/native-encryption-evidence.md) for fixture provenance and the [encryption options](docs/operations.md#encryption-options) for resource limits, replacement recovery and platform durability limits.
 

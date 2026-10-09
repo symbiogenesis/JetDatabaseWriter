@@ -5,15 +5,15 @@ using System.IO;
 using System.Security.AccessControl;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
-using JetDatabaseWriter.TestSupport;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Exercises recoverable copies at namespace commit boundaries.</summary>
 public sealed class ReplacementDurabilityTests
 {
-    /// <summary>New private staging files do not inherit a broadly readable Windows directory ACL.</summary>
+    /// <summary>New maintenance files do not inherit a broadly readable Windows directory ACL.</summary>
     [Fact]
-    public void PrivateFile_OnWindows_HasProtectedOwnerOnlyAcl()
+    public void MaintenanceFile_OnWindows_HasProtectedOwnerOnlyAcl()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -25,7 +25,7 @@ public sealed class ReplacementDurabilityTests
         string path = Path.Combine(directory, "private.tmp");
         try
         {
-            using (FileStream staging = EncryptionPrivateFile.Create(path))
+            using (FileStream staging = EncryptionMaintenanceFile.Create(path))
             {
                 staging.WriteByte(7);
             }
@@ -43,11 +43,11 @@ public sealed class ReplacementDurabilityTests
         }
     }
 
-    /// <summary>Unix staging files grant no access to group or other users.</summary>
+    /// <summary>Modern Unix staging files request owner-only POSIX permissions.</summary>
     [Fact]
-    public void PrivateFile_OnUnix_HasOwnerOnlyMode()
+    public void MaintenanceFile_OnUnix_HasOwnerOnlyMode()
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() || LibraryTarget.IsNetStandard)
         {
             return;
         }
@@ -57,7 +57,7 @@ public sealed class ReplacementDurabilityTests
         string path = Path.Combine(directory, "private.tmp");
         try
         {
-            using (FileStream staging = EncryptionPrivateFile.Create(path))
+            using (FileStream staging = EncryptionMaintenanceFile.Create(path))
             {
                 staging.WriteByte(7);
             }
@@ -70,40 +70,19 @@ public sealed class ReplacementDurabilityTests
         }
     }
 
-    /// <summary>macOS private creation suppresses inherited extended ACL grants before writing payloads.</summary>
+    /// <summary>A maintenance file name collision preserves the existing bytes.</summary>
     [Fact]
-    public void PrivateFile_OnMacOS_DoesNotInheritParentAllowAcl()
+    public async Task MaintenanceFile_ExistingPath_PreservesContents()
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         string directory = Path.Combine(Path.GetTempPath(), $"ReplacementDurabilityTests_{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
-        string controlPath = Path.Combine(directory, "control.tmp");
-        string privatePath = Path.Combine(directory, "private.tmp");
+        string path = Path.Combine(directory, "existing.tmp");
+        byte[] existing = [1, 2, 3];
         try
         {
-            PowerShellRunResult grant = PowerShellProcessRunner.Run("/bin/chmod", ["+a", "everyone allow read,file_inherit,directory_inherit", directory], TimeSpan.FromSeconds(15));
-            Assert.Equal(0, grant.ExitCode);
-            using (var control = new FileStream(controlPath, FileMode.CreateNew, FileAccess.Write))
-            {
-                control.WriteByte(7);
-            }
-
-            using (FileStream staging = EncryptionPrivateFile.Create(privatePath))
-            {
-                staging.WriteByte(7);
-            }
-
-            PowerShellRunResult controlAcl = PowerShellProcessRunner.Run("/bin/ls", ["-le", controlPath], TimeSpan.FromSeconds(15));
-            Assert.Equal(0, controlAcl.ExitCode);
-            Assert.Contains("everyone", controlAcl.StandardOutput, StringComparison.Ordinal);
-            PowerShellRunResult privateAcl = PowerShellProcessRunner.Run("/bin/ls", ["-le", privatePath], TimeSpan.FromSeconds(15));
-            Assert.Equal(0, privateAcl.ExitCode);
-            Assert.DoesNotContain("everyone", privateAcl.StandardOutput, StringComparison.Ordinal);
-            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(privatePath));
+            await File.WriteAllBytesAsync(path, existing, TestContext.Current.CancellationToken);
+            Assert.Throws<IOException>(() => EncryptionMaintenanceFile.Create(path));
+            Assert.Equal(existing, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -190,7 +169,7 @@ public sealed class ReplacementDurabilityTests
             {
                 Assert.True(new FileInfo(retainedOriginal).GetAccessControl().AreAccessRulesProtected);
             }
-            else
+            else if (!LibraryTarget.IsNetStandard)
             {
                 Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(retainedOriginal));
             }

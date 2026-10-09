@@ -13,11 +13,11 @@ using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>Maintains native database encryption by replacing a fully staged file.</summary>
-/// <remarks>Close readers and writers before maintenance. Data is processed one page at a time;
-/// the original remains unchanged until replacement. The staging file is adjacent to the original,
-/// and incomplete staging is cleaned up before commit. A commit failure retains private recovery copies
-/// named in the IOException data. Linux and macOS flush the containing directory around replacement;
-/// Windows flushes file contents. Power-loss persistence depends on the host filesystem.</remarks>
+/// <remarks>Close readers and writers before maintenance and protect the containing directory
+/// from untrusted access. Data is processed one page at a time; the original remains unchanged
+/// until replacement. Incomplete staging is cleaned up before commit; commit failures retain
+/// recovery copies named in the IOException data. File contents are flushed through managed
+/// .NET APIs, but directory entries are not flushed and power-loss persistence is not guaranteed.</remarks>
 public static class AccessDatabaseEncryption
 {
     /// <summary>Detects native page encryption without modifying the database.</summary>

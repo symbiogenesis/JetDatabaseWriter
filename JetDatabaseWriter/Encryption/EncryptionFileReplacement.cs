@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 /// <summary>Stages one file-maintenance operation beside its destination.</summary>
 internal static class EncryptionFileReplacement
 {
-    /// <summary>Writes and durably flushes a private staging file before replacing the original.</summary>
+    /// <summary>Writes and durably flushes an exclusive staging file before replacing the original.</summary>
     /// <param name="path">The destination file.</param>
     /// <param name="write">The staging operation; retained source handles must permit delete sharing for replacement.</param>
     /// <param name="cancellationToken">Cancellation is honored through the final flush.</param>
@@ -21,7 +21,7 @@ internal static class EncryptionFileReplacement
         bool stagingCreated = false;
         try
         {
-            FileStream staging = EncryptionPrivateFile.Create(temporary);
+            FileStream staging = EncryptionMaintenanceFile.Create(temporary);
             stagingCreated = true;
             try
             {

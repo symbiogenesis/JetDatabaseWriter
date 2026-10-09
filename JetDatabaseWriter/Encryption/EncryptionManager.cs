@@ -375,7 +375,7 @@ internal static class EncryptionManager
         return headerPage;
     }
 
-    /// <summary>Flushes private staging contents, then commits an atomic replacement with a recoverable original.</summary>
+    /// <summary>Flushes staging contents, then commits an atomic replacement with a recoverable original.</summary>
     /// <param name="path">The destination file.</param>
     /// <param name="contents">The replacement contents.</param>
     /// <param name="cancellationToken">Cancellation is honored until the namespace commit begins.</param>
@@ -388,7 +388,7 @@ internal static class EncryptionManager
             cancellationToken);
 
     /// <summary>Commits an adjacent flushed staging file, retaining recoverable copies on failure.</summary>
-    /// <param name="tempPath">The flushed private staging file.</param>
+    /// <param name="tempPath">The flushed staging file.</param>
     /// <param name="path">The destination file.</param>
     /// <exception cref="IOException">The commit failed; retained paths are supplied in the exception data.</exception>
     internal static void ReplaceFileWithTemp(string tempPath, string path)

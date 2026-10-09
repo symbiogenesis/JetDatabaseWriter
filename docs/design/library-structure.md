@@ -315,7 +315,8 @@ JetDatabaseWriter/
 │   ├── NativeStandardPageCodec.cs         (native ACE Standard AES and RC4 CryptoAPI)
 │   ├── NativeJetSecurity.cs               (security identity remasking and index rebuilding)
 │   ├── EncryptionFileReplacement.cs       (bounded staging and cancellation)
-│   ├── EncryptionReplacementCommit.cs     (private recovery copies and OS flush ordering)
+│   ├── EncryptionMaintenanceFile.cs       (managed file creation and platform permission policy)
+│   ├── EncryptionReplacementCommit.cs     (recovery copies and managed content flushes)
 │   ├── NativeAgilePageCodec.cs
 │   ├── Jet4Rc4PageCodec.cs
 │   ├── EncryptionConverter.cs             (format conversion — add/remove/change encryption)
