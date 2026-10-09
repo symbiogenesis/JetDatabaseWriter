@@ -131,7 +131,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             return;
         }
 
-        using (var journal = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        using (var journal = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
             if (journal.Length is < HeaderLength or > MaximumJournalLength)
             {
@@ -172,6 +172,9 @@ internal sealed class PersistentRollbackJournal : IDisposable
             long completeEnd = start + ((journal.Length - start) / recordSize * recordSize);
             byte[] record = new byte[recordSize];
             long maximumLength = originalLength;
+            long minimumLength = originalLength;
+            bool recovering = false;
+            bool authorizedLength = database.Length >= originalLength;
             bool committed = false;
             for (long position = start; position < completeEnd; position += recordSize)
             {
@@ -187,6 +190,25 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     break;
                 }
 
+                if (offset == -2)
+                {
+                    long length = BinaryPrimitives.ReadInt64LittleEndian(record.AsSpan(8));
+                    if (length < 0 || length % pageSize != 0 || length > maximumLength)
+                    {
+                        throw new IOException("The recovery truncate intent is invalid.");
+                    }
+
+                    minimumLength = Math.Min(minimumLength, length);
+                    authorizedLength |= database.Length == length;
+                    continue;
+                }
+
+                if (offset == -3)
+                {
+                    recovering = true;
+                    continue;
+                }
+
                 if (offset < 0 || offset % pageSize != 0 || offset > MaximumDatabaseLength - pageSize)
                 {
                     throw new IOException("The recovery page offset is invalid.");
@@ -197,7 +219,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
             if (!committed)
             {
-                if (database.Length < originalLength || database.Length > maximumLength)
+                if (database.Length < minimumLength || database.Length > maximumLength || (!authorizedLength && !recovering))
                 {
                     throw new IOException("The database length conflicts with its recovery journal.");
                 }
@@ -218,7 +240,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     Read(database, offset, current, count);
                     for (int index = 0; index < count; index++)
                     {
-                        valid[index] = current[index] == original[index];
+                        valid[index] = current[index] == original[index] || (recovering && offset + index >= minimumLength && current[index] == 0);
                     }
 
                     bool matchesOriginal = true;
@@ -252,6 +274,11 @@ internal sealed class PersistentRollbackJournal : IDisposable
                     }
                 }
 
+                if (minimumLength < originalLength && !recovering)
+                {
+                    AppendRecord(journal, pageSize, -3, []);
+                }
+
                 byte[] buffer = new byte[8192];
                 for (long offset = 0; offset < originalLength;)
                 {
@@ -264,10 +291,34 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
                 database.SetLength(originalLength);
                 database.Flush(true);
+                AppendRecord(journal, pageSize, -1, DatabaseHash(database));
             }
         }
 
         File.Delete(path);
+    }
+
+    private static void AppendRecord(FileStream journal, int pageSize, long offset, ReadOnlySpan<byte> bytes)
+    {
+        int payloadLength = Math.Max(pageSize, 32);
+        byte[] record = new byte[checked(8 + payloadLength + 32)];
+        if (journal.Length > MaximumJournalLength - record.Length)
+        {
+            throw new IOException("The bounded recovery journal size limit has been reached.");
+        }
+
+        byte[] lengthBytes = new byte[8];
+        Read(journal, 16, lengthBytes, lengthBytes.Length);
+        long start = HeaderLength + BinaryPrimitives.ReadInt64LittleEndian(lengthBytes);
+        long completeEnd = start + ((journal.Length - start) / record.Length * record.Length);
+        journal.SetLength(completeEnd);
+
+        BinaryPrimitives.WriteInt64LittleEndian(record, offset);
+        bytes.CopyTo(record.AsSpan(8, payloadLength));
+        Hash(record.AsSpan(0, record.Length - 32).ToArray()).CopyTo(record, record.Length - 32);
+        journal.Position = journal.Length;
+        journal.Write(record, 0, record.Length);
+        journal.Flush(true);
     }
 
     private static long ReadRecord(FileStream journal, long position, byte[] record)
@@ -364,6 +415,33 @@ internal sealed class PersistentRollbackJournal : IDisposable
         this.AppendRecord(offset, after);
     }
 
+    /// <summary>Records that restoration may re-extend an authorized truncated tail.</summary>
+    /// <exception cref="IOException">The journal is already completed.</exception>
+    internal void RecordRecoveryStart()
+    {
+        if (this.completed)
+        {
+            throw new IOException("A completed rollback journal cannot begin recovery.");
+        }
+
+        this.AppendRecord(-3, []);
+    }
+
+    /// <summary>Durably authorizes removal of a raw tail before changing file length.</summary>
+    /// <param name="length">The retained page-aligned length.</param>
+    /// <exception cref="IOException">The intent is outside the supported bounds.</exception>
+    internal void RecordBeforeTruncate(long length)
+    {
+        if (this.completed || length < 0 || length % this.pageSize != 0 || length > this.database.Length)
+        {
+            throw new IOException("The rollback journal cannot record this truncation.");
+        }
+
+        byte[] payload = new byte[8];
+        BinaryPrimitives.WriteInt64LittleEndian(payload, length);
+        this.AppendRecord(-2, payload);
+    }
+
     /// <summary>Durably records a commit decision after the database has been durably flushed.</summary>
     internal void MarkCommitted()
     {
@@ -378,6 +456,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     internal void CompleteRollback()
     {
         this.database.Flush(true);
+        this.AppendRecord(-1, DatabaseHash(this.database));
         this.completed = true;
         this.CleanupCompleted();
     }
@@ -410,18 +489,12 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
     private void AppendRecord(long offset, ReadOnlySpan<byte> bytes)
     {
-        int payloadLength = Math.Max(this.pageSize, 32);
-        byte[] record = new byte[checked(8 + payloadLength + 32)];
-        if (this.journal.Length > MaximumJournalLength - record.Length)
+        int recordSize = checked(8 + Math.Max(this.pageSize, 32) + 32);
+        if ((offset >= 0 || offset == -2) && this.journal.Length > MaximumJournalLength - (3L * recordSize))
         {
-            throw new IOException("The bounded recovery journal size limit has been reached.");
+            throw new IOException("The bounded recovery journal must retain decision record capacity.");
         }
 
-        BinaryPrimitives.WriteInt64LittleEndian(record, offset);
-        bytes.CopyTo(record.AsSpan(8, payloadLength));
-        Hash(record.AsSpan(0, record.Length - 32).ToArray()).CopyTo(record, record.Length - 32);
-        this.journal.Position = this.journal.Length;
-        this.journal.Write(record, 0, record.Length);
-        this.journal.Flush(true);
+        AppendRecord(this.journal, this.pageSize, offset, bytes);
     }
 }

@@ -145,7 +145,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <summary>
     /// Asynchronously creates a new, empty JET database file at the specified path
     /// and returns a new <see cref="AccessWriter"/> ready for table creation and data insertion.
-    /// The file must not already exist.
+    /// The file must not already exist. Initialization completes in a private adjacent staging file
+    /// whose contents are durably flushed before non-overwriting publication. If reopening the
+    /// published database fails, the complete database remains at the destination. Directory
+    /// entries are not durably flushed; power-loss persistence is not guaranteed. Protect the
+    /// containing directory from untrusted access, especially on Unix netstandard2.1.
     /// </summary>
     /// <param name="path">Path where the new .mdb or .accdb file will be created.</param>
     /// <param name="format">The database format to use (Jet4 .mdb or ACE .accdb).</param>
@@ -155,7 +159,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="IOException">Thrown when a database file already exists at <paramref name="path"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. No file is created.</exception>
     /// <exception cref="JetIOException">The destination database file already exists.</exception>
-    public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
+    public static ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
+        => CreateDatabaseCoreAsync(path, format, options, observer: null, cancellationToken);
+
+    /// <summary>Creates a database with an operation-scoped staging boundary observer.</summary>
+    /// <param name="path">The destination path.</param>
+    /// <param name="format">The database format.</param>
+    /// <param name="options">Writer options.</param>
+    /// <param name="observer">An optional observer for focused publication fault tests.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The initialized writer.</returns>
+    /// <exception cref="JetIOException">The destination database already exists.</exception>
+    internal static async ValueTask<AccessWriter> CreateDatabaseCoreAsync(string path, DatabaseFormat format, AccessWriterOptions? options, Action<string, string>? observer, CancellationToken cancellationToken)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
@@ -167,56 +182,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new JetIOException(JetErrorCode.DatabaseFileExists, $"Database file already exists: {path}");
         }
 
-        byte[] dbBytes = await AccessDatabaseEncryption.PrepareCreatedDatabaseAsync(TDefPageBuilder.BuildEmptyDatabase(format), format, options, cancellationToken).ConfigureAwait(false);
+        path = Path.GetFullPath(path);
+        await DatabaseCreationPublication.PublishAsync(
+            path,
+            async (staging, token) =>
+            {
+                await using AccessWriter writer = await CreateDatabaseAsync(staging, format, options, leaveOpen: true, token).ConfigureAwait(false);
+            },
+            observer,
+            cancellationToken).ConfigureAwait(false);
 
-        bool created = false;
-        try
-        {
-            await using (FileStream fs = FileStreamFactory.Open(
-                path,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                FileOptions.Asynchronous,
-                preallocationSize: dbBytes.Length))
-            {
-                created = true;
-                await fs.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
-                await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
-            }
-
-            AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                await writer.InitializeFreshDatabaseAsync(cancellationToken).ConfigureAwait(false);
-                return writer;
-            }
-            catch
-            {
-                await writer.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
-        }
-        catch
-        {
-            try
-            {
-                if (created)
-                {
-                    File.Delete(path);
-                }
-            }
-            catch (IOException)
-            {
-                // Best-effort cleanup of the partially-created file.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Best-effort cleanup if we lack permission.
-            }
-
-            throw;
-        }
+        // Publication is committed. Reopen failure must retain the complete database.
+        return await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -585,8 +562,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Runs the work in a private statement transaction when no explicit
     /// transaction is active, or in a savepoint of the explicit transaction.
     /// Failed work discards its pages and writer state. Physical write-back
-    /// restores the original image after an I/O failure; process loss during
-    /// replay can still leave part of the call in the file.
+    /// restores the original image after an I/O failure. File-backed recovery restores
+    /// interrupted physical writes when the database is next opened for writing.
     /// </summary>
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>

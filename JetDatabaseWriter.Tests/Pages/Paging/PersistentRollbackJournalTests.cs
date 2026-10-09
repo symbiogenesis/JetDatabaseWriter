@@ -10,6 +10,149 @@ using Xunit;
 /// <summary>Checks durable raw rollback and refusal of conflicting content.</summary>
 public sealed class PersistentRollbackJournalTests
 {
+#pragma warning disable CA1849 // Synchronous device flush and raw reads model interrupted recovery.
+    /// <summary>An authorized removed tail is restored from the raw snapshot.</summary>
+    /// <param name="restart">Whether restoration already started.</param>
+    /// <param name="partialRecord">Whether an interrupted append remains.</param>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async System.Threading.Tasks.Task Recover_TruncatedTail_RestoresOriginal(bool restart, bool partialRecord)
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        byte[] original = new byte[8192];
+        Array.Fill(original, (byte)3);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            await using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+                // A store truncation must persist its intent before changing the file.
+                await using var store = new StreamPageStore(database, leaveOpen: true) { RollbackJournal = journal };
+                await store.SetLengthAsync(4096, TestContext.Current.CancellationToken);
+                if (restart)
+                {
+                    journal.RecordRecoveryStart();
+                    database.SetLength(original.Length);
+                    database.Position = 4096;
+                    database.Write(original, 4096, 17);
+                    database.Flush(true);
+                }
+            }
+
+            if (partialRecord)
+            {
+                await using var sidecar = new FileStream(path + ".jdw-journal", FileMode.Append, FileAccess.Write, FileShare.None);
+                sidecar.WriteByte(123);
+            }
+
+            PersistentRollbackJournal.Recover(database);
+            database.Position = 0;
+            byte[] restored = new byte[original.Length];
+            Assert.Equal(restored.Length, database.Read(restored, 0, restored.Length));
+            Assert.Equal(original, restored);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".jdw-journal");
+        }
+    }
+
+#pragma warning restore CA1849
+
+    /// <summary>Neither unexplained truncation nor unrelated retained bytes authorize rollback.</summary>
+    /// <param name="authorize">Whether the truncation has an intent record.</param>
+    /// <param name="corrupt">Whether retained content conflicts.</param>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public void Recover_TruncatedConflict_RefusesWithoutWrites(bool authorize, bool corrupt)
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        byte[] original = new byte[8192];
+        Array.Fill(original, (byte)3);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            using (var journal = PersistentRollbackJournal.Create(database, 2048))
+            {
+                if (authorize)
+                {
+                    journal.RecordBeforeTruncate(4096);
+                    if (corrupt)
+                    {
+                        journal.RecordRecoveryStart();
+                    }
+                }
+            }
+
+            long length = authorize && !corrupt ? 5000 : 4096;
+            database.SetLength(length);
+            if (corrupt)
+            {
+                database.Position = 50;
+                database.WriteByte(0);
+            }
+
+            database.Flush(true);
+            Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(database));
+            Assert.Equal(length, database.Length);
+            Assert.True(File.Exists(path + ".jdw-journal"));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".jdw-journal");
+        }
+    }
+
+    /// <summary>A failure after a real replay write retains evidence for a second recovery.</summary>
+    [Fact]
+    public void Recover_InterruptedReplay_RestoresOriginalOnReopen()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        byte[] original = new byte[24576];
+        Array.Fill(original, (byte)23);
+        File.WriteAllBytes(path, original);
+        try
+        {
+            using (var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                using var journal = PersistentRollbackJournal.Create(database, 2048);
+                journal.RecordBeforeTruncate(4096);
+                database.SetLength(4096);
+                database.Flush(true);
+            }
+
+            using (var interrupted = new ReplayFaultStream(path))
+            {
+                Assert.Throws<IOException>(() => PersistentRollbackJournal.Recover(interrupted));
+                Assert.Equal(8192, interrupted.Length);
+                Assert.Equal(1, interrupted.ReplayWrites);
+                Assert.True(File.Exists(path + ".jdw-journal"));
+            }
+
+            using (var recovery = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                PersistentRollbackJournal.Recover(recovery);
+                PersistentRollbackJournal.Recover(recovery);
+            }
+
+            Assert.Equal(original, File.ReadAllBytes(path));
+            Assert.False(File.Exists(path + ".jdw-journal"));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".jdw-journal");
+        }
+    }
+
     /// <summary>A partial overwrite restores the exact original bytes on repeated recovery.</summary>
     [Fact]
     public void Recover_TornWrite_IsIdempotent()
@@ -301,7 +444,7 @@ public sealed class PersistentRollbackJournalTests
             if (invalidOffset)
             {
                 byte[] record = new byte[2088];
-                BinaryPrimitives.WriteInt64LittleEndian(record, -2);
+                BinaryPrimitives.WriteInt64LittleEndian(record, -4);
                 SHA256.HashData(record.AsSpan(0, 2056)).CopyTo(record, 2056);
                 using var journal = new FileStream(path + ".jdw-journal", FileMode.Open, FileAccess.Write, FileShare.None);
                 journal.Position = journal.Length;
@@ -454,5 +597,22 @@ public sealed class PersistentRollbackJournalTests
             File.Delete(path + ".jdw-journal");
             File.Delete(path + ".jdw-journal.preparing");
         }
+    }
+
+    private sealed class ReplayFaultStream(string path) : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+    {
+        internal int ReplayWrites { get; private set; }
+
+#pragma warning disable CA1849 // The recovery replay uses synchronous writes and requires a durable interruption boundary.
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            base.Write(buffer, offset, count);
+            this.Flush(flushToDisk: true);
+            if (++this.ReplayWrites == 1)
+            {
+                throw new IOException("Injected interruption after the first recovery replay buffer.");
+            }
+        }
+#pragma warning restore CA1849
     }
 }

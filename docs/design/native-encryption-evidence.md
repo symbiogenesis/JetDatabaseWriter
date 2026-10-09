@@ -267,5 +267,8 @@ Secure erase, truncate and flush failures restore the original bytes and length;
 encrypted ciphertext is restored exactly. Tests cover write refusal, torn writes,
 erase flush, post-truncate flush and failure before or after truncation for
 CBC/SHA-256 and CFB8/SHA-384 variants. The writer remains usable after successful
-undo and is faulted if undo fails. This is in-process rollback; physical shrinking
-has no new claim of persistent crash recovery.
+undo and is faulted if undo fails. File-backed shrinking additionally persists
+a complete raw snapshot, write intents and its intended retained length before
+truncation. Writer reopen restores an undecided shrink, including encrypted
+ciphertext, or retains the hash-validated committed image. This process-crash
+protocol does not establish power-loss or Access-native recovery.

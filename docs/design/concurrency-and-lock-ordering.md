@@ -137,7 +137,7 @@ Under `mutationGate`, `RunInSavepointAsync` captures the insert hint, owned-map 
 
 Default row, table-schema, relationship and complex-item calls use the same private journal and commit-lock sequence above. At `max(64, PageCacheSize / 2)` buffered pages, the pager captures each page's first raw before-image and writes the batch, then releases its replay images. Work-phase failures and cancellation restore earlier spills and writer state; replay failures restore the original bytes and length. Each started physical batch and restoration ignores cancellation, while work and preparation between batches remain cancellable. File-backed statements always request a device flush before the journal commit decision. Other stores request it when `UseTransactionalWrites` is true. Private statements are exempt from the explicit transaction page budget; provisional zero reservations keep metadata without allocating page buffers.
 
-Initial database creation and physical tail shrinking still use reference-counted write scopes with a separate lifecycle. Container rewrapping also sits outside this statement path. Their failure and crash guarantees do not follow from the statement journal.
+Initial database creation and physical tail shrinking use reference-counted write scopes with a separate lifecycle. Path creation publishes only a completely initialized, flushed staging file. File-backed shrinking prepares its own persistent snapshot and truncation intent under the pager frame gate, and records the committed result before cleanup. Encryption replacement also sits outside the statement path and retains an original backup through its replacement boundary.
 
 ### Reader operation
 

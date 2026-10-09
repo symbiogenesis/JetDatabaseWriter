@@ -134,6 +134,11 @@ internal class StreamPageStore : IPageStore
         await this.ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (length < this.Stream.Length)
+            {
+                this.RollbackJournal?.RecordBeforeTruncate(length);
+            }
+
             this.Stream.SetLength(length);
         }
         finally

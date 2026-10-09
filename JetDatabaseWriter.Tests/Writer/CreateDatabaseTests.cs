@@ -11,6 +11,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -330,6 +331,181 @@ public sealed class CreateDatabaseTests
             TryDeleteFile(path);
             TryDeleteFile(Path.ChangeExtension(path, ext == ".accdb" ? ".laccdb" : ".ldb"));
         }
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_Path_ReopenFailureRetainsCompletePublishedDatabase()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".accdb");
+        string lockPath = Path.ChangeExtension(path, ".laccdb");
+        await File.WriteAllBytesAsync(lockPath, [1], TestContext.Current.CancellationToken);
+        try
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() => AccessWriter.CreateDatabaseAsync(path, DatabaseFormat.AceAccdb, cancellationToken: TestContext.Current.CancellationToken).AsTask());
+            Assert.True(File.Exists(path));
+            await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
+            Assert.Empty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(lockPath);
+        }
+    }
+
+    [Theory]
+    [InlineData("Created")]
+    [InlineData("Initialized")]
+    [InlineData("Publishing")]
+    public async Task CreateDatabaseAsync_Path_InterruptedStagingNeverPublishes(string boundary)
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".accdb");
+        string? stagingPath = null;
+        void Observe(string phase, string staging)
+        {
+            Assert.False(File.Exists(path));
+            stagingPath = staging;
+            if (phase == boundary)
+            {
+                throw new IOException("Interrupted creation.");
+            }
+        }
+
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() => AccessWriter.CreateDatabaseCoreAsync(path, DatabaseFormat.AceAccdb, null, Observe, TestContext.Current.CancellationToken).AsTask());
+            Assert.False(File.Exists(path));
+            Assert.NotNull(stagingPath);
+            Assert.False(File.Exists(stagingPath));
+            Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".create-*"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_Path_PublicationRacePreservesOtherDestination()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".accdb");
+        string? stagingPath = null;
+        void Observe(string phase, string staging)
+        {
+            Assert.False(File.Exists(path));
+            stagingPath = staging;
+            if (phase == "Publishing")
+            {
+                File.WriteAllBytes(path, [42]);
+            }
+        }
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() => AccessWriter.CreateDatabaseCoreAsync(path, DatabaseFormat.AceAccdb, null, Observe, TestContext.Current.CancellationToken).AsTask());
+            Assert.Equal([42], await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+            Assert.NotNull(stagingPath);
+            Assert.False(File.Exists(stagingPath));
+            Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".create-*"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_Path_CancelBeforePublicationLeavesDestinationAbsent()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".accdb");
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        string? stagingPath = null;
+        void Observe(string phase, string staging)
+        {
+            stagingPath = staging;
+            if (phase == "Publishing")
+            {
+                cancellation.Cancel();
+            }
+        }
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => AccessWriter.CreateDatabaseCoreAsync(path, DatabaseFormat.AceAccdb, null, Observe, cancellation.Token).AsTask());
+            Assert.False(File.Exists(path));
+            Assert.NotNull(stagingPath);
+            Assert.False(File.Exists(stagingPath));
+            Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".create-*"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task CreateDatabaseAsync_Path_PublishesInitializedEncryptedDatabase(DatabaseFormat format)
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + (format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb"));
+        byte[]? publishedBytes = null;
+        void Observe(string phase, string staging)
+        {
+            Assert.False(File.Exists(path));
+            if (phase == "Publishing")
+            {
+                publishedBytes = File.ReadAllBytes(staging);
+            }
+        }
+
+        try
+        {
+            var options = new AccessWriterOptions("Creation123") { PageCacheSize = 0 };
+            await using (AccessWriter created = await AccessWriter.CreateDatabaseCoreAsync(path, format, options, Observe, TestContext.Current.CancellationToken))
+            {
+                Assert.NotNull(created);
+            }
+
+            Assert.NotNull(publishedBytes);
+            Assert.Equal(publishedBytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+            await using (ReaderHarness reader = await ReaderHarness.OpenAsync(path, new AccessReaderOptions("Creation123") { UseLockFile = false }, TestContext.Current.CancellationToken))
+            {
+                TableDef? catalog = await reader.ReadTableDefAsync(2, TestContext.Current.CancellationToken);
+                Assert.NotNull(catalog);
+                Assert.Equal(FullCatalogColumnNames, catalog.Columns.Select(c => c.Name));
+            }
+
+            await using (AccessWriter writer = await AccessWriter.OpenAsync(path, options, TestContext.Current.CancellationToken))
+            {
+                await writer.CreateTableAsync("Created", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
+            }
+
+            await using AccessReader reopened = await AccessReader.OpenAsync(path, new AccessReaderOptions("Creation123") { UseLockFile = false }, TestContext.Current.CancellationToken);
+            Assert.Equal(["Created"], await reopened.ListTablesAsync(TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task CreateDatabaseAsync_Path_PartialStagingFailureCleansOnlyOwnedFile()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".accdb");
+        async ValueTask Initialize(FileStream staging, CancellationToken token)
+        {
+            Assert.StartsWith(path + ".create-", staging.Name, StringComparison.Ordinal);
+            await staging.WriteAsync(new byte[] { 1, 2, 3 }, token);
+            Assert.False(File.Exists(path));
+            throw new IOException("Partial staging failure.");
+        }
+
+        await Assert.ThrowsAsync<IOException>(() => DatabaseCreationPublication.PublishAsync(path, Initialize, observer: null, TestContext.Current.CancellationToken).AsTask());
+        Assert.False(File.Exists(path));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + ".create-*"));
     }
 
     // ── CreateDatabaseAsync: error cases ──────────────────────────────────────

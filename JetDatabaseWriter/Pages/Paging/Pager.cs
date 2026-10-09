@@ -281,6 +281,8 @@ internal sealed class Pager : PageFile
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         StatementUndoLog? undo = null;
+        PersistentRollbackJournal? journal = null;
+        bool recordingDecision = false;
         try
         {
             await this.DrainDirtyPagesAsync().ConfigureAwait(false);
@@ -292,6 +294,21 @@ internal sealed class Pager : PageFile
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            if (this.Store is StreamPageStore { Stream: FileStream database } store)
+            {
+                try
+                {
+                    journal = PersistentRollbackJournal.Create(database, this.PageSize);
+                }
+                catch
+                {
+                    this.IsFaulted = true;
+                    throw;
+                }
+
+                store.RollbackJournal = journal;
+            }
+
             this.InvalidateAll();
             undo.HasWrites = true;
             if (secure)
@@ -311,17 +328,29 @@ internal sealed class Pager : PageFile
 
             await this.Store.SetLengthAsync(length, CancellationToken.None).ConfigureAwait(false);
             await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+            recordingDecision = journal is not null;
+            journal?.MarkCommitted();
             undo.HasWrites = false;
             this.zeroReservations.RemoveWhere(pageNumber => pageNumber >= length / this.PageSize);
             this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
         }
         catch (Exception failure)
         {
+            if (recordingDecision)
+            {
+                this.IsFaulted = true;
+                throw;
+            }
+
             if (undo?.HasWrites == true)
             {
                 try
                 {
+                    this.DetachRecoveryJournal();
+                    journal?.RecordRecoveryStart();
+
                     await undo.RestoreAsync(this.Store, durable: true).ConfigureAwait(false);
+                    journal?.CompleteRollback();
                 }
                 catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
                 {
@@ -343,8 +372,16 @@ internal sealed class Pager : PageFile
             }
             finally
             {
-                this.InvalidateAll();
-                _ = this.frameGate.Release();
+                try
+                {
+                    this.DetachRecoveryJournal();
+                    journal?.Dispose();
+                }
+                finally
+                {
+                    this.InvalidateAll();
+                    _ = this.frameGate.Release();
+                }
             }
         }
     }
