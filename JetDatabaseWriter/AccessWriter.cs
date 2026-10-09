@@ -32,8 +32,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Stream stream,
         byte[] header,
         AccessWriterOptions options,
-        bool leaveOpen = false)
-        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options))
+        bool leaveOpen = false,
+        CancellationToken cancellationToken = default)
+        : base(DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options, cancellationToken))
     {
         this.lockFileCoordinator = LockFileCoordinator.ForWriter(path, options);
 
@@ -127,7 +128,8 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
                 stream,
                 headerPage,
                 options,
-                leaveOpen: leaveOpen);
+                leaveOpen: leaveOpen,
+                cancellationToken: cancellationToken);
         }
         catch
         {
@@ -165,31 +167,44 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw new JetIOException(JetErrorCode.DatabaseFileExists, $"Database file already exists: {path}");
         }
 
-        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format);
+        byte[] dbBytes = await AccessDatabaseEncryption.PrepareCreatedDatabaseAsync(TDefPageBuilder.BuildEmptyDatabase(format), format, options, cancellationToken).ConfigureAwait(false);
 
-        await using (FileStream fs = FileStreamFactory.Open(
-            path,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            FileOptions.Asynchronous,
-            preallocationSize: dbBytes.Length))
-        {
-            await fs.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-
+        bool created = false;
         try
         {
+            await using (FileStream fs = FileStreamFactory.Open(
+                path,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                FileOptions.Asynchronous,
+                preallocationSize: dbBytes.Length))
+            {
+                created = true;
+                await fs.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
+                await fs.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             AccessWriter writer = await OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
-            await writer.InitializeFreshDatabaseAsync(cancellationToken).ConfigureAwait(false);
-            return writer;
+            try
+            {
+                await writer.InitializeFreshDatabaseAsync(cancellationToken).ConfigureAwait(false);
+                return writer;
+            }
+            catch
+            {
+                await writer.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
         }
         catch
         {
             try
             {
-                File.Delete(path);
+                if (created)
+                {
+                    File.Delete(path);
+                }
             }
             catch (IOException)
             {
@@ -223,7 +238,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         options ??= new AccessWriterOptions();
         options.Validate();
 
-        byte[] dbBytes = TDefPageBuilder.BuildEmptyDatabase(format);
+        byte[] dbBytes = await AccessDatabaseEncryption.PrepareCreatedDatabaseAsync(TDefPageBuilder.BuildEmptyDatabase(format), format, options, cancellationToken).ConfigureAwait(false);
         await stream.WriteAsync(dbBytes.AsMemory(), cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         stream.Position = 0;
@@ -240,152 +255,6 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw;
         }
     }
-
-    // ════════════════════════════════════════════════════════════════
-    // Encryption mutation: change password / encrypt / decrypt
-    // ════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Detects the on-disk encryption format of the database at
-    /// <paramref name="path"/>. Returns <see cref="AccessEncryptionFormat.None"/>
-    /// when the file is unencrypted. The file is read but not modified.
-    /// </summary>
-    /// <param name="path">Path to the .mdb or .accdb file.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> yielding the detected format.</returns>
-    public static ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
-        string path,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.DetectEncryptionFormatAsync(path, cancellationToken);
-
-    /// <summary>
-    /// Detects the on-disk encryption format of the database in <paramref name="stream"/>
-    /// without modifying it. The stream must be seekable.
-    /// </summary>
-    /// <param name="stream">A readable, seekable stream containing the database bytes.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask{TResult}"/> yielding the detected format.</returns>
-    public static ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(
-        Stream stream,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.DetectEncryptionFormatAsync(stream, cancellationToken);
-
-    /// <summary>
-    /// Requests a password change for an encrypted JET / ACE database.
-    /// Native password maintenance is currently unsupported and is refused
-    /// before mutation. Existing encrypted databases can be opened and updated
-    /// with their original password.
-    /// </summary>
-    /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
-    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="newPassword">The new password (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="options">Optional configuration. Used only for lockfile honouring; the password fields are ignored.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    /// <exception cref="InvalidOperationException">The database is unencrypted.</exception>
-    /// <exception cref="ArgumentException"><paramref name="newPassword"/> is empty.</exception>
-    /// <exception cref="NotSupportedException">Native encryption maintenance is not supported. The database is unchanged.</exception>
-    public static ValueTask ChangePasswordAsync(
-        string path,
-        ReadOnlyMemory<char> oldPassword,
-        ReadOnlyMemory<char> newPassword,
-        AccessWriterOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.ChangePasswordAsync(path, oldPassword, newPassword, options, cancellationToken);
-
-    /// <summary>
-    /// Requests encryption of an unencrypted JET / ACE database.
-    /// Creating native password/security metadata is currently unsupported,
-    /// including when <paramref name="targetFormat"/> is omitted. The request
-    /// is refused before mutation.
-    /// </summary>
-    /// <param name="path">Path to an existing unencrypted .mdb or .accdb file.</param>
-    /// <param name="newPassword">The password to apply (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The requested native encryption format. Creating or changing native database passwords is not supported.</param>
-    /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    /// <exception cref="ArgumentException">
-    /// <paramref name="newPassword"/> is empty,
-    /// <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>,
-    /// or the format is not valid for the underlying file kind.
-    /// </exception>
-    /// <exception cref="InvalidOperationException">The file is already encrypted.</exception>
-    /// <exception cref="NotSupportedException">Native encryption maintenance is not supported. The database is unchanged.</exception>
-    public static ValueTask EncryptAsync(
-        string path,
-        ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat? targetFormat = null,
-        AccessWriterOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.EncryptAsync(path, newPassword, targetFormat, options, cancellationToken);
-
-    /// <summary>
-    /// Requests removal of native JET / ACE encryption and password protection.
-    /// Native security-metadata maintenance is currently unsupported, so the
-    /// request is refused before mutation.
-    /// </summary>
-    /// <param name="path">Path to an existing encrypted .mdb or .accdb file.</param>
-    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="options">Optional configuration. Used only for lockfile honouring.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    /// <exception cref="InvalidOperationException">The file is already unencrypted.</exception>
-    /// <exception cref="NotSupportedException">Native encryption maintenance is not supported. The database is unchanged.</exception>
-    public static ValueTask DecryptAsync(
-        string path,
-        ReadOnlyMemory<char> oldPassword,
-        AccessWriterOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.DecryptAsync(path, oldPassword, options, cancellationToken);
-
-    /// <summary>
-    /// Stream-based equivalent of
-    /// <see cref="ChangePasswordAsync(string, ReadOnlyMemory{char}, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
-    /// The stream must be readable, writable, and seekable. Native password
-    /// changes are currently refused without rewriting it.
-    /// </summary>
-    /// <param name="stream">A readable, writable, seekable stream containing the database bytes.</param>
-    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="newPassword">The new password (must be non-empty). Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public static ValueTask ChangePasswordAsync(
-        Stream stream,
-        ReadOnlyMemory<char> oldPassword,
-        ReadOnlyMemory<char> newPassword,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.ChangePasswordAsync(stream, oldPassword, newPassword, cancellationToken);
-
-    /// <summary>
-    /// Stream-based equivalent of
-    /// <see cref="EncryptAsync(string, ReadOnlyMemory{char}, AccessEncryptionFormat?, AccessWriterOptions?, CancellationToken)"/>.
-    /// </summary>
-    /// <param name="stream">A readable, writable, seekable stream containing the unencrypted database bytes.</param>
-    /// <param name="newPassword">The password to apply. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="targetFormat">The requested native encryption format. Creating or changing native database passwords is not supported.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public static ValueTask EncryptAsync(
-        Stream stream,
-        ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat? targetFormat = null,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.EncryptAsync(stream, newPassword, targetFormat, cancellationToken);
-
-    /// <summary>
-    /// Stream-based equivalent of
-    /// <see cref="DecryptAsync(string, ReadOnlyMemory{char}, AccessWriterOptions?, CancellationToken)"/>.
-    /// </summary>
-    /// <param name="stream">A readable, writable, seekable stream containing the encrypted database bytes.</param>
-    /// <param name="oldPassword">The current password. Mutable backing memory must remain unchanged until the returned task completes.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    public static ValueTask DecryptAsync(
-        Stream stream,
-        ReadOnlyMemory<char> oldPassword,
-        CancellationToken cancellationToken = default)
-        => EncryptionManager.DecryptAsync(stream, oldPassword, cancellationToken);
 
     /// <summary>Sets or removes a table validation rule after checking every existing row.</summary>
     /// <param name="tableName">The table name.</param>

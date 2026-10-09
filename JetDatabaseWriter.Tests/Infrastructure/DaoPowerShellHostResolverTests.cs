@@ -6,6 +6,25 @@ using Xunit;
 
 public sealed class DaoPowerShellHostResolverTests
 {
+    [Fact]
+    public void GetCandidateHostPaths_ExplicitPortableHostIsProbedFirst()
+    {
+        IReadOnlyList<string> candidates = DaoPowerShellHostResolver.GetCandidateHostPaths(
+            @"C:\Windows",
+            is64BitOperatingSystem: true,
+            is64BitProcess: true,
+            preferWow64Host: false,
+            configuredHost: @"C:\tools\pwsh-x64\pwsh.exe");
+
+        Assert.Equal(
+            [
+                @"C:\tools\pwsh-x64\pwsh.exe",
+                @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                @"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe",
+            ],
+            candidates);
+    }
+
     [Theory]
     [InlineData(@"C:\Windows\")]
     [InlineData("C:/Windows/")]

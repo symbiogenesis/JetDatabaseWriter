@@ -60,9 +60,17 @@ a standalone password/encryption flag.
 Preserving the original key and password permits page updates. Changing the
 header password alone was insufficient: native `NewPassword` also changed
 security metadata on pages 17 and 18 in the characterization database.
-Encryption, decryption and password maintenance therefore require separate
-native metadata work; refusal before mutation is safer than emitting a file
-DAO cannot authenticate.
+The native maintenance implementation remasks `MSysObjects.Owner` and
+`MSysACEs.SID` with the old and new header-derived RC4 keys. The decrypted data
+pages match DAO `NewPassword` output byte for byte. Physical index descriptors
+are validated before remasking; indexed security identity columns are refused.
+The ordinary fixtures do not establish every custom workgroup configuration.
+
+`NativeJet4PasswordChanged.mdb` was produced on 2026-10-08 by DAO120
+`NewPassword("Native123", "Changed123")` from `NativeJet4Rc4.mdb`.
+SHA-256: `7954A11E0827B410BB7036A9DDB60B5538FEC842A789C0809F47985BCC2E2066`.
+Focused DAO tests authenticate, write and compact encrypted, decrypted and
+rekeyed output on both target frameworks.
 
 ## ACE Agile
 
@@ -94,17 +102,20 @@ operation's file; unrelated temporary files remain untouched. Windows handles
 without delete sharing refuse replacement; Unix readers may retain the old
 inode while new opens see the replacement. The containing directory is not
 flushed, so this does not establish persistence of the new name after power
-loss. These helper semantics do not enable the native encryption maintenance
-operations that are still refused above.
+loss. Native maintenance uses bounded page conversion into the final target
+format and retains a delete-shared source handle through replacement. A pending
+rollback journal is refused before staging; callers recover it through the writer.
+New encrypted database creation transforms the bounded bootstrap in memory
+before its first destination write. A JET password-only source stays password-only
+after a password change; ACE password changes use fresh AES-256-CBC/SHA-512.
 
 ## Evidence limits
 
-The DAO fixtures do not establish native JET3 producer interoperability, RC4 CryptoAPI or Standard ACE
-providers, every Agile algorithm combination, workgroup security, native
-password maintenance, encrypted creation, power-loss recovery or complete hostile
-input resistance. Required work remains in `docs/todo.md` (E1, E2, F3, F4, F6,
-S1-S2 and I15). The older library-generated encryption files are not native
-interoperability oracles.
+The fixtures do not establish the native ACE 50,000-iteration Standard variant,
+every Agile algorithm combination, custom workgroup security, directory-entry
+power-loss durability or complete hostile-input resistance. Required work remains
+in `docs/todo.md` (E1, E2, F3, F4, F6, S1-S2 and I15). Library-generated encryption
+round trips alone are not native interoperability oracles.
 
 ## Upstream JET3 oracle
 
@@ -120,5 +131,43 @@ format oracle, not a locally DAO-authored fixture.
 Its unmasked encoding key is `A7E0C0FE`; its password region is empty.
 The native per-page RC4 rule decodes it. Raw header byte 0x62 is 0x34,
 and its unmasked value is zero; it is not an encryption flag. Library
-read/write regressions use this fixture, while a native Access 97 mutation
-and compact check still requires a compatible engine.
+read/write regressions use this fixture. A compatible x86 `DAO.DBEngine.36` host
+now verifies password changes, decryption, rekeying, library inserts, native
+updates and compact/reopen. The producing `DAO360.dll` reports version
+10.0.26100.5074. DAO120 continues to refuse Access 97 files; DAO36 is required.
+
+| DAO36 fixture | Creation | SHA-256 |
+|---|---|---|
+| NativeJet3Password.mdb | Upstream fixture followed by `NewPassword("", "Native123")` | 66B7F57A8480F66548E7AFB71B5081E41B9A523E65FF9BE7FFB7CD90DACD9F04 |
+| NativeJet3Rc4.mdb | DAO36 `CreateDatabase`, options 34, password Native123, then `NewPassword` to CP1252 password Pássword | EFEE0E45A1438E68FCF1BAA18859375DB0E9CCE6ADE79585CAD328276092982E |
+
+The first oracle changes only the password region and a page-zero open counter.
+JET3 passwords are encoded using the native database code page; embedded NUL,
+unrepresentable text and more than 20 encoded bytes are refused when writing.
+
+## Additional ACE providers
+
+These unchanged files are pinned to the same Jackcess Encrypt revision above.
+The original producing host is undocumented. DAO120 independently reads, writes
+and compacts each after library page mutation on both target frameworks.
+
+| Fixture | Password | Provider | SHA-256 |
+|---|---|---|---|
+| Upstream-db2007-oldenc.accdb | Test123 | RC4 CryptoAPI | 174BA7FF6349D4F929ADF555F5035C0722923776662F30A523F2933827D9558E |
+| Upstream-db2007-enc.accdb | Test123 | Agile AES-128-CBC/SHA-1 | FA6CD4ED7639DEE40AD288FF6C530356EA050BDE36DBDE5E4328FEE6AA07F306 |
+| Upstream-db-nonstandard.accdb | password | Compatibility AES-256/SHA-1, zero iterations | 5E93BAD848E0262EA8952C14DB897D63F8588CA22870043AB7CF954D865B4B39 |
+| Upstream-db2013-enc.accdb | 1234 | Agile AES-256-CBC/SHA-512 | 3E9EE219A7CA9BF7DEE261F6455F298887603D41C82EA0C5BC06D8831F09637A |
+
+Native Standard uses AES ECB with a page-specific derived key; its page addressing
+differs from Office package encryption. The pinned
+`Upstream-OfficeStandard.docx` and its published plaintext validate AES Standard
+primitives independently, but an Office package is not a native ACE producer
+fixture. Attribution, source revision and hashes are in `THIRD-PARTY-NOTICES.txt`.
+The implementation follows [MS-OFFCRYPTO](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-offcrypto/).
+
+Agile additionally accepts AES-192, CFB8, SHA-256 and SHA-384, including distinct
+password and page algorithms. Independent specification vectors cover those
+combinations; they are not advertised as Microsoft-produced fixture evidence.
+Password hashing checks cancellation within the loop and consumes an aggregate
+reader/linked-source iteration budget before deriving a key. Descriptor tests
+refuse duplicate roles, incorrect namespaces and inconsistent algorithm sizes.

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Relationships;
@@ -52,6 +53,15 @@ public sealed class AccessReaderOptions : AccessOptions
     /// Budget refusals propagate in strict and lenient parsing modes.
     /// </summary>
     public int MaxComplexDiscoveryEntries { get; init; } = 65536;
+
+    /// <summary>
+    /// Gets the maximum cumulative password-hash iterations for this reader and
+    /// every linked source it opens during its lifetime. Default: 10,000,000.
+    /// Must be nonnegative. Repeated or failed password attempts consume this
+    /// budget; opening a new root reader starts an independent budget, even when
+    /// the same options are reused. Increase explicitly for trusted workloads.
+    /// </summary>
+    public long MaxTotalEncryptionSpinCount { get; init; } = 10_000_000;
 
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
     public int PageCacheSize { get; init; } = 256;
@@ -150,6 +160,23 @@ public sealed class AccessReaderOptions : AccessOptions
 
     /// <summary>Gets the immutable ancestry inherited by an internal linked reader.</summary>
     internal LinkedSourceTraversal? LinkedSourceTraversal { get; init; }
+
+    /// <summary>Gets or sets the budget inherited by linked readers.</summary>
+    internal EncryptionWorkBudget? EncryptionWorkBudget { get; set; }
+
+    /// <summary>Creates private options with a fresh root budget, or preserves an inherited budget.</summary>
+    /// <returns>The private options used for this reader.</returns>
+    internal AccessReaderOptions WithEncryptionWorkBudget()
+    {
+        if (this.EncryptionWorkBudget is not null)
+        {
+            return this;
+        }
+
+        var options = (AccessReaderOptions)this.MemberwiseClone();
+        options.EncryptionWorkBudget = new EncryptionWorkBudget(this.MaxTotalEncryptionSpinCount);
+        return options;
+    }
 
     /// <summary>
     /// Returns whether a reader opened with these options reads its pages

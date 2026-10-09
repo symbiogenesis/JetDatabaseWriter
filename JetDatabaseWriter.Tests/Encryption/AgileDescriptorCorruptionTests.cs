@@ -98,6 +98,29 @@ public sealed class AgileDescriptorCorruptionTests
         Assert.Contains("integrity", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("keyData")]
+    [InlineData("encryptedKey")]
+    public void Decrypt_RejectsDuplicateCryptographicRoles(string role)
+    {
+        string xml = DescriptorXml();
+        string element = role == "encryptedKey" ? "p:encryptedKey" : role;
+        int start = xml.IndexOf("<" + element + " ", StringComparison.Ordinal);
+        int end = xml.IndexOf("/>", start, StringComparison.Ordinal) + 2;
+        string duplicate = xml[start..end];
+        xml = xml.Insert(end, duplicate);
+        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
+    }
+
+    [Theory]
+    [InlineData("http://schemas.microsoft.com/office/2006/encryption")]
+    [InlineData("http://schemas.microsoft.com/office/2006/keyEncryptor/password")]
+    public void Decrypt_RejectsWrongCryptographicNamespaces(string original)
+    {
+        string xml = DescriptorXml().Replace(original, "urn:wrong", StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(() => OfficeCryptoAgile.Decrypt(Info(xml), new byte[8], "password"));
+    }
+
     private static byte[] Info(string xml)
     {
         byte[] bytes = new byte[8 + Encoding.UTF8.GetByteCount(xml)];
@@ -114,6 +137,6 @@ public sealed class AgileDescriptorCorruptionTests
         string verifier = Convert.ToBase64String(new byte[64]);
         string key = Convert.ToBase64String(new byte[32]);
         string attributes = $"saltSize=\"16\" blockSize=\"16\" keyBits=\"256\" hashSize=\"64\" cipherAlgorithm=\"AES\" cipherChaining=\"ChainingModeCBC\" hashAlgorithm=\"SHA512\" saltValue=\"{salt}\"";
-        return $"<encryption><keyData {attributes}/><keyEncryptors><keyEncryptor uri=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\"><encryptedKey spinCount=\"0\" {attributes} encryptedVerifierHashInput=\"{salt}\" encryptedVerifierHashValue=\"{verifier}\" encryptedKeyValue=\"{key}\"/></keyEncryptor></keyEncryptors></encryption>";
+        return $"<encryption xmlns=\"http://schemas.microsoft.com/office/2006/encryption\" xmlns:p=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\"><keyData {attributes}/><keyEncryptors><keyEncryptor uri=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\"><p:encryptedKey spinCount=\"0\" {attributes} encryptedVerifierHashInput=\"{salt}\" encryptedVerifierHashValue=\"{verifier}\" encryptedKeyValue=\"{key}\"/></keyEncryptor></keyEncryptors></encryption>";
     }
 }

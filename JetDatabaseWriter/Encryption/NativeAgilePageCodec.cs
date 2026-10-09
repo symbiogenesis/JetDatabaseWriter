@@ -6,7 +6,9 @@ using System.Security.Cryptography;
 /// <param name="dataKey">The owned unlocked data key.</param>
 /// <param name="keyDataSalt">The owned provider salt.</param>
 /// <param name="encodingKey">The owned native encoding key.</param>
-internal sealed class NativeAgilePageCodec(byte[] dataKey, byte[] keyDataSalt, byte[] encodingKey) : IPageCodec
+/// <param name="hashAlgorithm">The provider digest algorithm.</param>
+/// <param name="cipherChaining">The provider chaining mode.</param>
+internal sealed class NativeAgilePageCodec(byte[] dataKey, byte[] keyDataSalt, byte[] encodingKey, string hashAlgorithm = "SHA512", string cipherChaining = "ChainingModeCBC") : IPageCodec
 {
     /// <inheritdoc/>
     public bool HasEncryption => true;
@@ -34,6 +36,6 @@ internal sealed class NativeAgilePageCodec(byte[] dataKey, byte[] keyDataSalt, b
             return;
         }
 
-        OfficeCryptoAgile.TransformFlatPage(data, offset, checked((int)pageNumber), pageSize, dataKey, keyDataSalt, encodingKey, encrypt);
+        OfficeCryptoAgile.TransformFlatPage(data, offset, checked((int)pageNumber), pageSize, dataKey, keyDataSalt, encodingKey, encrypt, hashAlgorithm, cipherChaining);
     }
 }

@@ -1,10 +1,12 @@
 namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
+using System.Buffers.Binary;
 using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
@@ -19,12 +21,25 @@ public sealed class NativeAceEncryptionTests
     public async Task NativeAgile_ReadsKnownRow()
     {
         string path = Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb");
-        Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
+        Assert.Equal(AccessEncryptionFormat.AccdbAgile, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions("Native123") { UseLockFile = false }, TestContext.Current.CancellationToken);
         DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         DataRow row = Assert.Single(rows.Rows.Cast<DataRow>());
         Assert.Equal(7, row["Id"]);
         Assert.Equal("Native encrypted row", row["Label"]);
+    }
+
+    /// <summary>Replacing encryption metadata preserves native header data beyond the descriptors.</summary>
+    [Fact]
+    public async Task NativeAgile_ReplaceHeaderPreservesNativeSuffix()
+    {
+        byte[] original = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
+        byte[] header = original.AsSpan(0, Constants.PageSizes.Jet4).ToArray();
+        int originalLength = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.AgileEncryption.FlatEncryptionInfoLengthOffset));
+        using NativeAgilePageCodec codec = OfficeCryptoAgile.CreateFlatEncryptionHeader(header, "Changed123", cancellationToken: TestContext.Current.CancellationToken);
+        int replacementLength = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.AgileEncryption.FlatEncryptionInfoLengthOffset));
+        int suffixOffset = Constants.AgileEncryption.FlatEncryptionInfoOffset + Math.Max(originalLength, replacementLength);
+        Assert.Equal(original.AsSpan(suffixOffset, header.Length - suffixOffset).ToArray(), header.AsSpan(suffixOffset).ToArray());
     }
 
     /// <summary>The native password verifier rejects a wrong password before page decoding.</summary>
@@ -161,31 +176,37 @@ public sealed class NativeAceEncryptionTests
         Assert.Equal(0, counting.BytesWritten);
     }
 
-    /// <summary>Unimplemented native password conversions leave every encrypted byte untouched.</summary>
+    /// <summary>Rejected native maintenance leaves every encrypted byte untouched.</summary>
     /// <param name="operation">The requested password operation.</param>
     [Theory]
     [InlineData("decrypt")]
     [InlineData("change")]
     [InlineData("encrypt")]
-    public async Task NativeAgile_PasswordConversionLeavesSourceUntouched(string operation)
+    public async Task NativeAgile_RejectedMaintenanceLeavesSourceUntouched(string operation)
     {
         byte[] fixture = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(fixture, TestContext.Current.CancellationToken);
-        stream.Position = 0;
-        if (operation == "encrypt")
+        string path = Path.Combine(Path.GetTempPath(), $"NativeAceMaintenance_{Guid.NewGuid():N}.accdb");
+        try
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await AccessWriter.EncryptAsync(stream, "Changed123".AsMemory(), AccessEncryptionFormat.AccdbAgile, TestContext.Current.CancellationToken));
-        }
-        else if (operation == "decrypt")
-        {
-            await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessWriter.DecryptAsync(stream, "Native123".AsMemory(), TestContext.Current.CancellationToken));
-        }
-        else
-        {
-            await Assert.ThrowsAsync<NotSupportedException>(async () => await AccessWriter.ChangePasswordAsync(stream, "Native123".AsMemory(), "Changed123".AsMemory(), TestContext.Current.CancellationToken));
-        }
+            await File.WriteAllBytesAsync(path, fixture, TestContext.Current.CancellationToken);
+            if (operation == "encrypt")
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(async () => await AccessDatabaseEncryption.EncryptAsync(path, "Changed123".AsMemory(), AccessEncryptionFormat.AccdbAgile, cancellationToken: TestContext.Current.CancellationToken));
+            }
+            else if (operation == "decrypt")
+            {
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessDatabaseEncryption.DecryptAsync(path, "wrong".AsMemory(), cancellationToken: TestContext.Current.CancellationToken));
+            }
+            else
+            {
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await AccessDatabaseEncryption.ChangePasswordAsync(path, "wrong".AsMemory(), "Changed123".AsMemory(), cancellationToken: TestContext.Current.CancellationToken));
+            }
 
-        Assert.Equal(fixture, stream.ToArray());
+            Assert.Equal(fixture, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 }

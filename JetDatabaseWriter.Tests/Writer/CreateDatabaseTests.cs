@@ -96,7 +96,7 @@ public sealed class CreateDatabaseTests
         // Raw byte 0x62 is a creation-date byte of the masked password area,
         // not an encryption flag.
         ms.Position = 0;
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(ms, TestContext.Current.CancellationToken));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(ms, TestContext.Current.CancellationToken));
 
         EncryptionManager.TransformHeaderMask(bytes);
         Assert.Equal(0xE4, bytes[0x3C]);
@@ -145,7 +145,7 @@ public sealed class CreateDatabaseTests
         }
 
         ms.Position = 0;
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(ms, ct));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(ms, ct));
         ms.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
         Assert.Equal(1252, reader.CodePage);

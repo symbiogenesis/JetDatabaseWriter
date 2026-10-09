@@ -74,7 +74,7 @@ internal sealed class WriterHarness : IAsyncDisposable
         options.Validate();
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
         byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
-        var database = DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options);
+        var database = DatabaseFile.ForWriter(stream, header, options.Password, path, leaveOpen, out Pager pager, options.PageCacheSize, options, cancellationToken);
         try
         {
             pager.ByteRangeLock = options.CreateByteRangeLock(stream);

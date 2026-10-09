@@ -13,7 +13,6 @@ using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.Transactions;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
 /// <summary>
@@ -393,209 +392,6 @@ internal static class EncryptionManager
     }
 
     /// <summary>
-    /// Changes the password of an already-encrypted JET / ACE database,
-    /// preserving the existing on-disk encryption format. The re-encrypted
-    /// file replaces the original through <see cref="ReplaceFileAtomicAsync"/>,
-    /// a temp file renamed over it, never an overwrite in place.
-    /// </summary>
-    /// <param name="path">Path to the file.</param>
-    /// <param name="oldPassword">The old password.</param>
-    /// <param name="newPassword">The new password.</param>
-    /// <param name="options">The options.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="IOException">Thrown when the file cannot be replaced, for example while an <see cref="AccessReader"/> holds it open; see <see cref="ReplaceFileAtomicAsync"/>.</exception>
-    public static ValueTask ChangePasswordAsync(
-        string path,
-        ReadOnlyMemory<char> oldPassword,
-        ReadOnlyMemory<char> newPassword,
-        AccessWriterOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-        Guard.NotEmpty(newPassword, nameof(newPassword));
-        return ReencryptFileAsync(
-            path,
-            oldPassword,
-            newPassword,
-            targetFormat: null,
-            requireSourceEncrypted: true,
-            options,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Encrypts a currently-unencrypted JET / ACE database, applying the
-    /// requested <paramref name="targetFormat"/>. The encrypted file replaces
-    /// the original through <see cref="ReplaceFileAtomicAsync"/>, a temp file
-    /// renamed over it, never an overwrite in place.
-    /// </summary>
-    /// <param name="path">Path to the file.</param>
-    /// <param name="newPassword">The new password.</param>
-    /// <param name="targetFormat">The target format.</param>
-    /// <param name="options">The options.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
-    /// <exception cref="IOException">Thrown when the file cannot be replaced, for example while an <see cref="AccessReader"/> holds it open; see <see cref="ReplaceFileAtomicAsync"/>.</exception>
-    public static ValueTask EncryptAsync(
-        string path,
-        ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat? targetFormat = null,
-        AccessWriterOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-        Guard.NotEmpty(newPassword, nameof(newPassword));
-        if (targetFormat == AccessEncryptionFormat.None)
-        {
-            throw new ArgumentException(
-                "Target format must not be None. Use DecryptAsync to remove encryption.",
-                nameof(targetFormat));
-        }
-
-        return ReencryptFileAsync(
-            path,
-            oldPassword: null,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted: false,
-            options,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Removes encryption from a JET / ACE database. The decrypted file
-    /// replaces the original through <see cref="ReplaceFileAtomicAsync"/>, a
-    /// temp file renamed over it, never an overwrite in place.
-    /// </summary>
-    /// <param name="path">Path to the file.</param>
-    /// <param name="oldPassword">The old password.</param>
-    /// <param name="options">The options.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="IOException">Thrown when the file cannot be replaced, for example while an <see cref="AccessReader"/> holds it open; see <see cref="ReplaceFileAtomicAsync"/>.</exception>
-    public static ValueTask DecryptAsync(
-        string path,
-        ReadOnlyMemory<char> oldPassword,
-        AccessWriterOptions? options = null,
-        CancellationToken cancellationToken = default)
-    {
-        Guard.NotNullOrEmpty(path, nameof(path));
-        return ReencryptFileAsync(
-            path,
-            oldPassword,
-            newPassword: null,
-            targetFormat: AccessEncryptionFormat.None,
-            requireSourceEncrypted: true,
-            options,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Stream-based equivalent of <see cref="ChangePasswordAsync(string,ReadOnlyMemory{char},ReadOnlyMemory{char},AccessWriterOptions?,CancellationToken)"/>.
-    /// </summary>
-    /// <param name="stream">The stream.</param>
-    /// <param name="oldPassword">The old password.</param>
-    /// <param name="newPassword">The new password.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public static ValueTask ChangePasswordAsync(
-        Stream stream,
-        ReadOnlyMemory<char> oldPassword,
-        ReadOnlyMemory<char> newPassword,
-        CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        Guard.NotEmpty(newPassword, nameof(newPassword));
-        return ReencryptStreamAsync(
-            stream,
-            oldPassword,
-            newPassword,
-            targetFormat: null,
-            requireSourceEncrypted: true,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Stream-based equivalent of <see cref="EncryptAsync(string,ReadOnlyMemory{char},AccessEncryptionFormat?,AccessWriterOptions?,CancellationToken)"/>.
-    /// </summary>
-    /// <param name="stream">The stream.</param>
-    /// <param name="newPassword">The new password.</param>
-    /// <param name="targetFormat">The target format.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="targetFormat"/> is <see cref="AccessEncryptionFormat.None"/>.</exception>
-    public static ValueTask EncryptAsync(
-        Stream stream,
-        ReadOnlyMemory<char> newPassword,
-        AccessEncryptionFormat? targetFormat = null,
-        CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        Guard.NotEmpty(newPassword, nameof(newPassword));
-        if (targetFormat == AccessEncryptionFormat.None)
-        {
-            throw new ArgumentException(
-                "Target format must not be None. Use DecryptAsync to remove encryption.",
-                nameof(targetFormat));
-        }
-
-        return ReencryptStreamAsync(
-            stream,
-            oldPassword: null,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted: false,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Stream-based equivalent of <see cref="DecryptAsync(string,ReadOnlyMemory{char},AccessWriterOptions?,CancellationToken)"/>.
-    /// </summary>
-    /// <param name="stream">The stream.</param>
-    /// <param name="oldPassword">The old password.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    public static ValueTask DecryptAsync(
-        Stream stream,
-        ReadOnlyMemory<char> oldPassword,
-        CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(stream, nameof(stream));
-        return ReencryptStreamAsync(
-            stream,
-            oldPassword,
-            newPassword: null,
-            targetFormat: AccessEncryptionFormat.None,
-            requireSourceEncrypted: true,
-            cancellationToken);
-    }
-
-    private static async ValueTask ReencryptFileAsync(
-        string path,
-        ReadOnlyMemory<char>? oldPassword,
-        ReadOnlyMemory<char>? newPassword,
-        AccessEncryptionFormat? targetFormat,
-        bool requireSourceEncrypted,
-        AccessWriterOptions? options,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        Guard.RequireExistingDatabaseFile(path, nameof(path));
-
-        using var lockFile = LockFileCoordinator.ForReencrypt(path, options);
-        lockFile.Acquire();
-
-        byte[] sourceBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        await using var sourceStream = new MemoryStream(sourceBytes, writable: false);
-
-        byte[] result = await ReencryptCoreAsync(
-            sourceStream,
-            oldPassword,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted,
-            cancellationToken).ConfigureAwait(false);
-
-        await ReplaceFileAtomicAsync(path, result, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
     /// <para>
     /// Replaces the file at <paramref name="path"/> with
     /// <paramref name="contents"/> atomically: the contents go to a temp file
@@ -815,78 +611,6 @@ internal static class EncryptionManager
         }
     }
 
-    private static async ValueTask ReencryptStreamAsync(
-        Stream stream,
-        ReadOnlyMemory<char>? oldPassword,
-        ReadOnlyMemory<char>? newPassword,
-        AccessEncryptionFormat? targetFormat,
-        bool requireSourceEncrypted,
-        CancellationToken cancellationToken)
-    {
-        Guard.RequireReadWriteSeekableStream(stream, nameof(stream));
-
-        byte[] result = await ReencryptCoreAsync(
-            stream,
-            oldPassword,
-            newPassword,
-            targetFormat,
-            requireSourceEncrypted,
-            cancellationToken).ConfigureAwait(false);
-
-        _ = stream.Seek(0, SeekOrigin.Begin);
-        await stream.WriteAsync(result.AsMemory(), cancellationToken).ConfigureAwait(false);
-        stream.SetLength(result.Length);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<byte[]> ReencryptCoreAsync(
-        Stream source,
-        ReadOnlyMemory<char>? oldPassword,
-        ReadOnlyMemory<char>? newPassword,
-        AccessEncryptionFormat? targetFormat,
-        bool requireSourceEncrypted,
-        CancellationToken cancellationToken)
-    {
-        ReadOnlyMemory<char> oldPwd = oldPassword.GetValueOrDefault();
-        ReadOnlyMemory<char> newPwd = newPassword.GetValueOrDefault();
-
-        long origPos = source.Position;
-        AccessEncryptionFormat detectedFormat = await DetectEncryptionFormatAsync(source, cancellationToken).ConfigureAwait(false);
-        _ = source.Seek(origPos, SeekOrigin.Begin);
-
-        if (requireSourceEncrypted && detectedFormat == AccessEncryptionFormat.None)
-        {
-            throw new InvalidOperationException(
-                "The source database is not encrypted. Use EncryptAsync to add a password.");
-        }
-
-        if (!requireSourceEncrypted && detectedFormat != AccessEncryptionFormat.None)
-        {
-            throw new InvalidOperationException(
-                $"The source database is already encrypted ({detectedFormat}). Use ChangePasswordAsync or DecryptAsync.");
-        }
-
-        if (detectedFormat is AccessEncryptionFormat.Jet3Rc4 or AccessEncryptionFormat.Jet4Rc4 or AccessEncryptionFormat.AccdbAgile)
-        {
-            throw new NotSupportedException("Changing or removing native database encryption requires native system security metadata that is not supported. The database remains unchanged.");
-        }
-
-        (byte[] plaintext, AccessEncryptionFormat sourceFormat) = await EncryptionConverter
-            .ReadDecryptedAsync(source, oldPwd, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (sourceFormat == AccessEncryptionFormat.Jet4Rc4)
-        {
-            throw new NotSupportedException("Changing or removing native Jet4 encryption requires native system security metadata that is not supported. The database remains unchanged.");
-        }
-
-        AccessEncryptionFormat effectiveTarget = targetFormat
-            ?? (requireSourceEncrypted
-                ? sourceFormat
-                : EncryptionConverter.ResolveBestTargetFormat(plaintext));
-        return EncryptionConverter.ApplyEncryption(plaintext, effectiveTarget, newPwd);
-    }
-
     // ── Crypto primitives ────────────────────────────────────────────
 
     /// <summary>Combines the native Jet encoding key with the little-endian page number using XOR.</summary>
@@ -938,11 +662,17 @@ internal static class EncryptionManager
     /// <param name="encodingKey">The native database encoding key.</param>
     /// <param name="password">The database password.</param>
     /// <exception cref="JetLimitationException">The password exceeds the native twenty-character field.</exception>
+    /// <exception cref="ArgumentException">The password contains a null character.</exception>
     internal static void WriteNativeJet4EncryptionHeader(byte[] header, uint encodingKey, ReadOnlySpan<char> password)
     {
         if (password.Length > HeaderPasswordLength / sizeof(char))
         {
             throw new JetLimitationException("Jet4 passwords cannot exceed twenty UTF-16 characters.");
+        }
+
+        if (password.IndexOf('\0') >= 0)
+        {
+            throw new ArgumentException("Native database passwords cannot contain null characters.", nameof(password));
         }
 
         TransformHeaderMask(header);
@@ -963,6 +693,53 @@ internal static class EncryptionManager
         finally
         {
             TransformHeaderMask(header);
+        }
+    }
+
+    /// <summary>Writes the native Jet3 encoding key and code-page password field.</summary>
+    /// <param name="header">The raw header.</param>
+    /// <param name="encodingKey">The page encoding key.</param>
+    /// <param name="password">The database password.</param>
+    /// <exception cref="ArgumentException">The password contains a null character or cannot be encoded in the database code page.</exception>
+    /// <exception cref="JetLimitationException">The encoded password exceeds twenty bytes.</exception>
+    internal static void WriteNativeJet3EncryptionHeader(byte[] header, uint encodingKey, ReadOnlySpan<char> password)
+    {
+        if (password.IndexOf('\0') >= 0)
+        {
+            throw new ArgumentException("Native database passwords cannot contain null characters.", nameof(password));
+        }
+
+        if (password.Length > Constants.DatabaseHeader.Jet3PasswordLength)
+        {
+            throw new JetLimitationException("Jet3 passwords cannot exceed twenty bytes in the database code page.");
+        }
+
+        var encoding = (Encoding)JetFormat.FromHeader(header).AnsiEncoding.Clone();
+        encoding.EncoderFallback = EncoderFallback.ExceptionFallback;
+        byte[] bytes = new byte[encoding.GetByteCount(password)];
+        _ = encoding.GetBytes(password, bytes);
+        try
+        {
+            if (bytes.Length > Constants.DatabaseHeader.Jet3PasswordLength)
+            {
+                throw new JetLimitationException("Jet3 passwords cannot exceed twenty bytes in the database code page.");
+            }
+
+            TransformHeaderMask(header, DatabaseFormat.Jet3Mdb);
+            try
+            {
+                Wu32(header, Constants.DatabaseHeader.EncodingKey, encodingKey);
+                header.AsSpan(Constants.DatabaseHeader.Password, Constants.DatabaseHeader.Jet3PasswordLength).Clear();
+                bytes.CopyTo(header, Constants.DatabaseHeader.Password);
+            }
+            finally
+            {
+                TransformHeaderMask(header, DatabaseFormat.Jet3Mdb);
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
         }
     }
 

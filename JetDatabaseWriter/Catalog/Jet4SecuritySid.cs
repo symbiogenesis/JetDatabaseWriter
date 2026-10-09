@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Catalog;
 
 using System;
 using System.Buffers.Binary;
+using System.Security.Cryptography;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
 
@@ -30,32 +31,41 @@ internal static class Jet4SecuritySid
         }
 
         byte[] header = (byte[])rawHeader.Clone();
-        format.TransformHeaderMask(header);
-        double creationDate = BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(0x72, 8)));
-        if (double.IsNaN(creationDate) || double.IsInfinity(creationDate) || creationDate < int.MinValue || creationDate > int.MaxValue)
+        Span<byte> dateMask = stackalloc byte[4];
+        Span<byte> keyBytes = stackalloc byte[4];
+        try
         {
-            throw new JetCorruptDataException("The Jet4 creation date cannot derive its security identity key.");
-        }
-
-        byte[] dateMask = new byte[4];
-        BinaryPrimitives.WriteInt32LittleEndian(dateMask, (int)creationDate);
-        uint key = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x72, 4));
-        for (int index = 0; index < 40; index++)
-        {
-            int byteIndex = index * 2;
-            byte value = header[0x42 + byteIndex];
-            if (byteIndex < 40)
+            format.TransformHeaderMask(header);
+            double creationDate = BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(0x72, 8)));
+            if (double.IsNaN(creationDate) || double.IsInfinity(creationDate) || creationDate < int.MinValue || creationDate > int.MaxValue)
             {
-                value ^= dateMask[byteIndex % 4];
+                throw new JetCorruptDataException("The Jet4 creation date cannot derive its security identity key.");
             }
 
-            key ^= (uint)value << (index % 24);
-        }
+            BinaryPrimitives.WriteInt32LittleEndian(dateMask, (int)creationDate);
+            uint key = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0x72, 4));
+            for (int index = 0; index < 40; index++)
+            {
+                int byteIndex = index * 2;
+                byte value = header[0x42 + byteIndex];
+                if (byteIndex < 40)
+                {
+                    value ^= dateMask[byteIndex % 4];
+                }
 
-        byte[] keyBytes = new byte[4];
-        BinaryPrimitives.WriteUInt32LittleEndian(keyBytes, key);
-        byte[] identity = plainIdentity.ToArray();
-        EncryptionManager.Rc4Transform(identity, 0, identity.Length, keyBytes);
-        return identity;
+                key ^= (uint)value << (index % 24);
+            }
+
+            BinaryPrimitives.WriteUInt32LittleEndian(keyBytes, key);
+            byte[] identity = plainIdentity.ToArray();
+            EncryptionManager.Rc4Transform(identity, 0, identity.Length, keyBytes);
+            return identity;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(header);
+            CryptographicOperations.ZeroMemory(dateMask);
+            CryptographicOperations.ZeroMemory(keyBytes);
+        }
     }
 }

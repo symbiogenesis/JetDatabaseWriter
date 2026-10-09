@@ -433,7 +433,7 @@ internal static class DaoBaselineProbe
             return false;
         }
 
-        AccessEncryptionFormat encryption = await AccessWriter.DetectEncryptionFormatAsync(reader.HostDatabasePath);
+        AccessEncryptionFormat encryption = await AccessDatabaseEncryption.DetectEncryptionFormatAsync(reader.HostDatabasePath);
         return encryption == AccessEncryptionFormat.None;
     }
 

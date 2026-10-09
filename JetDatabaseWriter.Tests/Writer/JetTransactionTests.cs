@@ -349,28 +349,23 @@ public sealed class JetTransactionTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.None)]
     [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.None)]
+    [InlineData(DatabaseFormat.AceAccdb, AccessEncryptionFormat.AccdbAgile)]
+    [InlineData(DatabaseFormat.Jet4Mdb, AccessEncryptionFormat.Jet4Rc4)]
     public async Task Commit_WhenCancelledAfterReplayStarts_CompletesReplay(DatabaseFormat format, AccessEncryptionFormat encryption)
     {
+        string? password = encryption == AccessEncryptionFormat.None ? null : "secret";
+        var options = new AccessWriterOptions(password) { UseLockFile = false, UseByteRangeLocks = false };
         await using var stream = new FaultInjectingStream();
         await using (AccessWriter creator = await AccessWriter.CreateDatabaseAsync(
             stream,
             format,
-            NonLockingWriterOptions(),
+            options,
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken))
         {
             await creator.CreateTableAsync("Items", ItemsSchema(), TestContext.Current.CancellationToken);
         }
 
-        string? password = null;
-        if (encryption != AccessEncryptionFormat.None)
-        {
-            password = "secret";
-            stream.Position = 0;
-            await AccessWriter.EncryptAsync(stream, password.AsMemory(), encryption, TestContext.Current.CancellationToken);
-        }
-
-        var options = new AccessWriterOptions(password) { UseLockFile = false, UseByteRangeLocks = false };
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, options, leaveOpen: true, TestContext.Current.CancellationToken))
         {

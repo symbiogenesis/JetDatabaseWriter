@@ -2,10 +2,14 @@ namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading.Tasks;
+using JetDatabaseWriter.CompoundFile;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Encryption.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Office Standard cryptographic primitive and malformed descriptor tests; these are not database-container interoperability tests.</summary>
@@ -134,6 +138,30 @@ public sealed class StandardEncryptionTests
         // different output due to corrupted AES-CBC ciphertext.
         byte[] decrypted = OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword);
         Assert.NotEqual(plaintext, decrypted);
+    }
+
+    /// <summary>A pinned independent Standard Office package verifies the required AES identifiers, derivation and ECB transform.</summary>
+    [Fact]
+    public async Task Standard_DecryptsIndependentOfficePackage()
+    {
+        await using FileStream stream = File.OpenRead(Path.Combine(TestDatabases.EncryptedRoot, "Upstream-OfficeStandard.docx"));
+        Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(stream, TestContext.Current.CancellationToken);
+        byte[] expected = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "Upstream-OfficeStandard-plain.docx"), TestContext.Current.CancellationToken);
+        byte[] actual = OfficeCryptoStandard.Decrypt(streams["EncryptionInfo"], streams["EncryptedPackage"], "Password1234_");
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(19)]
+    [InlineData(21)]
+    public void Standard_RejectsInvalidVerifierHashLength(int hashBytes)
+    {
+        OfficeEncryptedPackage package = OfficeCryptoStandard.Encrypt(new byte[16], TestPassword);
+        int headerBytes = BinaryPrimitives.ReadInt32LittleEndian(package.EncryptionInfo.AsSpan(8));
+        BinaryPrimitives.WriteInt32LittleEndian(package.EncryptionInfo.AsSpan(12 + headerBytes + 36), hashBytes);
+        Assert.Throws<InvalidDataException>(() => OfficeCryptoStandard.Decrypt(package.EncryptionInfo, package.EncryptedPackage, TestPassword));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -294,14 +322,14 @@ public sealed class StandardEncryptionTests
     // ═══════════════════════════════════════════════════════════════════
 
     private static byte[] BuildFakeStandardEncryptionInfo(
-        int algId = 0x6601,
+        int algId = 0x660E,
         int algIdHash = 0x8004,
         int saltSize = 16,
         bool truncateVerifier = false)
     {
         const string cspName = "Microsoft Enhanced RSA and AES Cryptographic Provider";
         byte[] cspNameBytes = Encoding.Unicode.GetBytes(cspName + '\0');
-        int headerSize = 28 + cspNameBytes.Length;
+        int headerSize = 32 + cspNameBytes.Length;
 
         int verifierSize = truncateVerifier ? 10 : (4 + 16 + 16 + 4 + 32);
 
@@ -337,6 +365,8 @@ public sealed class StandardEncryptionTests
         BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos), 0x18); // ProviderType
         pos += 4;
         BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos), 0); // Reserved1
+        pos += 4;
+        BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(pos), 0); // Reserved2
         pos += 4;
         Buffer.BlockCopy(cspNameBytes, 0, info, pos, cspNameBytes.Length);
         pos += cspNameBytes.Length;

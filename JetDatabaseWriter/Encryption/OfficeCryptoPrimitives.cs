@@ -12,6 +12,47 @@ internal static class OfficeCryptoPrimitives
 
     public const int Sha512HashBytes = 64;
 
+    /// <summary>Returns the digest size of a supported Office provider hash.</summary>
+    /// <param name="algorithm">The declared digest.</param>
+    /// <exception cref="NotSupportedException">The digest is unsupported.</exception>
+    public static int HashSize(string algorithm) => algorithm.ToUpperInvariant() switch
+    {
+        "SHA1" => 20,
+        "SHA256" => 32,
+        "SHA384" => 48,
+        "SHA512" => 64,
+        _ => throw new NotSupportedException($"Office encryption hash '{algorithm}' is unsupported."),
+    };
+
+    /// <summary>Hashes provider data with its declared digest.</summary>
+    /// <param name="source">The digest input.</param>
+    /// <param name="algorithm">The declared digest.</param>
+    public static byte[] Hash(ReadOnlySpan<byte> source, string algorithm)
+    {
+        using var hash = IncrementalHash.CreateHash(HashName(algorithm));
+        hash.AppendData(source);
+        return hash.GetHashAndReset();
+    }
+
+    /// <summary>Computes the package authentication hash.</summary>
+    /// <param name="key">The authentication key.</param>
+    /// <param name="source">The authenticated input.</param>
+    /// <param name="algorithm">The declared digest.</param>
+    public static byte[] Hmac(byte[] key, byte[] source, string algorithm)
+    {
+        using var hash = IncrementalHash.CreateHMAC(HashName(algorithm), key);
+        hash.AppendData(source);
+        return hash.GetHashAndReset();
+    }
+
+    /// <summary>Resolves the platform digest name after validating support.</summary>
+    /// <param name="algorithm">The declared digest.</param>
+    public static HashAlgorithmName HashName(string algorithm)
+    {
+        _ = HashSize(algorithm);
+        return new HashAlgorithmName(algorithm.ToUpperInvariant());
+    }
+
     public static void ZeroIfNotNull(byte[]? buffer)
     {
         if (buffer is not null)
@@ -123,6 +164,25 @@ internal static class OfficeCryptoPrimitives
         byte[]? result = transform.TransformFinalBlock(data, 0, data.Length);
         return result ?? throw new CryptographicException("AES transform returned no data.");
 #endif
+    }
+
+    /// <summary>Transforms native Agile AES-CFB data with the specified byte feedback.</summary>
+    /// <param name="data">The whole cipher input.</param>
+    /// <param name="key">The provider key.</param>
+    /// <param name="iv">The provider IV.</param>
+    /// <param name="encrypt">Whether to encrypt.</param>
+    public static byte[] AesCfbNoPadding(byte[] data, byte[] key, byte[] iv, bool encrypt)
+    {
+        using var aes = Aes.Create();
+#pragma warning disable CA5358 // MS-OFFCRYPTO Agile descriptors can mandate byte-feedback CFB.
+        aes.Mode = CipherMode.CFB;
+#pragma warning restore CA5358 // MS-OFFCRYPTO Agile descriptors can mandate byte-feedback CFB.
+        aes.FeedbackSize = 8;
+        aes.Padding = PaddingMode.None;
+        aes.Key = key;
+        aes.IV = iv;
+        using ICryptoTransform transform = CreateAesTransform(aes, encrypt);
+        return transform.TransformFinalBlock(data, 0, data.Length);
     }
 
     public static ICryptoTransform CreateAesTransform(Aes aes, bool encrypt)

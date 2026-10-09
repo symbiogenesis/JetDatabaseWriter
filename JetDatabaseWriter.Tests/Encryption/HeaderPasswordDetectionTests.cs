@@ -105,7 +105,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
             }
         }
 
-        Assert.Equal(encryption, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
+        Assert.Equal(encryption, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(path, Ct));
         await AssertRefusedAsync(path, password: null);
         Assert.Equal(["7|Native encrypted row", "8|two"], await ReadRowsAsync(path, FirstPassword));
     }
@@ -137,10 +137,10 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
     {
         string path = await this.CreateDatabaseWithRowAsync(format);
 
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(path, Ct));
 
         await using var stream = new MemoryStream(await File.ReadAllBytesAsync(path, Ct));
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(stream, Ct));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(stream, Ct));
     }
 
     [Theory]
@@ -153,7 +153,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
         // AesEncrypted.accdb (raw 0x07) were reported as encrypted.
         string path = Path.Combine(AppContext.BaseDirectory, "Databases", relativePath);
 
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(path, Ct));
     }
 
     [Theory]
@@ -176,10 +176,9 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
 
         await AssertUnencryptedAndOpensAsync(path, tables);
 
-        byte[] original = await File.ReadAllBytesAsync(path, Ct);
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await AccessWriter.EncryptAsync(path, FirstPassword.AsMemory(), options: NoLockOptions, cancellationToken: Ct));
-        Assert.Equal(original, await File.ReadAllBytesAsync(path, Ct));
+        await AccessDatabaseEncryption.EncryptAsync(path, FirstPassword.AsMemory(), options: NoLockOptions, cancellationToken: Ct);
+        Assert.Equal(AccessEncryptionFormat.Jet4Rc4, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(path, Ct));
+        Assert.Equal(tables, await ListTablesAsync(path, FirstPassword));
     }
 
     [Theory]
@@ -349,7 +348,7 @@ public sealed class HeaderPasswordDetectionTests : IDisposable
 
     private static async Task AssertUnencryptedAndOpensAsync(string path, IReadOnlyList<string> expectedTables)
     {
-        Assert.Equal(AccessEncryptionFormat.None, await AccessWriter.DetectEncryptionFormatAsync(path, Ct));
+        Assert.Equal(AccessEncryptionFormat.None, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(path, Ct));
         Assert.Equal(expectedTables, await ListTablesAsync(path));
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(path, NoLockOptions, Ct))

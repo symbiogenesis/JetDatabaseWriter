@@ -14,15 +14,15 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// (Access 2007) password-encrypted .accdb files. Parses the binary
 /// EncryptionInfo descriptor, derives the AES-128 key from the user password
 /// via SHA-1 PBKDF, verifies the password, and decrypts the EncryptedPackage
-/// stream using AES-128-CBC with a zero IV.
+/// stream using AES-128-ECB.
 /// </summary>
 internal static class OfficeCryptoStandard
 {
     // ── AlgID constants per MS-OFFCRYPTO §2.3.6.1 ───────────
 
-    private const int AlgIdAes128 = 0x6601;
-    private const int AlgIdAes192 = 0x6602;
-    private const int AlgIdAes256 = 0x6603;
+    private const int AlgIdAes128 = 0x660E;
+    private const int AlgIdAes192 = 0x660F;
+    private const int AlgIdAes256 = 0x6610;
 
     // ── AlgIDHash constants ─────────────────────────────────
 
@@ -63,7 +63,7 @@ internal static class OfficeCryptoStandard
 
     /// <summary>
     /// Encrypts <paramref name="innerPackage"/> with Standard encryption
-    /// parameters (AES-128-CBC, SHA-1, 50000 spin iterations) and returns
+    /// parameters (AES-128-ECB, SHA-1, 50000 spin iterations) and returns
     /// the resulting <c>EncryptionInfo</c> descriptor and
     /// <c>EncryptedPackage</c> stream bytes.
     /// </summary>
@@ -89,8 +89,8 @@ internal static class OfficeCryptoStandard
         byte[]? verifierHashPadded = null;
         try
         {
-            // Encrypt verifier (16 bytes -> 16 bytes via AES-CBC, IV=0).
-            byte[] encryptedVerifier = AesCbcZeroIv(verifier, key, encrypt: true);
+            // Encrypt verifier (16 bytes -> 16 bytes via AES-ECB).
+            byte[] encryptedVerifier = AesEcb(verifier, key, encrypt: true);
 
             // Hash the verifier with SHA-1 -> 20 bytes, then pad to 32 for encryption.
             verifierHash = OfficeCryptoPrimitives.Sha1(verifier);
@@ -98,12 +98,12 @@ internal static class OfficeCryptoStandard
             // Pad to 32 bytes (next multiple of AES block size above 20).
             verifierHashPadded = new byte[32];
             Buffer.BlockCopy(verifierHash, 0, verifierHashPadded, 0, verifierHash.Length);
-            byte[] encryptedVerifierHash = AesCbcZeroIv(verifierHashPadded, key, encrypt: true);
+            byte[] encryptedVerifierHash = AesEcb(verifierHashPadded, key, encrypt: true);
 
             // Build EncryptionInfo binary blob.
             byte[] encryptionInfo = BuildEncryptionInfo(salt, encryptedVerifier, encryptedVerifierHash, keyBits);
 
-            // Build EncryptedPackage: 8-byte LE size prefix + AES-CBC encrypted data.
+            // Build EncryptedPackage: 8-byte LE size prefix + AES-ECB encrypted data.
             byte[] encryptedPackage = EncryptPackage(innerPackage, key);
 
             return new OfficeEncryptedPackage(encryptionInfo, encryptedPackage);
@@ -134,9 +134,9 @@ internal static class OfficeCryptoStandard
 
         int headerSize = Ri32(encryptionInfo, 8);
         const int headerStart = 12;
-        int headerEnd = headerStart + headerSize;
+        int headerEnd = headerSize >= 32 && headerSize <= encryptionInfo.Length - headerStart ? headerStart + headerSize : -1;
 
-        if (headerEnd > encryptionInfo.Length || headerSize < 28)
+        if (headerEnd < 0)
         {
             throw new InvalidDataException(
                 $"EncryptionHeader size ({headerSize}) is invalid or exceeds stream length.");
@@ -163,6 +163,12 @@ internal static class OfficeCryptoStandard
                 $"Standard encryption AlgIDHash 0x{algIdHash:X4} is not supported (only SHA-1 0x8004).");
         }
 
+        int requiredKeyBits = algId switch { AlgIdAes128 => 128, AlgIdAes192 => 192, _ => 256 };
+        if (keyBits != requiredKeyBits)
+        {
+            throw new InvalidDataException("Standard encryption algorithm and key size disagree.");
+        }
+
         // Parse EncryptionVerifier (immediately after EncryptionHeader).
         int verifierStart = headerEnd;
         if (encryptionInfo.Length < verifierStart + 52)
@@ -180,6 +186,10 @@ internal static class OfficeCryptoStandard
         byte[] salt = ver.Slice(4, 16).ToArray();
         byte[] encryptedVerifier = ver.Slice(20, 16).ToArray();
         int verifierHashSize = Ri32(ver, 36);
+        if (verifierHashSize != OfficeCryptoPrimitives.Sha1HashBytes)
+        {
+            throw new InvalidDataException("Standard encryption password verifier must declare a 20-byte SHA-1 hash.");
+        }
 
         // EncryptedVerifierHash is keyBits/8 bytes for the key length,
         // but always at least 32 bytes (padded to AES block boundary above SHA-1's 20-byte output).
@@ -271,15 +281,7 @@ internal static class OfficeCryptoStandard
 
                 // Step 4: Derive key of required length.
                 // cbHash = 20 (SHA-1), cbRequiredKeyLength = keyByteCount
-                if (keyByteCount <= hashBytes)
-                {
-                    // Truncate to required length.
-                    byte[] truncatedKey = new byte[keyByteCount];
-                    Buffer.BlockCopy(h, 0, truncatedKey, 0, keyByteCount);
-                    return truncatedKey;
-                }
-
-                // Extend using X1/X2 derivation (MS-OFFCRYPTO §2.3.6.2).
+                // Apply X1/X2 derivation (MS-OFFCRYPTO §2.3.6.2).
                 derivedBuf = new byte[64];
                 for (int i = 0; i < 64; i++)
                 {
@@ -341,10 +343,10 @@ internal static class OfficeCryptoStandard
         try
         {
             // Decrypt the 16-byte EncryptedVerifier -> plaintext verifier.
-            verifier = AesCbcZeroIv(d.EncryptedVerifier, key, encrypt: false);
+            verifier = AesEcb(d.EncryptedVerifier, key, encrypt: false);
 
             // Decrypt the EncryptedVerifierHash -> padded hash.
-            verifierHash = AesCbcZeroIv(d.EncryptedVerifierHash, key, encrypt: false);
+            verifierHash = AesEcb(d.EncryptedVerifierHash, key, encrypt: false);
 
             // Compute expected hash: SHA1(verifier).
             expectedHash = OfficeCryptoPrimitives.Sha1(verifier);
@@ -390,7 +392,7 @@ internal static class OfficeCryptoStandard
         byte[] cipherBlock = new byte[paddedLen];
         Buffer.BlockCopy(encryptedPackage, 8, cipherBlock, 0, cipherLen);
 
-        byte[] plaintext = AesCbcZeroIv(cipherBlock, key, encrypt: false);
+        byte[] plaintext = AesEcb(cipherBlock, key, encrypt: false);
 
         // Truncate to the declared decrypted size.
         if (plaintext.Length == (int)decryptedSize)
@@ -411,7 +413,7 @@ internal static class OfficeCryptoStandard
         byte[] padded = new byte[paddedLen];
         Buffer.BlockCopy(plaintext, 0, padded, 0, plaintext.Length);
 
-        byte[] cipher = AesCbcZeroIv(padded, key, encrypt: true);
+        byte[] cipher = AesEcb(padded, key, encrypt: true);
 
         // Prepend 8-byte LE size prefix.
         byte[] result = new byte[8 + cipher.Length];
@@ -430,8 +432,8 @@ internal static class OfficeCryptoStandard
         const string cspName = "Microsoft Enhanced RSA and AES Cryptographic Provider";
         byte[] cspNameBytes = Encoding.Unicode.GetBytes(cspName + '\0');
 
-        // EncryptionHeader: 7 fixed uint32 fields (28 bytes) + CSPName.
-        int headerSize = 28 + cspNameBytes.Length;
+        // EncryptionHeader: 8 fixed uint32 fields (32 bytes) + CSPName.
+        int headerSize = 32 + cspNameBytes.Length;
 
         // EncryptionVerifier: saltSize(4) + salt(16) + encVerifier(16) + hashSize(4) + encVerifierHash(32).
         int verifierSize = 4 + 16 + 16 + 4 + encryptedVerifierHash.Length;
@@ -471,7 +473,8 @@ internal static class OfficeCryptoStandard
         Wu32(info, pos, 0); // Reserved1
         pos += 4;
 
-        // Reserved2 is not stored separately — it's part of the CSPName area.
+        Wu32(info, pos, 0); // Reserved2
+        pos += 4;
         Buffer.BlockCopy(cspNameBytes, 0, info, pos, cspNameBytes.Length);
         pos += cspNameBytes.Length;
 
@@ -490,13 +493,19 @@ internal static class OfficeCryptoStandard
     }
 
     // ════════════════════════════════════════════════════════════════
-    // AES-CBC helper (IV = all zeros, per MS-OFFCRYPTO Standard spec)
+    // AES-ECB helper (per MS-OFFCRYPTO Standard spec)
     // ════════════════════════════════════════════════════════════════
 
-    private static byte[] AesCbcZeroIv(byte[] data, byte[] key, bool encrypt)
+    private static byte[] AesEcb(byte[] data, byte[] key, bool encrypt)
     {
-        byte[] zeroIv = new byte[16];
-        return OfficeCryptoPrimitives.AesCbcNoPadding(data, key, zeroIv, encrypt);
+        using var aes = Aes.Create();
+#pragma warning disable CA5358, RS0030 // ECMA-376 Standard encryption mandates ECB.
+        aes.Mode = CipherMode.ECB;
+#pragma warning restore CA5358, RS0030 // ECMA-376 Standard encryption mandates ECB.
+        aes.Padding = PaddingMode.None;
+        aes.Key = key;
+        using ICryptoTransform transform = OfficeCryptoPrimitives.CreateAesTransform(aes, encrypt);
+        return transform.TransformFinalBlock(data, 0, data.Length);
     }
 
     // ════════════════════════════════════════════════════════════════

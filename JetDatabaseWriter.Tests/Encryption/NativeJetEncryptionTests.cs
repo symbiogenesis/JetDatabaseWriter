@@ -61,29 +61,35 @@ public sealed class NativeJetEncryptionTests
         Assert.Contains(rows.Rows.Cast<DataRow>(), row => Equals(row["Id"], 8) && Equals(row["Label"], "Library updated native file"));
     }
 
-    /// <summary>Unsupported native password conversion fails without changing the caller's bytes.</summary>
+    /// <summary>A wrong maintenance password leaves the native file untouched.</summary>
     /// <param name="operation">The public conversion operation.</param>
     [Theory]
     [InlineData("Decrypt")]
     [InlineData("ChangePassword")]
-    public async Task NativeJet4_PasswordConversionLeavesSourceUntouched(string operation)
+    public async Task NativeJet4_WrongMaintenancePasswordLeavesSourceUntouched(string operation)
     {
         byte[] original = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Rc4.mdb"), TestContext.Current.CancellationToken);
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(original, TestContext.Current.CancellationToken);
-        stream.Position = 0;
-        await Assert.ThrowsAsync<NotSupportedException>(async () =>
+        string path = Path.Combine(Path.GetTempPath(), $"NativeJetMaintenance_{Guid.NewGuid():N}.mdb");
+        try
         {
-            if (operation == "Decrypt")
+            await File.WriteAllBytesAsync(path, original, TestContext.Current.CancellationToken);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             {
-                await AccessWriter.DecryptAsync(stream, "Native123".AsMemory(), TestContext.Current.CancellationToken);
-            }
-            else
-            {
-                await AccessWriter.ChangePasswordAsync(stream, "Native123".AsMemory(), "changed".AsMemory(), cancellationToken: TestContext.Current.CancellationToken);
-            }
-        });
+                if (operation == "Decrypt")
+                {
+                    await AccessDatabaseEncryption.DecryptAsync(path, "wrong".AsMemory(), cancellationToken: TestContext.Current.CancellationToken);
+                }
+                else
+                {
+                    await AccessDatabaseEncryption.ChangePasswordAsync(path, "wrong".AsMemory(), "changed".AsMemory(), cancellationToken: TestContext.Current.CancellationToken);
+                }
+            });
 
-        Assert.Equal(original, stream.ToArray());
+            Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 }

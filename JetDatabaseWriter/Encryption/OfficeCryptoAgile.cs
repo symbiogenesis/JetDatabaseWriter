@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Xml;
 using JetDatabaseWriter.Encryption.Models;
 using JetDatabaseWriter.Enums;
@@ -352,11 +353,12 @@ internal static class OfficeCryptoAgile
             {
                 byte[] cipherPage = new byte[Constants.PageSizes.Jet4];
                 Buffer.BlockCopy(result, offset, cipherPage, 0, cipherPage.Length);
-                byte[] plainPage = AesCbcRaw(
+                byte[] plainPage = TransformAgileCipher(
                     cipherPage,
                     intermediateKey,
-                    FlatPageIv(descriptor.KeyDataSalt, encodingKey, pageNumber, descriptor.KeyDataBlockSize),
-                    encrypt: false);
+                    FlatPageIv(descriptor.KeyDataSalt, encodingKey, pageNumber, descriptor.KeyDataBlockSize, descriptor.KeyDataHashAlgorithm),
+                    encrypt: false,
+                    descriptor.KeyDataCipherChaining);
                 Buffer.BlockCopy(plainPage, 0, result, offset, plainPage.Length);
             }
 
@@ -370,15 +372,92 @@ internal static class OfficeCryptoAgile
         }
     }
 
+    /// <summary>Replaces page-zero encryption metadata with a fresh native Agile provider.</summary>
+    /// <param name="headerPage">The complete mutable page zero.</param>
+    /// <param name="password">The new password.</param>
+    /// <param name="maxSpinCount">The permitted password iteration count.</param>
+    /// <param name="maxDescriptorBytes">The descriptor byte budget.</param>
+    /// <returns>The codec that owns the new provider key.</returns>
+    /// <param name="cancellationToken">Cancellation for provider creation.</param>
+    /// <exception cref="InvalidDataException">The supplied header is incomplete.</exception>
+    /// <exception cref="JetLimitationException">The configured cryptographic budget is exceeded.</exception>
+    internal static NativeAgilePageCodec CreateFlatEncryptionHeader(byte[] headerPage, ReadOnlySpan<char> password, int maxSpinCount = 1_000_000, int maxDescriptorBytes = 1024 * 1024, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (headerPage.Length != Constants.PageSizes.Jet4)
+        {
+            throw new InvalidDataException("Native ACE encryption requires a complete page zero.");
+        }
+
+        if (maxSpinCount < Constants.AgileEncryption.SpinCount)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The new native Agile provider exceeds the configured spin budget.");
+        }
+
+        FlatAgileEncryptionInfo flatInfo = CreateFlatEncryptionInfo(password, cancellationToken);
+        bool transferred = false;
+        byte[] encodingKey = RandomBytes(4);
+        try
+        {
+            if (flatInfo.EncryptionInfo.Length > maxDescriptorBytes || Constants.AgileEncryption.FlatEncryptionInfoOffset + flatInfo.EncryptionInfo.Length > headerPage.Length)
+            {
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The new native Agile provider exceeds the descriptor byte budget.");
+            }
+
+            byte[] target = GetUnmaskedHeaderPage(headerPage);
+            int previousLength = Ru32(target, Constants.AgileEncryption.FlatEncodingKeyOffset) == 0
+                ? 0
+                : Ru16(target, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset);
+            if (Constants.AgileEncryption.FlatEncryptionInfoOffset + previousLength > target.Length)
+            {
+                throw new InvalidDataException("The previous native ACE encryption descriptor exceeds page zero.");
+            }
+
+            // Native user-lock metadata follows the descriptor and must survive replacement.
+            Array.Clear(target, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset, sizeof(ushort) + previousLength);
+            EncryptionManager.WriteEmptyHeaderPassword(target, DatabaseFormat.AceAccdb);
+            encodingKey.CopyTo(target, Constants.AgileEncryption.FlatEncodingKeyOffset);
+            Wu16(target, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset, checked((ushort)flatInfo.EncryptionInfo.Length));
+            flatInfo.EncryptionInfo.CopyTo(target, Constants.AgileEncryption.FlatEncryptionInfoOffset);
+            EncryptionManager.TransformHeaderMask(target);
+            target.CopyTo(headerPage, 0);
+            var codec = new NativeAgilePageCodec(flatInfo.IntermediateKey, flatInfo.KeyDataSalt, encodingKey);
+            transferred = true;
+            return codec;
+        }
+        finally
+        {
+            if (!transferred)
+            {
+                CryptographicOperations.ZeroMemory(flatInfo.IntermediateKey);
+                CryptographicOperations.ZeroMemory(flatInfo.KeyDataSalt);
+                CryptographicOperations.ZeroMemory(encodingKey);
+            }
+        }
+    }
+
+    /// <summary>Clears any flat ACE provider while preserving the remaining header.</summary>
+    /// <param name="headerPage">The mutable page zero.</param>
+    internal static void ClearFlatEncryptionHeader(byte[] headerPage)
+    {
+        byte[] unmasked = GetUnmaskedHeaderPage(headerPage);
+        int length = Ru16(unmasked, Constants.AgileEncryption.FlatEncryptionInfoLengthOffset);
+        ClearFlatEncryptionHeader(headerPage, length);
+        CryptographicOperations.ZeroMemory(unmasked);
+    }
+
     /// <summary>Unlocks the original native Agile provider without reading any data pages.</summary>
     /// <param name="headerPage">The encrypted page-zero bytes.</param>
     /// <param name="password">The database password.</param>
     /// <param name="maxSpinCount">The password hashing budget.</param>
     /// <param name="maxDescriptorBytes">The descriptor byte budget.</param>
+    /// <param name="workBudget">The aggregate password hashing budget.</param>
+    /// <param name="cancellationToken">Cancellation for password hashing.</param>
     /// <exception cref="InvalidDataException">The native Agile descriptor is absent or malformed.</exception>
     /// <exception cref="NotSupportedException">The native ACE provider is not Agile.</exception>
-    internal static NativeAgilePageCodec CreateFlatPageCodec(byte[] headerPage, ReadOnlySpan<char> password, int maxSpinCount, int maxDescriptorBytes)
+    internal static NativeAgilePageCodec CreateFlatPageCodec(byte[] headerPage, ReadOnlySpan<char> password, int maxSpinCount, int maxDescriptorBytes, EncryptionWorkBudget? workBudget = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!TryGetFlatEncryptionInfo(headerPage, out byte[] encryptionInfo))
         {
             throw new InvalidDataException("Native ACE encryption requires a complete page-zero descriptor.");
@@ -401,8 +480,9 @@ internal static class OfficeCryptoAgile
         byte[]? dataKey = null;
         try
         {
-            dataKey = ResolvePassword(descriptor, passwordUtf16);
-            var codec = new NativeAgilePageCodec(dataKey, (byte[])descriptor.KeyDataSalt.Clone(), encodingKey);
+            workBudget?.Charge(descriptor.SpinCount);
+            dataKey = ResolvePassword(descriptor, passwordUtf16, cancellationToken);
+            var codec = new NativeAgilePageCodec(dataKey, (byte[])descriptor.KeyDataSalt.Clone(), encodingKey, descriptor.KeyDataHashAlgorithm, descriptor.KeyDataCipherChaining);
             dataKey = null;
             return codec;
         }
@@ -422,8 +502,10 @@ internal static class OfficeCryptoAgile
     /// <param name="keyDataSalt">The native provider salt.</param>
     /// <param name="encodingKey">The native encoding key.</param>
     /// <param name="encrypt">Whether to encrypt.</param>
+    /// <param name="hashAlgorithm">The declared digest.</param>
+    /// <param name="cipherChaining">The declared cipher chaining mode.</param>
     /// <exception cref="InvalidDataException">The page size is not the native ACE size.</exception>
-    internal static void TransformFlatPage(byte[] data, int offset, int pageNumber, int pageSize, byte[] dataKey, byte[] keyDataSalt, byte[] encodingKey, bool encrypt)
+    internal static void TransformFlatPage(byte[] data, int offset, int pageNumber, int pageSize, byte[] dataKey, byte[] keyDataSalt, byte[] encodingKey, bool encrypt, string hashAlgorithm = "SHA512", string cipherChaining = "ChainingModeCBC")
     {
         if (pageSize != Constants.PageSizes.Jet4)
         {
@@ -434,7 +516,7 @@ internal static class OfficeCryptoAgile
         byte[]? output = null;
         try
         {
-            output = AesCbcRaw(input, dataKey, FlatPageIv(keyDataSalt, encodingKey, pageNumber, Constants.AgileEncryption.BlockSize), encrypt);
+            output = TransformAgileCipher(input, dataKey, FlatPageIv(keyDataSalt, encodingKey, pageNumber, Constants.AgileEncryption.BlockSize, hashAlgorithm), encrypt, cipherChaining);
             output.CopyTo(data, offset);
         }
         finally
@@ -488,8 +570,18 @@ internal static class OfficeCryptoAgile
 
         using var sr = new StringReader(xml);
         using var reader = XmlReader.Create(sr, settings);
+        const string encryptionNamespace = "http://schemas.microsoft.com/office/2006/encryption";
+        const string passwordNamespace = "http://schemas.microsoft.com/office/2006/keyEncryptor/password";
+        bool hasRoot = false;
+        bool hasKeyData = false;
+        bool hasPasswordKey = false;
         while (reader.Read())
         {
+            if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "keyEncryptor" && reader.NamespaceURI == encryptionNamespace)
+            {
+                inPasswordKeyEncryptor = false;
+            }
+
             if (reader.NodeType != XmlNodeType.Element)
             {
                 continue;
@@ -500,9 +592,39 @@ internal static class OfficeCryptoAgile
                 throw new InvalidDataException("Agile EncryptionInfo XML exceeds the supported nesting depth.");
             }
 
+            if (reader.Depth == 0)
+            {
+                if (hasRoot || reader.LocalName != "encryption" || reader.NamespaceURI != encryptionNamespace)
+                {
+                    throw new InvalidDataException("Agile EncryptionInfo must have one encryption root in the Office encryption namespace.");
+                }
+
+                hasRoot = true;
+                continue;
+            }
+
             string local = reader.LocalName;
+            string expectedNamespace = local == "encryptedKey" ? passwordNamespace : encryptionNamespace;
+            if (local is "keyData" or "dataIntegrity" or "keyEncryptor" or "keyEncryptors" or "encryptedKey"
+                && reader.NamespaceURI != expectedNamespace)
+            {
+                // Certificate encryptedKey elements belong to a separate supported descriptor role.
+                if (local == "encryptedKey" && !inPasswordKeyEncryptor)
+                {
+                    continue;
+                }
+
+                throw new InvalidDataException("Agile EncryptionInfo contains a cryptographic field in the wrong namespace.");
+            }
+
             if (local == "keyData")
             {
+                if (hasKeyData || reader.Depth != 1)
+                {
+                    throw new InvalidDataException("Agile EncryptionInfo contains duplicate or misplaced keyData.");
+                }
+
+                hasKeyData = true;
                 d.KeyDataSaltSize = ReadIntAttr(reader, "saltSize");
                 d.KeyDataBlockSize = ReadIntAttr(reader, "blockSize");
                 d.KeyDataKeyBits = ReadIntAttr(reader, "keyBits");
@@ -514,17 +636,33 @@ internal static class OfficeCryptoAgile
             }
             else if (local == "dataIntegrity")
             {
+                if (hasDataIntegrity || reader.Depth != 1)
+                {
+                    throw new InvalidDataException("Agile EncryptionInfo contains duplicate or misplaced dataIntegrity.");
+                }
+
                 hasDataIntegrity = true;
                 d.EncryptedHmacKey = ReadBase64Attr(reader, "encryptedHmacKey");
                 d.EncryptedHmacValue = ReadBase64Attr(reader, "encryptedHmacValue");
             }
             else if (local == "keyEncryptor")
             {
+                if (reader.Depth != 2)
+                {
+                    throw new InvalidDataException("Agile EncryptionInfo contains a misplaced keyEncryptor.");
+                }
+
                 string? uri = reader.GetAttribute("uri");
                 inPasswordKeyEncryptor = uri == "http://schemas.microsoft.com/office/2006/keyEncryptor/password";
             }
             else if (local == "encryptedKey" && inPasswordKeyEncryptor)
             {
+                if (hasPasswordKey || reader.Depth != 3)
+                {
+                    throw new InvalidDataException("Agile EncryptionInfo contains duplicate or misplaced password encryptedKey.");
+                }
+
+                hasPasswordKey = true;
                 d.SpinCount = ReadIntAttr(reader, "spinCount");
                 d.PasswordSaltSize = ReadIntAttr(reader, "saltSize");
                 d.PasswordBlockSize = ReadIntAttr(reader, "blockSize");
@@ -540,19 +678,15 @@ internal static class OfficeCryptoAgile
             }
         }
 
-        if (d.KeyDataSalt.Length == 0 || d.PasswordSalt.Length == 0 ||
+        if (!hasRoot || !hasKeyData || !hasPasswordKey || d.KeyDataSalt.Length == 0 || d.PasswordSalt.Length == 0 ||
             d.EncryptedKeyValue.Length == 0 || d.EncryptedVerifierHashInput.Length == 0 ||
             d.EncryptedVerifierHashValue.Length == 0)
         {
             throw new InvalidDataException("Agile EncryptionInfo XML is missing required fields.");
         }
 
-        if (!string.Equals(d.PasswordHashAlgorithm, "SHA512", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(d.KeyDataHashAlgorithm, "SHA512", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new NotSupportedException(
-                $"Agile encryption hash algorithm '{d.PasswordHashAlgorithm}' / '{d.KeyDataHashAlgorithm}' is not supported (only SHA512).");
-        }
+        int passwordHashSize = OfficeCryptoPrimitives.HashSize(d.PasswordHashAlgorithm);
+        int dataHashSize = OfficeCryptoPrimitives.HashSize(d.KeyDataHashAlgorithm);
 
         if (!string.Equals(d.PasswordCipherAlgorithm, "AES", StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(d.KeyDataCipherAlgorithm, "AES", StringComparison.OrdinalIgnoreCase))
@@ -566,11 +700,11 @@ internal static class OfficeCryptoAgile
             || d.KeyDataKeyBits is not 128 and not 192 and not 256
             || d.PasswordKeyBits is not 128 and not 192 and not 256
             || d.KeyDataBlockSize != 16 || d.PasswordBlockSize != 16
-            || d.KeyDataHashSize != 64 || d.PasswordHashSize != 64
+            || d.KeyDataHashSize != dataHashSize || d.PasswordHashSize != passwordHashSize
             || d.KeyDataSaltSize is < 1 or > 65536 || d.PasswordSaltSize is < 1 or > 65536
             || d.KeyDataSalt.Length != d.KeyDataSaltSize || d.PasswordSalt.Length != d.PasswordSaltSize
             || d.EncryptedVerifierHashInput.Length != (d.PasswordSaltSize + 15) / 16 * 16
-            || d.EncryptedVerifierHashValue.Length != 64
+            || d.EncryptedVerifierHashValue.Length != (passwordHashSize + 15) / 16 * 16
             || d.EncryptedKeyValue.Length != ((d.KeyDataKeyBits / 8) + 15) / 16 * 16)
         {
             throw new InvalidDataException("Agile EncryptionInfo contains inconsistent or unsupported cryptographic parameter sizes.");
@@ -588,10 +722,10 @@ internal static class OfficeCryptoAgile
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"Agile password hashing requires {d.SpinCount} iterations, exceeding the configured limit {maxSpinCount}.");
         }
 
-        if (!string.Equals(d.KeyDataCipherChaining, "ChainingModeCBC", StringComparison.Ordinal)
-            || !string.Equals(d.PasswordCipherChaining, "ChainingModeCBC", StringComparison.Ordinal))
+        if (d.KeyDataCipherChaining is not "ChainingModeCBC" and not "ChainingModeCFB"
+            || d.PasswordCipherChaining is not "ChainingModeCBC" and not "ChainingModeCFB")
         {
-            throw new NotSupportedException("Only Agile AES CBC chaining is supported.");
+            throw new NotSupportedException("Only Agile AES CBC and byte-feedback CFB chaining are supported.");
         }
 
         return d;
@@ -618,7 +752,7 @@ internal static class OfficeCryptoAgile
     // Password resolution + intermediate-key recovery
     // ════════════════════════════════════════════════════════════════
 
-    private static byte[] ResolvePassword(AgileDescriptor d, byte[] passwordUtf16)
+    private static byte[] ResolvePassword(AgileDescriptor d, byte[] passwordUtf16, CancellationToken cancellationToken = default)
     {
         AgilePasswordKeys passwordKeys = default;
         bool hasPasswordKeys = false;
@@ -632,14 +766,14 @@ internal static class OfficeCryptoAgile
             // 1. Verify the password by decrypting verifierHashInput / Value.
             //    The three password keys share one PBKDF chain and differ
             //    only in the block key mixed in at the end.
-            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, d.PasswordSalt, d.SpinCount, d.PasswordKeyBits / 8);
+            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, d.PasswordSalt, d.SpinCount, d.PasswordKeyBits / 8, d.PasswordHashAlgorithm, cancellationToken);
             hasPasswordKeys = true;
 
-            verifierInput = AesCbcDecrypt(d.EncryptedVerifierHashInput, passwordKeys.VerifierInput, d.PasswordSalt);
-            storedHash = AesCbcDecrypt(d.EncryptedVerifierHashValue, passwordKeys.VerifierHash, d.PasswordSalt);
+            verifierInput = TransformAgileCipher(d.EncryptedVerifierHashInput, passwordKeys.VerifierInput, NormalizeIv(d.PasswordSalt, 16), encrypt: false, d.PasswordCipherChaining);
+            storedHash = TransformAgileCipher(d.EncryptedVerifierHashValue, passwordKeys.VerifierHash, NormalizeIv(d.PasswordSalt, 16), encrypt: false, d.PasswordCipherChaining);
 
             verifierInputForHash = Truncate(verifierInput, d.PasswordSaltSize);
-            expectedHash = OfficeCryptoPrimitives.Sha512(verifierInputForHash);
+            expectedHash = OfficeCryptoPrimitives.Hash(verifierInputForHash, d.PasswordHashAlgorithm);
 
             if (!OfficeCryptoPrimitives.FixedTimeEquals(expectedHash, storedHash, expectedHash.Length))
             {
@@ -648,7 +782,7 @@ internal static class OfficeCryptoAgile
             }
 
             // 2. Recover the intermediate key.
-            intermediate = AesCbcDecrypt(d.EncryptedKeyValue, passwordKeys.KeyValue, d.PasswordSalt);
+            intermediate = TransformAgileCipher(d.EncryptedKeyValue, passwordKeys.KeyValue, NormalizeIv(d.PasswordSalt, 16), encrypt: false, d.PasswordCipherChaining);
             byte[] intermediateKey = new byte[d.KeyDataKeyBits / 8];
             Buffer.BlockCopy(intermediate, 0, intermediateKey, 0, Math.Min(intermediateKey.Length, intermediate.Length));
             return intermediateKey;
@@ -694,16 +828,16 @@ internal static class OfficeCryptoAgile
         byte[]? computedHmac = null;
         try
         {
-            hmacKeyIv = HmacIv(d.KeyDataSalt, BlockKeyHmacKey);
-            hmacValueIv = HmacIv(d.KeyDataSalt, BlockKeyHmacValue);
+            hmacKeyIv = HmacIv(d.KeyDataSalt, BlockKeyHmacKey, d.KeyDataHashAlgorithm);
+            hmacValueIv = HmacIv(d.KeyDataSalt, BlockKeyHmacValue, d.KeyDataHashAlgorithm);
 
-            hmacKeyRaw = AesCbcRaw(d.EncryptedHmacKey, intermediateKey, hmacKeyIv, encrypt: false);
+            hmacKeyRaw = TransformAgileCipher(d.EncryptedHmacKey, intermediateKey, hmacKeyIv, encrypt: false, d.KeyDataCipherChaining);
             hmacKey = Truncate(hmacKeyRaw, d.KeyDataSaltSize);
 
-            hmacValueRaw = AesCbcRaw(d.EncryptedHmacValue, intermediateKey, hmacValueIv, encrypt: false);
+            hmacValueRaw = TransformAgileCipher(d.EncryptedHmacValue, intermediateKey, hmacValueIv, encrypt: false, d.KeyDataCipherChaining);
             storedHmac = Truncate(hmacValueRaw, d.KeyDataHashSize);
 
-            computedHmac = OfficeCryptoPrimitives.HmacSha512(hmacKey, encryptedPackage);
+            computedHmac = OfficeCryptoPrimitives.Hmac(hmacKey, encryptedPackage, d.KeyDataHashAlgorithm);
 
             if (!OfficeCryptoPrimitives.FixedTimeEquals(computedHmac, storedHmac, d.KeyDataHashSize))
             {
@@ -780,10 +914,10 @@ internal static class OfficeCryptoAgile
                     $"EncryptedPackage stream truncated at segment {segmentIndex}.");
             }
 
-            byte[] iv = SegmentIv(d.KeyDataSalt, segmentIndex, blockSize);
+            byte[] iv = SegmentIv(d.KeyDataSalt, segmentIndex, blockSize, d.KeyDataHashAlgorithm);
             byte[] cipher = new byte[paddedLen];
             Buffer.BlockCopy(encryptedPackage, readOffset, cipher, 0, paddedLen);
-            byte[] plain = AesCbcRaw(cipher, intermediateKey, iv, encrypt: false);
+            byte[] plain = TransformAgileCipher(cipher, intermediateKey, iv, encrypt: false, d.KeyDataCipherChaining);
             Buffer.BlockCopy(plain, 0, result, writeOffset, segmentLen);
 
             readOffset += paddedLen;
@@ -793,18 +927,18 @@ internal static class OfficeCryptoAgile
         return result;
     }
 
-    private static byte[] SegmentIv(byte[] keyDataSalt, int segmentIndex, int blockSize)
+    private static byte[] SegmentIv(byte[] keyDataSalt, int segmentIndex, int blockSize, string hashAlgorithm = "SHA512")
     {
         byte[] data = new byte[keyDataSalt.Length + 4];
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
         Wi32(data, keyDataSalt.Length, segmentIndex);
 
-        byte[] hash = OfficeCryptoPrimitives.Sha512(data);
+        byte[] hash = OfficeCryptoPrimitives.Hash(data, hashAlgorithm);
 
         return Truncate(hash, blockSize);
     }
 
-    private static byte[] FlatPageIv(byte[] keyDataSalt, byte[] encodingKey, int pageNumber, int blockSize)
+    private static byte[] FlatPageIv(byte[] keyDataSalt, byte[] encodingKey, int pageNumber, int blockSize, string hashAlgorithm = "SHA512")
     {
         byte[] blockKey = new byte[encodingKey.Length];
         Wi32(blockKey, 0, pageNumber);
@@ -817,7 +951,7 @@ internal static class OfficeCryptoAgile
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
         Buffer.BlockCopy(blockKey, 0, data, keyDataSalt.Length, blockKey.Length);
 
-        byte[] hash = OfficeCryptoPrimitives.Sha512(data);
+        byte[] hash = OfficeCryptoPrimitives.Hash(data, hashAlgorithm);
 
         return Truncate(hash, blockSize);
     }
@@ -826,17 +960,10 @@ internal static class OfficeCryptoAgile
     // AES-CBC helpers
     // ════════════════════════════════════════════════════════════════
 
-    private static byte[] AesCbcDecrypt(byte[] cipher, byte[] key, byte[] iv)
-    {
-        Guard.NotNull(cipher, nameof(cipher));
-        Guard.NotNull(key, nameof(key));
-        Guard.NotNull(iv, nameof(iv));
-
-        // Agile uses raw (no PKCS#7) AES-CBC throughout; the IV is the salt
-        // truncated/padded to the AES block size.
-        byte[] paddedIv = NormalizeIv(iv, 16);
-        return AesCbcRaw(cipher, key, paddedIv, encrypt: false);
-    }
+    private static byte[] TransformAgileCipher(byte[] data, byte[] key, byte[] iv, bool encrypt, string cipherChaining)
+        => cipherChaining == "ChainingModeCFB"
+            ? OfficeCryptoPrimitives.AesCfbNoPadding(data, key, iv, encrypt)
+            : AesCbcRaw(data, key, iv, encrypt);
 
     private static byte[] AesCbcRaw(byte[] data, byte[] key, byte[] iv, bool encrypt)
         => OfficeCryptoPrimitives.AesCbcNoPadding(data, key, iv, encrypt);
@@ -918,9 +1045,11 @@ internal static class OfficeCryptoAgile
     /// <param name="passwordSalt">The password key encryptor's salt.</param>
     /// <param name="spinCount">The iteration count: the descriptor's <c>spinCount</c>, or <see cref="Constants.AgileEncryption.SpinCount"/> when encrypting.</param>
     /// <param name="keyByteCount">The key length in bytes: the descriptor's <c>keyBits</c> / 8, or <see cref="Constants.AgileEncryption.KeyBytes"/> when encrypting.</param>
-    private static AgilePasswordKeys DeriveAllPasswordKeys(byte[] passwordUtf16, byte[] passwordSalt, int spinCount, int keyByteCount)
+    /// <param name="hashAlgorithm">The declared digest.</param>
+    /// <param name="cancellationToken">Cancellation for password hashing.</param>
+    private static AgilePasswordKeys DeriveAllPasswordKeys(byte[] passwordUtf16, byte[] passwordSalt, int spinCount, int keyByteCount, string hashAlgorithm = "SHA512", CancellationToken cancellationToken = default)
     {
-        byte[] h = new byte[OfficeCryptoPrimitives.Sha512HashBytes];
+        byte[]? h = null;
         byte[]? init = null;
         byte[]? verifierInput = null;
         byte[]? verifierHash = null;
@@ -933,20 +1062,20 @@ internal static class OfficeCryptoAgile
             init = new byte[passwordSalt.Length + passwordUtf16.Length];
             Buffer.BlockCopy(passwordSalt, 0, init, 0, passwordSalt.Length);
             Buffer.BlockCopy(passwordUtf16, 0, init, passwordSalt.Length, passwordUtf16.Length);
-            OfficeCryptoPrimitives.HashSha512(init, h);
+            h = OfficeCryptoPrimitives.Hash(init, hashAlgorithm);
 
-            IteratePasswordHash(h, spinCount);
+            IteratePasswordHash(h, spinCount, hashAlgorithm, cancellationToken);
 
             // Mix in each block-key constant.
-            verifierInput = FinalizeKey(h, BlockKeyVerifierHashInput, keyByteCount);
-            verifierHash = FinalizeKey(h, BlockKeyVerifierHashValue, keyByteCount);
-            keyValue = FinalizeKey(h, BlockKeyEncryptedKeyValue, keyByteCount);
+            verifierInput = FinalizeKey(h, BlockKeyVerifierHashInput, keyByteCount, hashAlgorithm);
+            verifierHash = FinalizeKey(h, BlockKeyVerifierHashValue, keyByteCount, hashAlgorithm);
+            keyValue = FinalizeKey(h, BlockKeyEncryptedKeyValue, keyByteCount, hashAlgorithm);
             returned = true;
             return new AgilePasswordKeys(verifierInput, verifierHash, keyValue);
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(h);
+            OfficeCryptoPrimitives.ZeroIfNotNull(h);
             OfficeCryptoPrimitives.ZeroIfNotNull(init);
             if (!returned)
             {
@@ -968,18 +1097,25 @@ internal static class OfficeCryptoAgile
     /// </summary>
     /// <param name="hash">The 64-byte <c>H0</c> on entry, <c>H(spinCount)</c> on return.</param>
     /// <param name="spinCount">The iteration count.</param>
-    /// <exception cref="CryptographicException">Thrown when a SHA-512 hash cannot be computed.</exception>
-    private static void IteratePasswordHash(byte[] hash, int spinCount)
+    /// <param name="hashAlgorithm">The declared digest.</param>
+    /// <param name="cancellationToken">Cancellation for password hashing.</param>
+    /// <exception cref="CryptographicException">Thrown when a provider hash cannot be computed.</exception>
+    private static void IteratePasswordHash(byte[] hash, int spinCount, string hashAlgorithm, CancellationToken cancellationToken)
     {
-        const int hashBytes = OfficeCryptoPrimitives.Sha512HashBytes;
+        int hashBytes = OfficeCryptoPrimitives.HashSize(hashAlgorithm);
         Span<byte> input = stackalloc byte[sizeof(int) + hashBytes];
         Span<byte> next = stackalloc byte[hashBytes];
         try
         {
             hash.AsSpan().CopyTo(input[sizeof(int)..]);
-            using var sha512 = IncrementalHash.CreateHash(HashAlgorithmName.SHA512);
+            using var sha512 = IncrementalHash.CreateHash(OfficeCryptoPrimitives.HashName(hashAlgorithm));
             for (int i = 0; i < spinCount; i++)
             {
+                if ((i & 255) == 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 Wi32(input, 0, i);
                 sha512.AppendData(input);
                 if (!sha512.TryGetHashAndReset(next, out int written) || written != hashBytes)
@@ -990,6 +1126,7 @@ internal static class OfficeCryptoAgile
                 next.CopyTo(input[sizeof(int)..]);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             input[sizeof(int)..].CopyTo(hash);
         }
         finally
@@ -999,13 +1136,12 @@ internal static class OfficeCryptoAgile
         }
     }
 
-    private static byte[] FinalizeKey(byte[] iteratedHash, ReadOnlySpan<byte> blockKey, int keyByteCount)
+    private static byte[] FinalizeKey(byte[] iteratedHash, ReadOnlySpan<byte> blockKey, int keyByteCount, string hashAlgorithm)
     {
         byte[] buf = new byte[iteratedHash.Length + blockKey.Length];
         Buffer.BlockCopy(iteratedHash, 0, buf, 0, iteratedHash.Length);
         blockKey.CopyTo(buf.AsSpan(iteratedHash.Length));
-        byte[] hf = new byte[OfficeCryptoPrimitives.Sha512HashBytes];
-        OfficeCryptoPrimitives.HashSha512(buf, hf);
+        byte[] hf = OfficeCryptoPrimitives.Hash(buf, hashAlgorithm);
 
         try
         {
@@ -1098,8 +1234,9 @@ internal static class OfficeCryptoAgile
     }
 
     private static FlatAgileEncryptionInfo CreateFlatEncryptionInfo(
-        ReadOnlySpan<char> password)
+        ReadOnlySpan<char> password, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         byte[] passwordUtf16 = PasswordToUtf16(password);
         byte[]? verifierHashInput = null;
         byte[]? intermediateKey = null;
@@ -1114,7 +1251,7 @@ internal static class OfficeCryptoAgile
             verifierHashInput = RandomBytes(Constants.AgileEncryption.SaltSize);
             intermediateKey = RandomBytes(Constants.AgileEncryption.KeyBytes);
 
-            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, passwordSalt, Constants.AgileEncryption.SpinCount, Constants.AgileEncryption.KeyBytes);
+            passwordKeys = DeriveAllPasswordKeys(passwordUtf16, passwordSalt, Constants.AgileEncryption.SpinCount, Constants.AgileEncryption.KeyBytes, cancellationToken: cancellationToken);
             hasPasswordKeys = true;
 
             byte[] verifierInputCipher = AesCbcRaw(
@@ -1247,12 +1384,12 @@ internal static class OfficeCryptoAgile
         return headerPage;
     }
 
-    private static byte[] HmacIv(byte[] keyDataSalt, ReadOnlySpan<byte> blockKey)
+    private static byte[] HmacIv(byte[] keyDataSalt, ReadOnlySpan<byte> blockKey, string hashAlgorithm = "SHA512")
     {
         byte[] data = new byte[keyDataSalt.Length + blockKey.Length];
         Buffer.BlockCopy(keyDataSalt, 0, data, 0, keyDataSalt.Length);
         blockKey.CopyTo(data.AsSpan(keyDataSalt.Length));
-        byte[] hash = OfficeCryptoPrimitives.Sha512(data);
+        byte[] hash = OfficeCryptoPrimitives.Hash(data, hashAlgorithm);
 
         return Truncate(hash, Constants.AgileEncryption.BlockSize);
     }

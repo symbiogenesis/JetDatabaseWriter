@@ -78,6 +78,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="header">Header bytes read from page 0.</param>
     /// <param name="snapshotLease">The read-only file handle that excludes writers during the reader lifetime.</param>
     /// <param name="leaveOpen">Whether the caller retains ownership of the stream. If false, the stream is disposed when the reader is disposed.</param>
+    /// <param name="cancellationToken">Cancels password derivation during open.</param>
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "AccessBase takes ownership of the database file; DisposeAsync disposes it after the reader's services.")]
     private AccessReader(
         string path,
@@ -85,8 +86,9 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Stream stream,
         byte[] header,
         FileStream? snapshotLease,
-        bool leaveOpen = false)
-        : base(DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options))
+        bool leaveOpen = false,
+        CancellationToken cancellationToken = default)
+        : base(DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options, cancellationToken))
     {
         Guard.NotNull(options, nameof(options));
         this.snapshotLease = snapshotLease;
@@ -198,10 +200,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
         Guard.RequireReadableSeekableStream(stream, nameof(stream));
         cancellationToken.ThrowIfCancellationRequested();
 
-        options ??= new AccessReaderOptions();
         FileStream? snapshotLease = null;
         try
         {
+            options = (options ?? new AccessReaderOptions()).WithEncryptionWorkBudget();
             string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
             if (stream is FileStream recoveryFile)
             {
@@ -215,7 +217,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
             byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
 
-            return new AccessReader(path, options, stream, header, snapshotLease, leaveOpen);
+            return new AccessReader(path, options, stream, header, snapshotLease, leaveOpen, cancellationToken);
         }
         catch
         {

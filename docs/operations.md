@@ -171,7 +171,11 @@ These examples are not an exhaustive exception list. See [remaining structured-e
 
 ## Encryption options
 
-`AccessReaderOptions.Password` and `AccessWriterOptions.Password` are credentials for opening an existing protected file. They do not request encryption for a newly created database. `EncryptAsync`, `DecryptAsync` and `ChangePasswordAsync` refuse unsupported encryption-maintenance operations before mutation.
+`AccessReaderOptions.Password` and `AccessWriterOptions.Password` open an existing protected file. A nonempty writer password also requests native encryption during `CreateDatabaseAsync`; the initial database image is encrypted in memory before its first destination write.
+
+Close readers and writers before calling `AccessDatabaseEncryption.EncryptAsync`, `DecryptAsync` or `ChangePasswordAsync`. Maintenance processes pages through a reusable buffer, stages the final format in a unique adjacent file, updates native security metadata, flushes, then replaces the original. Cancellation and pre-replacement failures preserve the original and remove only the operation's temporary file. Pending recovery journals are refused: recover through `AccessWriter.OpenAsync` first. Directory-entry persistence after power loss remains filesystem-dependent; the directory is not flushed.
+
+JET password-only files remain password-only after a password change. New JET encryption uses native RC4; new ACE encryption and ACE password changes use fresh AES-256-CBC/SHA-512. Existing encrypted files retain their provider during ordinary updates. JET3 passwords must fit 20 bytes in the database code page; JET4 passwords fit 20 UTF-16 characters. Unrepresentable passwords are refused before publishing output.
 
 Linked databases receive passwords only through `LinkedSourcePasswordResolver`; the host database's password is not forwarded.
 
@@ -181,10 +185,13 @@ Encrypted descriptors are bounded before allocation or expensive key derivation:
 |---|---|---|
 | `MaxEncryptionSpinCount` | 1,000,000 | Caps password-derivation iterations. |
 | `MaxEncryptionInfoBytes` | 1 MiB | Caps the encryption descriptor size. |
+| `AccessReaderOptions.MaxTotalEncryptionSpinCount` | 10,000,000 | Caps cumulative password-hash iterations across a reader and every linked source it opens during its lifetime. Reusing options for a new root reader starts a fresh budget. |
 
-A resource-limit refusal does not mean the file is corrupt. Malformed descriptors fail deliberately. Native Agile support uses AES-CBC with SHA-512; Microsoft fixture evidence covers 256-bit AES. Internal Office package tests do not establish public Access-provider support, and Office compound packages are rejected by the public reader and writer.
+A resource-limit refusal does not mean the file is corrupt. Password hashing checks cancellation during its iteration loop. Malformed or contradictory descriptors fail before key derivation. Native Agile accepts AES-128/192/256, CBC/CFB8 and SHA-1/256/384/512; native fixtures cover CBC/SHA-1 and CBC/SHA-512, while the other combinations have independent specification-vector coverage. RC4 CryptoAPI and compatibility AES have native DAO read/write/compact evidence. Internal Office package vectors validate Standard primitives but do not establish native ACE producer interoperability; Office compound packages remain unsupported database inputs.
 
-For native Jet4, password verification uses the creation-date-masked header independently of the encoding key. RC4 page encryption uses the unmasked four-byte key XOR the little-endian page number. Updates preserve the existing key and password; password maintenance also needs system-security metadata that the library does not yet update. See [native encryption evidence](design/native-encryption-evidence.md).
+For native Jet4, password verification uses the creation-date-masked header independently of the encoding key. RC4 page encryption uses the unmasked four-byte key XOR the little-endian page number. Password maintenance remasks catalog owners and access-control identities using the old and new header keys. Indexed security identity fields are refused because their keys cannot be safely preserved by this transformation. See [native encryption evidence](design/native-encryption-evidence.md).
+
+For local DAO tests on hosts whose installed Office architecture differs from the default PowerShell architecture, `JETDATABASEWRITER_DAO_POWERSHELL` selects a compatible PowerShell executable. The test harness probes COM activation before using it.
 
 ## Limitations
 

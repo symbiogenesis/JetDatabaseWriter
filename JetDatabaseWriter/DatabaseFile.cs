@@ -2,6 +2,7 @@ namespace JetDatabaseWriter;
 
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Pages;
@@ -34,6 +35,8 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="maxEncryptionSpinCount">The password hashing budget.</param>
     /// <param name="maxEncryptionInfoBytes">The descriptor byte budget.</param>
     /// <param name="maxTableDefinitionBytes">The per-table definition byte budget.</param>
+    /// <param name="workBudget">The cumulative password work for a reader and linked sources.</param>
+    /// <param name="cancellationToken">Cancels password derivation during open.</param>
     private DatabaseFile(
         Stream stream,
         byte[] header,
@@ -44,7 +47,9 @@ internal sealed class DatabaseFile : IAsyncDisposable
         int cacheSize = 0,
         int maxEncryptionSpinCount = 1_000_000,
         int maxEncryptionInfoBytes = 1024 * 1024,
-        int maxTableDefinitionBytes = 16 * 1024 * 1024)
+        int maxTableDefinitionBytes = 16 * 1024 * 1024,
+        EncryptionWorkBudget? workBudget = null,
+        CancellationToken cancellationToken = default)
     {
 #if NET8_0_OR_GREATER
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxTableDefinitionBytes);
@@ -66,7 +71,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         string passwordOptionName = writable
             ? EncryptionManager.WriterPasswordOption
             : EncryptionManager.ReaderPasswordOption;
-        IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, password, passwordOptionName, maxEncryptionSpinCount, maxEncryptionInfoBytes);
+        IPageCodec pageKeys = PageCodecFactory.Open(header, this.Format.Kind, password, passwordOptionName, maxEncryptionSpinCount, maxEncryptionInfoBytes, workBudget: workBudget, cancellationToken: cancellationToken);
         this.Pages = writable
             ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize)
             : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType);
@@ -107,9 +112,10 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="path">Path to the database file, or empty when opened from a stream.</param>
     /// <param name="leaveOpen">When <see langword="true"/>, the caller retains ownership of <paramref name="stream"/> and it will not be disposed.</param>
     /// <param name="options">The configured encryption resource budgets.</param>
+    /// <param name="cancellationToken">Cancels password derivation during open.</param>
     /// <returns>The read-only file.</returns>
-    internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, AccessOptions? options = null)
-        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024));
+    internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, AccessOptions? options = null, CancellationToken cancellationToken = default)
+        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), workBudget: (options as AccessReaderOptions)?.EncryptionWorkBudget, cancellationToken: cancellationToken);
 
     /// <summary>
     /// Opens the writer's file over a <see cref="Pager"/>, which writes and
@@ -126,10 +132,11 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="pager">Receives the file's pager; the file owns and disposes it.</param>
     /// <param name="cacheSize">The writer frame-cache capacity.</param>
     /// <param name="options">The configured encryption resource budgets.</param>
+    /// <param name="cancellationToken">Cancels password derivation during open.</param>
     /// <returns>The writer's file.</returns>
-    internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager, int cacheSize = 256, AccessOptions? options = null)
+    internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager, int cacheSize = 256, AccessOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024), options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024));
+        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024), options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), cancellationToken: cancellationToken);
         pager = (Pager)file.Pages;
         return file;
     }

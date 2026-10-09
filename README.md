@@ -32,7 +32,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 | ✅ | **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Select`/`Include`+`ThenInclude` (relationship-inferred eager load) and async terminals (`ToListAsync`/`CountAsync`/`FirstAsync`/…); results are async-only |
 | ✅ | **Async&#8209;first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ | **Stream&#8209;based&nbsp;I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
-| Partial | **Encryption** | Read/update existing Jet4 and ACE Agile encrypted files; other formats have restrictions. See [Encryption Support](#encryption-support). |
+| Partial | **Encryption** | Native JET/ACE encrypted reads, updates, creation and password maintenance; provider evidence varies. See [Encryption Support](#encryption-support). |
 | ✅ | **Schema&nbsp;features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access-file read-through plus ODBC/text catalog entries) |
 | ✅ | **Complex&nbsp;columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ | **Calculated&nbsp;columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
@@ -161,12 +161,12 @@ Writers accept the password through `AccessWriterOptions`.
 
 | Format | Current support |
 |---|---|
-| Jet4 password protection and RC4 encryption | Read and update existing files, verified with Microsoft DAO-created fixtures. |
-| ACE Agile encryption | Read and update existing files; Microsoft fixture coverage includes AES-256-CBC/SHA-512. |
-| Jet3 RC4 encryption | Read and update coverage uses an independent upstream fixture. Native Access 97 password and mutation checks remain incomplete. |
-| ACE Standard and RC4 CryptoAPI providers | Not supported. |
+| Jet4 password protection and RC4 encryption | Read, update, create, encrypt/decrypt and change passwords, including native security identity remasking. |
+| ACE Agile encryption | Read and update AES-128/192/256 with CBC or CFB8 and SHA-1/256/384/512; create and maintain using AES-256-CBC/SHA-512. Native DAO evidence covers CBC/SHA-1 and CBC/SHA-512; other combinations have specification-vector tests. |
+| Jet3 RC4 encryption and password protection | Native code-page passwords, page updates and maintenance; DAO 3.6 fixtures and read/write/compact checks cover Access 97. |
+| ACE Standard and RC4 CryptoAPI providers | Read and update native pages. DAO verifies RC4 and compatibility AES files; the 50,000-iteration Standard variant has independent algorithm vectors but still needs a native ACE producer fixture. |
 
-New databases are **unencrypted**, even if you supply a password in their creation options. Adding or removing encryption and changing passwords are unsupported. Updates to supported encrypted files preserve their existing password and key.
+`AccessWriter.CreateDatabaseAsync` encrypts a new database when `AccessWriterOptions.Password` is nonempty, before writing the initial database image. Use `AccessDatabaseEncryption.EncryptAsync`, `DecryptAsync` and `ChangePasswordAsync` for file maintenance. These operations stream pages into an adjacent temporary file and replace the original after successful completion. Ordinary updates preserve the original encryption provider and key. Password maintenance preserves JET password-only mode; ACE password changes use fresh AES-256-CBC/SHA-512 encryption.
 
 Office encrypted compound packages are not supported database inputs. See the [native encryption evidence](docs/design/native-encryption-evidence.md) for tested formats and remaining gaps, and [encryption options](docs/operations.md#encryption-options) for resource limits and linked-database credentials.
 

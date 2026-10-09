@@ -57,13 +57,14 @@ internal static class DaoPowerShellHostResolver
     }
 
     private static IReadOnlyList<string> GetCandidateHostPaths(string windowsDirectory, bool preferWow64Host)
-        => GetCandidateHostPaths(windowsDirectory, Environment.Is64BitOperatingSystem, Environment.Is64BitProcess, preferWow64Host);
+        => GetCandidateHostPaths(windowsDirectory, Environment.Is64BitOperatingSystem, Environment.Is64BitProcess, preferWow64Host, Environment.GetEnvironmentVariable("JETDATABASEWRITER_DAO_POWERSHELL"));
 
     internal static IReadOnlyList<string> GetCandidateHostPaths(
         string windowsDirectory,
         bool is64BitOperatingSystem,
         bool is64BitProcess,
-        bool preferWow64Host)
+        bool preferWow64Host,
+        string? configuredHost = null)
     {
         if (string.IsNullOrWhiteSpace(windowsDirectory))
         {
@@ -77,7 +78,12 @@ internal static class DaoPowerShellHostResolver
             ? BuildPowerShellPath(windowsDirectory, "SysWOW64")
             : null;
 
-        var candidates = new List<string>(capacity: 2);
+        var candidates = new List<string>(capacity: 3);
+        if (!string.IsNullOrWhiteSpace(configuredHost))
+        {
+            candidates.Add(configuredHost);
+        }
+
         if (preferWow64Host)
         {
             if (wow64HostPath is not null)

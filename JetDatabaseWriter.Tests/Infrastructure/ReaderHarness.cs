@@ -78,7 +78,7 @@ internal sealed class ReaderHarness : IAsyncDisposable
         options ??= new AccessReaderOptions { UseLockFile = false };
         string path = stream is FileStream fileStream ? fileStream.Name : string.Empty;
         byte[] header = await EncryptionManager.ReadOpenHeaderPageAsync(stream, cancellationToken).ConfigureAwait(false);
-        var database = DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options);
+        var database = DatabaseFile.ForReader(stream, header, options.Password, path, leaveOpen, options, cancellationToken);
         try
         {
             return new ReaderHarness(database, new ReaderServices(database, options));

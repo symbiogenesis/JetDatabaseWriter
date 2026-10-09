@@ -421,7 +421,7 @@ public sealed class EncryptionOpenProbeTests(DatabaseCache db) : IClassFixture<D
         {
             backing.Position = 0;
             Assert.Equal(AccessEncryptionFormat.AccdbAgile, encryption);
-            Assert.Equal(encryption, await AccessWriter.DetectEncryptionFormatAsync(backing, ct));
+            Assert.Equal(encryption, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(backing, ct));
         }
 
         backing.Position = 0;

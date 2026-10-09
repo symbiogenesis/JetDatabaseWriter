@@ -18,7 +18,7 @@ public sealed class NativeJet3EncryptionTests
     public async Task NativeJet3_ReadsUpstreamRowsWithoutPassword()
     {
         string path = Path.Combine(TestDatabases.EncryptedRoot, "UpstreamJet3Rc4.mdb");
-        Assert.Equal(AccessEncryptionFormat.Jet3Rc4, await AccessWriter.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
+        Assert.Equal(AccessEncryptionFormat.Jet3Rc4, await AccessDatabaseEncryption.DetectEncryptionFormatAsync(path, TestContext.Current.CancellationToken));
         await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
         DataTable rows = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(2, rows.Rows.Count);

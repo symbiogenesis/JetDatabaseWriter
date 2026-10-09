@@ -2,10 +2,10 @@ namespace JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Identifies the on-disk encryption layout of a JET / ACE database.
-/// Returned by <see cref="AccessWriter.DetectEncryptionFormatAsync(string, System.Threading.CancellationToken)"/>
-/// for inspection. Existing encrypted databases can be read and updated while
-/// preserving their native encryption. Creating, removing or changing native
-/// password protection is currently unsupported.
+/// Returned by <see cref="AccessDatabaseEncryption.DetectEncryptionFormatAsync(string, System.Threading.CancellationToken)"/>
+/// for inspection. Existing encrypted databases retain their native provider
+/// during page updates. Creation and file maintenance use native JET RC4 or
+/// ACE Agile; historical ACE providers remain available for reads and updates.
 /// </summary>
 public enum AccessEncryptionFormat
 {
@@ -26,4 +26,10 @@ public enum AccessEncryptionFormat
 
     /// <summary>Native Jet3 RC4 page encryption using its unmasked encoding key. Its single-byte header password is independent of page encryption.</summary>
     Jet3Rc4 = 3,
+
+    /// <summary>Access-native RC4 CryptoAPI encryption with an embedded binary provider descriptor.</summary>
+    AccdbRc4CryptoApi = 4,
+
+    /// <summary>Access-native ECMA-376 Standard AES page encryption with an embedded binary provider descriptor.</summary>
+    AccdbStandard = 5,
 }
