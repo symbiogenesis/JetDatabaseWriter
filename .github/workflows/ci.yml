@@ -23,7 +23,7 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
-# Every job runs on Windows: the suite uses Windows paths and byte-range locks, and the
+# The full suite runs on Windows: it uses Windows paths and byte-range locks, and the
 # DAO round-trip tests skip themselves when Access is not installed. The jobs run in
 # parallel. The analyzers take most of a Release build, so four jobs share them, and the
 # test legs build without them.
@@ -166,3 +166,35 @@ jobs:
       - name: Publish and run generated consumers
         shell: pwsh
         run: ./scripts/test-aot.ps1
+
+  encryption-replacement:
+    name: Encryption replacement (${{ matrix.os }}, ${{ matrix.tf }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        tf: [net10.0, net8.0]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
+          cache: true
+          cache-dependency-path: '*/packages.lock.json'
+      - name: Restore
+        run: dotnet restore JetDatabaseWriter.Tests --locked-mode
+      - name: Build
+        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:RunAnalyzers=false
+      - name: Test native replacement durability
+        run: >-
+          dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }}
+          --filter-class JetDatabaseWriter.Tests.Encryption.AtomicReplacementTests
+          JetDatabaseWriter.Tests.Encryption.ReplacementCancellationTests
+          JetDatabaseWriter.Tests.Encryption.ReplacementDurabilityTests

@@ -50,7 +50,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Databases\**\*.mdb;Databases\**\*.accdb;Databases\**\*.docx" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Databases\**\*.mdw;Databases\**\*.mdb;Databases\**\*.accdb;Databases\**\*.docx" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Cfb\**\*.cfs;Cfb\**\*.doc;Cfb\**\*.xls;Cfb\**\*.ppt;Cfb\**\*.suo" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

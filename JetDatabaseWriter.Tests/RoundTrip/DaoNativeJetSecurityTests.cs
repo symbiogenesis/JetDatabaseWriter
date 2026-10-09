@@ -19,6 +19,7 @@ public sealed class DaoNativeJetSecurityTests
     [InlineData("NativeJet4Rc4.mdb", "Changed123", 305419896u)]
     [InlineData("NativeJet4Rc4.mdb", "", 0u)]
     [InlineData("NativeJet4Password.mdb", "Changed123", 305419896u)]
+    [InlineData("NativeJet4Workgroup.mdb", "Changed123", 305419896u)]
     public async Task SecurityTransformation_DaoAuthenticatesWritesAndCompacts(string fixture, string password, uint encodingKey)
     {
         ArgumentNullException.ThrowIfNull(password);
@@ -41,16 +42,37 @@ public sealed class DaoNativeJetSecurityTests
         await File.WriteAllBytesAsync(session.SourcePath, image, TestContext.Current.CancellationToken);
         await using (WriterHarness harness = await WriterHarness.OpenAsync(session.SourcePath, new AccessWriterOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken))
         {
-            await NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, oldHeader, newHeader, TestContext.Current.CancellationToken);
+            await NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, harness.Services.Indexes, oldHeader, newHeader, TestContext.Current.CancellationToken);
         }
 
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
         string destination = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.CompactedPath);
         string connection = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(password.Length == 0 ? string.Empty : ";PWD=" + password);
         string locale = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(";LANGID=0x0409;CP=1252;COUNTRY=0" + (password.Length == 0 ? string.Empty : ";PWD=" + password));
+        string workgroupSetup = string.Empty;
+        if (fixture == "NativeJet4Workgroup.mdb")
+        {
+            string workgroup = Path.Combine(session.WorkDir, "SyntheticWorkgroup.mdw");
+            File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeJetWorkgroup.mdw"), workgroup);
+            workgroupSetup = $$"""
+                $engine.SystemDB = {{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(workgroup)}}
+                $engine.DefaultUser = 'NativeOwner'
+                $engine.DefaultPassword = 'Owner123'
+                $check = $engine.CreateWorkspace('AccountCheck', 'NativeOwner', 'Owner123', 2)
+                try {
+                    $names = @(foreach ($user in $check.Users) { $user.Name }) | Sort-Object
+                    if (($names -join ',') -ne 'admin,Creator,Engine,NativeOwner') { throw 'Workgroup contains unexpected user accounts.' }
+                    $groups = @(foreach ($group in $check.Groups) { $group.Name }) | Sort-Object
+                    if (($groups -join ',') -ne 'Admins,Users') { throw 'Workgroup contains unexpected groups.' }
+                } finally { $check.Close() }
+                """;
+        }
+
         string script = $$"""
+            {{workgroupSetup}}
             $db = $engine.OpenDatabase({{source}}, $false, $false, {{connection}})
             try {
+                Write-Output ("OWNER=" + $db.Containers('Tables').Documents('T').Owner)
                 $rs = $db.OpenRecordset('SELECT Count(*) AS N FROM [T]')
                 try { Write-Output "ROWS=$($rs.Fields('N').Value)" } finally { $rs.Close() }
                 $db.Execute("UPDATE [T] SET [Label]='DAO password update' WHERE [Id]=7", 128)
@@ -60,6 +82,11 @@ public sealed class DaoNativeJetSecurityTests
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoEngineScript(script, TimeSpan.FromMinutes(2));
         Assert.True(result.ExitCode == 0, $"DAO failed: {result.StdOut}\n{result.StdErr}");
         Assert.Contains("ROWS=1", result.StdOut, StringComparison.Ordinal);
+        if (fixture == "NativeJet4Workgroup.mdb")
+        {
+            Assert.Contains("OWNER=NativeOwner", result.StdOut, StringComparison.Ordinal);
+        }
+
         await using AccessReader reader = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken);
         using System.Data.DataTable rows = await reader.ReadTableAsync("T", cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal("DAO password update", Assert.Single(rows.Select())["Label"]);

@@ -15,8 +15,9 @@ using JetDatabaseWriter.Transactions;
 /// <summary>Maintains native database encryption by replacing a fully staged file.</summary>
 /// <remarks>Close readers and writers before maintenance. Data is processed one page at a time;
 /// the original remains unchanged until replacement. The staging file is adjacent to the original,
-/// and only the current operation's staging file is cleaned up. The file is flushed before replacement;
-/// persistence of the directory entry after power loss depends on the host filesystem.</remarks>
+/// and incomplete staging is cleaned up before commit. A commit failure retains private recovery copies
+/// named in the IOException data. Linux and macOS flush the containing directory around replacement;
+/// Windows flushes file contents. Power-loss persistence depends on the host filesystem.</remarks>
 public static class AccessDatabaseEncryption
 {
     /// <summary>Detects native page encryption without modifying the database.</summary>
@@ -103,7 +104,7 @@ public static class AccessDatabaseEncryption
             {
                 if (database.Format.UsesHeaderMaskedSecuritySids)
                 {
-                    await NativeJetSecurity.RewriteAsync(database.Format, database.TableDefs, database.OwnedPages, pager, sourceHeader, targetHeader, cancellationToken: cancellationToken, bootstrap: true).ConfigureAwait(false);
+                    await NativeJetSecurity.RewriteAsync(database.Format, database.TableDefs, database.OwnedPages, pager, new WriterServices(database, pager, options, pager.ByteRangeLock).Indexes, sourceHeader, targetHeader, cancellationToken: cancellationToken, bootstrap: true).ConfigureAwait(false);
                 }
 
                 await pager.FlushAsync(toDisk: false, cancellationToken).ConfigureAwait(false);
@@ -127,6 +128,7 @@ public static class AccessDatabaseEncryption
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
+        path = Path.GetFullPath(path);
         Guard.RequireExistingDatabaseFile(path, nameof(path));
         options ??= new AccessWriterOptions();
         options.Validate();
@@ -164,7 +166,7 @@ public static class AccessDatabaseEncryption
                     {
                         if (database.Format.UsesHeaderMaskedSecuritySids)
                         {
-                            await NativeJetSecurity.RewriteAsync(database.Format, database.TableDefs, database.OwnedPages, pager, sourceHeader, targetHeader, cancellationToken: token).ConfigureAwait(false);
+                            await NativeJetSecurity.RewriteAsync(database.Format, database.TableDefs, database.OwnedPages, pager, new WriterServices(database, pager, options, pager.ByteRangeLock).Indexes, sourceHeader, targetHeader, cancellationToken: token).ConfigureAwait(false);
                         }
 
                         await pager.FlushAsync(toDisk: false, token).ConfigureAwait(false);

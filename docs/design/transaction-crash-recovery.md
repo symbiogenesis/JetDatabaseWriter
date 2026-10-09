@@ -37,7 +37,7 @@ A transaction copies the entire original database and hashes the committed file.
 
 The process-crash protocol does not establish power-loss atomicity: creating or deleting the journal changes directory entries, and this implementation does not flush the containing directory. On Linux, a file `fsync` alone does not guarantee its directory entry; a separate directory flush is required ([Linux fsync documentation](https://www.man7.org/linux/man-pages/man2/fsync.2.html)). Windows file flushing pushes buffered data toward the device, but filesystem and storage ordering still require separate verification ([Microsoft file flushing documentation](https://learn.microsoft.com/en-us/windows/win32/fileio/flushing-system-buffered-i-o-data-to-disk)).
 
-Initial database creation, physical shrinking, replacement and non-file streams have separate lifecycles. No explicit persistent journal-stream API is provided for custom streams.
+Initial database creation, physical shrinking, replacement and non-file streams have separate lifecycles. Physical shrinking has bounded spillable raw-tail undo for in-process write, truncate and flush failures; that temporary undo is not a persistent crash-recovery journal. No explicit persistent journal-stream API is provided for custom streams.
 
 ## Regression evidence
 

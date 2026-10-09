@@ -5,7 +5,7 @@
 [![Targets](https://img.shields.io/badge/targets-net10.0%20%7C%20netstandard2.1-blue)](#nuget-target-compatibility)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Fully managed .NET library for reading and writing Microsoft Access (JET/ACE) databases — no OleDB, ODBC, or ACE/Jet driver installation required.
+.NET library for reading and writing Microsoft Access (JET/ACE) databases — no OleDB, ODBC, or ACE/Jet driver installation required.
 
 Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from your .NET applications and tools, without installing Microsoft Access.
 
@@ -24,7 +24,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 
 | Support | Feature | Description |
 |:---:|---|---|
-| ✅ | **Pure&nbsp;managed&nbsp;.NET** | No OleDB, ODBC, or ACE/Jet driver — runs anywhere .NET runs |
+| ✅ | **Managed&nbsp;database&nbsp;engine** | No OleDB, ODBC, or ACE/Jet driver; file maintenance uses host filesystem primitives |
 | Partial | **JET/ACE&nbsp;formats** | Jet3, Jet4 and ACE `.mdb` / `.accdb` files; feature and generation coverage is incomplete. Pre-Jet3 formats are not supported. See the [validation matrix](docs/design/writer-disk-format-validation-matrix.md). |
 | ✅ | **Read&nbsp;&&nbsp;write** | Create databases and tables; insert/update/delete rows; add/drop/rename columns |
 | ✅ | **Typed&nbsp;values** | `int`, `DateTime`, `decimal`, `Guid`, MEMO, OLE, Hyperlink — not just strings |
@@ -32,7 +32,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 | ✅ | **IQueryable** | `Query<T>(...)` is an `IQueryable<T>` with `Where`/`OrderBy`/`Skip`/`Take`/`Select`/`Include`+`ThenInclude` (relationship-inferred eager load) and async terminals (`ToListAsync`/`CountAsync`/`FirstAsync`/…); results are async-only |
 | ✅ | **Async&#8209;first** | `ValueTask<T>` API, `OpenAsync(...)`, `await using` (`IAsyncDisposable`), `IProgress<T>` callbacks |
 | ✅ | **Stream&#8209;based&nbsp;I/O** | Open from any seekable `Stream` (files, byte arrays, blobs, embedded resources) |
-| Partial | **Encryption** | Native JET/ACE encrypted reads, updates, creation and password maintenance; provider evidence varies. See [Encryption Support](#encryption-support). |
+| ✅ | **Encryption** | Built-in JET RC4 and ACE CryptoAPI, Standard AES and Agile AES: reads, updates, creation and password maintenance. See [Encryption Support](#encryption-support) for provider and platform scope. |
 | ✅ | **Schema&nbsp;features** | Indexes, primary & foreign keys with referential integrity (cascade update/delete), linked tables (Access-file read-through plus ODBC/text catalog entries) |
 | ✅ | **Complex&nbsp;columns** | Read/write attachments and multi-value columns (ACCDB) |
 | ✅ | **Calculated&nbsp;columns** | ACCDB expression-column metadata, cached values, and a row-local expression evaluator |
@@ -161,20 +161,20 @@ Writers accept the password through `AccessWriterOptions`.
 
 | Format | Current support |
 |---|---|
-| Jet4 password protection and RC4 encryption | Read, update, create, encrypt/decrypt and change passwords, including native security identity remasking. |
-| ACE Agile encryption | Read and update AES-128/192/256 with CBC or CFB8 and SHA-1/256/384/512; create and maintain using AES-256-CBC/SHA-512. Native DAO evidence covers CBC/SHA-1 and CBC/SHA-512; other combinations have specification-vector tests. |
+| Jet4 password protection and RC4 encryption | Read, update, create, encrypt/decrypt and change passwords, including native security identity remasking and rebuilding indexed Owner/SID fields. |
+| ACE Agile encryption | Read and update AES-128/192/256 with CBC or CFB8 and SHA-1/256/384/512; create and maintain using AES-256-CBC/SHA-512. Microsoft-compacted fixtures cover AES-192, CFB8, SHA-256 and SHA-384 as well as the default algorithms, including distinct password and page parameters. |
 | Jet3 RC4 encryption and password protection | Native code-page passwords, page updates and maintenance; DAO 3.6 fixtures and read/write/compact checks cover Access 97. |
-| ACE Standard and RC4 CryptoAPI providers | Read and update native pages. DAO verifies RC4 and compatibility AES files; the 50,000-iteration Standard variant has independent algorithm vectors but still needs a native ACE producer fixture. |
+| ACE Standard and RC4 CryptoAPI providers | Read and update native pages, including 50,000-iteration Standard and compatibility AES. Microsoft DAO read/write/compact checks and a native Standard output fixture verify interoperability. |
 
 `AccessWriter.CreateDatabaseAsync` encrypts a new database when `AccessWriterOptions.Password` is nonempty, before writing the initial database image. Use `AccessDatabaseEncryption.EncryptAsync`, `DecryptAsync` and `ChangePasswordAsync` for file maintenance. These operations stream pages into an adjacent temporary file and replace the original after successful completion. Ordinary updates preserve the original encryption provider and key. Password maintenance preserves JET password-only mode; ACE password changes use fresh AES-256-CBC/SHA-512 encryption.
 
-Office encrypted compound packages are not supported database inputs. See the [native encryption evidence](docs/design/native-encryption-evidence.md) for tested formats and remaining gaps, and [encryption options](docs/operations.md#encryption-options) for resource limits and linked-database credentials.
+The support status covers the built-in providers listed above. Third-party extensible providers, non-AES Agile ciphers and Office encrypted compound packages are not supported database inputs. Custom workgroup identities are preserved; the library does not authenticate workgroup users. See the [native encryption evidence](docs/design/native-encryption-evidence.md) for fixture provenance and the [encryption options](docs/operations.md#encryption-options) for resource limits, replacement recovery and platform durability limits.
 
 ## Limitations
 
 - **Keep the file stable while reading, and use one writer per file.** A reader caches data and does not refresh it or provide a consistent snapshot of a changing file. Reopen it after changes. Lockfiles help coordinate access but do not exclude every external writer on every platform.
 - **Crash recovery requires the database and its journal.** File transactions recover interrupted writes on writer reopen; keep the adjacent `.jdw-journal` with the database until recovery finishes. Custom streams and power loss have narrower guarantees. See [transaction guarantees](docs/operations.md#transactions).
-- **Access feature coverage varies.** Some encryption providers, index formats and expressions are unsupported. For example, a default or validation rule using `DLookUp` refuses the write. See the [compatibility evidence](docs/design/writer-disk-format-validation-matrix.md) and [detailed limits](docs/operations.md#limitations).
+- **Access feature coverage varies.** Third-party encryption providers, some index formats and some expressions are unsupported. For example, a default or validation rule using `DLookUp` refuses the write. See the [compatibility evidence](docs/design/writer-disk-format-validation-matrix.md) and [detailed limits](docs/operations.md#limitations).
 - **Access size and encoding constraints still apply.** Tables are limited to 255 columns; rows must fit the supported page layout. Jet3 text must fit the database's code page. Large MEMO and binary OLE values can use separate pages; see [size limits](docs/operations.md#table-and-row-size).
 - **Storage maintenance is limited.** `ShrinkDatabaseAsync` removes free pages at the end of a file; it does not perform a full Access Compact & Repair. Deleted data is not securely erased by default; see [storage maintenance](docs/writing.md#storage-maintenance-and-secure-erase).
 - **This is a data library.** It supports LINQ queries, but does not execute SQL, saved Access queries, forms, reports, macros or VBA, and does not provide an ODBC driver. Complete preservation of Access application objects during edits is not established.

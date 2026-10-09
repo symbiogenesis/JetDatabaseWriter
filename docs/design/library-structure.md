@@ -312,12 +312,16 @@ JetDatabaseWriter/
 │   ├── IPageCodec.cs                      (owned per-page cipher contract)
 │   ├── PageCodecFactory.cs
 │   ├── NoPageCodec.cs
+│   ├── NativeStandardPageCodec.cs         (native ACE Standard AES and RC4 CryptoAPI)
+│   ├── NativeJetSecurity.cs               (security identity remasking and index rebuilding)
+│   ├── EncryptionFileReplacement.cs       (bounded staging and cancellation)
+│   ├── EncryptionReplacementCommit.cs     (private recovery copies and OS flush ordering)
 │   ├── NativeAgilePageCodec.cs
 │   ├── Jet4Rc4PageCodec.cs
 │   ├── EncryptionConverter.cs             (format conversion — add/remove/change encryption)
-│   ├── OfficeCryptoAgile.cs               (ECMA-376 Agile encryption — AES-256-CBC, SHA-512)
+│   ├── OfficeCryptoAgile.cs               (native Agile AES/CBC/CFB8 with SHA-1/256/384/512)
 │   ├── OfficeCryptoPrimitives.cs          (shared Office Crypto hashing, HMAC, AES helpers)
-│   ├── OfficeCryptoStandard.cs            (MS-OFFCRYPTO §2.3.6 Standard — AES-128-CBC, SHA-1)
+│   ├── OfficeCryptoStandard.cs            (Standard AES derivation and package-vector helpers)
 │   └── Models/
 │       └── OfficeEncryptedPackage.cs
 │
@@ -434,7 +438,7 @@ The library follows a **Layered Codec / Service Architecture** — the dominant 
 | **Codec / Domain Services** | `ValueEncoding/`, `ValueDecoding/`, `DelimitedText/`, `Indexes/`, `Catalog/`, `Schema/`, `Relationships/`, `ComplexColumns/`, `Tables/`, `Queries/` | Encode/decode values, rows, index keys, and linked text records; read/write system tables; run the reader's and writer's table workflows; translate and run LINQ queries; manage feature-specific catalog artifacts |
 | **API / Orchestration** | Root (`AccessReader`, `AccessWriter`, `AccessBase`, `ReaderServices`, `WriterServices`), `Interfaces/`, public `Models/`, public `Enums/` | User-facing operations, options, DTOs, and composition |
 
-Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only what is genuinely its own: opening or creating the database (header read, Agile unwrap, lock-file slot, and for the writer the byte-range lock), disposal order, and, for the writer, the refusal of flat-Agile files on open, the Agile re-wrap, the auto-commit scope, and the static encryption helpers. Every other public method forwards to one service:
+Both `AccessReader` and `AccessWriter` are **facades** (GoF). Each keeps only what is genuinely its own: opening or creating the database (header read, native page-codec authentication, lock-file slot, and for the writer the byte-range lock), disposal order, and the writer's auto-commit scope. `AccessDatabaseEncryption` composes bounded native conversion and security remasking for separately staged file maintenance. Every other public method forwards to one service:
 
 - reader: `TableReader`, `IndexRowReader`, `SchemaReader`, or `ComplexItemReader`; `FromIndex` and `Query<T>` return handles built over those services;
 - writer: `TableDataWriter`, `TableSchemaEditor`, `RelationshipManager`, `ComplexColumnManager`, `LinkedTableManager`, `PageAllocator`, or `TransactionLifecycle`, inside the auto-commit scope.
@@ -450,7 +454,7 @@ Each facade owns one **`DatabaseFile`**, which owns the file's parts and their l
 
 `TDefCodec` owns declared index counts, column descriptors and names, index-section offsets and logical index names. Cached `TDefImage` parsing retains independent logical bytes, immutable structural projections and uninterpreted descriptor bytes; `CopyBytes` returns a copy. `TableCatalog` resolves a `TableSchema` keyed by the exact image and catalog generation, loading persisted properties only when metadata or calculated columns require them. The constraint registry reads those same properties. Layouts protect their column and CLR-type collections, while row counts come from root-only counter reads. System-table rewrites set their final row count directly. The test assembly enables structural cache-hit verification; tests that measure cache I/O disable it on their own readers. Model-driven schema edits remain separate work.
 
-`StreamPageStore` serializes seek-based reads, writes, truncation and flushes with its own gate; eligible reader file handles use positional reads. `MemoryPageStore` provides the same storage contract over memory. `StoreCapabilities` describes physical-file backing, positional reads, durable flush, atomic commit, byte-range locks and in-place pages. The page file's `IoGate` protects only the journal and never spans a store operation. Page codecs (`NoPageCodec`, `NativeAgilePageCodec`, `Jet4Rc4PageCodec`) own cipher state and preserve page 0. The writer's `PageCacheSize` defaults to 256; zero disables frame retention. Cache reads return owned copies, writes update retained frames, and explicit-transaction attachment, rollback, failed writes and truncation invalidate them. Private statement attachment and successful replay retain coherent frames. Whole-file owned-page discovery uses `PageReadHint.NoCache`.
+`StreamPageStore` serializes seek-based reads, writes, truncation and flushes with its own gate; eligible reader file handles use positional reads. `MemoryPageStore` provides the same storage contract over memory. `StoreCapabilities` describes physical-file backing, positional reads, durable flush, atomic commit, byte-range locks and in-place pages. The page file's `IoGate` protects only the journal and never spans a store operation. Page codecs (`NoPageCodec`, `NativeAgilePageCodec`, `NativeStandardPageCodec`, `Jet4Rc4PageCodec`) own cipher state and preserve page 0. The writer's `PageCacheSize` defaults to 256; zero disables frame retention. Cache reads return owned copies, writes update retained frames, and explicit-transaction attachment, rollback, failed writes and truncation invalidate them. Private statement attachment and successful replay retain coherent frames. Whole-file owned-page discovery uses `PageReadHint.NoCache`.
 A contiguous allocation reserves logical page numbers with readable zero images, including reused free pages, without queuing provisional zero writes. Reservations remain available independently of the frame cache and across dirty-page spills; the caller must initialize or release every reserved page. Only initialized images enter physical write-back. Transaction reservations consume the page budget and disappear on rollback.
 `IPageSource.PageCount` is the one end of file: inside a transaction the `Pager` includes the pages the journal has appended past the physical end, so every page-number bounds check, and every caller that numbers new pages before appending them, sees the transaction's own pages. `AccessBase` holds the `DatabaseFile`, exposes the public format properties over it, and nothing else. The facade object is never handed to a service, so at runtime the facade and its services share the file parts.
 
@@ -548,7 +552,7 @@ Mapping/          → Infrastructure/
 LongValues/       → Pages/, Schema/
 Pages/            → Catalog/, Encryption/, Schema/, Transactions/, Infrastructure/; JetFormat
 Transactions/     → Catalog/, Pages/, Schema/, Infrastructure/; JetFormat
-Encryption/       → CompoundFile/, Schema/, Transactions/, Infrastructure/
+Encryption/       → CompoundFile/, Catalog/, Indexes/, Pages/, Schema/, Transactions/, ValueDecoding/, Infrastructure/
 ValueDecoding/    → Catalog/, LongValues/, Mapping/, Pages/, Schema/, Infrastructure/; JetFormat
 ValueEncoding/    → Catalog/, LongValues/, Pages/, Schema/, ValueDecoding/; JetFormat
 Schema/           → Catalog/, Encryption/, Indexes/, Pages/, Infrastructure/; JetFormat
@@ -734,7 +738,7 @@ Internal access goes to the internal types, not through the facades. Tests that 
 
 ### 1. Thin facades over composition roots and one database file
 
-`AccessWriter` and `AccessReader` are **facades**. Every public method forwards to one service; the facade keeps only opening and creating databases, the lock-file lifetime, disposal order, and for the writer the byte-range lock, the refusal of flat-Agile files on open, the auto-commit scope, the Agile-encryption re-wrap, and the static encryption helpers.
+`AccessWriter` and `AccessReader` are **facades**. Every public method forwards to one service; the facade keeps only opening and creating databases, the lock-file lifetime, disposal order, and for the writer the byte-range lock and the auto-commit scope. `AccessDatabaseEncryption` handles staged native encryption maintenance; encrypted files use the same page services as plaintext files.
 
 Both used to be the shared context their collaborators reached through. Writer managers took `AccessWriter` and found their siblings through internal `Relationships`, `ComplexColumns`, and `Constraints` properties. Reader helpers (`ComplexColumnReader`, `LongValueDecoder`, the index queries, the LINQ provider, `IncludeLoader`, and the reader half of `LinkedTableManager`) took `AccessReader` itself, and some called its public methods back. Page I/O lived in the `AccessBase` base class, so even a service that only read pages held the facade object. `ReaderServices` and `WriterServices` now wire each graph explicitly. Page I/O moved out of `AccessBase` into `PageFile`/`Pager`, which services receive directly, and the user-table catalog moved into the shared `TableCatalog`.
 

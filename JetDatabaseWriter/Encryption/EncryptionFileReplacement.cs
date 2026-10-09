@@ -4,7 +4,6 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Infrastructure;
 
 /// <summary>Stages one file-maintenance operation beside its destination.</summary>
 internal static class EncryptionFileReplacement
@@ -17,10 +16,13 @@ internal static class EncryptionFileReplacement
     internal static async ValueTask ReplaceAsync(string path, Func<Stream, CancellationToken, ValueTask> write, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        path = Path.GetFullPath(path);
         string temporary = path + ".reenc-" + Guid.NewGuid().ToString("N") + ".tmp";
+        bool stagingCreated = false;
         try
         {
-            FileStream staging = FileStreamFactory.Open(temporary, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, FileOptions.Asynchronous);
+            FileStream staging = EncryptionPrivateFile.Create(temporary);
+            stagingCreated = true;
             try
             {
                 await write(staging, cancellationToken).ConfigureAwait(false);
@@ -39,7 +41,11 @@ internal static class EncryptionFileReplacement
         }
         catch
         {
-            TryDelete(temporary);
+            if (stagingCreated)
+            {
+                TryDelete(temporary);
+            }
+
             throw;
         }
 

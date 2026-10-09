@@ -35,3 +35,12 @@ D265DCF02F7D552486229B8C67A627EF3752FE6802B02FD2D2D485FCFBBAC5DE
 CA1C0EBB465553361B9034E696D4081DF0A2D41918F820060325B3CA634EB69B
 MIT license; see adjacent MSOFFCRYPTO-LICENSE.txt.
 An Office package algorithm oracle does not establish flat ACE producer interoperability.
+NativeAceStandard.accdb:
+Emitted by Microsoft DAO.DBEngine.120 CompactDatabase on 2026-10-08,
+ACEDAO.DLL 16.0.20430.20146. Bootstrap encryption used the independently
+sourced EncryptionInfo verifier from Upstream-OfficeStandard.docx above;
+no Word document content is present. Database plaintext is the synthetic
+NativeAceAgile fixture. NativeStandardDatabaseTests reproduces the seed,
+library update, native DAO update and native compact procedure.
+SHA-256: 349745691382E10D8F5E5946378FAFD2BA20FF33B616082E65742F45B288E1BA
+Full data and provider provenance: docs/design/native-encryption-evidence.md.

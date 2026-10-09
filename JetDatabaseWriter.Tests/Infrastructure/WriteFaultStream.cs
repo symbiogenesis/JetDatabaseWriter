@@ -20,6 +20,8 @@ internal sealed class WriteFaultStream : MemoryStream
     private bool partialWriteFault;
     private int flushesUntilFault;
     private bool persistentWriteFault;
+    private bool truncateFault;
+    private bool truncateBeforeFault;
     private int writesUntilCancel;
     private int readsUntilCancel;
     private CancellationTokenSource? cancellation;
@@ -67,6 +69,33 @@ internal sealed class WriteFaultStream : MemoryStream
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(nthFlush);
         this.flushesUntilFault = nthFlush;
         this.Faulted = false;
+    }
+
+    /// <summary>Arms a one-shot physical truncation failure.</summary>
+    /// <param name="afterTruncate">Whether to truncate the stream before throwing.</param>
+    public void FailOnTruncate(bool afterTruncate)
+    {
+        this.truncateFault = true;
+        this.truncateBeforeFault = afterTruncate;
+        this.Faulted = false;
+    }
+
+    /// <inheritdoc/>
+    public override void SetLength(long value)
+    {
+        if (this.truncateFault)
+        {
+            this.truncateFault = false;
+            this.Faulted = true;
+            if (this.truncateBeforeFault)
+            {
+                base.SetLength(value);
+            }
+
+            throw new IOException("Injected physical truncation fault.");
+        }
+
+        base.SetLength(value);
     }
 
     /// <summary>Arms a write failure that also prevents undo writes.</summary>

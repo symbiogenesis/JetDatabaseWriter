@@ -222,11 +222,6 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
                 break;
             }
 
-            if (secure)
-            {
-                await this.WriteFreedPageAsync(candidatePage, secure: true, cancellationToken).ConfigureAwait(false);
-            }
-
             newTotalPages--;
         }
 
@@ -236,7 +231,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         }
 
         long newLength = newTotalPages * format.PageSize;
-        await pager.SetLengthAsync(newLength, cancellationToken).ConfigureAwait(false);
+        await pager.ShrinkTailAsync(newLength, secure, cancellationToken).ConfigureAwait(false);
 
         return totalPages - newTotalPages;
     }

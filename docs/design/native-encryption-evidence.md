@@ -47,7 +47,7 @@ are not combined. Distinct stored identities may therefore legitimately
 converge when the placeholder is resolved.
 
 The regression pins the fixture's placeholder and checks that deriving it does
-not modify page zero. Workgroup variants still require separate native evidence.
+not modify page zero. The synthetic custom-owner workgroup oracle below supplies separate native evidence.
 
 ## JET4
 
@@ -63,8 +63,9 @@ security metadata on pages 17 and 18 in the characterization database.
 The native maintenance implementation remasks `MSysObjects.Owner` and
 `MSysACEs.SID` with the old and new header-derived RC4 keys. The decrypted data
 pages match DAO `NewPassword` output byte for byte. Physical index descriptors
-are validated before remasking; indexed security identity columns are refused.
-The ordinary fixtures do not establish every custom workgroup configuration.
+are validated before remasking; indexes containing Owner or SID are rebuilt from
+the remasked rows. Synthetic index regressions check leaf keys and row references;
+the ordinary and custom-owner fixtures do not establish every workgroup configuration.
 
 `NativeJet4PasswordChanged.mdb` was produced on 2026-10-08 by DAO120
 `NewPassword("Native123", "Changed123")` from `NativeJet4Rc4.mdb`.
@@ -90,32 +91,61 @@ unchanged page 0. On both target frameworks, DAO120 reads, writes and compacts
 the native JET4 RC4 and ACE Agile fixtures after this maintenance. Separate
 write, torn-write and flush fault tests restore the original Agile ciphertext
 and reuse the writer successfully; these are library rollback checks, not
-native crash-recovery evidence. Separate library subprocess tests now verify exact ciphertext restoration after process termination through the persistent sidecar protocol; this does not establish Access-native or power-loss recovery. Other algorithms and physical shrink faults
-still need their own coverage.
+native crash-recovery evidence. Separate library subprocess tests now verify exact ciphertext restoration after process termination through the persistent sidecar protocol; this does not establish Access-native or power-loss recovery. Additional native algorithm fixtures and physical shrink fault coverage are described below.
 
 ## File replacement guarantees
 
-The internal replacement helper writes and flushes a unique adjacent temporary
-file before renaming it over the destination. Pre-canceled operations stop
-before creating the temporary file. A refused rename cleans up only that
-operation's file; unrelated temporary files remain untouched. Windows handles
-without delete sharing refuse replacement; Unix readers may retain the old
-inode while new opens see the replacement. The containing directory is not
-flushed, so this does not establish persistence of the new name after power
-loss. Native maintenance uses bounded page conversion into the final target
-format and retains a delete-shared source handle through replacement. A pending
-rollback journal is refused before staging; callers recover it through the writer.
-New encrypted database creation transforms the bounded bootstrap in memory
-before its first destination write. A JET password-only source stays password-only
-after a password change; ACE password changes use fresh AES-256-CBC/SHA-512.
+Native maintenance streams pages into a unique adjacent staging file. Staging
+and retained originals use private permissions. Pre-canceled operations stop
+before creating the file; conversion/cancellation failures clean up only that
+operation's incomplete staging file. After successful conversion, the staging
+file and a separate copy of the original are flushed before `File.Replace`.
+The original backup needs approximately one additional source-file-sized disk
+allocation during commit. Successful replacement preserves Windows destination
+ACL semantics; it does not change the source provider until the staged image
+is ready.
+
+On Linux and macOS the parent directory is flushed before and after replacement,
+and again after original-backup cleanup. On Windows the replacement contents
+are flushed; there is no supported directory-fsync equivalent used here.
+These are OS ordering guarantees, not proof of hardware power-loss persistence.
+The same `File.Replace` path is used by both library targets; an unsupported
+platform fails before replacement. Windows handles without delete sharing
+refuse replacement; Unix readers can retain the previous inode.
+
+Commit refusal/failure retains complete staged output and the original backup
+when available. `IOException.Data["JetDatabaseWriter.ReplacementFile"]` identifies
+retained staging, and `["JetDatabaseWriter.OriginalFile"]` identifies the flushed
+original. An `["JetDatabaseWriter.IncompleteOriginalFile"]` entry identifies an
+owned partial backup whose cleanup failed, not a recoverable original.
+After rename, inspect the destination as well as these paths before
+retrying. Injected failures at prepared, renamed and committed boundaries verify
+retained bytes. They do not simulate process termination or power interruption.
+Other operations' temporary files are never cleaned up.
+
+Native maintenance retains a delete-shared source handle through replacement.
+A pending rollback journal is refused before staging; recover it through the
+writer. New encrypted creation transforms the bounded bootstrap in memory before
+its first destination write. A JET password-only source stays password-only after
+a password change; ACE password changes use fresh AES-256-CBC/SHA-512.
 
 ## Evidence limits
 
-The fixtures do not establish the native ACE 50,000-iteration Standard variant,
-every Agile algorithm combination, custom workgroup security, directory-entry
-power-loss durability or complete hostile-input resistance. Required work remains
-in `docs/todo.md` (E1, E2, F3, F4, F6, S1-S2 and I15). Library-generated encryption
-round trips alone are not native interoperability oracles.
+The built-in encryption support status covers JET3/JET4 RC4/password protection,
+ACE RC4 CryptoAPI, Standard/compatibility AES and Agile AES with the algorithms
+listed in the README. Third-party extensible modules and non-AES Agile ciphers
+remain unsupported. The Office extensible descriptor identifies an arbitrary
+module and opaque provider data; it is not a universal key derivation contract.
+A native ACE specimen and that provider's implementation contract are required.
+See [MS-OFFCRYPTO extensible encryption](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-offcrypto/a922e41e-63f2-4701-8521-7f5d221a7ce0).
+
+Workgroup identity preservation is not workgroup-user authentication. Native
+engine evidence is specific to the pinned fixtures, not every possible custom
+security configuration or every Cartesian product of algorithms. Windows
+namespace power-loss durability, native crash semantics for physical shrink,
+and complete hostile-input resistance remain separate gaps in `docs/todo.md`
+(E1, E2, F3, F6, S1-S2 and I5). Library-generated round trips alone are not native
+interoperability oracles.
 
 ## Upstream JET3 oracle
 
@@ -161,13 +191,74 @@ and compacts each after library page mutation on both target frameworks.
 Native Standard uses AES ECB with a page-specific derived key; its page addressing
 differs from Office package encryption. The pinned
 `Upstream-OfficeStandard.docx` and its published plaintext validate AES Standard
-primitives independently, but an Office package is not a native ACE producer
-fixture. Attribution, source revision and hashes are in `THIRD-PARTY-NOTICES.txt`.
+primitives independently, and the separate native Standard fixture below validates the flat ACE provider. Attribution, source revision and hashes are in `THIRD-PARTY-NOTICES.txt`.
 The implementation follows [MS-OFFCRYPTO](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-offcrypto/).
 
 Agile additionally accepts AES-192, CFB8, SHA-256 and SHA-384, including distinct
 password and page algorithms. Independent specification vectors cover those
-combinations; they are not advertised as Microsoft-produced fixture evidence.
+combinations; the separately identified Microsoft-compacted fixtures below establish native output evidence.
 Password hashing checks cancellation within the loop and consumes an aggregate
 reader/linked-source iteration budget before deriving a key. Descriptor tests
 refuse duplicate roles, incorrect namespaces and inconsistent algorithm sizes.
+
+## Microsoft-compacted Standard and mixed Agile providers
+
+These fixtures were emitted on 2026-10-08 by x64 `DAO.DBEngine.120`,
+`ACEDAO.DLL` version 16.0.20430.20146. Their inputs were synthetic: native
+`NativeAceAgile.accdb` plaintext/schema encrypted with an independently sourced
+Standard verifier or an independent deterministic Agile builder. Library DML
+was followed by a Microsoft DAO update and `CompactDatabase` into a new file.
+The pinned bytes are those native compact outputs, not the synthetic seeds.
+This establishes Microsoft acceptance and native output compatibility, without
+claiming that the Access UI created the original provider configuration.
+
+| Fixture | Password | Provider | Bytes | SHA-256 |
+|---|---|---|---:|---|
+| NativeAceStandard.accdb | Password1234_ | Standard AES-128/SHA-1, 50,000 iterations, descriptor 4.2/fAES | 184320 | 349745691382E10D8F5E5946378FAFD2BA20FF33B616082E65742F45B288E1BA |
+| NativeAceAgileMixedCbc.accdb | vector | Password AES-192-CBC/SHA-256; pages AES-256-CBC/SHA-384 | 200704 | FB86804BD61188FDE4C684BC538D75E3ECE4FD7998BAC045D371B532B56A313E |
+| NativeAceAgileMixedCfb8.accdb | vector | Password AES-128-CFB8/SHA-384; pages AES-192-CFB8/SHA-512 | 200704 | 18D9535FD1C8AD88435669B659397B9BC7099C2E468A505D1DA8275F658A6DD5 |
+
+The mixed Agile fixtures use seven password iterations solely to keep the
+synthetic test bootstrap inexpensive; new production encryption still uses
+100,000. They contain `T` rows 7 ("Native encrypted row") and 8 ("DAO updated"),
+and `Added` row 1. Standard contains `T` rows 7 ("Native encrypted row") and
+8 ("DAO Standard row"). Native compact retains the requested provider and
+algorithms; Standard changes descriptor version 3.2 to 4.2. Ordinary library
+updates preserve page zero exactly. The guarded producer regressions verify
+native reads, writes and compacted rows; unguarded fixture tests run in CI.
+Public password change, decrypt and re-encrypt tests also reopen through DAO.
+
+## Custom-owner JET4 workgroup oracle
+
+`NativeJet4Workgroup.mdb` and `NativeJet4WorkgroupChanged.mdb` are 77824-byte
+DAO36 outputs (DAO360.dll version 10.0.26100.5074) from a synthetic workgroup
+user `NativeOwner`, PID `NativeOwnerPID`, user password `Owner123`. Database
+passwords are `Native123` and `Changed123`. Only synthetic data and identities
+are committed. The bundled `NativeJetWorkgroup.mdw` is created from scratch by
+ADOX with `Jet OLEDB:Create System Database=True`; it contains only the built-in
+`admin`, `Creator`, `Engine`, `Admins` and `Users` principals plus `NativeOwner`.
+`scripts/create-native-workgroup-encryption-fixtures.ps1` reproduces the corpus
+with x86 Windows PowerShell, Microsoft Jet OLE DB and DAO36.
+
+| Fixture | SHA-256 |
+|---|---|
+| NativeJet4Workgroup.mdb | A84688D1EE0F394C8C1B36AC8996749B662DD8268AB0A099F5DE69B507FC5D10 |
+| NativeJet4WorkgroupChanged.mdb | 6FE02A19F4F24F299EF908F40D1A87F3A1952BF375B2F4B144647D98EC29DDFB |
+| NativeJetWorkgroup.mdw | D89E1574E8A1F764746244A3D28CD3161EC893790560F4B403E75B0CC36C7F24 |
+
+DAO reports the custom owner before and after `NewPassword`; the stored owner
+identity is longer than the built-in two-byte principals. Library password
+maintenance matches every decrypted page of the native password-change oracle.
+Indexed Owner/SID tests additionally validate rebuilt entry counts, page ownership and key ordering;
+they are synthetic index cases, not a claim that DAO created those indexes.
+
+## Physical shrink failure handling
+
+Physical tail shrink keeps raw before-images of the removed pages and spills
+them to a private temporary undo file above the bounded memory threshold.
+Secure erase, truncate and flush failures restore the original bytes and length;
+encrypted ciphertext is restored exactly. Tests cover write refusal, torn writes,
+erase flush, post-truncate flush and failure before or after truncation for
+CBC/SHA-256 and CFB8/SHA-384 variants. The writer remains usable after successful
+undo and is faulted if undo fails. This is in-process rollback; physical shrinking
+has no new claim of persistent crash recovery.

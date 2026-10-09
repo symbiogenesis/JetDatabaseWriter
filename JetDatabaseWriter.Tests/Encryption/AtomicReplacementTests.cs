@@ -29,6 +29,7 @@ public sealed class AtomicReplacementTests
             Assert.Equal(replacement, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
             Assert.Equal(original, await File.ReadAllBytesAsync(otherTemporaryPath, TestContext.Current.CancellationToken));
             Assert.Equal(otherTemporaryPath, Assert.Single(Directory.GetFiles(directory, "*.tmp")));
+            Assert.Empty(Directory.GetFiles(directory, "*.original"));
         }
         finally
         {
@@ -95,8 +96,11 @@ public sealed class AtomicReplacementTests
             {
                 if (OperatingSystem.IsWindows())
                 {
-                    await Assert.ThrowsAsync<IOException>(async () =>
+                    IOException error = await Assert.ThrowsAsync<IOException>(async () =>
                         await EncryptionManager.ReplaceFileAtomicAsync(path, replacement, TestContext.Current.CancellationToken));
+                    string staged = Assert.IsType<string>(error.Data[EncryptionManager.ReplacementFileDataKey]);
+                    Assert.Equal(replacement, await File.ReadAllBytesAsync(staged, TestContext.Current.CancellationToken));
+                    File.Delete(staged);
                     Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
                 }
                 else

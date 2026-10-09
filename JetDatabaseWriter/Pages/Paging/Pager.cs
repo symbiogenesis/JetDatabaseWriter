@@ -271,6 +271,84 @@ internal sealed class Pager : PageFile
         }
     }
 
+    /// <summary>Preserves raw tail images until secure erase, truncation and flush succeed.</summary>
+    /// <param name="length">The retained physical length.</param>
+    /// <param name="secure">Whether freed pages must be erased before truncation.</param>
+    /// <param name="cancellationToken">Cancellation before and during preparation.</param>
+    /// <returns>The asynchronous completion.</returns>
+    /// <exception cref="AggregateException">Both shrink and restoration failed.</exception>
+    internal async ValueTask ShrinkTailAsync(long length, bool secure, CancellationToken cancellationToken)
+    {
+        await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        StatementUndoLog? undo = null;
+        try
+        {
+            await this.DrainDirtyPagesAsync().ConfigureAwait(false);
+            long originalLength = this.Store.Length;
+            undo = new StatementUndoLog(originalLength, fileBacked: true, Math.Max(64, this.cacheSize / 2));
+            for (long offset = length; offset < originalLength; offset += this.PageSize)
+            {
+                await undo.CaptureAsync(this.Store, offset, this.PageSize, cancellationToken).ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            this.InvalidateAll();
+            undo.HasWrites = true;
+            if (secure)
+            {
+                byte[] freed = new byte[this.PageSize];
+                freed[0] = Constants.PageTypes.Freed;
+                freed[1] = 0x01;
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(freed.AsSpan(2), checked((ushort)(this.PageSize - 16)));
+                for (long offset = length; offset < originalLength; offset += this.PageSize)
+                {
+                    byte[] encoded = this.PrepareEncryptedPageForWrite(offset / this.PageSize, freed);
+                    await this.Store.WriteAsync(offset, encoded, CancellationToken.None).ConfigureAwait(false);
+                }
+
+                await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            await this.Store.SetLengthAsync(length, CancellationToken.None).ConfigureAwait(false);
+            await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+            undo.HasWrites = false;
+            this.zeroReservations.RemoveWhere(pageNumber => pageNumber >= length / this.PageSize);
+            this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
+        }
+        catch (Exception failure)
+        {
+            if (undo?.HasWrites == true)
+            {
+                try
+                {
+                    await undo.RestoreAsync(this.Store, durable: true).ConfigureAwait(false);
+                }
+                catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
+                {
+                    this.IsFaulted = true;
+                    throw new AggregateException("Physical shrink failed and its original database image could not be restored.", failure, undoFailure);
+                }
+            }
+
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                if (undo is not null)
+                {
+                    await undo.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                this.InvalidateAll();
+                _ = this.frameGate.Release();
+            }
+        }
+    }
+
     /// <summary>Truncates to a page count and discards every cached frame.</summary>
     /// <param name="pageCount">The remaining page count.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

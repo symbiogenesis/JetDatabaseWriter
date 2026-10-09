@@ -53,7 +53,7 @@ git -c push.followTags=false push origin main:main
 gh run list --workflow ci.yml --branch main --commit <commit>
 ```
 
-Record the run URL, exact tested SHA and verdict. Inspect all seven jobs: four Release analyzer/package jobs, one ordinary test job per target framework, and the generated trimmed/NativeAOT consumer job. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
+Record the run URL, exact tested SHA and verdict. Inspect all eleven jobs: four Windows Release analyzer/package jobs, one Windows ordinary test job per target framework, the Windows generated trimmed/NativeAOT consumer job, and focused encryption replacement tests on Linux and macOS for both target frameworks. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
 
 For a completed run, the reporting mode of the existing helper prints every step result, build summaries, both test summaries and failing-test messages without pushing or dispatching:
 
