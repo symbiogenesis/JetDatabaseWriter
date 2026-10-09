@@ -168,6 +168,7 @@ public sealed class ShrinkCrashRecoveryTests
             File.WriteAllText(this.Name + ".crashed", boundary);
             using var process = Process.GetCurrentProcess();
             process.Kill();
+            process.WaitForExit(); // Kill is asynchronous; do not run cleanup while termination is pending.
         }
     }
 }

@@ -187,6 +187,7 @@ public sealed class TransactionCrashRecoveryTests
             await File.WriteAllTextAsync(path + ".crashed", "commit completed", TestContext.Current.CancellationToken);
             using var process = Process.GetCurrentProcess();
             process.Kill();
+            await process.WaitForExitAsync(CancellationToken.None); // Do not unwind before the process is terminated.
         }
     }
 
@@ -234,6 +235,7 @@ public sealed class TransactionCrashRecoveryTests
                 await File.WriteAllTextAsync(this.Name + ".crashed", this.Phase, cancellationToken);
                 using var process = Process.GetCurrentProcess();
                 process.Kill();
+                await process.WaitForExitAsync(CancellationToken.None); // Do not unwind before the process is terminated.
             }
         }
     }

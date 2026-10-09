@@ -31,6 +31,7 @@ public sealed class ReplacementCrashRecoveryTests
                     File.WriteAllText(childPath + ".crashed", boundary);
                     using var process = Process.GetCurrentProcess();
                     process.Kill();
+                    process.WaitForExit(); // Kill is asynchronous; do not run cleanup while termination is pending.
                 }
             });
             Assert.Fail("The requested replacement boundary was never interrupted.");
