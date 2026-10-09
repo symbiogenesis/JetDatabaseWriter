@@ -103,7 +103,7 @@ public static class AccessDatabaseEncryption
             {
                 if (database.Format.UsesHeaderMaskedSecuritySids)
                 {
-                    await NativeJetSecurity.RewriteAsync(database, pager, sourceHeader, targetHeader, cancellationToken: cancellationToken, bootstrap: true).ConfigureAwait(false);
+                    await NativeJetSecurity.RewriteAsync(database.Format, database.TableDefs, database.OwnedPages, pager, sourceHeader, targetHeader, cancellationToken: cancellationToken, bootstrap: true).ConfigureAwait(false);
                 }
 
                 await pager.FlushAsync(toDisk: false, cancellationToken).ConfigureAwait(false);
@@ -164,7 +164,7 @@ public static class AccessDatabaseEncryption
                     {
                         if (database.Format.UsesHeaderMaskedSecuritySids)
                         {
-                            await NativeJetSecurity.RewriteAsync(database, pager, sourceHeader, targetHeader, cancellationToken: token).ConfigureAwait(false);
+                            await NativeJetSecurity.RewriteAsync(database.Format, database.TableDefs, database.OwnedPages, pager, sourceHeader, targetHeader, cancellationToken: token).ConfigureAwait(false);
                         }
 
                         await pager.FlushAsync(toDisk: false, token).ConfigureAwait(false);

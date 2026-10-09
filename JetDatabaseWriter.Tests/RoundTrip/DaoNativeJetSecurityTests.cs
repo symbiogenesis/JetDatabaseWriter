@@ -41,7 +41,7 @@ public sealed class DaoNativeJetSecurityTests
         await File.WriteAllBytesAsync(session.SourcePath, image, TestContext.Current.CancellationToken);
         await using (WriterHarness harness = await WriterHarness.OpenAsync(session.SourcePath, new AccessWriterOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken))
         {
-            await NativeJetSecurity.RewriteAsync(harness.Database, harness.Pager, oldHeader, newHeader, TestContext.Current.CancellationToken);
+            await NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, oldHeader, newHeader, TestContext.Current.CancellationToken);
         }
 
         string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);

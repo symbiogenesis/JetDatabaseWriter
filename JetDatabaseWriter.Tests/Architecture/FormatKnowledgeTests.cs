@@ -15,13 +15,14 @@ using Xunit;
 /// of comparing <see cref="DatabaseFormat"/> values. A format value may be
 /// named only in JetFormat.cs, in the enum itself (<c>Enums/</c>), in the
 /// encryption code, which classifies a file and unmasks its header before
-/// any profile exists, and in the facades, which take a format from the
-/// caller. The scan reads the library's source files from the repository.
+/// any profile exists, and in the public reader, writer and encryption
+/// facades, which accept a caller's format or classify native headers.
+/// The scan reads the library's source files from the repository.
 /// </summary>
 public sealed partial class FormatKnowledgeTests
 {
     /// <summary>The library-relative paths that may name a format value: files, or folders ending in a slash.</summary>
-    private static readonly string[] AllowedPaths = ["JetFormat.cs", "Enums/", "Encryption/", "AccessReader.cs", "AccessWriter.cs"];
+    private static readonly string[] AllowedPaths = ["JetFormat.cs", "Enums/", "Encryption/", "AccessReader.cs", "AccessWriter.cs", "AccessDatabaseEncryption.cs"];
 
     [Fact]
     public async Task DatabaseFormatValues_AreNamedOnlyByTheFormatProfile()

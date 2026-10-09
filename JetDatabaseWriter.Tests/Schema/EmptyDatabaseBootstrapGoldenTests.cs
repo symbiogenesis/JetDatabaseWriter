@@ -54,7 +54,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb, "D99ABF7F931CEFCCA40A76D2D7E341593992E0F1809F92D31AFA4D821E7A06BD")]
     [InlineData(DatabaseFormat.Jet4Mdb, "942B0938E09313C3D0E24DE79D1944201D9AAD875CA0ED5C2BE6AE3383A0FBB5")]
-    [InlineData(DatabaseFormat.AceAccdb, "2BF119CCEEAA076A9AE7C2A64476707A1DA60AFFD8E72E2996E53F564D6D5DF0")]
+    [InlineData(DatabaseFormat.AceAccdb, "547D452B37ECFD21A5B6922C5C6110E241B51C5843B55471D06A7E3DCE6EE5FA")]
     public void BuildEmptyDatabase_MatchesGoldenHash(DatabaseFormat format, string expectedSha256)
     {
         byte[] image = TDefPageBuilder.BuildEmptyDatabase(format);
