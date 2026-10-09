@@ -34,6 +34,20 @@ public sealed class CreateDatabaseTests
         "RmtInfoLong", "Lv", "LvProp", "LvModule", "LvExtra",
     ];
 
+    private static async ValueTask<AccessWriter> CreateObservedAsync(string path, DatabaseFormat format, AccessWriterOptions? options, Action<string, string> observer, CancellationToken cancellationToken)
+    {
+        path = Path.GetFullPath(path);
+        await DatabaseCreationPublication.PublishAsync(
+            path,
+            async (staging, token) =>
+            {
+                await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(staging, format, options, leaveOpen: true, token);
+            },
+            observer,
+            cancellationToken);
+        return await AccessWriter.OpenAsync(path, options, cancellationToken);
+    }
+
     // ── CreateDatabaseAsync (Stream, Jet4Mdb) ─────────────────────────────────
 
     [Fact]
@@ -373,7 +387,7 @@ public sealed class CreateDatabaseTests
 
         try
         {
-            await Assert.ThrowsAsync<IOException>(() => AccessWriter.CreateDatabaseCoreAsync(path, DatabaseFormat.AceAccdb, null, Observe, TestContext.Current.CancellationToken).AsTask());
+            await Assert.ThrowsAsync<IOException>(() => CreateObservedAsync(path, DatabaseFormat.AceAccdb, null, Observe, TestContext.Current.CancellationToken).AsTask());
             Assert.False(File.Exists(path));
             Assert.NotNull(stagingPath);
             Assert.False(File.Exists(stagingPath));
@@ -402,7 +416,7 @@ public sealed class CreateDatabaseTests
 
         try
         {
-            await Assert.ThrowsAnyAsync<IOException>(() => AccessWriter.CreateDatabaseCoreAsync(path, DatabaseFormat.AceAccdb, null, Observe, TestContext.Current.CancellationToken).AsTask());
+            await Assert.ThrowsAnyAsync<IOException>(() => CreateObservedAsync(path, DatabaseFormat.AceAccdb, null, Observe, TestContext.Current.CancellationToken).AsTask());
             Assert.Equal([42], await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
             Assert.NotNull(stagingPath);
             Assert.False(File.Exists(stagingPath));
@@ -431,7 +445,7 @@ public sealed class CreateDatabaseTests
 
         try
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => AccessWriter.CreateDatabaseCoreAsync(path, DatabaseFormat.AceAccdb, null, Observe, cancellation.Token).AsTask());
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CreateObservedAsync(path, DatabaseFormat.AceAccdb, null, Observe, cancellation.Token).AsTask());
             Assert.False(File.Exists(path));
             Assert.NotNull(stagingPath);
             Assert.False(File.Exists(stagingPath));
@@ -463,7 +477,7 @@ public sealed class CreateDatabaseTests
         try
         {
             var options = new AccessWriterOptions("Creation123") { PageCacheSize = 0 };
-            await using (AccessWriter created = await AccessWriter.CreateDatabaseCoreAsync(path, format, options, Observe, TestContext.Current.CancellationToken))
+            await using (AccessWriter created = await CreateObservedAsync(path, format, options, Observe, TestContext.Current.CancellationToken))
             {
                 Assert.NotNull(created);
             }

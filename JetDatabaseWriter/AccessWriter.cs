@@ -159,18 +159,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <exception cref="IOException">Thrown when a database file already exists at <paramref name="path"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="options"/> has a <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> of zero or less. No file is created.</exception>
     /// <exception cref="JetIOException">The destination database file already exists.</exception>
-    public static ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
-        => CreateDatabaseCoreAsync(path, format, options, observer: null, cancellationToken);
-
-    /// <summary>Creates a database with an operation-scoped staging boundary observer.</summary>
-    /// <param name="path">The destination path.</param>
-    /// <param name="format">The database format.</param>
-    /// <param name="options">Writer options.</param>
-    /// <param name="observer">An optional observer for focused publication fault tests.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The initialized writer.</returns>
-    /// <exception cref="JetIOException">The destination database already exists.</exception>
-    internal static async ValueTask<AccessWriter> CreateDatabaseCoreAsync(string path, DatabaseFormat format, AccessWriterOptions? options, Action<string, string>? observer, CancellationToken cancellationToken)
+    public static async ValueTask<AccessWriter> CreateDatabaseAsync(string path, DatabaseFormat format, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(path, nameof(path));
         cancellationToken.ThrowIfCancellationRequested();
@@ -187,9 +176,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             path,
             async (staging, token) =>
             {
-                await using AccessWriter writer = await CreateDatabaseAsync(staging, format, options, leaveOpen: true, token).ConfigureAwait(false);
+                await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(staging, format, options, leaveOpen: true, token).ConfigureAwait(false);
             },
-            observer,
+            observer: null,
             cancellationToken).ConfigureAwait(false);
 
         // Publication is committed. Reopen failure must retain the complete database.
