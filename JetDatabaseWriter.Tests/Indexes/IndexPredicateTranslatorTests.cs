@@ -103,6 +103,32 @@ public sealed class IndexPredicateTranslatorTests
     }
 
     [Fact]
+    public void LossyColumnConversions_AreNotPushed()
+    {
+        Assert.Empty(Extract(r => unchecked((byte)r.Id) == 1).Predicates);
+        Assert.Empty(Extract(r => checked((byte)r.Id) == 1).Predicates);
+        Assert.Empty(Extract(r => unchecked((byte)(long)r.Id) < 2).Predicates);
+        Assert.Empty(Extract(r => (int)(float)r.Id == 16_777_216).Predicates);
+        Assert.Empty(Extract(r => (double)(float)r.Id == 16_777_216.0).Predicates);
+#pragma warning disable CS8629 // Nullable unwrapping must stay residual so its exception is preserved.
+        Assert.Empty(Extract(r => (int)r.Optional == 1).Predicates);
+#pragma warning restore CS8629
+    }
+
+    [Fact]
+    public void LosslessColumnConversions_ArePushed()
+    {
+#pragma warning disable IDE0004 // Explicit casts exercise conversion nodes in the predicate tree.
+        Assert.Single(Extract(r => (long)r.Id == 1L).Predicates);
+        Assert.Single(Extract(r => (double)r.Id == 1.0).Predicates);
+        Assert.Single(Extract(r => (decimal)r.Id == 1m).Predicates);
+        Assert.Single(Extract(r => (long?)r.Id == 1L).Predicates);
+        Assert.Single(Extract(r => (long?)r.Optional == 1L).Predicates);
+        Assert.Single(Extract(r => (int)r.Day == 1).Predicates);
+#pragma warning restore IDE0004
+    }
+
+    [Fact]
     public void OrBranch_IsNotPushed()
     {
         RowCriteria criteria = Extract(r => r.Id == 1 || r.Name == "x");

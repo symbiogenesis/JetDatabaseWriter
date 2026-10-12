@@ -32,7 +32,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="maxEntries">The maximum number of catalog entries to inspect.</param>
     /// <exception cref="JetLimitationException">The complex discovery metadata budget is exceeded.</exception>
-    /// <exception cref="JetCorruptDataException">The catalog is missing a required field or a live row has malformed required values.</exception>
+    /// <exception cref="JetCorruptDataException">The catalog is missing a required field, a live row has malformed required values, or its row directory and overflow pointers cannot be completely traversed.</exception>
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
@@ -46,47 +46,59 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
         }
 
         var result = new List<CatalogRow>();
-        await ownedPages.ForEachLiveTableRowAsync(
-            2,
-            (row, _) =>
-            {
-                if (result.Count >= maxEntries)
+        try
+        {
+            await ownedPages.ForEachLiveTableRowAsync(
+                2,
+                (row, _) =>
                 {
-                    throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Catalog discovery exceeds MaxComplexDiscoveryEntries.");
-                }
+                    if (result.Count >= maxEntries)
+                    {
+                        throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Catalog discovery exceeds MaxComplexDiscoveryEntries.");
+                    }
 
-                byte[] page = row.Page;
-                RowLocation location = row.Location;
-                if (!this.CanDecodeRow(page, location))
-                {
-                    throw CorruptRow(location, "The catalog row layout cannot be decoded.");
-                }
+                    byte[] page = row.Page;
+                    RowLocation location = row.Location;
+                    if (!this.CanDecodeRow(page, location))
+                    {
+                        throw CorruptRow(location, "The catalog row layout cannot be decoded.");
+                    }
 
-                string name = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn);
-                if (string.IsNullOrEmpty(name)
-                    || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn), out long id)
-                    || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn), out int objectType)
-                    || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn), out long flags))
-                {
-                    throw CorruptRow(location, "A required catalog row value is missing or malformed.");
-                }
+                    string name = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn);
+                    if (string.IsNullOrEmpty(name)
+                        || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn), out long id)
+                        || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn), out int objectType)
+                        || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn), out long flags))
+                    {
+                        throw CorruptRow(location, "A required catalog row value is missing or malformed.");
+                    }
 
-                long parentId = parentIdColumn is null
-                    ? 0
-                    : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, parentIdColumn));
-                result.Add(new CatalogRow(
-                    PageNumber: location.PageNumber,
-                    RowIndex: location.RowIndex,
-                    Name: name,
-                    ObjectType: objectType,
-                    Flags: flags,
-                    TDefPage: CatalogValueReader.TdefPageFromId(id),
-                    Id: id,
-                    ParentId: parentId,
-                    IsDecoded: true));
-                return new ValueTask<bool>(true);
-            },
-            cancellationToken).ConfigureAwait(false);
+                    long parentId = parentIdColumn is null
+                        ? 0
+                        : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, parentIdColumn));
+                    result.Add(new CatalogRow(
+                        PageNumber: location.PageNumber,
+                        RowIndex: location.RowIndex,
+                        Name: name,
+                        ObjectType: objectType,
+                        Flags: flags,
+                        TDefPage: CatalogValueReader.TdefPageFromId(id),
+                        Id: id,
+                        ParentId: parentId,
+                        IsDecoded: true));
+                    return new ValueTask<bool>(true);
+                },
+                cancellationToken,
+                requireCompleteRows: true).ConfigureAwait(false);
+        }
+        catch (JetCorruptDataException error) when (error.ErrorCode == JetErrorCode.MalformedValue)
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptCatalog,
+                "A live MSysObjects catalog row cannot be traversed.",
+                error.ErrorInfo with { TableName = Constants.SystemTableNames.Objects },
+                error);
+        }
 
         return result;
     }

@@ -10,6 +10,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
@@ -385,10 +386,10 @@ internal sealed class RowDecodePlan
         ref bool needsLongValue)
     {
         bool isOle = column.Type == OleType;
-        if (length >= Constants.LongValue.HeaderSize
-            && (page[start + 3] & Constants.LongValue.StorageModeMask) == Constants.LongValue.InlineStorageMode)
+        if (LongValueDescriptor.TryRead(page.AsSpan(start, length), out LongValueDescriptor descriptor)
+            && descriptor.IsInline)
         {
-            int valueLength = JetTypeInfo.ReadUInt24LittleEndian(page.AsSpan(start, 3));
+            int valueLength = descriptor.Length;
             int valueStart = start + Constants.LongValue.HeaderSize;
             longValueDecoder.ValidateStoredLength(valueLength);
             if (valueLength > length - Constants.LongValue.HeaderSize)

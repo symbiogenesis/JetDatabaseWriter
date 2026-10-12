@@ -50,7 +50,7 @@ acceptance of variable Complex storage.
 
 ## Long-value integrity
 
-Stored MEMO/OLE payload lengths are exact. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw InvalidDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.
+Stored MEMO/OLE payload lengths are exact. Every read path uses all 30 native length bits, including typed inline decoding; the upper two bits select storage mode. The declared length is checked against `MaxLongValueBytes` before copying inline bytes. Resource-limit refusals propagate in strict and lenient modes. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw InvalidDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.
 
 Mixed scalar/OLE typed scans use the same row-layout and column-slice validation as projected rows. The compiled hybrid plan assigns scalar auto-properties and records only bound OLE slices. Each enumerator owns its slice array; cached plans contain no mutable row state. The scan retains the data or resolved overflow page through every awaited LVAL read, and resolves all bound OLE byte arrays before yielding the target. Arrays contain the stored bytes without OLE unwrapping or content interpretation; null and empty remain distinct.
 
@@ -366,5 +366,8 @@ offset. Deleted slots may alias offsets, and deleted overflow targets remain
 valid. An unresolved overflow pointer, a live row too short for its
 column-count field, or a layout that cannot be decoded raises a contextual
 "MalformedValue" corruption error before row updates or schema rewrites. The
-snapshot cannot omit that row and reinsert only the readable rows. Public read
-APIs retain their own decode-fault policy.
+snapshot cannot omit that row and reinsert only the readable rows. Ordinary
+public table reads retain their own decode-fault policy. Catalog identity scans
+require complete `MSysObjects` row directories and resolved overflow chains
+regardless of `StrictParsing`; traversal failures become `CorruptCatalog` with
+table, page and reason context before any table list or system lookup is cached.

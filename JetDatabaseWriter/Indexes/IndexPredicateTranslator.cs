@@ -32,6 +32,13 @@ using JetDatabaseWriter.Models;
 /// to index key columns case-insensitively.
 /// </para>
 /// <para>
+/// Column-side conversions are stripped only when they preserve every value and null:
+/// numeric widenings, enum conversions with lossless underlying types, nullable lifting,
+/// and reference upcasts. Narrowing, rounding, nullable unwrapping and user-defined
+/// conversions stay in the residual predicate, because seeking the original column could
+/// miss a converted match or suppress an exception.
+/// </para>
+/// <para>
 /// The translator does not know the columns' types. Before it plans a seek, the reader keeps
 /// only the comparisons <see cref="IndexSeekFilter"/> finds a seek answers exactly, for
 /// example not an enum property bound to a Text column, whose operand is the enum's integer.
@@ -234,12 +241,50 @@ internal static class IndexPredicateTranslator
     private static Expression StripConvert(Expression expression)
     {
         Expression current = expression;
-        while (current is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
+        while (current is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
+            && IsLosslessColumnConversion(unary))
         {
             current = unary.Operand;
         }
 
         return current;
+    }
+
+    private static bool IsLosslessColumnConversion(UnaryExpression conversion)
+    {
+        Type? fromNullable = Nullable.GetUnderlyingType(conversion.Operand.Type);
+        Type? toNullable = Nullable.GetUnderlyingType(conversion.Type);
+        if (fromNullable is not null && toNullable is null)
+        {
+            // Unwrapping null throws; an index seek could skip the row that must throw.
+            return false;
+        }
+
+        Type from = fromNullable ?? conversion.Operand.Type;
+        Type to = toNullable ?? conversion.Type;
+        if (from.IsEnum)
+        {
+            from = Enum.GetUnderlyingType(from);
+        }
+
+        if (to.IsEnum)
+        {
+            to = Enum.GetUnderlyingType(to);
+        }
+
+        bool widening = ClosureValueReader.IsLosslessWidening(from, to);
+        if (conversion.Method is not null)
+        {
+            // Integral-to-decimal conversions use an operator method. Other user-defined
+            // conversions can change values even when their source and target types agree.
+            return widening
+                && conversion.Method.DeclaringType == typeof(decimal)
+                && conversion.Method.Name == "op_Implicit";
+        }
+
+        return from == to
+            || widening
+            || (!from.IsValueType && !to.IsValueType && to.IsAssignableFrom(from));
     }
 
     private sealed class ParameterUsageFinder(ParameterExpression parameter) : ExpressionVisitor

@@ -8,6 +8,7 @@ using System.Linq.Expressions;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Linq;
 using JetDatabaseWriter.Models;
 using Xunit;
 
@@ -110,6 +111,59 @@ public sealed class InferredIndexReadTests
         await AssertSameRowsAsync(reader, p => p.Score >= 30, p => p.Score >= nullableLow);
         await AssertSameRowsAsync(reader, p => p.Name == "Bob", p => p.Name == name);
         await AssertSameRowsAsync(reader, p => p.Id == 3, p => p.Id == id);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task NarrowingColumnCast_ReturnsEveryMatch(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await BuildPeopleDatabaseAsync(format);
+        await AddWrappingIdsAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        IReadOnlyList<Person> all = await ScanAllAsync(reader);
+
+        Expression<Func<Person, bool>> equality = p => unchecked((byte)p.Id) == 1;
+        Expression<Func<Person, bool>> range = p => unchecked((byte)(long)p.Id) < 3;
+#pragma warning disable SA1131, RCS1098 // Exercise the constant-on-the-left translation path.
+        Expression<Func<Person, bool>> reversed = p => 1 == unchecked((byte)p.Id);
+#pragma warning restore SA1131, RCS1098
+        foreach (Expression<Func<Person, bool>> predicate in new[] { equality, range, reversed })
+        {
+            int[] expected = all.Where(predicate.Compile()).Select(p => p.Id).Order().ToArray();
+            Assert.Contains(257, expected);
+            Assert.Equal(expected, await ReadIdsAsync(reader, predicate));
+            List<Person> queried = await reader.Query<Person>("People").Where(predicate).ToListAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(expected, queried.Select(p => p.Id).Order().ToArray());
+        }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CheckedNarrowingColumnCast_PreservesScanOverflow(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await BuildPeopleDatabaseAsync(format);
+        await AddWrappingIdsAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Expression<Func<Person, bool>> predicate = p => checked((byte)p.Id) == 1;
+
+        await Assert.ThrowsAsync<OverflowException>(async () => await ReadIdsAsync(reader, predicate));
+        await Assert.ThrowsAsync<OverflowException>(async () =>
+            await reader.Query<Person>("People").Where(predicate).ToListAsync(TestContext.Current.CancellationToken));
+    }
+
+    private static async Task AddWrappingIdsAsync(MemoryStream stream)
+    {
+        stream.Position = 0;
+        await using AccessWriter writer = await AccessWriter.OpenAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false },
+            leaveOpen: true,
+            TestContext.Current.CancellationToken);
+        await writer.InsertRowsAsync("People", [[257, "Wrapped one", 50], [258, "Wrapped two", 30]], TestContext.Current.CancellationToken);
     }
 
     private static async Task AssertSameRowsAsync(
