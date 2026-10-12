@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
 using Xunit;
 using static JetDatabaseWriter.Enums.ColumnType;
@@ -94,7 +95,7 @@ public sealed class RowValueDecodePolicyTests
         Assert.Contains("When", ex.Message, StringComparison.Ordinal);
     }
 
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void LenientScalarFault_EmitsDiagnosticAndToleratesListenerFailure(bool calculated)
@@ -108,7 +109,7 @@ public sealed class RowValueDecodePolicyTests
         };
         using var output = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(output);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             Assert.Equal(DBNull.Value, RowValueDecodePolicy.MalformedVariableValue(column, new ArgumentException("secret payload"), strictParsing: false));
@@ -120,18 +121,18 @@ public sealed class RowValueDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
 
         using var throwing = new ThrowingTraceListener();
-        Trace.Listeners.Add(throwing);
+        var throwingScope = new TestTraceScope(throwing);
         try
         {
             Assert.Equal(DBNull.Value, RowValueDecodePolicy.MalformedVariableValue(column, new ArgumentException("bad currency"), strictParsing: false));
         }
         finally
         {
-            Trace.Listeners.Remove(throwing);
+            throwingScope.Dispose();
         }
     }
 

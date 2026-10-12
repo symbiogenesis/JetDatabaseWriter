@@ -217,12 +217,12 @@ public sealed class FixedDateDecodePolicyTests
             => this.FailReads ? ValueTask.FromException<int>(this.Failure) : base.ReadAsync(buffer, cancellationToken);
     }
 
-    [Fact(DisableParallelization = true)]
+    [Fact]
     public void LenientDateFault_EmitsDiagnosticAndToleratesListenerFailure()
     {
         using var output = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(output);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             Assert.Equal(DBNull.Value, RowValueDecodePolicy.MalformedFixedDate(new ColumnInfo { Name = "Value" }, new ArgumentException("bad date"), strictParsing: false));
@@ -231,18 +231,18 @@ public sealed class FixedDateDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
 
         using var throwing = new ThrowingTraceListener();
-        Trace.Listeners.Add(throwing);
+        var throwingScope = new TestTraceScope(throwing);
         try
         {
             Assert.Equal(DBNull.Value, RowValueDecodePolicy.MalformedFixedDate(new ColumnInfo { Name = "Value" }, new ArgumentException("bad date"), strictParsing: false));
         }
         finally
         {
-            Trace.Listeners.Remove(throwing);
+            throwingScope.Dispose();
         }
     }
 

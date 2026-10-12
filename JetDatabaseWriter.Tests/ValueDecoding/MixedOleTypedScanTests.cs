@@ -116,7 +116,7 @@ public sealed class MixedOleTypedScanTests
         Assert.Equal(7, (await CollectAsync(reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct))).Count);
     }
 
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb, 0)]
     [InlineData(DatabaseFormat.Jet3Mdb, 1)]
     [InlineData(DatabaseFormat.Jet3Mdb, 2)]
@@ -171,7 +171,7 @@ public sealed class MixedOleTypedScanTests
         stream.Position = 0;
         await using var messages = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             await using AccessReader lenient = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 1, StrictParsing = false }, leaveOpen: true, cancellationToken: Ct);
@@ -196,7 +196,7 @@ public sealed class MixedOleTypedScanTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
     }
 

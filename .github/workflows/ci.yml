@@ -26,10 +26,10 @@ env:
 # The full suite runs on Windows: it uses Windows paths and byte-range locks, and the
 # DAO round-trip tests skip themselves when Access is not installed. The jobs run in
 # parallel. The analyzers take most of a Release build, so four jobs share them, and the
-# test legs execute the Release binaries uploaded by the analyzer jobs.
+# test legs execute their own analyzed Release binaries immediately in the same job.
 jobs:
   analyze:
-    name: Analyze (${{ matrix.name }})
+    name: Analyze${{ matrix.runner && ' and test' || '' }} (${{ matrix.name }})
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
@@ -80,6 +80,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
+          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
           cache: true
           cache-dependency-path: '*/packages.lock.json'
 
@@ -91,7 +92,7 @@ jobs:
       - name: Build
         run: dotnet build ${{ matrix.project }} -c Release --no-restore ${{ matrix.options }}
 
-      # Test jobs and Access hosts execute these exact analyzed binaries.
+      # Tests and Access hosts execute these exact analyzed binaries.
       - name: Upload DAO test runner
         if: matrix.runner
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -100,6 +101,26 @@ jobs:
           path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/
           if-no-files-found: error
           retention-days: 3
+
+      # Each framework starts its full suite as soon as its own analyzer build passes,
+      # without waiting for other lanes or rebuilding on a second runner.
+      - name: Test
+        if: matrix.runner
+        run: >-
+          dotnet test --test-modules JetDatabaseWriter.Tests.dll
+          --root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
+          --minimum-expected-tests 1
+          --report-xunit-xml --report-xunit-xml-filename tests.xml
+          --results-directory artifacts/test-results/${{ matrix.tf }}
+
+      - name: Upload test results
+        if: ${{ !cancelled() && matrix.runner }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.tf }}
+          path: artifacts/test-results/${{ matrix.tf }}/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Pack
         if: matrix.pack
@@ -116,45 +137,6 @@ jobs:
           path: artifacts/nupkg/*.nupkg
           if-no-files-found: error
           retention-days: 7
-
-  test:
-    name: Test (${{ matrix.tf }})
-    needs: analyze
-    runs-on: windows-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        # net8.0 runs the suite against the library's netstandard2.1 build, net10.0
-        # against its net10.0 build.
-        tf: [net10.0, net8.0]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      # The .NET 8 SDK is installed only for its runtime, which runs the net8.0 leg.
-      - name: Setup .NET
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: global.json
-          dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
-
-      # Artifacts are immutable and scoped to this workflow run. Do not rebuild the
-      # test project here: its Release analyzer lane already built every dependency.
-      - name: Download validated test runner
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dao-test-runner-${{ matrix.tf }}
-          path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/
-
-      - name: Test
-        run: >-
-          dotnet test --test-modules JetDatabaseWriter.Tests.dll
-          --root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
-          --minimum-expected-tests 1
 
   aot:
     name: Trimmed and NativeAOT consumers

@@ -81,33 +81,25 @@ internal static class TextIndexEncoderFixtureHarness
             TableDef definition = await pages.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, tableName, ct);
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (IndexMetadata index in indexes)
+
+            // Users2_8_idx's fixed-length Text column reads as Null; this
+            // fixture gap remains in docs/todo.md.
+            List<IndexMetadata> textIndexes = [.. indexes.Where(index =>
+                index.Columns.Count == 1 && !index.IsForeignKey && index.FirstDp > 0
+                && colByName.TryGetValue(index.Columns[0].Name, out ColumnMetadata? column) && column.ClrType == typeof(string)
+                && !(encode is null && fixturePath.Contains("fixedTextTest", StringComparison.OrdinalIgnoreCase) && index.Name == "Users2_8_idx"))];
+            if (textIndexes.Count == 0)
             {
-                if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                // The fixed-length Text column in this index reads as Null;
-                // this fixture gap remains in docs/todo.md.
-                if (encode is null
-                    && fixturePath.Contains("fixedTextTest", StringComparison.OrdinalIgnoreCase)
-                    && index.Name == "Users2_8_idx")
-                {
-                    continue;
-                }
-
+            using DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
+            foreach (IndexMetadata index in textIndexes)
+            {
                 IndexColumnReference keyCol = index.Columns[0];
-                if (!colByName.TryGetValue(keyCol.Name, out ColumnMetadata? colMeta)
-                    || colMeta.ClrType != typeof(string))
-                {
-                    continue;
-                }
-
                 List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(
                     pages, layout, pageSize, index.FirstDp, ct);
 
-                DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
                 var values = new List<string?>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {

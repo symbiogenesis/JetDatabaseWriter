@@ -23,7 +23,8 @@ using Xunit;
 /// sets up is asserted on the facades' own files in <c>ServiceGraphTests</c>,
 /// the one class that reflects into them.
 /// </summary>
-public sealed class AccessReaderRandomAccessTests : IDisposable
+/// <param name="seeds">Caches the generated database images shared by these read-only scenarios.</param>
+public sealed class AccessReaderRandomAccessTests(GeneratedDatabaseCache seeds) : IDisposable, IClassFixture<GeneratedDatabaseCache>
 {
     private readonly List<string> paths = [];
 
@@ -454,6 +455,35 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         }
     }
 
+    private static async Task<byte[]> CreateReadableDatabaseBytesAsync(int rowCount, DatabaseFormat format)
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream,
+            format,
+            leaveOpen: true,
+            cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
+            if (rowCount == 1)
+            {
+                await writer.InsertRowAsync("Items", [1], TestContext.Current.CancellationToken);
+            }
+            else
+            {
+                var rows = new List<object[]>(rowCount);
+                for (int id = 1; id <= rowCount; id++)
+                {
+                    rows.Add([id]);
+                }
+
+                await writer.InsertRowsAsync("Items", rows, TestContext.Current.CancellationToken);
+            }
+        }
+
+        return stream.ToArray();
+    }
+
     private async ValueTask<string> CreateReadableDatabaseAsync(int rowCount = 1, DatabaseFormat format = DatabaseFormat.Jet4Mdb)
     {
         bool accdb = format == DatabaseFormat.AceAccdb;
@@ -461,24 +491,12 @@ public sealed class AccessReaderRandomAccessTests : IDisposable
         this.paths.Add(path);
         this.paths.Add(Path.ChangeExtension(path, accdb ? ".laccdb" : ".ldb"));
 
-        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            path,
-            format,
-            cancellationToken: TestContext.Current.CancellationToken);
-        await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
-        if (rowCount == 1)
+        await using MemoryStream seed = await seeds.CopyToStreamAsync(
+            $"{format}:{rowCount}",
+            () => CreateReadableDatabaseBytesAsync(rowCount, format));
+        await using (FileStream file = File.Create(path))
         {
-            await writer.InsertRowAsync("Items", [1], TestContext.Current.CancellationToken);
-        }
-        else
-        {
-            var rows = new List<object[]>(rowCount);
-            for (int id = 1; id <= rowCount; id++)
-            {
-                rows.Add([id]);
-            }
-
-            await writer.InsertRowsAsync("Items", rows, TestContext.Current.CancellationToken);
+            await seed.CopyToAsync(file, TestContext.Current.CancellationToken);
         }
 
         return path;

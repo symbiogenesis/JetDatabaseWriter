@@ -152,7 +152,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
 
     // ── Matrix (2 GB) — memory-efficiency smoke test ──────────────────
 
-    [Fact]
+    [Fact(DisableParallelization = true)] // Full collections and retained-heap measurements exclude unrelated tests.
     public async Task StreamRows_NorthwindTraders_DoesNotExceedReasonableMemory()
     {
         string path = TestDatabases.NorthwindTraders;
@@ -205,7 +205,7 @@ public class AccessReaderStreamTests(DatabaseCache db) : IClassFixture<DatabaseC
 
     // ── Jackcess — memory-efficiency smoke test ─────────────────────
 
-    [Theory]
+    [Theory(DisableParallelization = true)] // Full collections and retained-heap measurements exclude unrelated tests.
     [MemberData(nameof(TestDatabases.Jackcess), MemberType = typeof(TestDatabases))]
     public async Task StreamRows_Jackcess_DoesNotExceedReasonableMemory(string path)
     {

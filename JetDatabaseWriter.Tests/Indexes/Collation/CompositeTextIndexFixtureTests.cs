@@ -65,22 +65,19 @@ public sealed class CompositeTextIndexFixtureTests
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (IndexMetadata index in indexes)
+            List<IndexMetadata> textIndexes = [.. indexes.Where(index =>
+                index.Columns.Count >= 2 && !index.IsForeignKey && index.FirstDp > 0
+                && index.Columns.All(c => colByName.TryGetValue(c.Name, out ColumnMetadata? cm) && cm.ClrType == typeof(string)))];
+            if (textIndexes.Count == 0)
             {
-                if (index.Columns.Count < 2 || index.IsForeignKey || index.FirstDp <= 0)
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                if (!index.Columns.All(c => colByName.TryGetValue(c.Name, out ColumnMetadata? cm)
-                                            && cm.ClrType == typeof(string)))
-                {
-                    continue;
-                }
-
+            using DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
+            foreach (IndexMetadata index in textIndexes)
+            {
                 List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(pages, layout, pageSize, index.FirstDp, ct);
 
-                DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
                 var encoded = new List<(string Repr, byte[] Key)>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {

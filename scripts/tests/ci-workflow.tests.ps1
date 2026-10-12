@@ -36,7 +36,7 @@ function Get-AnalyzerLanes([string] $Analyze) {
 
 function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProps, [xml] $TestProject) {
     $analyze = Get-CiJob $Workflow 'analyze'
-    $test = Get-CiJob $Workflow 'test'
+    $test = $analyze
     $lanes = @(Get-AnalyzerLanes $analyze)
     Assert-Contract ($lanes.Count -gt 0) 'The analyzer matrix is missing or its structure changed.'
 
@@ -74,22 +74,23 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     $suppressed = @($TestProject.SelectNodes('/Project/PropertyGroup/NoWarn') | ForEach-Object { $_.InnerText.Split(';') } | Where-Object { $_ -and $_ -ne '$(NoWarn)' } | Sort-Object -Unique)
     Assert-Contract (($suppressed -join ';') -eq 'CA1707;SA1615') 'The test project must not add blanket warning suppressions.'
 
-    # Artifact names and paths bind each runtime leg to its own analyzer output.
-    # Omitting cross-run inputs makes download-artifact use this immutable workflow run.
+    # Each runtime leg executes its own Release analyzer output in the same job.
+    # The artifact remains available for focused DAO checks on Access hosts.
     $runnerName = 'name: dao-test-runner-${{ matrix.tf }}'
     $runnerPath = 'path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/'
     $upload = [regex]::Match($analyze, '(?ms)^      - name: Upload DAO test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
     Assert-Contract ($upload -match '(?m)^        if: matrix.runner$' -and $upload.Contains($runnerName) -and $upload.Contains($runnerPath) -and $upload -match 'uses: actions/upload-artifact@[0-9a-f]{40}(?:\s|$)' -and $upload.Contains('if-no-files-found: error')) 'Analyzer jobs must publish the complete matching test runner with a pinned action.'
-    Assert-Contract ($test -match '(?m)^    needs: analyze$') 'Ordinary tests must wait for successful analyzer jobs.'
-    $matrix = [regex]::Match($test, '(?m)^        tf: \[(?<frameworks>[^\]\n]+)\]$')
-    Assert-Contract $matrix.Success 'The ordinary test framework matrix is missing or its structure changed.'
-    $runtimeFrameworks = @($matrix.Groups['frameworks'].Value.Split(',') | ForEach-Object { $_.Trim() } | Sort-Object -Unique)
-    Assert-Contract (($runtimeFrameworks -join ';') -eq ($frameworks -join ';')) 'Ordinary tests must run every test project framework.'
-    $download = [regex]::Match($test, '(?ms)^      - name: Download validated test runner\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
-    Assert-Contract ($download.Contains($runnerName) -and $download.Contains($runnerPath) -and $download -match 'uses: actions/download-artifact@[0-9a-f]{40}(?:\s|$)') 'Ordinary tests must download their matching validated test runner with a pinned action.'
-    Assert-Contract ($download -notmatch '(?m)^          (run-id|github-token|repository|pattern|merge-multiple):') 'Ordinary tests must download one artifact from the current workflow run.'
-    Assert-Contract ($test -notmatch '(?m)^[ \t]+(?:run:.*\b)?dotnet[ \t]+(?:build|restore|publish)\b' -and $test -notmatch 'continue-on-error:') 'Ordinary test jobs must execute the validated binaries without rebuilding or ignoring failures.'
-    $testStep = [regex]::Match($test, '(?ms)^      - name: Test\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($analyze -notmatch '(?m)^    needs:') 'Test analyzer lanes must start independently of other analyzer lanes.'
+    $testSteps = [regex]::Matches($test, '(?ms)^      - name: Test\n(?<step>.*?)(?=^      - |\z)')
+    Assert-Contract ($testSteps.Count -eq 1) 'Every test analyzer lane must execute the ordinary suite exactly once.'
+    $testStep = $testSteps[0].Groups['step'].Value
+    Assert-Contract ($testStep -match '(?m)^        if: matrix.runner$') 'Every test analyzer lane must run its full ordinary suite.'
+    $buildPosition = $test.IndexOf('      - name: Build', [StringComparison]::Ordinal)
+    $testPosition = $test.IndexOf('      - name: Test', [StringComparison]::Ordinal)
+    Assert-Contract ($buildPosition -ge 0 -and $buildPosition -lt $testPosition) 'Ordinary tests must follow their successful Release analyzer build.'
+    $afterBuild = $test.Substring($buildPosition + '      - name: Build'.Length)
+    Assert-Contract ([regex]::Matches($afterBuild, '(?m)^[ \t]+(?:run:.*\b)?dotnet[ \t]+(?:build|restore|publish)\b').Count -eq 1) 'Ordinary tests must execute the validated binaries without rebuilding.'
+    Assert-Contract ($test.Contains("dotnet-version: `${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}")) 'The net8.0 analyzer lane must install its test runtime.'
     $testCommand = [regex]::Match($testStep, '(?m)^        run: (?<command>[^\n]+)$').Groups['command'].Value
     if ($testCommand -eq '>-') {
         $testCommand = ([regex]::Matches($testStep, '(?m)^          (?<line>[^\n]+)$') | ForEach-Object { $_.Groups['line'].Value.Trim() }) -join ' '
@@ -109,7 +110,7 @@ function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedE
     "PASS: $Name"
 }
 
-Assert-Scenario 'hosted coverage and validated binary handoff' $workflow
+Assert-Scenario 'hosted coverage and immediate validated binary execution' $workflow
 $net8Lane = '(?ms)^          - name: tests net8\.0\n.*?(?=^          - name:|^    steps:|\z)'
 Assert-Scenario 'missing net8 analyzer lane' ([regex]::Replace($workflow, $net8Lane, '')) 'Every test framework must have exactly one analyzer lane'
 Assert-Scenario 'wrong analyzer project selection' ($workflow.Replace('-f net8.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests', '-f net8.0 -p:AnalyzeOnly=JetDatabaseWriter.Test')) "The 'net8.0' test framework must have an analyzer lane"
@@ -117,14 +118,17 @@ Assert-Scenario 'incomplete solution analysis' ($workflow.Replace('project: JetD
 Assert-Scenario 'Debug analyzer build' ($workflow.Replace('dotnet build ${{ matrix.project }} -c Release', 'dotnet build ${{ matrix.project }} -c Debug')) 'The analyzer build must use Release'
 Assert-Scenario 'disabled analyzers' ($workflow.Replace('dotnet build ${{ matrix.project }}', 'dotnet build -p:RunAnalyzers=false ${{ matrix.project }}')) 'Analyzer jobs must retain all strict build guarantees'
 Assert-Scenario 'mismatched analyzer runner framework' ($workflow.Replace("tf: net8.0`n", "tf: net10.0`n")) "The 'net8.0' analyzer lane must publish its matching test runner"
-Assert-Scenario 'missing ordinary framework' ($workflow.Replace('tf: [net10.0, net8.0]', 'tf: [net10.0]')) 'Ordinary tests must run every test project framework'
-Assert-Scenario 'tests before validation' ($workflow.Replace('needs: analyze', 'needs: []')) 'Ordinary tests must wait for successful analyzer jobs'
+Assert-Scenario 'ordinary suite disabled' ($workflow.Replace("      - name: Test`n        if: matrix.runner", "      - name: Test`n        if: false")) 'Every test analyzer lane must run its full ordinary suite'
+Assert-Scenario 'unrelated analyzer barrier' ($workflow.Replace("    name: Analyze", "    needs: another-analyzer`n    name: Analyze")) 'Test analyzer lanes must start independently'
+Assert-Scenario 'missing net8 runtime' ($workflow.Replace("          dotnet-version: `${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}`n", '')) 'The net8.0 analyzer lane must install its test runtime'
 
-$testJob = Get-CiJob $workflow 'test'
-Assert-Scenario 'wrong artifact in ordinary tests' ($workflow.Replace($testJob, $testJob.Replace('name: dao-test-runner-${{ matrix.tf }}', 'name: dao-test-runner-net10.0'))) 'Ordinary tests must download their matching validated test runner'
-Assert-Scenario 'artifact from another run' ($workflow.Replace($testJob, $testJob.Replace('name: dao-test-runner-${{ matrix.tf }}', "name: dao-test-runner-`${{ matrix.tf }}`n          run-id: 123"))) 'Ordinary tests must download one artifact from the current workflow run'
-Assert-Scenario 'redundant ordinary test build' ($workflow.Replace($testJob, $testJob.Replace('    steps:', "    steps:`n      - name: Rebuild`n        run: dotnet build JetDatabaseWriter.Tests -c Release"))) 'Ordinary test jobs must execute the validated binaries without rebuilding'
-Assert-Scenario 'redundant multiline test build' ($workflow.Replace($testJob, $testJob.Replace('    steps:', "    steps:`n      - name: Rebuild`n        run: >-`n          dotnet build JetDatabaseWriter.Tests -c Release"))) 'Ordinary test jobs must execute the validated binaries without rebuilding'
+$analyzeJob = Get-CiJob $workflow 'analyze'
+$testStep = [regex]::Match($analyzeJob, '(?ms)^      - name: Test\n.*?(?=^      - |\z)').Value
+Assert-Scenario 'missing ordinary suite' ($workflow.Replace($testStep, '')) 'Every test analyzer lane must execute the ordinary suite exactly once'
+Assert-Scenario 'duplicate ordinary suite' ($workflow.Replace($testStep, $testStep + $testStep)) 'Every test analyzer lane must execute the ordinary suite exactly once'
+Assert-Scenario 'tests before validation' ($workflow.Replace($testStep, '').Replace('      - name: Build', $testStep + '      - name: Build')) 'Ordinary tests must follow their successful Release analyzer build'
+Assert-Scenario 'redundant ordinary test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: dotnet build JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
+Assert-Scenario 'redundant multiline test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: >-`n          dotnet build JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
 Assert-Scenario 'empty test discovery accepted' ($workflow.Replace('--minimum-expected-tests 1', '--minimum-expected-tests 0')) 'Ordinary tests must launch the validated module and reject empty discovery'
 Assert-Scenario 'partial ordinary test selection' ($workflow.Replace('--minimum-expected-tests 1', '--minimum-expected-tests 1 --filter-class Example')) 'Ordinary test jobs must run the full ordinary suite'
 

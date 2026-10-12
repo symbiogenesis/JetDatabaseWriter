@@ -33,7 +33,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// pages before commit and after reopening.
 /// </summary>
 /// <param name="cache">Caches the Access-authored fixtures the foreign-key cases copy.</param>
-public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IClassFixture<DatabaseCache>
+/// <param name="seeds">Caches generated databases before the transaction scenarios begin.</param>
+public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, GeneratedDatabaseCache seeds)
+    : IClassFixture<DatabaseCache>, IClassFixture<GeneratedDatabaseCache>
 {
     private const string TableName = "T";
     private const string PrimaryKeyName = "PK";
@@ -66,7 +68,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         WriteMode mode)
     {
         var expectedIds = new List<int>();
-        await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, expectedIds);
+        await using MemoryStream stream = await this.CopySeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, expectedIds);
 
         await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
         {
@@ -90,7 +92,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
     public async Task SingleInserts_IntoOneKeyRangeAfterAppendedPages_RolledBack_LeaveSeededTable(DatabaseFormat format)
     {
         var seededIds = new List<int>();
-        await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, seededIds);
+        await using MemoryStream stream = await this.CopySeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, seededIds);
 
         await using (WriterHarness writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
         {
@@ -125,7 +127,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         // data pages, before the index is maintained.
         const int baseRows = 4000;
         var expectedIds = new List<int>();
-        await using MemoryStream stream = await CreateSeededDatabaseAsync(format, baseRows, keyStep: 10, expectedIds);
+        await using MemoryStream stream = await this.CopySeededDatabaseAsync(format, baseRows, keyStep: 10, expectedIds);
 
         await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
         {
@@ -333,10 +335,10 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         return ids;
     }
 
-    private static async Task<MemoryStream> CreateSeededDatabaseAsync(DatabaseFormat format, int baseRows, int keyStep, List<int> expectedIds)
+    private static async Task<byte[]> CreateSeededDatabaseAsync(DatabaseFormat format, int baseRows, int keyStep)
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        var stream = new MemoryStream();
+        await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
             format,
@@ -351,13 +353,12 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
             {
                 int id = i * keyStep;
                 rows.Add([id, new string('p', 150)]);
-                expectedIds.Add(id);
             }
 
             _ = await writer.InsertRowsAsync(TableName, rows, cancellationToken);
         }
 
-        return stream;
+        return stream.ToArray();
     }
 
     /// <summary>
@@ -539,6 +540,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
 
         var dataPages = new Dictionary<long, (byte[] Page, RowBound[] Rows)>();
         var entries = new List<(int Key, long DataPage, byte DataRow)>();
+        object?[] values = new object?[1];
         byte[]? previousKey = null;
         int leafBudget = 10_000;
         while (current != 0)
@@ -557,19 +559,33 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
                     Assert.True(
                         dataPage[0] == Constants.PageTypes.Data && Ri32(dataPage, db.Format.DataPage.TDefOff) == tdefPage,
                         $"Index entry points at page {indexEntry.DataPage}, which is not a data page of the table.");
-                    data = (dataPage, DataPageRows.ComputeRowDirectory(db.Format, dataPage));
+                    RowBound[] rowDirectory = DataPageRows.ComputeRowDirectory(db.Format, dataPage);
+                    var rowsByIndex = new RowBound[rowDirectory.Length == 0 ? 0 : rowDirectory[^1].RowIndex + 1];
+                    foreach (RowBound row in rowDirectory)
+                    {
+                        rowsByIndex[row.RowIndex] = row;
+                    }
+
+                    data = (dataPage, rowsByIndex);
                     dataPages.Add(indexEntry.DataPage, data);
                 }
 
-                RowBound rowBound = Array.Find(data.Rows, row => row.RowIndex == indexEntry.DataRow);
-                Assert.True(rowBound.RowSize > 0, $"Index entry points at row {indexEntry.DataRow} of page {indexEntry.DataPage}, which is not a live row.");
+                RowBound rowBound = indexEntry.DataRow < data.Rows.Length ? data.Rows[indexEntry.DataRow] : default;
+                if (rowBound.RowSize <= 0)
+                {
+                    Assert.Fail($"Index entry points at row {indexEntry.DataRow} of page {indexEntry.DataPage}, which is not a live row.");
+                }
 
-                object?[] values = new object?[1];
+                values[0] = null;
                 Assert.True(decodePlan.TryDecodePartialColumns(db.Format, data.Page, rowBound.RowStart, rowBound.RowSize, values));
                 int key = Assert.IsType<int>(values[0]);
                 Assert.Equal(IndexKeyEncoder.EncodeEntry(keyType, key), indexEntry.Key);
                 int order = previousKey is null ? -1 : IndexPageCodec.CompareKeyBytes(previousKey, indexEntry.Key);
-                Assert.True(unique ? order < 0 : order <= 0, $"Leaf page {current} holds key {key} out of order.");
+                if (unique ? order >= 0 : order > 0)
+                {
+                    Assert.Fail($"Leaf page {current} holds key {key} out of order.");
+                }
+
                 previousKey = indexEntry.Key;
                 entries.Add((key, indexEntry.DataPage, indexEntry.DataRow));
             }
@@ -631,6 +647,18 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache) : IC
         }
 
         return (stream, "P", IdColumn, parentIds);
+    }
+
+    private async ValueTask<MemoryStream> CopySeededDatabaseAsync(DatabaseFormat format, int baseRows, int keyStep, List<int> expectedIds)
+    {
+        for (int i = 0; i < baseRows; i++)
+        {
+            expectedIds.Add(i * keyStep);
+        }
+
+        return await seeds.CopyToStreamAsync(
+            $"{format}:{baseRows}:{keyStep}",
+            () => CreateSeededDatabaseAsync(format, baseRows, keyStep));
     }
 
     private async Task InsertTailThenSingleKeysAsync(WriterHarness writer, List<int> expectedIds)

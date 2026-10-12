@@ -184,7 +184,7 @@ public sealed class OverflowRowTests
     /// <param name="format">The database format.</param>
     /// <param name="layout">The corrupt pointer layout.</param>
     /// <param name="readMode">The scan read mode.</param>
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [MemberData(nameof(CorruptLayouts))]
     public async Task CorruptOverflowPointer_TracesOnlyWithDiagnostics(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
     {
@@ -193,7 +193,7 @@ public sealed class OverflowRowTests
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, layout, this.ct);
         await using var messages = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             for (int pass = 0; pass < 2; pass++)
@@ -219,7 +219,7 @@ public sealed class OverflowRowTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
     }
 

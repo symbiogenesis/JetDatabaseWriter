@@ -33,7 +33,7 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 - Full test suites run only on CI, including a full run of just one target framework. Do not run the whole suite locally in batches of filtered tests.
 - All benchmarks run only on CI, including a single benchmark, short/medium/dry jobs, smoke checks, and debugging runs. Building the benchmark project locally is allowed; executing benchmarks is not.
 - Local builds and targeted tests provide development feedback. Required acceptance gates still run on CI against the settled `main` revision.
-- Windows ordinary test jobs download their exact-run Release binaries from the analyzer jobs. They use `dotnet test --test-modules` to execute them without restoring or building again; both framework legs and every analyzer gate remain required.
+- Windows test analyzer lanes execute their exact Release binaries with `dotnet test --test-modules` immediately after their own build, without restoring or building again. Both framework legs and every analyzer gate remain required. The lanes upload the analyzed runner for focused DAO checks and xUnit results with individual test durations.
 - Specialized benchmark, fuzz and portability workflows require a completed, successful `ci.yml` run for the exact main revision before their build jobs start. Finish that gate before dispatching them; no additional local build is required.
 
 ## Build
@@ -55,7 +55,7 @@ git -c push.followTags=false push origin main:main
 gh run list --workflow ci.yml --branch main --commit <commit>
 ```
 
-Record the run URL, exact tested SHA and verdict. Inspect all eleven jobs: four Windows Release analyzer/package jobs, one Windows ordinary test job per target framework, the Windows generated trimmed/NativeAOT consumer job, and focused encryption replacement tests on Linux and macOS for both target frameworks. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
+Record the run URL, exact tested SHA and verdict. Inspect all nine jobs: four Windows Release analyzer/package jobs (the two test analyzer lanes also execute their full ordinary suites), the Windows generated trimmed/NativeAOT consumer job, and focused encryption replacement tests on Linux and macOS for both target frameworks. Do not treat a queued or running workflow as passed. A timing-sensitive failure may be retried once with `gh run rerun <id> --failed` before diagnosing it as reproducible.
 
 For a completed run, the reporting mode of the existing helper prints every step result, build summaries, both test summaries and failing-test messages without pushing or dispatching:
 
@@ -79,7 +79,7 @@ For a quick local loop, build in Release and run a selected test: `dotnet test -
 
 xUnit v3 on Microsoft Testing Platform:
 
-- Use xUnit v3 (`xunit.v3`, stable 3.x), not the 4.x prerelease line. Test projects are executables: keep `<OutputType>Exe</OutputType>`.
+- Use the stable xUnit v3 framework (`xunit.v3`); the current stable 4.x package supports per-test parallelism. Do not use prerelease packages. Test projects are executables: keep `<OutputType>Exe</OutputType>`.
 - Use `using Xunit;`. Do not add `Xunit.Abstractions`, `xunit.runner.visualstudio`, `xunit.abstractions` or `xunit.assert`.
 - The base command is `dotnet test --project JetDatabaseWriter.Tests`; locally, add a focused inclusion filter such as `--filter-method` or `--filter-class`. The unfiltered command is for CI only. Pass Microsoft Testing Platform options straight to `dotnet test`, with no `--` separator. Do not use VSTest filters (`--filter "FullyQualifiedName~..."`) or `--nologo`; use `--verbosity quiet` for quieter output.
   - One target framework: `-f net10.0`.
@@ -96,7 +96,7 @@ xUnit v3 on Microsoft Testing Platform:
 - Writing tests:
   - Prefer primary constructors for fixtures and output, for example `public class MyTests(DatabaseCache db, ITestOutputHelper output) : IClassFixture<DatabaseCache>`.
   - Test methods may return `Task` or `ValueTask`.
-  - `xunit.runner.json` sets `parallelMode` to `all`, so every test runs in parallel with every other, including the tests of one class. Keep tests independent: give each its own database stream or uniquely named file. A test that cannot share the machine takes `[Fact(DisableParallelization = true)]`, and a class whose tests share state takes `[TestClass(DisableParallelization = true)]`.
+  - `xunit.runner.json` uses `parallelMode: all` with conservative scheduling and at most twice the CPU count, including tests within one class. Keep tests independent: give each its own database stream or uniquely named file. Diagnostic assertions capture through `TestTraceScope` rather than changing global trace listeners per test. Process-wide heap measurements and tests that cannot share the machine take `[Fact(DisableParallelization = true)]` (or the theory equivalent); a class whose tests share state takes `[TestClass(DisableParallelization = true)]`.
   - `[InlineData]` is type-checked strictly; `TheoryData<T>`, `MemberData` and `ClassData` still work.
 - Write the test first, and for a bug write a failing test first.
 

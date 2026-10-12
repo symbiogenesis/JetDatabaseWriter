@@ -205,12 +205,12 @@ public sealed class FixedSlotBoundsDecodePolicyTests
         Assert.Equal(ColumnSliceKind.Var, RowDecodePlan.ResolveColumnSlice(format.RowFields, page, 0, page.Length, layout, column with { FixedOff = 4 }).Kind);
     }
 
-    [Fact(DisableParallelization = true)]
+    [Fact]
     public void LenientFixedBounds_EmitDiagnosticWithoutValues()
     {
         using var output = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(output);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             var definition = new TableDef { Columns = [new ColumnInfo { Name = "Value", Type = ColumnType.LongIntegerType, Flags = Constants.ColumnDescriptorFlags.Fixed, FixedOff = 100 }] };
@@ -224,7 +224,7 @@ public sealed class FixedSlotBoundsDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
     }
 

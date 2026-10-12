@@ -27,7 +27,7 @@ using Xunit;
 /// <summary>Calculated Decimal mantissa bounds follow the public decode-fault policy.</summary>
 public sealed class CalculatedNumericDecodePolicyTests
 {
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [InlineData((short)14, 4, true)]
     [InlineData((short)14, 4, false)]
     [InlineData((short)14, 5, true)]
@@ -49,7 +49,7 @@ public sealed class CalculatedNumericDecodePolicyTests
 
         await using var traceOutput = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(traceOutput);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             await using var stream = new MemoryStream(bytes, writable: false);
@@ -89,7 +89,7 @@ public sealed class CalculatedNumericDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
 
         await using var mutationStream = new MemoryStream();

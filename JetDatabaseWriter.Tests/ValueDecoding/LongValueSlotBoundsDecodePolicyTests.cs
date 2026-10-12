@@ -51,7 +51,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         return data;
     }
 
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [MemberData(nameof(LongValueSlots))]
     public async Task AssignedLongValueSlot_PublicReadsDiagnoseMissingOffsets(DatabaseFormat format, bool ole, bool calculated, bool missingSlot, bool strict)
     {
@@ -72,7 +72,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         await DamageLastVariableSlotAsync(original, bytes, missingSlot, ct);
         await using var messages = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             await using var stream = new MemoryStream(bytes, writable: false);
@@ -112,7 +112,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
 
         await using var mutationStream = new MemoryStream();
@@ -123,7 +123,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         Assert.Equal(bytes, mutationStream.ToArray());
     }
 
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [InlineData(true, 0)]
     [InlineData(false, 0)]
     [InlineData(true, 1)]
@@ -141,7 +141,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         object?[] values = new object?[1];
         await using var messages = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             if (strict && unassignedKind == 0)
@@ -181,18 +181,18 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
     }
 
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [InlineData(ColumnType.MemoType)]
     [InlineData(ColumnType.OleType)]
     public async Task MissingLongValueSlot_UnassignedColumnsDoNotEmitDiagnostics(ColumnType type)
     {
         await using var messages = new StringWriter(CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(messages);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             foreach (bool absentColumn in new[] { false, true })
@@ -213,11 +213,11 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
     }
 
-    [Fact(DisableParallelization = true)]
+    [Fact]
     public async Task LenientMissingLongValueSlot_ThrowingListenerPreservesMissingValues()
     {
         var definition = new TableDef { Columns = [new ColumnInfo { Name = "Value", Type = ColumnType.MemoType }] };
@@ -225,7 +225,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
         object?[] values = new object?[1];
         using var listener = new ThrowingTraceListener();
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             Assert.True(RowDecodePlan.CreateTyped(definition, wantedColumns: null, strictParsing: false).TryDecodeTypedIntoBuffer(format, page, 0, page.Length, null!, values, out _));
@@ -234,7 +234,7 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
     }
 

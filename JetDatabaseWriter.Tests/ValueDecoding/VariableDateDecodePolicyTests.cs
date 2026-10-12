@@ -194,14 +194,14 @@ public sealed class VariableDateDecodePolicyTests
             => this.FailReads ? ValueTask.FromException<int>(this.Failure) : base.ReadAsync(buffer, cancellationToken);
     }
 
-    [Theory(DisableParallelization = true)]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void LenientVariableDateFault_EmitsDiagnostic(bool calculated)
     {
         using var output = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
         using var listener = new TextWriterTraceListener(output);
-        Trace.Listeners.Add(listener);
+        var traceScope = new TestTraceScope(listener);
         try
         {
             var column = new ColumnInfo { Name = "Value", Type = ColumnType.DateTimeType, ExtraFlags = calculated ? Constants.CalculatedColumn.ExtFlagMask : (byte)0 };
@@ -212,7 +212,7 @@ public sealed class VariableDateDecodePolicyTests
         }
         finally
         {
-            Trace.Listeners.Remove(listener);
+            traceScope.Dispose();
         }
     }
 

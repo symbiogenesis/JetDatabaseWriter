@@ -77,23 +77,22 @@ public sealed class IndexCodesAggregateTests
             var colByName = cols.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
 
             IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, ct);
-            foreach (IndexMetadata index in indexes)
+            List<IndexMetadata> textIndexes = [.. indexes.Where(index =>
+                index.Columns.Count == 1 && !index.IsForeignKey && index.FirstDp > 0
+                && colByName.TryGetValue(index.Columns[0].Name, out ColumnMetadata? column) && column.ClrType == typeof(string))];
+            if (textIndexes.Count == 0)
             {
-                if (index.Columns.Count != 1 || index.IsForeignKey || index.FirstDp <= 0)
-                {
-                    continue;
-                }
+                continue;
+            }
 
+            using DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
+            foreach (IndexMetadata index in textIndexes)
+            {
                 IndexColumnReference keyCol = index.Columns[0];
-                if (!colByName.TryGetValue(keyCol.Name, out ColumnMetadata? colMeta)
-                    || colMeta.ClrType != typeof(string))
-                {
-                    continue;
-                }
+                ColumnMetadata colMeta = colByName[keyCol.Name];
 
                 List<byte[]> onDiskKeys = await CollectAllLeafKeysAsync(pages, layout, pageSize, index.FirstDp, ct);
 
-                DataTable dt = await reader.ReadTableAsync(tableName, cancellationToken: ct);
                 var values = new List<string?>(dt.Rows.Count);
                 foreach (DataRow row in dt.Rows)
                 {

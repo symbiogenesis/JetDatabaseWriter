@@ -18,22 +18,17 @@ using Xunit;
 /// </summary>
 internal static class ScaffoldCompilation
 {
+    private static readonly Lazy<MetadataReference[]> References = new(CreateReferences);
+
     /// <summary>Compiles <paramref name="sources"/> and returns every error and warning, and the assembly when there was no error.</summary>
     /// <param name="sources">The generated source files.</param>
     /// <returns>The diagnostics and the loaded assembly.</returns>
     public static (IReadOnlyList<Diagnostic> Errors, IReadOnlyList<Diagnostic> Warnings, Assembly? Assembly) Compile(IEnumerable<string> sources)
     {
-        string trustedAssemblies = (string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!;
-        IEnumerable<MetadataReference> references = trustedAssemblies
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Append(typeof(AccessReader).Assembly.Location)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => MetadataReference.CreateFromFile(path));
-
         var compilation = CSharpCompilation.Create(
             "ScaffoldedEntities_" + Guid.NewGuid().ToString("N"),
             sources.Select(source => CSharpSyntaxTree.ParseText(source)),
-            references,
+            References.Value,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
 
         using var image = new MemoryStream();
@@ -54,5 +49,15 @@ internal static class ScaffoldCompilation
             errors.Count == 0 && warnings.Count == 0,
             string.Join(Environment.NewLine, errors.Concat(warnings)) + Environment.NewLine + string.Join(Environment.NewLine + "----" + Environment.NewLine, all));
         return assembly!;
+    }
+
+    private static MetadataReference[] CreateReferences()
+    {
+        string trustedAssemblies = (string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!;
+        return [.. trustedAssemblies
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Append(typeof(AccessReader).Assembly.Location)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => MetadataReference.CreateFromFile(path))];
     }
 }
