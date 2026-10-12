@@ -3,12 +3,15 @@
 Checks benchmark reporting and process orchestration with synthetic JSON and mocked git/dotnet commands.
 .DESCRIPTION
 Run with pwsh -NoProfile -File scripts/tests/benchmarks.tests.ps1. No real benchmarks or builds run.
-Diagnostic fixtures and results are retained under artifacts/benchmark-script-checks.
+Diagnostic fixtures and results are retained under a unique directory in OutputDirectory, which defaults to the system temp directory.
 #>
-param([string] $Repository = (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent))
+param(
+    [string] $Repository = (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent),
+    [string] $OutputDirectory = [IO.Path]::GetTempPath()
+)
 $ErrorActionPreference = 'Stop'
 $checks = [Collections.Generic.List[object]]::new()
-$root = Join-Path $Repository ('artifacts/benchmark-script-checks/' + [Guid]::NewGuid().ToString('N'))
+$root = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) ('jdw-benchmark-script-checks-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
 $compare = Join-Path $Repository 'scripts/compare-benchmarks.ps1'
 $runner = Join-Path $Repository 'scripts/run-benchmark-comparison.ps1'
@@ -56,6 +59,7 @@ $global:BenchmarkCheckInvocations = [Collections.Generic.List[object]]::new()
 $global:BenchmarkCheckMean = 100
 $global:BenchmarkCheckAllocation = 0
 $global:BenchmarkCheckProduceReport = $true
+$global:BenchmarkCheckExitCode = 0
 function git {
     $global:LASTEXITCODE = 0
     '0123456789012345678901234567890123456789'
@@ -68,7 +72,7 @@ function dotnet {
         $resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($output)
         Write-Report (Join-Path $resolved 'results') @((New-Case 'Sample.Read' $global:BenchmarkCheckMean $global:BenchmarkCheckAllocation))
     }
-    $global:LASTEXITCODE = 0
+    $global:LASTEXITCODE = $global:BenchmarkCheckExitCode
 }
 Check 'Relative output stays anchored to invocation directory' {
     Push-Location -LiteralPath $root
@@ -76,6 +80,9 @@ Check 'Relative output stays anchored to invocation directory' {
         & $runner -Head $checkout -Results 'relative-results' -Filter '*Read*'
         Assert ([IO.Path]::IsPathRooted($global:BenchmarkCheckInvocations[-1].Output)) 'Benchmark process received a relative artifacts directory.'
         Assert (Test-Path -LiteralPath (Join-Path $root 'relative-results/head/results/mock-report.json')) 'Report escaped the requested results root.'
+        $arguments = $global:BenchmarkCheckInvocations[-1].Arguments
+        Assert ($arguments -contains '--stopOnFirstError') 'An invalid benchmark could continue measuring unrelated cases.'
+        Assert ($arguments -notcontains '--job' -and $arguments -notcontains '--warmupCount' -and $arguments -notcontains '--iterationCount') 'Default adaptive timing was overridden.'
     }
     finally { Pop-Location }
 }
@@ -86,7 +93,22 @@ Check 'Controlled measurement order and arguments' {
     Assert ($global:BenchmarkCheckInvocations.Count -eq 6) 'Incorrect process count.'
     foreach ($call in $global:BenchmarkCheckInvocations) {
         Assert (($call.Arguments -join ' ').Contains('--filter *Read* *Write* --job dry --exporters json github')) 'Filter, job or exporter arguments changed.'
+        Assert ($call.Arguments -contains '--stopOnFirstError') 'A controlled run could continue after a failed benchmark.'
     }
+}
+Check 'Failed baseline stops the pair and preserves partial artifacts' {
+    $global:BenchmarkCheckInvocations.Clear()
+    $global:BenchmarkCheckExitCode = 1
+    $results = Join-Path $root 'failed-baseline'
+    $rejected = $false
+    try { & $runner -Head $checkout -Baseline $baselineCheckout -Results $results -Filter '*Read*' }
+    catch { $rejected = $_.Exception.Message -eq 'The baseline benchmark process failed.' }
+    finally { $global:BenchmarkCheckExitCode = 0 }
+    Assert $rejected 'A failed baseline did not fail the comparison.'
+    Assert ($global:BenchmarkCheckInvocations.Count -eq 1 -and $global:BenchmarkCheckInvocations[0].Checkout -eq $baselineCheckout) 'The head was measured after a failed baseline.'
+    Assert (Test-Path -LiteralPath (Join-Path $results 'measurement.json')) 'The failed comparison lost its revision manifest.'
+    Assert (Test-Path -LiteralPath (Join-Path $results 'baseline/results/mock-report.json')) 'The failed baseline lost its partial diagnostic report.'
+    Assert (-not (Test-Path -LiteralPath (Join-Path $results 'head'))) 'A failed baseline created head results.'
 }
 Check 'Whitespace filter fails before measurement' {
     $global:BenchmarkCheckInvocations.Clear()
@@ -147,7 +169,7 @@ Check 'Missing run manifests summarize without error' {
     $summary = & $runner -Results (Join-Path $root 'missing-manifest') -SummaryOnly
     Assert ($summary -eq 'No benchmark run manifest was produced.') 'Missing run manifest did not produce the partial-result diagnostic.'
 }
-Remove-Variable -Scope Global -Name BenchmarkCheckInvocations, BenchmarkCheckMean, BenchmarkCheckAllocation, BenchmarkCheckProduceReport
+Remove-Variable -Scope Global -Name BenchmarkCheckInvocations, BenchmarkCheckMean, BenchmarkCheckAllocation, BenchmarkCheckProduceReport, BenchmarkCheckExitCode
 $checks | Format-Table -Wrap -AutoSize
 [IO.File]::WriteAllText((Join-Path $root 'checks.json'), ($checks | ConvertTo-Json))
 Write-Output "CHECK_ARTIFACTS=$root"
