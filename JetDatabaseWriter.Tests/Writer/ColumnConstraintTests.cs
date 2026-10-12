@@ -14,6 +14,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using JetDatabaseWriter.ValueDecoding;
@@ -1587,6 +1588,90 @@ public sealed class ColumnConstraintTests
         int[] expectedIds = mode == WriteMode.ExplicitCommit ? [1, 2] : [1, 2, 3];
         Assert.Equal(expectedIds, rows.AsEnumerable().Select(row => (int)row["Id"]).Order());
         Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
+    }
+
+    /// <summary>Parser-refused stored rules retain the same writer's identity and usable caller transaction.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="surface">The public insertion overload.</param>
+    /// <param name="mode">The transaction mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(ParserRefusalInsertCases))]
+    public async Task UnsupportedStoredRule_EveryInsertSurface_PreservesIdentityWithoutReopen(DatabaseFormat format, string surface, WriteMode mode)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "StoredRuleRefusal";
+        Assert.Same(ColumnValidationRule.Unsupported, ColumnValidationRule.Compile(">= And", "Score"));
+        var attemptedIds = new List<int>();
+        await using (AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit }))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int))
+                    {
+                        IsAutoIncrement = true,
+                        ValidationRule = value =>
+                        {
+                            attemptedIds.Add((int)value!);
+                            return true;
+                        },
+                    },
+                    new("Score", typeof(int)) { ValidationRuleExpression = ">= And" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                "Control",
+                [new("Id", typeof(int)) { IsAutoIncrement = true }, new("Score", typeof(int))],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Control", [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+            byte[] before = stream.ToArray();
+
+            if (mode != WriteMode.ExplicitCommit)
+            {
+                for (int attempt = 0; attempt < 2; attempt++)
+                {
+                    attemptedIds.Clear();
+                    _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
+                    Assert.Equal<int>([1], attemptedIds);
+                    Assert.Equal(before, stream.ToArray());
+                }
+            }
+
+            await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Control", [DbDefault.Value, 2], TestContext.Current.CancellationToken);
+            int pages = transaction.JournaledPageCount;
+            Assert.True(pages > 0);
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                attemptedIds.Clear();
+                _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
+                Assert.Equal<int>([1], attemptedIds);
+                Assert.Equal(before, stream.ToArray());
+                Assert.Equal(pages, transaction.JournaledPageCount);
+                Assert.False(transaction.IsCommitted);
+                Assert.False(transaction.IsRolledBack);
+            }
+
+            Assert.Equal(1, await writer.UpdateRowsAsync("Control", "Id", 2, new Dictionary<string, object?> { ["Score"] = 3 }, TestContext.Current.CancellationToken));
+            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(before, stream.ToArray());
+
+            attemptedIds.Clear();
+            _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
+            Assert.Equal<int>([1], attemptedIds);
+            Assert.Equal(before, stream.ToArray());
+            await writer.InsertRowAsync("Control", [DbDefault.Value, 4], TestContext.Current.CancellationToken);
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        using DataTable refusedRows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Empty(refusedRows.AsEnumerable());
+        using DataTable controlRows = await reader.ReadTableAsync("Control", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal<int>([1, 2], controlRows.AsEnumerable().Select(row => (int)row["Id"]).Order());
+        Assert.Equal<int>([1, 4], controlRows.AsEnumerable().Select(row => (int)row["Score"]).Order());
     }
 
     /// <summary>Jet3 decimal storage resolution preserves the declaring writer's callback.</summary>

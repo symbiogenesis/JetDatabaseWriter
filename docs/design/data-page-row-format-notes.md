@@ -36,6 +36,18 @@ in lenient mode. Null bits are checked before fixed bounds. Writer snapshots
 refuse these malformed slices before changing bytes. The descriptor mutations
 in `FixedSlotBoundsDecodePolicyTests` are synthetic corruption evidence.
 
+Assigned MEMO/OLE slots with missing or reversed variable offsets use the same
+long-value failure policy as unreadable descriptors: strict reads throw a
+column-named `InvalidDataException`; lenient typed reads return `DBNull.Value`,
+string reads return null cells, and POCO properties remain unassigned/default,
+with a trace warning. Calculated MEMO slots use their resolved value type.
+Writer snapshots refuse these assigned slices before mutation. Null-mask and
+unrepresented-column slots remain missing without diagnostics. Assigned
+variable Complex slots use the scalar `MalformedValue` policy. The public
+MEMO/OLE and calculated MEMO mutations and synthetic Complex plan cases in
+`LongValueSlotBoundsDecodePolicyTests` establish corruption behavior, not native
+acceptance of variable Complex storage.
+
 ## Long-value integrity
 
 Stored MEMO/OLE payload lengths are exact. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw InvalidDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.

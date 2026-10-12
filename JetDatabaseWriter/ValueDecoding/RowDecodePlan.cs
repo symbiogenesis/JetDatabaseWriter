@@ -347,8 +347,17 @@ internal sealed class RowDecodePlan
         }
 
         ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+        if (valueType is MemoType or OleType)
+        {
+            _ = LongValueReadPolicy.MissingValue(
+                column.Name,
+                new InvalidDataException("The assigned long-value slot has missing or invalid row offsets."),
+                this.strictParsing || this.PreservesLongValueBytes);
+            return;
+        }
+
         if (valueType is BooleanType or BinaryType or BigBinaryType or TextType
-            || (valueType != ComplexType && JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _)))
+            || JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _))
         {
             _ = this.MalformedVariableValue(column, new ArgumentException("The assigned variable slot has missing or invalid row offsets."));
         }
@@ -647,6 +656,7 @@ internal sealed class RowDecodePlan
         CancellationToken cancellationToken) => slice.Kind switch
         {
             ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
+            ColumnSliceKind.Empty when JetTypeInfo.ResolveValueType(column) is MemoType or OleType => null!,
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
             ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),

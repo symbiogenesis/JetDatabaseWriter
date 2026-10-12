@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using Xunit;
@@ -349,7 +350,7 @@ public sealed class IndexCursorTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public async Task StreamingRange_CyclicLeafIsNotEmittedTwice(DatabaseFormat format)
+    public async Task StreamingRange_CyclicLeaf_ReportsCorruptionBeforeRevisit(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
@@ -364,10 +365,16 @@ public sealed class IndexCursorTests
             },
             pageSize);
         var actual = new List<(long DataPage, int RowIndex)>();
-        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken))
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
-            actual.Add(location);
-        }
+            await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken))
+            {
+                actual.Add(location);
+            }
+        });
+
+        Assert.Equal(JetErrorCode.CorruptIndex, error.ErrorCode);
+        Assert.Equal(FirstPageNumber, error.ErrorInfo.PageNumber);
 
         Assert.Equal(8, actual.Count);
         Assert.Equal(1, reads);
@@ -418,7 +425,7 @@ public sealed class IndexCursorTests
     [Theory]
     [InlineData(DatabaseFormat.AceAccdb)]
     [InlineData(DatabaseFormat.Jet3Mdb)]
-    public async Task StreamingRange_MultiLeafCycleEmitsEachLeafOnce(DatabaseFormat format)
+    public async Task StreamingRange_MultiLeafCycle_ReportsCorruptionBeforeRevisit(DatabaseFormat format)
     {
         int pageSize = PageSizeOf(format);
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
@@ -438,14 +445,130 @@ public sealed class IndexCursorTests
             },
             pageSize);
         var actual = new List<(long DataPage, int RowIndex)>();
-        await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken))
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
         {
-            actual.Add(location);
-        }
+            await foreach ((long DataPage, int RowIndex) location in cursor.EnumerateRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken))
+            {
+                actual.Add(location);
+            }
+        });
+
+        Assert.Equal(JetErrorCode.CorruptIndex, error.ErrorCode);
+        Assert.Equal(FirstPageNumber, error.ErrorInfo.PageNumber);
 
         Assert.Equal(16, actual.Count);
         Assert.Equal(16, actual.Distinct().Count());
         Assert.Equal(2, reads);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb, "contains", 1)]
+    [InlineData(DatabaseFormat.AceAccdb, "contains", 2)]
+    [InlineData(DatabaseFormat.AceAccdb, "exact", 1)]
+    [InlineData(DatabaseFormat.AceAccdb, "exact", 2)]
+    [InlineData(DatabaseFormat.AceAccdb, "range", 1)]
+    [InlineData(DatabaseFormat.AceAccdb, "range", 2)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "contains", 1)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "contains", 2)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "exact", 1)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "exact", 2)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "range", 1)]
+    [InlineData(DatabaseFormat.Jet3Mdb, "range", 2)]
+    public async Task NonStreamingReads_CyclicLeafChain_RefusesBeforeRevisit(DatabaseFormat format, string operation, int leafCount)
+    {
+        int pageSize = PageSizeOf(format);
+        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        byte[] key = EncodeIntKey(42);
+        List<IndexEntry> entries = BuildDuplicateEntries(key, leafCount * 2);
+        var pages = new Dictionary<long, byte[]>();
+        for (int index = 0; index < leafCount; index++)
+        {
+            long next = FirstPageNumber + ((index + 1) % leafCount);
+            pages.Add(FirstPageNumber + index, IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, entries.GetRange(index * 2, 2), prevPage: 0, nextPage: next, tailPage: 0, enablePrefixCompression: true));
+        }
+
+        int reads = 0;
+        var cursor = new IndexCursor(
+            layout,
+            (page, _) =>
+            {
+                Assert.True(++reads <= leafCount, "The cyclic leaf chain reread a page.");
+                return new ValueTask<byte[]>(pages[page]);
+            },
+            pageSize);
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+        {
+            switch (operation)
+            {
+                case "contains":
+                    _ = await cursor.ContainsKeyAsync(FirstPageNumber, EncodeIntKey(43), this.cancellationToken);
+                    break;
+                case "exact":
+                    _ = await cursor.FindRowLocationsAsync(FirstPageNumber, key, this.cancellationToken);
+                    break;
+                case "range":
+                    _ = await cursor.FindRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), this.cancellationToken);
+                    break;
+                default:
+                    Assert.Fail("Unknown index operation.");
+                    break;
+            }
+        });
+
+        Assert.Equal(JetErrorCode.CorruptIndex, error.ErrorCode);
+        Assert.Equal(FirstPageNumber, error.ErrorInfo.PageNumber);
+        Assert.Equal(leafCount, reads);
+    }
+
+    [Theory]
+    [InlineData("contains")]
+    [InlineData("exact")]
+    [InlineData("range")]
+    [InlineData("streaming")]
+    public async Task LeafReads_CancellationAfterRead_StopsBeforeNextLeaf(string operation)
+    {
+        const int pageSize = Constants.PageSizes.Jet4;
+        IndexPageLayout layout = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb).IndexPage;
+        byte[] key = EncodeIntKey(42);
+        byte[] page = IndexPageCodec.BuildLeafPage(layout, pageSize, ParentTdefPage, BuildDuplicateEntries(key, 2), prevPage: 0, nextPage: FirstPageNumber + 1, tailPage: 0, enablePrefixCompression: true);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(this.cancellationToken);
+        int reads = 0;
+        var cursor = new IndexCursor(
+            layout,
+            async (_, _) =>
+            {
+                reads++;
+                await cancellation.CancelAsync();
+                return page;
+            },
+            pageSize);
+        _ = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            switch (operation)
+            {
+                case "contains":
+                    _ = await cursor.ContainsKeyAsync(FirstPageNumber, EncodeIntKey(43), cancellation.Token);
+                    break;
+                case "exact":
+                    _ = await cursor.FindRowLocationsAsync(FirstPageNumber, key, cancellation.Token);
+                    break;
+                case "range":
+                    _ = await cursor.FindRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), cancellation.Token);
+                    break;
+                case "streaming":
+                    await foreach ((long _, int _) in cursor.EnumerateRowLocationsInRangeAsync(FirstPageNumber, new EncodedIndexRange(EncodedIndexBound.None, EncodedIndexBound.None), cancellation.Token))
+                    {
+                        Assert.Fail("A cancelled index read emitted a row.");
+                    }
+
+                    break;
+                default:
+                    Assert.Fail("Unknown index operation.");
+                    break;
+            }
+        });
+
+        Assert.Equal(1, reads);
     }
 
     private static void AssertLastKey(int expected, IndexEntry? last)

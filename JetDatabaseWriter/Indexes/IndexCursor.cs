@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
@@ -58,13 +59,13 @@ internal sealed class IndexCursor
     {
         Guard.NotNull(searchKey, nameof(searchKey));
 
-        byte[]? leafPage = await this.FindCandidateLeafAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
-        if (leafPage == null)
+        (long PageNumber, byte[] Page)? candidate = await this.FindCandidateLeafWithNumberAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
+        if (candidate == null)
         {
             return false;
         }
 
-        return await this.ContainsInLeafChainAsync(leafPage, searchKey, cancellationToken).ConfigureAwait(false);
+        return await this.ContainsInLeafChainAsync(candidate.Value.PageNumber, candidate.Value.Page, searchKey, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -82,13 +83,13 @@ internal sealed class IndexCursor
         Guard.NotNull(searchKey, nameof(searchKey));
 
         var matches = new List<(long DataPage, int RowIndex)>();
-        byte[]? leafPage = await this.FindCandidateLeafAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
-        if (leafPage == null)
+        (long PageNumber, byte[] Page)? candidate = await this.FindCandidateLeafWithNumberAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
+        if (candidate == null)
         {
             return matches;
         }
 
-        await this.CollectLeafChainAsync(leafPage, searchKey, matches, cancellationToken).ConfigureAwait(false);
+        await this.CollectLeafChainAsync(candidate.Value.PageNumber, candidate.Value.Page, searchKey, matches, cancellationToken).ConfigureAwait(false);
         return matches;
     }
 
@@ -106,14 +107,15 @@ internal sealed class IndexCursor
     {
         var matches = new List<(long DataPage, int RowIndex)>();
         byte[]? startKey = range.Lower.Key ?? range.RequiredPrefix ?? [];
-        byte[]? leafPage = await this.FindCandidateLeafAsync(rootPageNumber, startKey, cancellationToken).ConfigureAwait(false);
-        if (leafPage == null)
+        (long PageNumber, byte[] Page)? candidate = await this.FindCandidateLeafWithNumberAsync(rootPageNumber, startKey, cancellationToken).ConfigureAwait(false);
+        if (candidate == null)
         {
             return matches;
         }
 
         await this.CollectRangeLeafChainAsync(
-            leafPage,
+            candidate.Value.PageNumber,
+            candidate.Value.Page,
             range,
             matches,
             cancellationToken).ConfigureAwait(false);
@@ -293,11 +295,12 @@ internal sealed class IndexCursor
             }
 
             long next = IndexPageCodec.ReadNextPage(this.layout, page);
-            if (!continueToNext || next <= 0 || visited.Count >= MaxLeafHops || !visited.Add(next))
+            if (!continueToNext || next <= 0)
             {
                 yield break;
             }
 
+            RegisterLeafTraversal(visited, next);
             page = await this.readPage(next, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -382,10 +385,15 @@ internal sealed class IndexCursor
         }
     }
 
-    private async ValueTask<byte[]?> FindCandidateLeafAsync(long rootPageNumber, byte[] searchKey, CancellationToken cancellationToken)
+    private static void RegisterLeafTraversal(HashSet<long> visited, long pageNumber)
     {
-        (long PageNumber, byte[] Page)? candidate = await this.FindCandidateLeafWithNumberAsync(rootPageNumber, searchKey, cancellationToken).ConfigureAwait(false);
-        return candidate?.Page;
+        if (visited.Count >= MaxLeafHops || !visited.Add(pageNumber))
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptIndex,
+                "The index leaf chain contains a cycle or exceeds the traversal limit.",
+                new JetErrorInfo { PageNumber = pageNumber });
+        }
     }
 
     private async ValueTask<(long PageNumber, byte[] Page)?> FindCandidateLeafWithNumberAsync(
@@ -428,11 +436,13 @@ internal sealed class IndexCursor
     }
 
     private async ValueTask<bool> ContainsInLeafChainAsync(
+        long leafPageNumber,
         byte[] leafPage,
         byte[] searchKey,
         CancellationToken cancellationToken)
     {
         byte[]? page = leafPage;
+        var visited = new HashSet<long> { leafPageNumber };
         while (page != null)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -454,6 +464,7 @@ internal sealed class IndexCursor
                 return false;
             }
 
+            RegisterLeafTraversal(visited, nextPageNumber);
             page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
 
@@ -461,12 +472,14 @@ internal sealed class IndexCursor
     }
 
     private async ValueTask CollectLeafChainAsync(
+        long leafPageNumber,
         byte[] leafPage,
         byte[] searchKey,
         List<(long DataPage, int RowIndex)> matches,
         CancellationToken cancellationToken)
     {
         byte[]? page = leafPage;
+        var visited = new HashSet<long> { leafPageNumber };
         while (page != null)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -483,17 +496,20 @@ internal sealed class IndexCursor
                 return;
             }
 
+            RegisterLeafTraversal(visited, nextPageNumber);
             page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async ValueTask CollectRangeLeafChainAsync(
+        long leafPageNumber,
         byte[] leafPage,
         EncodedIndexRange range,
         List<(long DataPage, int RowIndex)> matches,
         CancellationToken cancellationToken)
     {
         byte[]? page = leafPage;
+        var visited = new HashSet<long> { leafPageNumber };
         while (page != null)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -515,6 +531,7 @@ internal sealed class IndexCursor
                 return;
             }
 
+            RegisterLeafTraversal(visited, nextPageNumber);
             page = await this.readPage(nextPageNumber, cancellationToken).ConfigureAwait(false);
         }
     }

@@ -29,6 +29,16 @@ indexes. Native DAO emits only the existing primary indexes for a relationship
 with dbRelationDontEnforce, permits orphans and allows related table deletion.
 Enforced relationships emit physical foreign-key indexes and block that deletion.
 
+Index-cursor Contains, exact seeks, list ranges and streaming ranges track
+visited leaf pages and share a maximum of 1,048,576 leaves per walk. A repeated
+page or exhausted traversal budget raises `JetCorruptDataException` with
+`CorruptIndex` and the next page number before that page is read. Each leaf
+checks cancellation. Streaming callers can receive earlier rows before the
+corruption is encountered; they must observe enumeration completion. Synthetic
+self-cycle and two-leaf-cycle regressions in `IndexCursorTests` establish bounded
+refusal, with valid multi-leaf and cancellation controls. They add no native
+index-layout evidence.
+
 ## 1. Background
 
 Row enumeration does **not** consume index information today; it remains a linear data-page scan via the per-table page-usage bitmap. Index *schema* metadata is observable via `IAccessReader.ListIndexesAsync` (R1), and exact equality seeks are exposed via `IAccessReader.SeekRowsAsync` (R3). Microsoft Access / DAO CompactDatabase remains the decisive compatibility validator for writer-emitted index bytes because it exercises the engine's own index and catalog walkers.
