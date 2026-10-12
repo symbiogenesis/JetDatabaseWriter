@@ -617,7 +617,11 @@ public sealed class ComplexColumnsReferenceAllocationTests
     [Theory]
     [MemberData(nameof(InvalidReferencesAndModes))]
     public async Task AddColumn_CachedCounterWithInvalidExistingReference_RefusesWithoutWrite(int? reference, WriteMode mode) =>
-        await AssertCachedAddColumnRefusesAsync(mode, (row, column) => (int)row[0] == 4 && column == "Tags" ? reference : (int)row[0], "Tags");
+        await AssertCachedAddColumnRefusesAsync(
+            mode,
+            (row, column) => (int)row[0] == 4 && column == "Tags" ? reference : (int)row[0],
+            "Tags",
+            expectedErrorCode: reference is <= 0 ? JetErrorCode.MalformedValue : JetErrorCode.CorruptComplexColumn);
 
     [Theory]
     [MemberData(nameof(AllModes), MemberType = typeof(ComplexColumnTestSupport))]
@@ -753,7 +757,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         return ms;
     }
 
-    private static async Task AssertCachedAddColumnRefusesAsync(WriteMode mode, Func<object[], string, int?> slotFor, string offendingColumn, bool clearComplexId = false)
+    private static async Task AssertCachedAddColumnRefusesAsync(WriteMode mode, Func<object[], string, int?> slotFor, string offendingColumn, bool clearComplexId = false, JetErrorCode expectedErrorCode = JetErrorCode.CorruptComplexColumn)
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await CreateWriterAsync(ms))
@@ -802,7 +806,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
                 await harness.Services.Transactions.RunAutoCommitAsync(
                     _ => harness.Services.Schema.AddColumnAsync("Docs", new ColumnDefinition("Labels", typeof(object)) { IsMultiValue = true, MultiValueElementType = typeof(int) }, Ct),
                     Ct));
-            Assert.Equal(JetErrorCode.CorruptComplexColumn, error.ErrorCode);
+            Assert.Equal(expectedErrorCode, error.ErrorCode);
             Assert.Equal("Docs", error.ErrorInfo.TableName);
             Assert.Equal(offendingColumn, error.ErrorInfo.ColumnName);
             Assert.True(error.ErrorInfo.PageNumber > 0);
@@ -813,7 +817,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         }
 
         Assert.Equal(baseline, ms.ToArray());
-        RawTable docs = await ReadRawTableAsync(ms, "Docs");
+        RawTable docs = await ReadRawFixedReferenceTableAsync(ms);
         Assert.Equal(6, docs.Rows.Count);
         Assert.Equal(6, docs.ComplexAutoNumber);
         Assert.DoesNotContain(docs.Definition.Columns, column => column.Name == "Labels");
@@ -822,6 +826,46 @@ public sealed class ComplexColumnsReferenceAllocationTests
             Assert.Equal(slotFor(row, "Files"), Slot(docs, row, "Files"));
             Assert.Equal(slotFor(row, "Tags"), Slot(docs, row, "Tags"));
         });
+    }
+
+    private static async Task<RawTable> ReadRawFixedReferenceTableAsync(MemoryStream ms)
+    {
+        // Write-back decoding refuses malformed assigned references. Inspect the
+        // fixture's fixed slots directly to verify they survived that refusal.
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", Ct);
+        JetFormat format = harness.Database.Format;
+        var rows = new List<object[]>();
+        foreach (RowLocation location in await harness.Database.GetLiveRowLocationsAsync(table.Entry.TDefPage, Ct))
+        {
+            byte[] page = await harness.Pager.ReadPageCopyAsync(location.DataPageNumber, Ct);
+            int columnCount = format.ReadRowColumnCount(page, location.RowStart);
+            Assert.Equal(table.Definition.Columns.Count, columnCount);
+            int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(columnCount);
+            ReadOnlySpan<byte> nullMask = page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize);
+            object[] values = new object[columnCount];
+            for (int index = 0; index < columnCount; index++)
+            {
+                ColumnInfo column = table.Definition.Columns[index];
+                Assert.True(column.IsFixed);
+                Assert.True(column.Type is ColumnType.LongIntegerType or ColumnType.ComplexType);
+                Assert.InRange(column.FixedOff, 0, location.RowSize - format.RowFields.NumCols - nullMaskSize - 4);
+                if (!JetTypeInfo.IsNullMaskBitSet(nullMask, column.ColNum))
+                {
+                    values[index] = DBNull.Value;
+                    continue;
+                }
+
+                int value = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(location.RowStart + format.RowFields.NumCols + column.FixedOff, 4));
+                values[index] = column.Type == ColumnType.ComplexType ? new ComplexIdRef(value) : value;
+            }
+
+            rows.Add(values);
+        }
+
+        byte[] tdef = await harness.Pager.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
+        return new RawTable(table.Definition, rows, tdef);
     }
 
     private static async Task CreateDocsAsync(AccessWriter writer) =>

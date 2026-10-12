@@ -257,8 +257,20 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The row is shorter than its column-count field", token).ConfigureAwait(false);
                 }
 
-                object?[] values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, decodePlan, token).ConfigureAwait(false)
-                    ?? throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
+                object?[] values;
+                try
+                {
+                    values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, decodePlan, token).ConfigureAwait(false)
+                        ?? throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
+                }
+                catch (JetCorruptDataException failure) when (failure.ErrorCode == JetErrorCode.MalformedValue && failure.ErrorInfo.PageNumber is null)
+                {
+                    throw new JetCorruptDataException(
+                        failure.ErrorCode,
+                        failure.Message,
+                        failure.ErrorInfo with { PageNumber = row.Location.DataPageNumber },
+                        failure);
+                }
 
                 if (tableDef.HasHyperlinkColumns)
                 {

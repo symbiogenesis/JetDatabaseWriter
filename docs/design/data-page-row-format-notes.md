@@ -46,7 +46,9 @@ unrepresented-column slots remain missing without diagnostics. Assigned
 fixed and variable Complex slots use the scalar `MalformedValue` policy and
 require an exact four-byte, positive reference. Strict reads refuse malformed assigned
 slots; lenient typed/string/POCO and DataTable reads return their missing-value
-representation with a Trace warning. Writer snapshots refuse these slots before
+representation with a Trace warning. Materialized write-back snapshots retain malformed scalar column context
+and add the resolved table name and data-page number. Writer snapshots
+refuse these slots before
 an unrelated update can erase them. Valid positive references with no items,
 null-mask slots and unrepresented columns remain missing without diagnostics.
 The public MEMO/OLE and calculated MEMO mutations in
