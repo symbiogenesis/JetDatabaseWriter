@@ -155,6 +155,33 @@ public sealed partial class PowerShellProcessRunnerTests
     }
 
     [Fact]
+    [SupportedOSPlatform("windows")]
+    public async Task DenyTerminateOnceStartedAsync_ProcessAlreadyExited_ReturnsNull()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+
+        string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
+        try
+        {
+            PowerShellRunResult result = PowerShellProcessRunner.Run(
+                PowerShellPath,
+                CommandArguments($"Set-Content -LiteralPath {AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(pidPath)} -Value $PID; exit 0"),
+                TimeSpan.FromSeconds(60));
+
+            Assert.Equal(0, result.ExitCode);
+            Assert.False(result.TimedOut);
+            Assert.True(result.OutputComplete);
+            Assert.True(ReadProcessId(pidPath).HasValue, "The host did not record its process id.");
+            using Process? process = await DenyTerminateOnceStartedAsync(pidPath, TestContext.Current.CancellationToken);
+            Assert.Null(process);
+        }
+        finally
+        {
+            File.Delete(pidPath);
+        }
+    }
+
+    [Fact]
     public void Run_GrandchildKeepsPipeOpen_ReturnsAfterDrainTimeout()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
@@ -292,9 +319,31 @@ public sealed partial class PowerShellProcessRunnerTests
         {
             if (ReadProcessId(pidPath) is int id)
             {
-                var ping = Process.GetProcessById(id);
-                ProcessSecurity.DenyTerminate(ping.SafeHandle, user);
-                return ping;
+                Process ping;
+                try
+                {
+                    ping = Process.GetProcessById(id);
+                }
+                catch (ArgumentException)
+                {
+                    // The timeout can kill the ping after its id was recorded but before this lookup.
+                    return null;
+                }
+
+                bool guarded = false;
+                try
+                {
+                    ProcessSecurity.DenyTerminate(ping.SafeHandle, user);
+                    guarded = true;
+                    return ping;
+                }
+                finally
+                {
+                    if (!guarded)
+                    {
+                        ping.Dispose();
+                    }
+                }
             }
 
             try
@@ -351,10 +400,17 @@ public sealed partial class PowerShellProcessRunnerTests
             return;
         }
 
-        // The handle this Process opened before the deny entry was added still has the right to
-        // terminate the process.
-        process.Kill();
-        _ = process.WaitForExit(TimeSpan.FromSeconds(10));
+        try
+        {
+            // The handle this Process opened before the deny entry was added still has the right to
+            // terminate the process.
+            process.Kill();
+            _ = process.WaitForExit(TimeSpan.FromSeconds(10));
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited after the guard was installed, before cleanup could kill it.
+        }
     }
 
     private static void TryKill(int? processId)
