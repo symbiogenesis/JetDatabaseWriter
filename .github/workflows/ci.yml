@@ -26,7 +26,7 @@ env:
 # The full suite runs on Windows: it uses Windows paths and byte-range locks, and the
 # DAO round-trip tests skip themselves when Access is not installed. The jobs run in
 # parallel. The analyzers take most of a Release build, so four jobs share them, and the
-# test legs build without them.
+# test legs execute the Release binaries uploaded by the analyzer jobs.
 jobs:
   analyze:
     name: Analyze (${{ matrix.name }})
@@ -49,9 +49,13 @@ jobs:
           - name: tests net10.0
             project: JetDatabaseWriter.Tests
             options: -f net10.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net10.0
+            runner: true
           - name: tests net8.0
             project: JetDatabaseWriter.Tests
             options: -f net8.0 -p:AnalyzeOnly=JetDatabaseWriter.Tests
+            tf: net8.0
+            runner: true
 
     steps:
       # MinVer computes the package version from the tags, so fetch the full history.
@@ -87,6 +91,16 @@ jobs:
       - name: Build
         run: dotnet build ${{ matrix.project }} -c Release --no-restore ${{ matrix.options }}
 
+      # Test jobs and Access hosts execute these exact analyzed binaries.
+      - name: Upload DAO test runner
+        if: matrix.runner
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dao-test-runner-${{ matrix.tf }}
+          path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Pack
         if: matrix.pack
         run: dotnet pack JetDatabaseWriter/JetDatabaseWriter.csproj -c Release --no-build -o artifacts/nupkg
@@ -105,6 +119,7 @@ jobs:
 
   test:
     name: Test (${{ matrix.tf }})
+    needs: analyze
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
@@ -126,27 +141,20 @@ jobs:
         with:
           global-json-file: global.json
           dotnet-version: ${{ matrix.tf == 'net8.0' && '8.0.x' || '' }}
-          cache: true
-          cache-dependency-path: '*/packages.lock.json'
 
-      - name: Restore
-        run: dotnet restore JetDatabaseWriter.Tests --locked-mode
-
-      # The analyze jobs check this code; the compiler's own warnings still fail the build.
-      - name: Build
-        run: dotnet build JetDatabaseWriter.Tests -c Release --no-restore -f ${{ matrix.tf }} -p:RunAnalyzers=false
-
-      # The same binaries can run only the DAO-guarded methods on an Access host.
-      - name: Upload DAO test runner
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      # Artifacts are immutable and scoped to this workflow run. Do not rebuild the
+      # test project here: its Release analyzer lane already built every dependency.
+      - name: Download validated test runner
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dao-test-runner-${{ matrix.tf }}
           path: JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}/
-          if-no-files-found: error
-          retention-days: 3
 
       - name: Test
-        run: dotnet test --project JetDatabaseWriter.Tests -c Release --no-build -f ${{ matrix.tf }}
+        run: >-
+          dotnet test --test-modules JetDatabaseWriter.Tests.dll
+          --root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
+          --minimum-expected-tests 1
 
   aot:
     name: Trimmed and NativeAOT consumers

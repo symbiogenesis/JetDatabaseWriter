@@ -33,6 +33,8 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 - Full test suites run only on CI, including a full run of just one target framework. Do not run the whole suite locally in batches of filtered tests.
 - All benchmarks run only on CI, including a single benchmark, short/medium/dry jobs, smoke checks, and debugging runs. Building the benchmark project locally is allowed; executing benchmarks is not.
 - Local builds and targeted tests provide development feedback. Required acceptance gates still run on CI against the settled `main` revision.
+- Windows ordinary test jobs download their exact-run Release binaries from the analyzer jobs. They use `dotnet test --test-modules` to execute them without restoring or building again; both framework legs and every analyzer gate remain required.
+- Specialized benchmark, fuzz and portability workflows require a completed, successful `ci.yml` run for the exact main revision before their build jobs start. Finish that gate before dispatching them; no additional local build is required.
 
 ## Build
 
@@ -116,6 +118,7 @@ gh workflow run benchmarks.yml --ref main -f filter="<filter patterns>" -f basel
 BenchmarkDotNet practice on CI:
 
 - BenchmarkDotNet warms up by default; do not add a separate warmup run.
+- The hosted comparison script uses `--stopOnFirstError`; a failed fixture or measurement aborts remaining cases and retains partial diagnostics. Fix the failing case before treating any results as acceptance.
 - Keep the default adaptive job for release-quality numbers. Use the workflow input `job=short` only for a focused refresh. Narrow a CI run with its `filter` input instead of lowering iteration or warmup counts.
 - BenchmarkDotNet already switches Windows to the High performance power plan during runs; add no boilerplate for it.
 - `[IterationSetup]` suits destructive writer benchmarks that need a fresh database per operation, but it forces `InvocationCount=1` and `UnrollFactor=1`. Copy from an unmeasured baseline fixture instead of rebuilding the schema in each benchmark.

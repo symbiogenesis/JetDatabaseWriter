@@ -37,6 +37,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: benchmarks-${{ github.ref }}
@@ -47,7 +48,21 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
+  prerequisite:
+    name: Require successful CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify the exact main revision passed CI
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/assert-ci-success.ps1
+
   benchmarks:
+    needs: prerequisite
     name: Benchmarks
     # Windows, like the development machines and the test job; some benchmarks are Windows only.
     runs-on: windows-latest
@@ -74,7 +89,9 @@ jobs:
         env:
           BASELINE: ${{ inputs.baseline }}
         run: |
-          git worktree add --detach "$env:RUNNER_TEMP/baseline" "$env:BASELINE"
+          $baselineSha = git rev-parse --verify --end-of-options "$env:BASELINE^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot resolve the baseline '$env:BASELINE'." }
+          git worktree add --detach "$env:RUNNER_TEMP/baseline" "$baselineSha"
           if ($LASTEXITCODE -ne 0) { throw "Cannot check out the baseline '$env:BASELINE'." }
           git -C "$env:RUNNER_TEMP/baseline" log -1 --format='Baseline: %H %s'
 
