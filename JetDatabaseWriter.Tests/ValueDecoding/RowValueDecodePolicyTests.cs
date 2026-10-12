@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Schema.Models;
@@ -52,15 +53,17 @@ public sealed class RowValueDecodePolicyTests
     }
 
     [Fact]
-    public void FixedVariableSlotTooShort_Strict_ThrowsInvalidDataException()
+    public void FixedVariableSlotTooShort_Strict_ThrowsCorruption()
     {
-        InvalidDataException ex = Assert.Throws<InvalidDataException>(() =>
+        JetCorruptDataException ex = Assert.Throws<JetCorruptDataException>(() =>
             RowValueDecodePolicy.FixedVariableSlotTooShort(
                 new ColumnInfo { Name = "Amount", Type = MoneyType },
                 actualLength: 3,
                 requiredLength: 8,
                 strictParsing: true));
 
+        Assert.Equal(JetErrorCode.MalformedValue, ex.ErrorCode);
+        Assert.Equal("Amount", ex.ErrorInfo.ColumnName);
         Assert.Contains("Amount", ex.Message, StringComparison.Ordinal);
     }
 
@@ -89,6 +92,66 @@ public sealed class RowValueDecodePolicyTests
         Assert.Equal("When", ex.ErrorInfo.ColumnName);
         Assert.Same(inner, ex.InnerException);
         Assert.Contains("When", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory(DisableParallelization = true)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LenientScalarFault_EmitsDiagnosticAndToleratesListenerFailure(bool calculated)
+    {
+        var column = new ColumnInfo
+        {
+            Name = "Amount",
+            Type = calculated ? MemoType : MoneyType,
+            ExtraFlags = calculated ? Constants.CalculatedColumn.ExtFlagMask : (byte)0,
+            CalculatedResultType = MoneyType,
+        };
+        using var output = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        using var listener = new TextWriterTraceListener(output);
+        Trace.Listeners.Add(listener);
+        try
+        {
+            Assert.Equal(DBNull.Value, RowValueDecodePolicy.MalformedVariableValue(column, new ArgumentException("secret payload"), strictParsing: false));
+            Assert.Contains("Amount", output.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Currency", output.ToString(), StringComparison.Ordinal);
+            Assert.Contains("missing value", output.ToString(), StringComparison.Ordinal);
+            Assert.Contains(calculated ? "calculated" : "variable-area", output.ToString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("secret payload", output.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+
+        using var throwing = new ThrowingTraceListener();
+        Trace.Listeners.Add(throwing);
+        try
+        {
+            Assert.Equal(DBNull.Value, RowValueDecodePolicy.MalformedVariableValue(column, new ArgumentException("bad currency"), strictParsing: false));
+        }
+        finally
+        {
+            Trace.Listeners.Remove(throwing);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void MalformedVariableValue_IoAndCancellation_RethrowsOriginalException(bool strict)
+    {
+        var column = new ColumnInfo { Name = "Amount", Type = MoneyType };
+        var io = new IOException("disk failure");
+        var cancellation = new OperationCanceledException();
+        Assert.Same(io, Assert.Throws<IOException>(() => RowValueDecodePolicy.MalformedVariableValue(column, io, strict)));
+        Assert.Same(cancellation, Assert.Throws<OperationCanceledException>(() => RowValueDecodePolicy.MalformedVariableValue(column, cancellation, strict)));
+    }
+
+    private sealed class ThrowingTraceListener : TraceListener
+    {
+        public override void Write(string? message) => throw new IOException("diagnostic failure");
+
+        public override void WriteLine(string? message) => throw new IOException("diagnostic failure");
     }
 
     [Fact]

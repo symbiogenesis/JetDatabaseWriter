@@ -297,11 +297,11 @@ public sealed class CompoundFileReaderTests
 
         // Patch the DIFAT extension's next-DIFAT pointer (last 4 bytes
         // of sector 3) to loop back to sector 3 instead of EndOfChain,
-        // and claim 50 DIFAT sectors so the while-loop would spin if
+        // and claim 2 DIFAT sectors so the second traversal visits the loop if
         // the guard were missing.
         const int difatOff = 512 + (3 * 512);
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOff + 508), 3);
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), 50);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), 2);
 
         await using var ms = new MemoryStream(file);
 
@@ -312,84 +312,66 @@ public sealed class CompoundFileReaderTests
         Assert.Contains("cycle", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ── DIFAT overflow / DoS mitigation tests ─────────────────────────
-    //
-    // Hostile FAT/DIFAT counts must not control allocation or traversal
-    // beyond the validated physical sector count.
+    // Hostile FAT/DIFAT counts are rejected before allocation or traversal.
 
-    /// <summary>
-    /// A crafted header with <c>NumFatSectors = 0x7FFF_FFFF</c> would
-    /// previously cause a ~8 GB list pre-allocation
-    /// (OOM). The reader now clamps to the physical sector count
-    /// derivable from the stream length.
-    /// </summary>
     [Fact]
     public async Task ReadStreams_DifatOverflow_HugeNumFatSectors_DoesNotOom()
     {
         byte[] file = BuildSyntheticDifatFile();
-
-        // Set NumFatSectors to int.MaxValue — far beyond the 5-sector
-        // test file — to trigger the OOM path pre-mitigation.
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x2C), 0x7FFFFFFFu);
-
         await using var ms = new MemoryStream(file);
 
-        // Must complete without OutOfMemoryException. The clamped FAT
-        // may be corrupt, so any non-OOM exception is acceptable.
-        Exception? ex = await Record.ExceptionAsync(
+        await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
-        Assert.IsNotType<OutOfMemoryException>(ex);
     }
 
-    /// <summary>
-    /// A crafted header with <c>NumDifatSectors = 0x3FFF_FFFF</c> and
-    /// a self-looping DIFAT sector would previously spin for ~1 billion
-    /// I/O rounds (CPU/IO DoS). The reader now clamps the walk to the
-    /// stream's physical sector count and detects cycles.
-    /// </summary>
     [Fact]
     public async Task ReadStreams_DifatOverflow_HugeNumDifatSectors_DoesNotSpin()
     {
         byte[] file = BuildSyntheticDifatFile();
-
-        // Inflate NumDifatSectors to ~1 billion and loop the DIFAT
-        // chain back to itself.
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), 0x3FFFFFFFu);
         const int difatOff = 512 + (3 * 512);
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOff + 508), 3);
-
         await using var ms = new MemoryStream(file);
 
-        // Cycle detection catches the self-loop on the second visit.
-        InvalidDataException ex = await Assert.ThrowsAsync<InvalidDataException>(
+        await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
-        Assert.Contains("cycle", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Validates that the DIFAT sector-count clamp is based on the
-    /// stream's physical size. A tiny file cannot declare thousands of
-    /// DIFAT sectors without the reader silently clamping the walk.
-    /// </summary>
     [Fact]
-    public async Task ReadStreams_DifatOverflow_NumDifatSectorsClampedToStreamLength()
+    public async Task ReadStreams_DifatOverflow_NumDifatSectorsExceedingStreamLength_Throws()
     {
         byte[] file = BuildSyntheticDifatFile();
-
-        // The file is 3072 bytes (header + 5 × 512). That is only
-        // 5 physical sectors, so NumDifatSectors = 1000 is absurd
-        // and must be clamped without spinning.
         BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), 1000);
-
         await using var ms = new MemoryStream(file);
 
-        // Should complete promptly — the clamped walk reads at most
-        // 5 DIFAT sectors regardless of the declared 1000.
-        Exception? ex = await Record.ExceptionAsync(
+        await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+    }
 
-        // Not an OOM or timeout; any parse error is fine.
-        Assert.IsNotType<OutOfMemoryException>(ex);
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task ReadStreams_DifatCountContradictingActualChain_Throws(int declaredCount)
+    {
+        byte[] file = BuildSyntheticDifatFile();
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(0x48), checked((uint)declaredCount));
+        await using var ms = new MemoryStream(file);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
+    }
+
+    [Fact]
+    public async Task ReadStreams_DifatContinuingPastDeclaredCount_Throws()
+    {
+        byte[] file = BuildSyntheticDifatFile();
+        const int difatOffset = 4 * 512;
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOffset + 508), 3);
+        await using var ms = new MemoryStream(file);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
     }
 
     /// <summary>
@@ -409,91 +391,74 @@ public sealed class CompoundFileReaderTests
     }
 
     /// <summary>
-    /// Builds a minimal synthetic v3 (512-byte sector) CFB with one DIFAT
-    /// extension sector. The file has 5 sectors:
-    /// <list type="bullet">
-    ///   <item>Sector 0: directory (Root Entry + <c>TestStream</c>)</item>
-    ///   <item>Sector 1: 10 bytes of data payload</item>
-    ///   <item>Sector 2: first FAT sector (referenced by header DIFAT[0])</item>
-    ///   <item>Sector 3: DIFAT extension sector (→ sector 4)</item>
-    ///   <item>Sector 4: second FAT sector (referenced from DIFAT ext)</item>
-    /// </list>
-    /// The header declares <c>NumFatSectors = 110</c> so that
-    /// <c>headerDifatCount = Min(109, 110) = 109</c>. Only DIFAT[0]
-    /// holds a valid sector id; entries [1..108] are <c>FreeSect</c>.
-    /// After the header loop, only 1 FAT sector is collected. The DIFAT
-    /// walk reads sector 3, picks up sector 4, bringing the total to 2.
+    /// Builds a v3 file with 110 distinct FAT sectors: the header contains
+    /// the first 109 FAT locations and one DIFAT sector contains the last.
+    /// Sectors 0 and 1 hold the directory and ten-byte payload; sector 3
+    /// holds the DIFAT, while sectors 2 and 4 through 112 hold the FAT.
     /// </summary>
     private static byte[] BuildSyntheticDifatFile()
     {
-        const int ss = 512; // sector size
-        const int sectorCount = 5;
+        const int ss = 512;
+        const int sectorCount = 113;
+        const int fatSectorCount = 110;
         byte[] file = new byte[ss + (sectorCount * ss)];
-
-        // ── Header ────────────────────────────────────────────────────
         Span<byte> h = file.AsSpan(0, ss);
         Constants.CompoundFile.Signature.CopyTo(h);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x18..], 0x003E);
-        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);          // v3
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1A..], 3);
         BinaryPrimitives.WriteUInt16LittleEndian(h[0x1C..], 0xFFFE);
-        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1E..], 9);          // 2^9 = 512
-        BinaryPrimitives.WriteUInt16LittleEndian(h[0x20..], 6);          // 2^6 = 64
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x2C..], 110);        // NumFatSectors > 109
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x30..], 0);          // FirstDirSector
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x38..], 0);          // MiniStreamCutoff = 0 (all regular FAT)
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], 0xFFFFFFFE); // FirstMiniFat = EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x40..], 0);          // NumMiniFatSectors
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x44..], 3);          // FirstDifatSector = sector 3
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x48..], 1);          // NumDifatSectors = 1
-        BinaryPrimitives.WriteUInt32LittleEndian(h[0x4C..], 2);          // DIFAT[0] = sector 2
-        for (int i = 1; i < 109; i++)
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x1E..], 9);
+        BinaryPrimitives.WriteUInt16LittleEndian(h[0x20..], 6);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x2C..], fatSectorCount);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x30..], 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x38..], 0); // diagnostic regular-stream layout
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x3C..], Constants.CompoundFile.EndOfChain);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x40..], 0);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x44..], 3);
+        BinaryPrimitives.WriteUInt32LittleEndian(h[0x48..], 1);
+        for (int i = 0; i < 109; i++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(h[(0x4C + (i * 4))..], 0xFFFFFFFF);
+            uint fatSector = i == 0 ? 2u : checked((uint)(i + 3));
+            BinaryPrimitives.WriteUInt32LittleEndian(h[(0x4C + (i * 4))..], fatSector);
         }
 
-        // ── Sector 0: Directory ───────────────────────────────────────
-        const int dirOff = ss;
-        WriteDirEntry(file, dirOff, "Root Entry", 5, 0xFFFFFFFE, 0, child: 1);
-        WriteDirEntry(file, dirOff + 128, "TestStream", 2, 1, 10, child: 0xFFFFFFFF);
-        WriteDirEntryUnused(file, dirOff + 256);
-        WriteDirEntryUnused(file, dirOff + 384);
-
-        // ── Sector 1: Data payload (10 bytes) ─────────────────────────
-        const int dataOff = ss + (1 * ss);
+        WriteDirEntry(file, ss, "Root Entry", 5, Constants.CompoundFile.EndOfChain, 0, child: 1);
+        WriteDirEntry(file, ss + 128, "TestStream", 2, 1, 10, child: Constants.CompoundFile.FreeSect);
+        WriteDirEntryUnused(file, ss + 256);
+        WriteDirEntryUnused(file, ss + 384);
         for (int i = 0; i < 10; i++)
         {
-            file[dataOff + i] = unchecked((byte)i);
+            file[(2 * ss) + i] = unchecked((byte)i);
         }
 
-        // ── Sector 2: First FAT sector (sectors 0-127) ───────────────
-        const int fat0Off = ss + (2 * ss);
-        for (int i = 0; i < 128; i++)
+        for (int i = 0; i < fatSectorCount; i++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Off + (i * 4)), 0xFFFFFFFF);
+            int fatSector = i == 0 ? 2 : i + 3;
+            int offset = (fatSector + 1) * ss;
+            for (int entry = 0; entry < ss / 4; entry++)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(offset + (entry * 4)), Constants.CompoundFile.FreeSect);
+            }
         }
 
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Off + (0 * 4)), 0xFFFFFFFE); // sector 0 dir → EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Off + (1 * 4)), 0xFFFFFFFE); // sector 1 data → EndOfChain
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Off + (2 * 4)), 0xFFFFFFFD); // sector 2 FAT → FatSect
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Off + (4 * 4)), 0xFFFFFFFD); // sector 4 FAT → FatSect
-
-        // ── Sector 3: DIFAT extension ─────────────────────────────────
-        const int difOff = ss + (3 * ss);
-        for (int i = 0; i < 128; i++)
+        const int fat0Offset = 3 * ss;
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Offset), Constants.CompoundFile.EndOfChain);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Offset + 4), Constants.CompoundFile.EndOfChain);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Offset + 8), Constants.CompoundFile.FatSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Offset + 12), Constants.CompoundFile.DifSect);
+        for (int sector = 4; sector < sectorCount; sector++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difOff + (i * 4)), 0xFFFFFFFF);
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat0Offset + (sector * 4)), Constants.CompoundFile.FatSect);
         }
 
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difOff), 4);          // entry[0] = sector 4
-        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difOff + 508), 0xFFFFFFFE); // next DIFAT → EndOfChain
-
-        // ── Sector 4: Second FAT sector (sectors 128-255, all free) ───
-        const int fat1Off = ss + (4 * ss);
-        for (int i = 0; i < 128; i++)
+        const int difatOffset = 4 * ss;
+        for (int entry = 0; entry < 127; entry++)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(fat1Off + (i * 4)), 0xFFFFFFFF);
+            BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOffset + (entry * 4)), Constants.CompoundFile.FreeSect);
         }
 
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOffset), 112);
+        BinaryPrimitives.WriteUInt32LittleEndian(file.AsSpan(difatOffset + 508), Constants.CompoundFile.EndOfChain);
         return file;
     }
 

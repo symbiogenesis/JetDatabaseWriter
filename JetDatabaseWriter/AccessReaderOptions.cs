@@ -93,9 +93,9 @@ public sealed class AccessReaderOptions : AccessOptions
     /// MEMO/OLE values produce a trace diagnostic and a missing value: DBNull
     /// in typed rows, or null in string rows. Underlying I/O failures and resource
     /// budget refusals always propagate.
-    /// Malformed classic Date/Time payloads and fixed or variable Date/Time Extended payloads
+    /// Malformed fixed, variable-area and calculated scalar payloads
     /// throw <see cref="Exceptions.JetCorruptDataException"/> in strict mode.
-    /// Lenient date reads emit a trace warning and return <see cref="DBNull.Value"/>
+    /// Lenient scalar reads emit a trace warning and return <see cref="DBNull.Value"/>
     /// in typed rows, empty text in string rows, or an unassigned/default POCO property.
     /// </summary>
     public bool StrictParsing { get; init; } = true;

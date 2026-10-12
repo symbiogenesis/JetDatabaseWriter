@@ -28,8 +28,19 @@ the qualifier and rewrite the matching field dependency. DAO120 rejects all
 nine tested variants with a space before, after or on both sides of the
 separator in `[T].[Price]`, `T.Price` and `[T]![Price]`; the evaluator rejects
 them too. Each native refusal leaves the field collection unchanged, and the
-adjacent spelling succeeds in the same database. Table renames still need
-separate native evidence.
+adjacent spelling succeeds in the same database.
+
+DAO120 table renames retain the original calculated-expression text. After
+renaming `T` to `Renamed T`, bare table qualifiers `T.Price` and `T![Price]`
+continue evaluating new and updated rows after reopen, and compact preserves
+the expression and results. Bracketed table qualifiers `[T].[Price]`,
+`[T]![Price]` and `[T].Price` instead return Null after rename, and compact
+refuses them with DAO error 3790. `TableRenamedQualifiedExpressionTests`
+characterizes all five variants. The writer refuses recalculation with a
+stale table qualifier before changing bytes, including on the native files.
+Supporting the legitimate bare aliases requires verified binding metadata;
+matching an arbitrary foreign qualifier to the current row would lose the
+native distinction.
 
 ## On-disk format
 

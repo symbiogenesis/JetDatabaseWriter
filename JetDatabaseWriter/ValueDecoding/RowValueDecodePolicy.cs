@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.ExceptionServices;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -123,40 +122,23 @@ internal static class RowValueDecodePolicy
     }
 
     internal static object FixedVariableSlotTooShort(ColumnInfo column, int actualLength, int requiredLength, bool strictParsing)
-    {
-        if (JetTypeInfo.ResolveValueType(column) is DateTimeType or DateTimeExtendedType)
-        {
-            return MalformedDate(column, new ArgumentException($"Date/Time payload needs {requiredLength} byte(s), found {Math.Max(0, actualLength)}."), strictParsing, column.IsCalculated ? "calculated" : "variable-area");
-        }
-
-        if (strictParsing)
-        {
-            throw new InvalidDataException(
-                $"Variable-area payload for column '{column.Name}' is too short for type {JetTypeInfo.GetTypeDisplayName(column.Type)}: need {requiredLength} byte(s), found {Math.Max(0, actualLength)}.");
-        }
-
-        return DBNull.Value;
-    }
+        => MalformedVariableValue(
+            column,
+            new ArgumentException($"{JetTypeInfo.GetTypeDisplayName(JetTypeInfo.ResolveValueType(column))} payload needs {requiredLength} byte(s), found {Math.Max(0, actualLength)}."),
+            strictParsing);
 
     internal static object MalformedVariableValue(ColumnInfo column, Exception exception, bool strictParsing)
     {
-        if (exception is JetLimitationException)
+        if (!IsMalformedValueException(exception))
         {
             ExceptionDispatchInfo.Capture(exception).Throw();
         }
 
-        if (JetTypeInfo.ResolveValueType(column) is DateTimeType or DateTimeExtendedType)
-        {
-            return MalformedDate(column, exception, strictParsing, column.IsCalculated ? "calculated" : "variable-area");
-        }
-
-        if (strictParsing)
-        {
-            throw new InvalidDataException(
-                $"Malformed variable-area payload for column '{column.Name}' (type {JetTypeInfo.GetTypeDisplayName(column.Type)}).",
-                exception);
-        }
-
-        return DBNull.Value;
+        return MalformedValue(
+            column,
+            exception,
+            strictParsing,
+            column.IsCalculated ? "calculated" : "variable-area",
+            JetTypeInfo.GetTypeDisplayName(JetTypeInfo.ResolveValueType(column)));
     }
 }

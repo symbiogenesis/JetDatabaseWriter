@@ -330,19 +330,32 @@ internal sealed class RowDecodePlan
         return value is DateTime date ? FormatDatePayload(date, column.Type) : string.Empty;
     }
 
-    internal void ValidateFixedColumnSlice(ColumnInfo column, ColumnSlice slice)
+    internal void ValidateColumnSlice(ColumnInfo column, ColumnSlice slice)
     {
-        if (column.IsFixed && slice.Kind == ColumnSliceKind.Empty)
+        if (slice.Kind != ColumnSliceKind.Empty)
+        {
+            return;
+        }
+
+        if (column.IsFixed)
         {
             _ = RowValueDecodePolicy.MalformedFixedValue(
                 column,
                 new ArgumentException("The assigned fixed slot extends outside the row's fixed payload."),
                 this.strictParsing || this.PreservesLongValueBytes);
+            return;
+        }
+
+        ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+        if (valueType is BooleanType or BinaryType or BigBinaryType or TextType
+            || (valueType != ComplexType && JetTypeInfo.TryGetVariableSlotFixedPayloadSize(valueType, out _)))
+        {
+            _ = this.MalformedVariableValue(column, new ArgumentException("The assigned variable slot has missing or invalid row offsets."));
         }
     }
 
-    internal bool ValidateDirectVariableSlot(ColumnInfo column, int length)
-        => length <= 0 || RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing);
+    internal bool ValidateDirectVariableSlot(ColumnInfo column, ColumnSlice slice)
+        => slice.Kind != ColumnSliceKind.Var || RowValueDecodePolicy.HasFixedPayload(column, slice.DataLen, this.strictParsing);
 
     internal bool TryDecodeDirect<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
         JetFormat source,
@@ -474,7 +487,7 @@ internal sealed class RowDecodePlan
 
             ColumnInfo column = this.columns[columnIndex];
             ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
-            this.ValidateFixedColumnSlice(column, slice);
+            this.ValidateColumnSlice(column, slice);
             result[columnIndex] = await this.DecodeStringValueAsync(
                 source,
                 page,
@@ -514,7 +527,7 @@ internal sealed class RowDecodePlan
 
             ColumnInfo column = this.columns[columnIndex];
             ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
-            this.ValidateFixedColumnSlice(column, slice);
+            this.ValidateColumnSlice(column, slice);
             buffer[columnIndex] = this.DecodeTypedValue(source, page, rowStart, slice, column, longValueDecoder, ref needsLongValue);
         }
 
@@ -544,7 +557,7 @@ internal sealed class RowDecodePlan
 
             ColumnInfo column = this.columns[columnOrdinal];
             ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
-            this.ValidateFixedColumnSlice(column, slice);
+            this.ValidateColumnSlice(column, slice);
             switch (slice.Kind)
             {
                 case ColumnSliceKind.Bool:
@@ -659,6 +672,7 @@ internal sealed class RowDecodePlan
     {
         if (length <= 0)
         {
+            this.ValidateEmptyVariablePayload(column, length);
             return string.Empty;
         }
 
@@ -777,7 +791,7 @@ internal sealed class RowDecodePlan
                 return CalculatedColumnUtil.ReadPayloadString(
                     payload,
                     valueType,
-                    this.strictParsing);
+                    this.strictParsing || this.PreservesLongValueBytes);
             }
 
             throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");
@@ -834,6 +848,7 @@ internal sealed class RowDecodePlan
     {
         if (length <= 0)
         {
+            this.ValidateEmptyVariablePayload(column, length);
             return RowValueDecodePolicy.EmptyVariableValue(column);
         }
 
@@ -853,8 +868,8 @@ internal sealed class RowDecodePlan
 
             if (JetTypeInfo.TryGetVariableSlotFixedPayloadSize(column.Type, out int required))
             {
-                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
-                    ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing)
+                return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes)
+                    ? JetTypeInfo.ReadFixedTyped(page, start, column, required, this.strictParsing || this.PreservesLongValueBytes)
                     : DBNull.Value;
             }
 
@@ -890,6 +905,18 @@ internal sealed class RowDecodePlan
         }
     }
 
+    private void ValidateEmptyVariablePayload(ColumnInfo column, int length)
+    {
+        if (column.IsCalculated)
+        {
+            _ = this.MalformedVariableValue(column, new ArgumentException("Calculated value envelope is truncated."));
+        }
+        else
+        {
+            _ = RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes);
+        }
+    }
+
     private object MalformedVariableValue(ColumnInfo column, Exception exception)
     {
         // A write-back snapshot must not turn an unreadable MEMO / OLE value
@@ -899,7 +926,7 @@ internal sealed class RowDecodePlan
             return new UnreadableLongValue(column.Name, exception.Message);
         }
 
-        return RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing || (this.PreservesLongValueBytes && JetTypeInfo.ResolveValueType(column) is DateTimeType or DateTimeExtendedType));
+        return RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing || this.PreservesLongValueBytes);
     }
 
     private object? DecodeCalculatedTypedVariableValue(
@@ -948,7 +975,7 @@ internal sealed class RowDecodePlan
                 return CalculatedColumnUtil.ReadPayloadTyped(
                     payload,
                     valueType,
-                    this.strictParsing);
+                    this.strictParsing || this.PreservesLongValueBytes);
             }
 
             throw new InvalidOperationException($"Calculated column of type {JetTypeInfo.GetTypeDisplayName(column.Type)} is unknown.");

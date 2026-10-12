@@ -284,14 +284,11 @@ internal static class DirectRowDecoderBuilder
                     layoutLocal,
                     colExpr)));
 
-            if (col.IsFixed)
-            {
-                statements.Add(Expression.Call(
-                    decodePlanParam,
-                    GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.ValidateFixedColumnSlice), InstanceNonPublic),
-                    colExpr,
-                    sliceLocal));
-            }
+            statements.Add(Expression.Call(
+                decodePlanParam,
+                GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.ValidateColumnSlice), InstanceNonPublic),
+                colExpr,
+                sliceLocal));
 
             if (col.Type == OleType)
             {
@@ -363,7 +360,7 @@ internal static class DirectRowDecoderBuilder
                     decodePlanParam,
                     GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.ValidateDirectVariableSlot), InstanceNonPublic),
                     Expression.Constant(col),
-                    dataLenExpr);
+                    sliceLocal);
                 kindGate = Expression.AndAlso(validPayload, kindGate);
             }
 

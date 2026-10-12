@@ -31,7 +31,7 @@ internal static class CompoundFileReader
     /// </summary>
     /// <param name="stream">The stream.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <param name="maxBytes">The physical file and aggregate decoded stream byte budget.</param>
+    /// <param name="maxBytes">The physical file and aggregate metadata/decoded buffer byte budget. Fixed header/scratch buffers and collection overhead are excluded.</param>
     /// <exception cref="ArgumentOutOfRangeException">The byte budget is not positive.</exception>
     /// <exception cref="JetLimitationException">The container exceeds the configured byte budget.</exception>
     public static async ValueTask<Dictionary<string, byte[]>> ReadStreamsAsync(Stream stream, CancellationToken cancellationToken, int maxBytes = 256 * 1024 * 1024)
@@ -54,16 +54,19 @@ internal static class CompoundFileReader
         byte[] header = await ReadHeaderAsync(stream, cancellationToken).ConfigureAwait(false);
         CfbHeader hdr = ParseHeader(header);
 
+        ValidateHeaderCounts(hdr, (stream.Length / hdr.SectorSize) - 1);
+        var budget = new BufferBudget(maxBytes);
+
         byte[] scratch = ArrayPool<byte>.Shared.Rent(hdr.SectorSize);
         try
         {
             var ownedSectors = new HashSet<uint>();
-            uint[] fat = await BuildFatAsync(stream, header, hdr, scratch, ownedSectors, cancellationToken).ConfigureAwait(false);
-            uint[] miniFat = await ReadMiniFatAsync(stream, hdr, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
-            byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
-            byte[] miniStream = await ReadMiniStreamAsync(stream, directory, hdr, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
+            uint[] fat = await BuildFatAsync(stream, header, hdr, scratch, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
+            uint[] miniFat = await ReadMiniFatAsync(stream, hdr, fat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
+            byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
+            byte[] miniStream = await ReadMiniStreamAsync(stream, directory, hdr, fat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
 
-            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, ownedSectors, maxBytes, cancellationToken).ConfigureAwait(false);
+            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -130,31 +133,25 @@ internal static class CompoundFileReader
         CfbHeader hdr,
         byte[] scratch,
         HashSet<uint> ownedSectors,
+        BufferBudget budget,
         CancellationToken cancellationToken)
     {
-        // Bound hostile DIFAT counts by the physical file geometry.
-        // A crafted CFB can set NumFatSectors / NumDifatSectors to
-        // enormous values, causing unbounded I/O or OOM via the List
-        // pre-allocation. Clamp both to the physical sector count the
-        // stream can actually contain.
-        long maxPhysicalSectors = stream.Length > 0
-            ? (stream.Length - 1) / hdr.SectorSize
-            : 0;
-
-        uint safeFatSectors = (uint)Math.Min(hdr.NumFatSectors, maxPhysicalSectors);
-        uint safeDifatSectors = (uint)Math.Min(hdr.NumDifatSectors, maxPhysicalSectors);
+        // Both the temporary sector IDs and materialized FAT remain live
+        // during FAT construction. Admit them before either allocation.
+        long fatBytes = hdr.NumFatSectors * hdr.SectorSize;
+        long sectorIdBytes = hdr.NumFatSectors * sizeof(uint);
+        budget.Reserve(fatBytes + sectorIdBytes);
 
         // ── Collect FAT sector ids: first from the header DIFAT, then
         // from any DIFAT extension sectors. ─────────────────────────
-        var fatSectorIds = new List<uint>((int)safeFatSectors);
-        int headerDifatCount = Math.Min(Constants.CompoundFile.MaxHeaderDifatEntries, (int)safeFatSectors);
+        var fatSectorIds = new List<uint>(checked((int)hdr.NumFatSectors));
+        const int headerDifatCount = Constants.CompoundFile.MaxHeaderDifatEntries;
         for (int i = 0; i < headerDifatCount; i++)
         {
             uint entry = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.HeaderDifat + (i * 4), 4));
             if (entry < Constants.CompoundFile.FatSectMin)
             {
-                ClaimSector(entry, ownedSectors, "FAT");
-                fatSectorIds.Add(entry);
+                AddFatSector(entry, hdr, ownedSectors, fatSectorIds);
             }
         }
 
@@ -164,7 +161,7 @@ internal static class CompoundFileReader
         var visitedDifat = new HashSet<uint>();
         while (difatSector != Constants.CompoundFile.EndOfChain
             && difatSector != Constants.CompoundFile.FreeSect
-            && difatSectorsRead < safeDifatSectors)
+            && difatSectorsRead < hdr.NumDifatSectors)
         {
             if (!visitedDifat.Add(difatSector))
             {
@@ -176,15 +173,21 @@ internal static class CompoundFileReader
             for (int i = 0; i < entriesPerDifatSector; i++)
             {
                 uint entry = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(i * 4));
-                if (entry < Constants.CompoundFile.FatSectMin && fatSectorIds.Count < (int)safeFatSectors)
+                if (entry < Constants.CompoundFile.FatSectMin)
                 {
-                    ClaimSector(entry, ownedSectors, "FAT");
-                    fatSectorIds.Add(entry);
+                    AddFatSector(entry, hdr, ownedSectors, fatSectorIds);
                 }
             }
 
             difatSector = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(hdr.SectorSize - 4));
             difatSectorsRead++;
+        }
+
+        if (difatSectorsRead != hdr.NumDifatSectors
+            || difatSector is not Constants.CompoundFile.EndOfChain and not Constants.CompoundFile.FreeSect
+            || fatSectorIds.Count != hdr.NumFatSectors)
+        {
+            throw new InvalidDataException("CFB FAT or DIFAT sector count contradicts its chain.");
         }
 
         // ── Materialise the FAT itself by reading each FAT sector. ──
@@ -200,6 +203,7 @@ internal static class CompoundFileReader
             }
         }
 
+        budget.Release(sectorIdBytes);
         return fat;
     }
 
@@ -208,16 +212,18 @@ internal static class CompoundFileReader
         CfbHeader hdr,
         uint[] fat,
         HashSet<uint> ownedSectors,
+        BufferBudget budget,
         CancellationToken cancellationToken)
     {
-        if (hdr.NumMiniFatSectors == 0
-            || hdr.FirstMiniFatSector == Constants.CompoundFile.EndOfChain
-            || hdr.FirstMiniFatSector == Constants.CompoundFile.FreeSect)
+        if (hdr.NumMiniFatSectors == 0)
         {
             return [];
         }
 
-        byte[] miniFatBytes = await ReadChainAsync(stream, hdr.FirstMiniFatSector, hdr.SectorSize, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
+        // Conversion needs both the raw bytes and uint entries simultaneously.
+        budget.Check(hdr.NumMiniFatSectors * hdr.SectorSize * 2);
+        byte[] miniFatBytes = await ReadChainAsync(stream, hdr.FirstMiniFatSector, hdr.SectorSize, fat, ownedSectors, budget, cancellationToken, expectedSectors: hdr.NumMiniFatSectors).ConfigureAwait(false);
+        budget.Reserve(miniFatBytes.Length);
         int count = miniFatBytes.Length / 4;
         uint[] miniFat = new uint[count];
         for (int i = 0; i < count; i++)
@@ -225,6 +231,7 @@ internal static class CompoundFileReader
             miniFat[i] = BinaryPrimitives.ReadUInt32LittleEndian(miniFatBytes.AsSpan(i * 4));
         }
 
+        budget.Release(miniFatBytes.Length);
         return miniFat;
     }
 
@@ -234,6 +241,7 @@ internal static class CompoundFileReader
         CfbHeader hdr,
         uint[] fat,
         HashSet<uint> ownedSectors,
+        BufferBudget budget,
         CancellationToken cancellationToken)
     {
         if (directory.Length < Constants.CompoundFile.DirEntrySize)
@@ -260,7 +268,7 @@ internal static class CompoundFileReader
 
         // Pass the exact size so the chain reader can allocate the final
         // buffer once and skip a trailing Array.Resize allocation+copy.
-        return await ReadChainAsync(stream, rootStart, hdr.SectorSize, fat, ownedSectors, cancellationToken, rootSize).ConfigureAwait(false);
+        return await ReadChainAsync(stream, rootStart, hdr.SectorSize, fat, ownedSectors, budget, cancellationToken, rootSize).ConfigureAwait(false);
     }
 
     private static async ValueTask<Dictionary<string, byte[]>> ExtractStreamsAsync(
@@ -271,11 +279,10 @@ internal static class CompoundFileReader
         uint[] fat,
         uint[] miniFat,
         HashSet<uint> ownedSectors,
-        int maxBytes,
+        BufferBudget budget,
         CancellationToken cancellationToken)
     {
         int dirCount = directory.Length / Constants.CompoundFile.DirEntrySize;
-        long aggregateBytes = (long)directory.Length + miniStream.Length + ((long)fat.Length * 4) + ((long)miniFat.Length * 4);
 
         // Upper-bound the capacity to the directory entry count so the
         // dictionary never has to rehash while we walk the directory.
@@ -320,18 +327,13 @@ internal static class CompoundFileReader
                 continue;
             }
 
-            if (size > maxBytes - aggregateBytes)
-            {
-                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Compound file streams exceed the configured aggregate byte budget.");
-            }
-
-            aggregateBytes += size;
+            budget.Check(size);
 
             // Pass the exact size so the chain readers can size the
             // destination buffer precisely and avoid a tail Array.Resize.
             streams[name] = size < hdr.MiniStreamCutoff
-                ? ReadMiniChain(miniStream, startSector, hdr.MiniSectorSize, miniFat, ownedMiniSectors, size, cancellationToken)
-                : await ReadChainAsync(stream, startSector, hdr.SectorSize, fat, ownedSectors, cancellationToken, size).ConfigureAwait(false);
+                ? ReadMiniChain(miniStream, startSector, hdr.MiniSectorSize, miniFat, ownedMiniSectors, size, budget, cancellationToken)
+                : await ReadChainAsync(stream, startSector, hdr.SectorSize, fat, ownedSectors, budget, cancellationToken, size).ConfigureAwait(false);
         }
 
         return streams;
@@ -357,15 +359,22 @@ internal static class CompoundFileReader
         int sectorSize,
         uint[] fat,
         HashSet<uint> ownedSectors,
+        BufferBudget budget,
         CancellationToken cancellationToken,
-        long exactSize = -1)
+        long exactSize = -1,
+        long expectedSectors = -1)
     {
         // Pre-walk the FAT to compute the chain length so the destination
         // buffer can be sized exactly. This avoids both per-sector array
         // allocations and a final List<byte[]> → byte[] block-copy pass,
         // and (when exactSize is supplied) skips the trailing Array.Resize.
         int chainLength = WalkChainLength(startSector, fat, "FAT", (stream.Length / sectorSize) - 1, ownedSectors, cancellationToken);
-        byte[] result = AllocateChainBuffer(chainLength, sectorSize, exactSize);
+        if (expectedSectors >= 0 && chainLength != expectedSectors)
+        {
+            throw new InvalidDataException("CFB metadata sector count contradicts its chain.");
+        }
+
+        byte[] result = AllocateChainBuffer(chainLength, sectorSize, exactSize, budget);
 
         uint sector = startSector;
         int dstOffset = 0;
@@ -395,12 +404,12 @@ internal static class CompoundFileReader
         return result;
     }
 
-    private static byte[] ReadMiniChain(byte[] miniStream, uint startSector, int miniSectorSize, uint[] miniFat, HashSet<uint> ownedSectors, long exactSize, CancellationToken cancellationToken)
+    private static byte[] ReadMiniChain(byte[] miniStream, uint startSector, int miniSectorSize, uint[] miniFat, HashSet<uint> ownedSectors, long exactSize, BufferBudget budget, CancellationToken cancellationToken)
     {
         // Pre-walk the mini-FAT to count the chain so we can size the
         // result buffer exactly and skip the intermediate index list.
         int chainLength = WalkChainLength(startSector, miniFat, "mini-FAT", miniStream.Length / miniSectorSize, ownedSectors, cancellationToken);
-        byte[] result = AllocateChainBuffer(chainLength, miniSectorSize, exactSize);
+        byte[] result = AllocateChainBuffer(chainLength, miniSectorSize, exactSize, budget);
 
         uint sector = startSector;
         int dstOffset = 0;
@@ -505,8 +514,9 @@ internal static class CompoundFileReader
     /// <param name="chainLength">The chain length.</param>
     /// <param name="sectorSize">The sector size.</param>
     /// <param name="exactSize">The exact size.</param>
+    /// <param name="budget">The live buffer byte budget.</param>
     /// <exception cref="InvalidDataException">The logical size exceeds the chain capacity or buffer limit.</exception>
-    private static byte[] AllocateChainBuffer(int chainLength, int sectorSize, long exactSize)
+    private static byte[] AllocateChainBuffer(int chainLength, int sectorSize, long exactSize, BufferBudget budget)
     {
         long capacity = (long)chainLength * sectorSize;
         long logicalLength = exactSize >= 0 ? exactSize : capacity;
@@ -515,6 +525,7 @@ internal static class CompoundFileReader
             throw new InvalidDataException("CFB stream length exceeds its chain capacity or supported buffer size.");
         }
 
+        budget.Reserve(logicalLength);
         int length = checked((int)logicalLength);
         return new byte[length];
     }
@@ -525,6 +536,62 @@ internal static class CompoundFileReader
         {
             throw new InvalidDataException($"CFB {sectorKind} sector {sector} overlaps another metadata sector.");
         }
+    }
+
+    private static void ValidateHeaderCounts(CfbHeader hdr, long physicalSectors)
+    {
+        if (hdr.NumFatSectors > physicalSectors
+            || hdr.NumDifatSectors > physicalSectors
+            || hdr.NumMiniFatSectors > physicalSectors
+            || (long)hdr.NumFatSectors + hdr.NumDifatSectors + hdr.NumMiniFatSectors > physicalSectors)
+        {
+            throw new InvalidDataException("CFB metadata sector counts exceed the physical file.");
+        }
+
+        ValidateChainStart(hdr.FirstDifatSector, hdr.NumDifatSectors, physicalSectors);
+        ValidateChainStart(hdr.FirstMiniFatSector, hdr.NumMiniFatSectors, physicalSectors);
+    }
+
+    private static void ValidateChainStart(uint start, uint count, long physicalSectors)
+    {
+        bool absent = start is Constants.CompoundFile.EndOfChain or Constants.CompoundFile.FreeSect;
+        bool hasSectors = count != 0;
+        if (hasSectors == absent || (!absent && start >= physicalSectors))
+        {
+            throw new InvalidDataException("CFB metadata chain start contradicts its sector count or physical file.");
+        }
+    }
+
+    private static void AddFatSector(uint sector, CfbHeader hdr, HashSet<uint> ownedSectors, List<uint> fatSectorIds)
+    {
+        if (fatSectorIds.Count >= hdr.NumFatSectors)
+        {
+            throw new InvalidDataException("CFB DIFAT contains more FAT sectors than the header declares.");
+        }
+
+        ClaimSector(sector, ownedSectors, "FAT");
+        fatSectorIds.Add(sector);
+    }
+
+    private sealed class BufferBudget(int maxBytes)
+    {
+        private long remaining = maxBytes;
+
+        public void Check(long bytes)
+        {
+            if (bytes > this.remaining)
+            {
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Compound file buffers exceed the configured aggregate byte budget.");
+            }
+        }
+
+        public void Reserve(long bytes)
+        {
+            this.Check(bytes);
+            this.remaining -= bytes;
+        }
+
+        public void Release(long bytes) => this.remaining += bytes;
     }
 
     private readonly record struct CfbHeader(
