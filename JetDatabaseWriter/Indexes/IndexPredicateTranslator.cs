@@ -26,6 +26,12 @@ using JetDatabaseWriter.Models;
 /// could skip a row whose earlier residual condition must throw.
 /// </para>
 /// <para>
+/// Seek operands are limited to literals, captured instance fields and lossless
+/// conversions that can be read without running user code or throwing. Property
+/// getters, static members and computed operands remain in the residual predicate,
+/// where earlier conjuncts and an empty source can prevent their evaluation.
+/// </para>
+/// <para>
 /// Each property resolves to its column through <see cref="EntityMap"/>, the same
 /// mapping the POCO row mapper uses, so <c>[Column("...")]</c> renames are honoured and
 /// <c>[NotMapped]</c> properties are never pushed. The reader matches the column names
@@ -140,17 +146,17 @@ internal static class IndexPredicateTranslator
         }
 
         if (TryResolveColumn(binary.Left, parameter, map, out string? leftColumn)
-            && IsConstant(binary.Right, parameter))
+            && TryReadSeekValue(binary.Right, out object? rightValue))
         {
-            predicate = Build(leftColumn!, @operator, EvaluateValue(binary.Right));
+            predicate = Build(leftColumn!, @operator, rightValue);
             return predicate is not null;
         }
 
         if (TryResolveColumn(binary.Right, parameter, map, out string? rightColumn)
-            && IsConstant(binary.Left, parameter))
+            && TryReadSeekValue(binary.Left, out object? leftValue))
         {
             // `value < o.X`  ==>  `o.X > value`.
-            predicate = Build(rightColumn!, Flip(@operator), EvaluateValue(binary.Left));
+            predicate = Build(rightColumn!, Flip(@operator), leftValue);
             return predicate is not null;
         }
 
@@ -237,21 +243,23 @@ internal static class IndexPredicateTranslator
         return true;
     }
 
-    private static bool IsConstant(Expression expression, ParameterExpression parameter)
+    private static bool TryReadSeekValue(Expression expression, out object? value)
     {
-        var finder = new ParameterUsageFinder(parameter);
-        finder.Visit(expression);
-        return !finder.Found;
+        // A null field-chain receiver stays residual; never compile a fallback here.
+        value = null;
+        return IsNonThrowingSeekOperand(expression)
+            && ClosureValueReader.TryRead(expression, out value);
     }
 
-    /// <summary>
-    /// Evaluates the value side of a comparison. Constants and captured variables, including
-    /// field and property chains such as <c>filter.Range.Low</c>, are read without compiling;
-    /// a computed operand such as <c>DateTime.Today</c> or <c>id + 1</c> is compiled once.
-    /// </summary>
-    /// <param name="expression">An operand that does not reference the predicate's parameter.</param>
-    /// <returns>The operand's value.</returns>
-    private static object? EvaluateValue(Expression expression) => ClosureValueReader.Evaluate(expression);
+    private static bool IsNonThrowingSeekOperand(Expression expression) => expression switch
+    {
+        ConstantExpression => true,
+        MemberExpression { Member: FieldInfo { IsStatic: false }, Expression: not null } member =>
+            IsNonThrowingSeekOperand(member.Expression),
+        UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } conversion =>
+            IsLosslessColumnConversion(conversion) && IsNonThrowingSeekOperand(conversion.Operand),
+        _ => false,
+    };
 
     private static Expression StripConvert(Expression expression)
     {
@@ -300,20 +308,5 @@ internal static class IndexPredicateTranslator
         return from == to
             || widening
             || (!from.IsValueType && !to.IsValueType && to.IsAssignableFrom(from));
-    }
-
-    private sealed class ParameterUsageFinder(ParameterExpression parameter) : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        protected override Expression VisitParameter(ParameterExpression node)
-        {
-            if (node == parameter)
-            {
-                this.Found = true;
-            }
-
-            return base.VisitParameter(node);
-        }
     }
 }

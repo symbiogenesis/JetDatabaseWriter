@@ -8,8 +8,9 @@ using System.Reflection;
 /// <summary>
 /// Reads the value of a LINQ operand that does not depend on the lambda's parameter, such
 /// as a captured variable, through reflection instead of compiling the expression. The LINQ
-/// translators evaluate every captured comparison value, <c>Skip</c> count and <c>Take</c>
-/// count this way, so a query does not pay an expression compile per operand on every call,
+/// translators read eligible seek operands and <c>Skip</c>/<c>Take</c> counts this way.
+/// Seek inference restricts operands to nonthrowing field reads and conversions; other
+/// comparison operands remain in the row predicate. Reflection avoids compiling each value,
 /// and needs neither the non-generic <see cref="Expression.Lambda(Expression, ParameterExpression[])"/>
 /// nor <see cref="Delegate.DynamicInvoke(object[])"/>, which require dynamic code.
 /// </summary>

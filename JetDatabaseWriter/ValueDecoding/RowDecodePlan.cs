@@ -344,6 +344,24 @@ internal sealed class RowDecodePlan
         return value is DateTime date ? FormatDatePayload(date, column.Type) : string.Empty;
     }
 
+    private object DecodeFixedComplexReference(byte[] page, int start, int length, ColumnInfo column)
+    {
+        try
+        {
+            ValidateComplexReference(page, start, length);
+            return new ComplexIdRef(JetTypeInfo.Ri32(page, start));
+        }
+        catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
+        {
+            return RowValueDecodePolicy.MalformedFixedValue(column, exception, this.strictParsing || this.PreservesLongValueBytes);
+        }
+    }
+
+    private string DecodeFixedComplexReferenceString(byte[] page, int start, int length, ColumnInfo column)
+        => this.DecodeFixedComplexReference(page, start, length, column) is ComplexIdRef reference
+            ? $"__CX:{reference.Id}__"
+            : string.Empty;
+
     internal void ValidateColumnSlice(ColumnInfo column, ColumnSlice slice)
     {
         if (slice.Kind != ColumnSliceKind.Empty)
@@ -673,6 +691,7 @@ internal sealed class RowDecodePlan
             ColumnSliceKind.Empty when JetTypeInfo.ResolveValueType(column) is MemoType or OleType => null!,
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
             ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
+            ColumnSliceKind.Fixed when column.Type == ComplexType => this.DecodeFixedComplexReferenceString(page, rowStart + slice.DataStart, slice.DataLen, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
                 source,
@@ -861,6 +880,7 @@ internal sealed class RowDecodePlan
                 }),
             ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
             ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDate(page, rowStart + slice.DataStart, column),
+            ColumnSliceKind.Fixed when column.Type == ComplexType => this.DecodeFixedComplexReference(page, rowStart + slice.DataStart, slice.DataLen, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
             _ => DBNull.Value,

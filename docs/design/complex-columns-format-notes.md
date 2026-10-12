@@ -43,6 +43,14 @@ Because `bitmask = 0x07`, the column is treated as a fixed-length 4-byte column 
 
 Access gives every complex column its own index on that reference: unique, Required, and named `<column>_<32 hex>` (truncated so the name fits in 64 characters), for example `Attachments_CFC7F98A63064F2DBDB6822D653AB763` in `ComplexFields.accdb`, `attach-data_071D71EDD53D45A1A9089929F06857D9` and `VersionHistory_F5F8918F-0A3F-4D_6E54CCBB170741DD8FD837271ED8B90C` in `complexDataTest*.accdb`, and `ProductCategoryImage_5C9A6A17CF9D4E1CA64DB2DECECEBB16` in `NorthwindTraders.accdb`. Its keys use the Long Integer layout (`7F` + big-endian int with the sign bit flipped; `7F 80 00 00 01` for reference 1), as Jackcess `IndexData` maps `COMPLEX_TYPE` to its integer descriptor. `IndexKeyEncoder` encodes complex-column keys that way, so updates, deletes and inserts on Access tables with complex columns keep these indexes current (`ComplexColumnIndexFixtureTests`). Users cannot declare an index on a complex column; the writer emits the native unique, Required reference index automatically.
 
+Assigned fixed and variable parent references must contain exactly four bytes
+and a positive ID. Strict public reads report `MalformedValue` with column
+context; lenient reads return their missing-value representation and a trace
+warning. Writer snapshots refuse invalid assigned references before mutation.
+Valid positive references without child items, null-mask slots and absent
+columns remain missing without diagnostics. The fixed and variable decode-policy
+tests use synthetic corruption; native reference allocation evidence follows.
+
 **Per-row references come from the TDEF complex AutoNumber.** ACE TDEF headers hold a second counter at offset 28 (`TDefHeaderLayout.ComplexAutoNumber`; Jackcess `JetFormat.OFFSET_NEXT_COMPLEX_AUTO_NUMBER`, mdbtools `ct_autonum`; Jet3 and Jet4 have none): the last per-row complex reference handed out. Access gives each row one reference, shared by all its complex columns, even a column with no items; it does not reuse the references of deleted rows. In the fixtures:
 
 | Fixture / table | TDEF@28 | Live slots |

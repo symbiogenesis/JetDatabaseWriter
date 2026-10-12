@@ -93,13 +93,44 @@ public sealed class IndexPredicateTranslatorTests
     }
 
     [Fact]
-    public void CapturedPropertyChain_ProducesTheSameCriteriaAsALiteral()
+    public void CapturedPropertyChain_RemainsResidual()
     {
         var filter = new Filter { Range = new ScoreRange { Low = 10, High = 20 }, Name = "x", Day = DayOfWeek.Friday };
 
-        AssertSameCriteria(r => r.Score >= 10 && r.Score < 20, r => r.Score >= filter.Range.Low && r.Score < filter.Range.High);
-        AssertSameCriteria(r => r.Name == "x", r => r.Name == filter.Name);
-        AssertSameCriteria(r => r.Day == DayOfWeek.Friday, r => r.Day == filter.Day);
+        Assert.Empty(Extract(r => r.Score >= filter.Range.Low && r.Score < filter.Range.High).Predicates);
+        Assert.Empty(Extract(r => r.Name == filter.Name).Predicates);
+        Assert.Empty(Extract(r => r.Day == filter.Day).Predicates);
+    }
+
+    [Fact]
+    public void ComputedOperand_KeepsOnlyLeadingSeekCriteria()
+    {
+        RowCriteria criteria = Extract(r => r.Id == 1 && r.Score == ThrowValue() && r.Name == "x");
+
+        ColumnPredicate predicate = Assert.Single(criteria.Predicates);
+        Assert.Equal("Id", predicate.ColumnName);
+        Assert.Equal(1, predicate.Operand);
+        Assert.Empty(Extract(r => ThrowValue() == r.Score && r.Id == 1).Predicates);
+    }
+
+    [Fact]
+    public void CapturedPropertyBeforeComparison_BlocksLaterSeekCriteria()
+    {
+        var filter = new Filter();
+
+        Assert.Empty(Extract(r => r.Name == filter.Name && r.Id == 1).Predicates);
+        Assert.Empty(Extract(r => r.When >= DateTime.UtcNow && r.Id == 1).Predicates);
+    }
+
+    [Fact]
+    public void CapturedVariableChanges_AreReadOnEveryExtraction()
+    {
+        int threshold = 7;
+        Expression<Func<Row, bool>> predicate = r => r.Score > threshold;
+
+        Assert.Equal(7, Assert.Single(Extract(predicate).Predicates).Operand);
+        threshold = 9;
+        Assert.Equal(9, Assert.Single(Extract(predicate).Predicates).Operand);
     }
 
     [Fact]
@@ -232,6 +263,8 @@ public sealed class IndexPredicateTranslatorTests
     }
 
     private static bool ThrowingComparison(int left, int right) => throw new InvalidOperationException($"Comparison: {left}, {right}.");
+
+    private static int ThrowValue() => throw new InvalidOperationException("Seek operand was evaluated.");
 
     private static void AssertSameCriteria(Expression<Func<Row, bool>> literal, Expression<Func<Row, bool>> captured)
     {

@@ -29,6 +29,13 @@ indexes. Native DAO emits only the existing primary indexes for a relationship
 with dbRelationDontEnforce, permits orphans and allows related table deletion.
 Enforced relationships emit physical foreign-key indexes and block that deletion.
 
+Index-cursor seek and last-entry intermediate descent track visited pages and refuse a repeated
+child or tail pointer before rereading its target. It reports
+`JetCorruptDataException` with `CorruptIndex` and that page number. Synthetic
+self-cycle and two-page-cycle regressions in `IntermediateIndexCycleTests` cover
+Jet3 and ACE cursor paths and public Jet3/Jet4/ACE index reads; they establish
+corruption refusal rather than native index-layout evidence.
+
 Index-cursor Contains, exact seeks, list ranges and streaming ranges track
 visited leaf pages and share a maximum of 1,048,576 leaves per walk. A repeated
 page or exhausted traversal budget raises `JetCorruptDataException` with

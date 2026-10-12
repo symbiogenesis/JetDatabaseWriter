@@ -309,7 +309,7 @@ internal sealed class IndexCursor
     /// Returns the last entry of the B-tree rooted at
     /// <paramref name="rootPageNumber"/>, the one with the largest key, or
     /// <see langword="null"/> when the tree has no entries or cannot be walked
-    /// (a page that is not an index page, a missing child, a cycle, or more
+    /// (a page that is not an index page, a missing child, a leaf-chain cycle, or more
     /// than <c>MaxDepth</c> levels). It descends through each intermediate
     /// page's last entry (its <c>tail_page</c> when it has none), then follows
     /// the leaf level's <c>next_page</c> chain to its end, because a tail leaf
@@ -318,6 +318,7 @@ internal sealed class IndexCursor
     /// </summary>
     /// <param name="rootPageNumber">The root page number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">The intermediate branch contains a cycle.</exception>
     public async ValueTask<IndexEntry?> TryReadLastEntryAsync(long rootPageNumber, CancellationToken cancellationToken)
     {
         if (rootPageNumber <= 0 || this.pageSize <= this.layout.FirstEntryOffset)
@@ -326,6 +327,7 @@ internal sealed class IndexCursor
         }
 
         long pageNumber = rootPageNumber;
+        HashSet<long>? descentVisited = null;
         byte[] page = await this.readPage(pageNumber, cancellationToken).ConfigureAwait(false);
         for (int depth = 0; !IndexPageCodec.IsLeaf(page); depth++)
         {
@@ -335,13 +337,16 @@ internal sealed class IndexCursor
             }
 
             List<DecodedIntermediateEntry> summaries = IndexPageCodec.DecodeIntermediateEntries(this.layout, page, this.pageSize);
-            pageNumber = summaries.Count > 0 ? summaries[^1].ChildPage : IndexPageCodec.ReadTailPage(this.layout, page);
-            if (pageNumber <= 0)
+            long nextPageNumber = summaries.Count > 0 ? summaries[^1].ChildPage : IndexPageCodec.ReadTailPage(this.layout, page);
+            if (nextPageNumber <= 0)
             {
                 return null;
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            descentVisited ??= [pageNumber];
+            RegisterIntermediateTraversal(descentVisited, nextPageNumber);
+            pageNumber = nextPageNumber;
             page = await this.readPage(pageNumber, cancellationToken).ConfigureAwait(false);
         }
 
@@ -385,6 +390,17 @@ internal sealed class IndexCursor
         }
     }
 
+    private static void RegisterIntermediateTraversal(HashSet<long> visited, long pageNumber)
+    {
+        if (!visited.Add(pageNumber))
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptIndex,
+                "The index intermediate branch contains a cycle.",
+                new JetErrorInfo { PageNumber = pageNumber });
+        }
+    }
+
     private static void RegisterLeafTraversal(HashSet<long> visited, long pageNumber)
     {
         if (visited.Count >= MaxLeafHops || !visited.Add(pageNumber))
@@ -407,6 +423,7 @@ internal sealed class IndexCursor
         }
 
         long currentPageNumber = rootPageNumber;
+        HashSet<long>? visited = null;
         for (int depth = 0; depth < MaxDepth; depth++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -428,6 +445,9 @@ internal sealed class IndexCursor
             {
                 return null;
             }
+
+            visited ??= [currentPageNumber];
+            RegisterIntermediateTraversal(visited, nextPageNumber);
 
             currentPageNumber = nextPageNumber;
         }

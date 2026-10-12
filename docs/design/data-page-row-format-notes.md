@@ -43,18 +43,18 @@ string reads return null cells, and POCO properties remain unassigned/default,
 with a trace warning. Calculated MEMO slots use their resolved value type.
 Writer snapshots refuse these assigned slices before mutation. Null-mask and
 unrepresented-column slots remain missing without diagnostics. Assigned
-variable Complex slots use the scalar `MalformedValue` policy and require an
-exact four-byte, positive reference. Strict reads refuse malformed assigned
+fixed and variable Complex slots use the scalar `MalformedValue` policy and
+require an exact four-byte, positive reference. Strict reads refuse malformed assigned
 slots; lenient typed/string/POCO and DataTable reads return their missing-value
 representation with a Trace warning. Writer snapshots refuse these slots before
 an unrelated update can erase them. Valid positive references with no items,
 null-mask slots and unrepresented columns remain missing without diagnostics.
 The public MEMO/OLE and calculated MEMO mutations in
 `LongValueSlotBoundsDecodePolicyTests` and the public Complex mutations in
-`VariableComplexDecodePolicyTests` establish corruption behavior. The Complex
-fixture uses writer-created variable storage with a complete complex catalog;
-native fixtures use fixed references, so it establishes no native acceptance of
-variable Complex storage.
+`FixedComplexDecodePolicyTests` and `VariableComplexDecodePolicyTests` establish
+synthetic corruption behavior using writer-created storage with a complete
+complex catalog. Native fixtures use fixed references; these mutations add no
+native acceptance evidence for variable Complex storage.
 
 ## Long-value integrity
 
