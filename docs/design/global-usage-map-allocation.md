@@ -38,5 +38,7 @@ native bitmap page type. Every referenced bitmap must itself be covered and
 marked allocated. Allocation ranges, including any new backing bitmaps, must
 fit the map before writes begin. Creation supplies an initialized global map.
 
-Table/index/LVAL usage maps, complete reachability auditing and interrupted-write
-recovery remain separate requirements in the TODO.
+Table/index/LVAL usage maps, complete reachability auditing, power-loss durability
+and custom-stream recovery remain separate requirements in the TODO. File-backed
+mutations have the process-interruption recovery protocol described in
+[transaction-crash-recovery.md](transaction-crash-recovery.md).

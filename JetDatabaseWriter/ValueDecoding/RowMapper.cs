@@ -338,9 +338,9 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
                 Expression propAccess = Expression.Property(itemParam, acc.Property);
                 if (pt.IsValueType && Nullable.GetUnderlyingType(pt) == null && td.Columns[i].IsAutoNumber && CanCompareToDefault(pt))
                 {
-                    // Non-nullable value type on an AutoNumber column: its CLR
-                    // default (0) means "not supplied", so the insert generates
-                    // the next value, as for null; any other value is stored.
+                    // A non-nullable AutoNumber property's CLR default means
+                    // omission. Integer generation or the persisted GUID default
+                    // then applies; every other value is an explicit assignment.
                     ParameterExpression local = Expression.Variable(pt, "id");
                     valueExpr = Expression.Block(
                         typeof(object),

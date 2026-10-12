@@ -46,8 +46,10 @@ unrepresented-column slots remain missing without diagnostics. Assigned
 fixed and variable Complex slots use the scalar `MalformedValue` policy and
 require an exact four-byte, positive reference. Strict reads refuse malformed assigned
 slots; lenient typed/string/POCO and DataTable reads return their missing-value
-representation with a Trace warning. Materialized write-back snapshots retain malformed scalar column context
-and add the resolved table name and data-page number. Writer snapshots
+representation with a Trace warning. Materialized and projected streaming write-back snapshots retain malformed scalar
+column context and add the resolved table name and physical data-page number.
+The reason includes the physical row slot, offset and size and retains the
+decoder's reason; the error code, message and cause are unchanged. Writer snapshots
 refuse these slots before
 an unrelated update can erase them. Valid positive references with no items,
 null-mask slots and unrepresented columns remain missing without diagnostics.
@@ -275,6 +277,11 @@ back to a whole-file scan.
   `DataPageNumber` (`TryReadColumnValuesTypedAsync`, and the complex-reference
   reads and writes in `ComplexColumnManager` when an attachment or multi-value
   item is added or a row's complex children are deleted).
+- Snapshot scalar decode failures report the physical `DataPageNumber` in
+  `JetErrorInfo.PageNumber`, including projected streaming snapshots used by
+  complex-parent predicates. An overflow header identifies the logical row;
+  the destination page identifies the malformed stored value. Existing
+  decoder context and underlying I/O failures are retained.
 - A cascade that seeks the child table's foreign-key index lands on the header,
   and `RelationshipChildRowLocator` resolves it to the moved bytes, so cascade
   deletes and updates reach overflow rows on the seek path as well as on the
@@ -335,6 +342,14 @@ pages of 4 KB, so 17 reach page 556,511, past the 524,288 pages of a 2 GB file.
   REFERENCE rows with its other pages
   (`TableSchemaEditor.ReclaimTableStoragePagesAsync`).
 
+Imported Jet4/ACE system tables use the same owned/free map maintenance as
+user tables. In TestV2010, a Table4 rewrite can exhaust the existing
+MSysObjects data page and relocate its catalog row to a reused data page.
+Leaving that page out of MSysObjects' owned map makes native compact omit the
+table, although indexed lookup and the reader's ownership-scan fallback find
+it. The policy permits catalogued local system tables and the fixed catalog
+root; map edits follow the stored pointers and participate in rollback.
+
 After insertion, the writer clears the free-space bit when the page cannot
 fit even one nonempty row or has exhausted its 255 row slots. It preserves
 the owned-pages bit and edits existing INLINE or REFERENCE maps without
@@ -366,8 +381,12 @@ The owned-pages rows of the Access-authored fixtures, read raw with PowerShell
   the 1,525 Jet4 and ACE ones are 69 bytes, the rest 85 to 381; the Jet3 ones
   are 133 bytes or more (a 128-byte bitmap, 1,024 pages).
 
-Whether Access reads the writer's REFERENCE rows is unchecked (under
-"Unchecked against Access" in docs/todo.md).
+`OwnedUsageMapGrowthTests.Dao_RecordCount_SeesRowsOnPagesPastInlineWindow`
+checks DAO read and compact of a writer-created ACE table whose owned-pages
+map grows to REFERENCE. Successful native runs are recorded in the
+[validation matrix](writer-disk-format-validation-matrix.md). Other map types,
+Jet3 maintenance, free-space thresholds and column-owned LVAL maps remain
+under I3 in the TODO.
 
 Writer snapshots require complete row traversal and use a write-back decode
 plan. The declared directory must fit its page, and every live slot must start

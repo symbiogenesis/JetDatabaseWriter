@@ -26,6 +26,11 @@ The discrimination between attachment / multi-value / version-history is **not**
 
 The reader implements all three kinds. Writer support has shipped through phase C10 — see §4.2.
 
+Phase labels record implemented library behavior. Individual item remove/replace,
+append-only Memo history writes and native validation of remaining descriptor and
+schema variants remain open. The [validation matrix](writer-disk-format-validation-matrix.md)
+distinguishes Microsoft fixtures and successful DAO checks from library round trips.
+
 ## 2. On-disk layout
 
 ### 2.1 Parent column descriptor

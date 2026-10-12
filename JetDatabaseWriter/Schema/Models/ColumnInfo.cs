@@ -94,10 +94,12 @@ internal sealed record ColumnInfo
     public bool IsCompressedUnicode => (this.ExtraFlags & Constants.CompressedUnicodeExtFlagMask) != 0;
 
     /// <summary>
-    /// Gets a value indicating whether the column is an AutoNumber column whose insert
-    /// generates the next value: <c>FLAG_AUTO_LONG</c>
+    /// Gets a value indicating whether the column carries an integer AutoNumber flag
+    /// or GUID ReplicationID marker: <c>FLAG_AUTO_LONG</c>
     /// (<see cref="Constants.ColumnDescriptorFlags.AutoNumber"/>) or the GUID-specific
     /// <see cref="Constants.ColumnDescriptorFlags.AutoNumberGuid"/> is set in <see cref="Flags"/>.
+    /// GUID generation follows the stored default; this marker alone does not generate
+    /// a value, require non-null values or prevent key updates.
     /// Complex columns (<c>Attachment</c> / <c>Complex</c>) carry the magic <c>0x07</c>
     /// marker in that byte rather than flag bits, so they never count.
     /// </summary>

@@ -101,7 +101,7 @@ internal sealed class SystemCatalogBootstrapper(
 
         CatalogObjectArtifact[] objects = BuildCoreCatalogObjectArtifacts();
         byte[]? header = null;
-        if (this.format.UsesHeaderMaskedSecuritySids)
+        if (this.format.InheritsCatalogPermissions)
         {
             byte[] borrowed = await this.pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
             try
@@ -137,7 +137,7 @@ internal sealed class SystemCatalogBootstrapper(
         await this.PatchHeaderSystemTablePagesAsync(acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
         if (header is not null)
         {
-            await this.InitializeJet4PermissionsAsync(header, acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
+            await this.InitializePermissionsAsync(header, acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -176,7 +176,7 @@ internal sealed class SystemCatalogBootstrapper(
                 Constants.SystemObjects.SystemObjectFlag),
         ];
 
-    private async ValueTask InitializeJet4PermissionsAsync(
+    private async ValueTask InitializePermissionsAsync(
         byte[] header,
         long acesPage,
         long queriesPage,

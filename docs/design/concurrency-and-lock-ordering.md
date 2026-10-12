@@ -276,14 +276,13 @@ on the assumption that the file does not change while it is open:
 | Each table's parsed TDEF image and lazily loaded properties | `TableDefReader` and `TableCatalog` | Dispose. |
 | Each table's owned data pages, and the whole-file owner index | `OwnedDataPages` | Dispose. |
 
-Nothing writes through the reader, so its own work never makes them stale.
-`AccessReaderOptions.FileShare` defaults to `ReadWrite`, so Access or another
-process may have the file open for writing at the same time, but the reader
-cannot tell when that process changes the file: for a table it has read, it
-keeps the columns, row count, indexes and owned pages it read first, and a read
-may combine pages cached before a change with pages read after it. The reader
-has to be reopened to see such changes. A new memo in the reader keeps to the
-same assumption.
+Nothing writes through the reader, so its own work never makes its caches stale.
+`AccessReaderOptions.FileShare` defaults to `Read`, and path-based readers
+exclude write/delete sharing. A caller-supplied `FileStream` needs a compatible
+read-only lease. Windows enforces sharing; other platforms require cooperating
+access, and custom streams require caller-managed isolation. Keep the source
+unchanged for the reader lifetime: its caches do not refresh. If external
+access bypasses that coordination, cached and newly read pages can disagree.
 
 ## Rules for new code
 

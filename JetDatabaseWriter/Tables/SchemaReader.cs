@@ -313,7 +313,7 @@ internal sealed class SchemaReader(
     /// <param name="target">Column property metadata read from <c>MSysObjects.LvProp</c>.</param>
     private static bool ResolveIsNullable(ColumnInfo col, ColumnPropertyTarget? target)
     {
-        if (col.IsAutoNumber)
+        if (col.IsAutoNumber && col.Type != GuidType)
         {
             return false;
         }

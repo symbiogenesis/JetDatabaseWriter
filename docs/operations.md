@@ -17,7 +17,7 @@ This guide covers stream ownership, configuration, transactions and the limits t
 
 ## Runtime compatibility
 
-The package ships two builds. Apps on .NET 10 or later get the `net10.0` build; apps on .NET Core 3.x and .NET 5 through 9 get the `netstandard2.1` build, which brings in `System.Linq.Async`, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` for the APIs .NET 10 has built in. The test suite runs against both: once on .NET 10 and once on .NET 8, where it loads the `netstandard2.1` build. The two builds read and write databases the same way, except that only the `net10.0` build reads pages from a file path with `RandomAccess`; the `netstandard2.1` build reads them through the stream.
+The package ships two builds. Apps on .NET 10 or later get the `net10.0` build; apps on .NET Core 3.x and .NET 5 through 9 get the `netstandard2.1` build, which brings in `System.Linq.Async`, `System.ComponentModel.Annotations` and `System.Text.Encoding.CodePages` for the APIs .NET 10 has built in. The test suite runs against both: once on .NET 10 and once on .NET 8, where it loads the `netstandard2.1` build. Hosted ordinary tests exercise these two runtime/library combinations; compatibility with the older supported runtimes is not equivalent to a completed test run on each. The `net10.0` build can read eligible file pages with `RandomAccess`; the `netstandard2.1` build uses stream I/O. Trimming/NativeAOT evidence covers the .NET 10 consumer paths below. Unix maintenance-file creation permissions also differ between the builds; see [encryption options](#encryption-options).
 
 ## Opening a Reader or Writer
 
@@ -131,8 +131,7 @@ var options = new AccessReaderOptions("secretPassword")
     MaxAttachmentContentBytesPerOperation = 256L * 1024 * 1024, // shared across one attachment read/table scan
     ValidateOnOpen           = true,   // format check on open (default: true)
     FileAccess               = FileAccess.Read,        // default
-    FileShare                = FileShare.ReadWrite,    // default: tolerate Access also having the file open
-    // FileShare             = FileShare.Read,         // tighten to read-only sharing if you don't need that
+    FileShare                = FileShare.Read,         // default; path readers retain read-only sharing
     UseLockFile              = true,   // create .ldb/.laccdb lockfile (default: true)
     LinkedSourcePathAllowlist = new[] { @"C:\TrustedLinkedDatabases" },
     LinkedSourcePathValidator = (link, fullPath) => link.Kind == LinkedTableKind.Access,
@@ -142,7 +141,7 @@ await using var reader = await AccessReader.OpenAsync("database.mdb", options);
 var writerOptions = new AccessWriterOptions("secretPassword")
 {
     UseLockFile = true,              // create .ldb/.laccdb lockfile (default: true)
-    RespectExistingLockFile = true,  // throw IOException if lockfile already exists (default: true)
+    RespectExistingLockFile = true,  // refuse an existing lockfile with DatabaseInUse (default: true)
     PageCacheSize = 256,             // writer page frames; 0 disables caching
     MaxTransactionPageBudget = 16_384, // pages one transaction may hold in memory (default: 16384); OpenAsync and
                                        // CreateDatabaseAsync throw ArgumentOutOfRangeException for 0 or less
@@ -156,19 +155,21 @@ await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOpti
 
 ## Error Handling
 
-Constraint, lookup, schema, lock and transaction-state exceptions implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship and page context. Avoid matching exception messages.
+Constraint, lookup, schema, lock, transaction-state and selected corruption exceptions implement `IJetException` in `JetDatabaseWriter.Exceptions`. Use `ErrorCode` for programmatic handling and `ErrorInfo` for available table, column, index, relationship and page context. Avoid matching exception messages.
 
 Some corruption and encryption paths still use BCL exceptions. Also handle ordinary I/O and argument errors as appropriate for your application.
 
 | Exception | Typical cause |
 |---|---|
 | `JetObjectNotFoundException` | A named table or other database object is missing; inspect `ErrorCode`. |
+| `JetCorruptDataException` | A malformed catalog, table, index or selected scalar value; inspect `ErrorCode` and available physical page/column context. |
+| `JetLockException` | A lockfile or page-lock refusal, such as `DatabaseInUse` or `LockTimeout`. |
 | `JetLimitationException` | A row or schema exceeds a supported limit, or a table's indexes cannot be maintained. |
 | `ArgumentException` | Invalid names, definitions or values. |
 | `UnauthorizedAccessException` | Missing or incorrect database password. |
 | `InvalidDataException` | Corrupt or invalid database data. |
 | `NotSupportedException` | An unsupported format, encryption provider or type. |
-| `IOException` | File, sharing or storage failure. |
+| `IOException` | File, sharing or storage failure; structured corruption and lock exceptions also derive from this type. |
 | `ObjectDisposedException` | The reader or writer has been disposed. |
 
 These examples are not an exhaustive exception list. See [remaining structured-error work](todo.md#s--hostile-file-parsing-and-schema-preservation).

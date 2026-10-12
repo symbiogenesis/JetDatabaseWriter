@@ -278,12 +278,11 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
             if (jet4)
             {
-                // Jet4/ACE column descriptor stores col_num twice: once at offset 5-6
-                // (NumOff above) and again at offset 9-10 (the "redundant col_num"
-                // field per mdbtools HACKING.md). DAO OpenRecordset reads the second
-                // copy and rejects the table with "Unrecognized database format ''."
-                // when the two disagree. Verified against DAO-authored
-                // NorthwindTraders.accdb in WriterColumnDescriptorRedundantColNumTests.
+                // New descriptors use the column number at offset 9-10 too.
+                // These fields coincide in NorthwindTraders, but native Table4
+                // in TestV2010 has different values. Equality is not a format
+                // invariant; preserving that identity through rewrites remains
+                // part of complete schema preservation.
                 Wu16(page, o + 9, col.ColNum);
             }
 
@@ -915,8 +914,8 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
             if (!isJet3)
             {
-                // Jet4/ACE: redundant col_num at offset 9-10 (see TDefPageBuilder
-                // user-table path and WriterColumnDescriptorRedundantColNumTests).
+                // Jet4/ACE: new descriptors initialize offset 9-10 from col_num (see
+                // the user-table path and its descriptor initialization tests).
                 Wu16(db, o + 9, col.ColNum);
             }
 

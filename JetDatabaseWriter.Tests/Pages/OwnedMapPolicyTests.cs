@@ -15,9 +15,9 @@ using Xunit;
 
 /// <summary>
 /// Pins <see cref="CatalogOwnedMapPolicy"/>, which decides whose owned-page
-/// usage maps the writer may extend when it appends a data page: never on
-/// Jet3; never for an Access-authored <c>MSys*</c> table, an answer it keeps by
-/// TDEF page so a later append does not rescan <c>MSysObjects</c>; and a table
+/// usage maps the writer may extend when it appends a data page: local Jet4/ACE
+/// user and system tables, with decisions cached by TDEF page; never on Jet3.
+/// The fixed MSysObjects root needs no scan or cached decision, and a table
 /// that a rolled-back transaction created is forgotten.
 /// </summary>
 public sealed class OwnedMapPolicyTests
@@ -59,16 +59,17 @@ public sealed class OwnedMapPolicyTests
     }
 
     /// <summary>
-    /// The writer never extends the owned-page map of an Access-authored
-    /// <c>MSys*</c> table, and keeps that answer by TDEF page, so asking again
-    /// for the same table, as every page appended to it does, reads nothing
-    /// instead of rescanning <c>MSysObjects</c>. A user table's answer is kept
-    /// too, and <c>MSysObjects</c>' own map is refused without a scan.
+    /// Imported local Jet4/ACE system tables have writable owned maps. Their
+    /// decisions are cached after one scan, as a user table's decision is.
+    /// The fixed MSysObjects root is writable without a scan or cache entry.
     /// </summary>
-    [Fact]
-    public async Task AccessAuthoredSystemTables_AreRefusedOnce_WithoutRescanningTheCatalog()
+    /// <param name="jet4">Whether to use the Jet4 fixture rather than ACE.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AccessAuthoredLocalTables_AreWritableOnce_WithoutRescanningTheCatalog(bool jet4)
     {
-        await using var file = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, Ct));
+        await using var file = new MemoryStream(await File.ReadAllBytesAsync(jet4 ? TestDatabases.TestV2003 : TestDatabases.NorthwindTraders, Ct));
         await using var counting = new CountingStream(file);
 
         // Measure the policy's memoization through physical reads of the catalog.
@@ -81,17 +82,17 @@ public sealed class OwnedMapPolicyTests
             await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysQueries", Ct),
             await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysRelationships", Ct),
         ];
-        long userTable = await TDefPageOfAsync(harness, "Orders");
+        long userTable = await TDefPageOfAsync(harness, jet4 ? "Table4" : "Orders");
         Assert.All(systemTables, tdefPage => Assert.True(tdefPage > 2, "A system table was not found."));
 
         foreach (long tdefPage in systemTables)
         {
             counting.Reset();
-            Assert.False(await policy.CanMaintainAsync(tdefPage, Ct));
+            Assert.True(await policy.CanMaintainAsync(tdefPage, Ct));
             Assert.True(counting.BytesRead > 0, "The first answer for a system table did not scan MSysObjects.");
 
             counting.Reset();
-            Assert.False(await policy.CanMaintainAsync(tdefPage, Ct));
+            Assert.True(await policy.CanMaintainAsync(tdefPage, Ct));
             Assert.True(
                 counting.BytesRead == 0,
                 $"The repeated answer for TDEF page {tdefPage} read pages {string.Join(", ", counting.PagesRead(harness.Database.Format.PageSize).Order())}.");
@@ -100,13 +101,13 @@ public sealed class OwnedMapPolicyTests
         Assert.True(await policy.CanMaintainAsync(userTable, Ct));
         counting.Reset();
         Assert.True(await policy.CanMaintainAsync(userTable, Ct));
-        Assert.False(await policy.CanMaintainAsync(2, Ct));
+        Assert.True(await policy.CanMaintainAsync(2, Ct));
         Assert.False(await policy.CanMaintainAsync(0, Ct));
         Assert.True(counting.BytesRead == 0, "A kept answer, MSysObjects' own map or page 0 read pages.");
 
         OwnedMapPolicyState state = policy.Capture();
-        Assert.Equal(systemTables.Order(), state.RefusedTdefs.Order());
-        Assert.Equal(userTable, Assert.Single(state.WritableTdefs));
+        Assert.Empty(state.RefusedTdefs);
+        Assert.Equal(systemTables.Append(userTable).Order(), state.WritableTdefs.Order());
     }
 
     /// <summary>

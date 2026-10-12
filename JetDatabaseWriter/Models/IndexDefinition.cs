@@ -15,7 +15,7 @@ using JetDatabaseWriter.Interfaces;
 /// The writer emits the TDEF schema metadata (real-index physical
 /// descriptor + logical-index entry + logical-index name) and a single empty
 /// B-tree leaf page (<c>page_type = 0x04</c>) per index at table-creation
-/// time, then maintains the B-tree on every subsequent row mutation.
+/// time, then maintains supported index layouts on subsequent row mutations.
 /// Primary keys are emitted via <see cref="IsPrimaryKey"/>; the multi-column
 /// constructor exists primarily to support multi-column primary keys. See
 /// <see href="docs/design/index-and-relationship-format-notes.md" /> for the on-disk
@@ -32,11 +32,10 @@ using JetDatabaseWriter.Interfaces;
 ///   <item><description>Every entry in <see cref="DescendingColumns"/> must also appear in <see cref="Columns"/> (case-insensitive).</description></item>
 /// </list>
 /// <para>
-/// <see cref="IsUnique"/> emits the real-idx <c>flags</c> bit <c>0x01</c>
-/// (index maintenance also throws on duplicate keys after the bulk B-tree
-/// rebuild), <see cref="DescendingColumns"/> clears the col_map ascending
-/// flag (<c>col_order = 0x00</c>), and multi-column non-PK indexes are
-/// supported and maintained live.
+/// Unique indexes refuse duplicate encoded keys. <see cref="DescendingColumns"/>
+/// clears the col_map ascending flag (<c>col_order = 0x00</c>). Supported
+/// multi-column non-PK indexes are maintained live; unsupported existing index
+/// layouts or collations can refuse writes rather than lose index metadata.
 /// </para>
 /// </remarks>
 public sealed record IndexDefinition
@@ -97,17 +96,11 @@ public sealed record IndexDefinition
     public bool IsPrimaryKey { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether this index enforces uniqueness. When
-    /// <see langword="true"/> and <see cref="IsPrimaryKey"/> is
-    /// <see langword="false"/>, the writer emits the real-idx <c>flags</c>
-    /// bit <c>0x01</c> on the matching physical descriptor (§3.1) and the index maintenance
-    /// bulk-rebuild path throws <see cref="InvalidOperationException"/>
-    /// when two live rows produce the same encoded key. Implicitly true for
-    /// primary-key indexes — PKs signal uniqueness via the logical-idx
-    /// <c>index_type = 0x01</c> discriminator and Access leaves the
-    /// real-idx <c>flags</c> byte at <c>0x00</c> (§3.1 probe note); setting
-    /// this property in addition to <see cref="IsPrimaryKey"/> has no extra
-    /// effect.
+    /// Gets a value indicating whether this index enforces uniqueness.
+    /// Duplicate encoded keys are refused with a structured constraint failure;
+    /// failed mutations roll back their complete statement or internal savepoint.
+    /// Primary-key indexes are implicitly unique, so setting this property in
+    /// addition to <see cref="IsPrimaryKey"/> has no extra effect.
     /// </summary>
     public bool IsUnique { get; init; }
 

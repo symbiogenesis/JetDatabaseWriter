@@ -17,7 +17,13 @@ using JetDatabaseWriter.Transactions;
 /// from untrusted access. Data is processed one page at a time; the original remains unchanged
 /// until replacement. Incomplete staging is cleaned up before commit; commit failures retain
 /// recovery copies named in the IOException data. File contents are flushed through managed
-/// .NET APIs, but directory entries are not flushed and power-loss persistence is not guaranteed.</remarks>
+/// .NET APIs, but directory entries are not flushed and power-loss persistence is not guaranteed.
+/// Supported source providers are JET RC4 and ACE RC4 CryptoAPI, Standard AES and Agile AES;
+/// new encrypted output uses JET RC4 or ACE Agile AES. Third-party extensible providers and
+/// non-AES Agile ciphers are unsupported. Native fixture
+/// evidence covers specific provider variants. Windows staging files receive owner-only ACLs.
+/// The .NET 10 build requests Unix mode 0600; the .NET Standard build uses host-default Unix
+/// permissions. Inherited ACLs and directory permissions must provide the required protection.</remarks>
 public static class AccessDatabaseEncryption
 {
     /// <summary>Detects native page encryption without modifying the database.</summary>
@@ -34,10 +40,10 @@ public static class AccessDatabaseEncryption
     public static ValueTask<AccessEncryptionFormat> DetectEncryptionFormatAsync(Stream stream, CancellationToken cancellationToken = default)
         => EncryptionManager.DetectEncryptionFormatAsync(stream, cancellationToken);
 
-    /// <summary>Encrypts an unencrypted database using its native provider.</summary>
+    /// <summary>Encrypts an unprotected database using a supported native page provider.</summary>
     /// <param name="path">The database file.</param>
     /// <param name="newPassword">The nonempty password; its backing memory must remain unchanged until completion.</param>
-    /// <param name="targetFormat">The native provider, or null for the database format's default.</param>
+    /// <param name="targetFormat">The output provider: matching JET RC4 or ACE Agile AES, or null for the database format's default. Historical ACE providers are supported sources, not output targets.</param>
     /// <param name="options">Locking and resource limits.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The asynchronous maintenance operation.</returns>
@@ -62,7 +68,7 @@ public static class AccessDatabaseEncryption
     public static ValueTask DecryptAsync(string path, ReadOnlyMemory<char> oldPassword, AccessWriterOptions? options = null, CancellationToken cancellationToken = default)
         => ConvertFileAsync(path, oldPassword, default, AccessEncryptionFormat.None, encryptedSource: true, options, cancellationToken);
 
-    /// <summary>Changes the password using fresh native encryption.</summary>
+    /// <summary>Changes a protected database password, preserving JET password-only mode or using fresh native page encryption.</summary>
     /// <param name="path">The database file.</param>
     /// <param name="oldPassword">The current password; its backing memory must remain unchanged until completion.</param>
     /// <param name="newPassword">The nonempty replacement password; its backing memory must remain unchanged until completion.</param>

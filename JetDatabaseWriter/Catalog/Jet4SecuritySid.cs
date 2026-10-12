@@ -6,10 +6,10 @@ using System.Security.Cryptography;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
 
-/// <summary>Encodes Jet4 security identities using the database header's SID key.</summary>
+/// <summary>Encodes Jet4/ACE security identities using the database header's SID key.</summary>
 internal static class Jet4SecuritySid
 {
-    /// <summary>Returns the masked inherited-owner placeholder for a raw Jet4 page zero.</summary>
+    /// <summary>Returns the masked inherited-owner placeholder for a raw Jet4/ACE page zero.</summary>
     /// <param name="format">The database format profile.</param>
     /// <param name="rawHeader">The raw database header.</param>
     /// <returns>The stored two-byte owner placeholder.</returns>
@@ -17,7 +17,7 @@ internal static class Jet4SecuritySid
     internal static byte[] GetOwnerPlaceholder(JetFormat format, byte[] rawHeader)
         => Encode(format, rawHeader, [0x02, 0x04]);
 
-    /// <summary>Encodes a security identity for the specified native Jet4 header.</summary>
+    /// <summary>Encodes a security identity for the specified native Jet4/ACE header.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="rawHeader">The raw header.</param>
     /// <param name="plainIdentity">The unmasked identity.</param>
@@ -27,7 +27,7 @@ internal static class Jet4SecuritySid
     {
         if (rawHeader.Length < 0x92)
         {
-            throw new JetCorruptDataException("The Jet4 header is too short to derive its security identity key.");
+            throw new JetCorruptDataException("The database header is too short to derive its security identity key.");
         }
 
         byte[] header = (byte[])rawHeader.Clone();
@@ -39,7 +39,7 @@ internal static class Jet4SecuritySid
             double creationDate = BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(0x72, 8)));
             if (double.IsNaN(creationDate) || double.IsInfinity(creationDate) || creationDate < int.MinValue || creationDate > int.MaxValue)
             {
-                throw new JetCorruptDataException("The Jet4 creation date cannot derive its security identity key.");
+                throw new JetCorruptDataException("The database creation date cannot derive its security identity key.");
             }
 
             BinaryPrimitives.WriteInt32LittleEndian(dateMask, (int)creationDate);

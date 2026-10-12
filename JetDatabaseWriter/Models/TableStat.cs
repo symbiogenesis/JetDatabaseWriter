@@ -14,7 +14,7 @@ public sealed record TableStat
     /// <summary>
     /// Gets the row count stored in the TDEF page.
     /// May be stale after bulk deletes or imports without a Compact &amp; Repair.
-    /// Use <see cref="IAccessReader.GetRealRowCountAsync"/> for an accurate count.
+    /// Use <see cref="IAccessReader.GetRealRowCountAsync"/> to scan decodable live-row layouts; that scan does not validate every stored scalar value.
     /// </summary>
     public long RowCount { get; init; }
 

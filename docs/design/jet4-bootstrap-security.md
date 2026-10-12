@@ -1,6 +1,6 @@
-# Native Jet4 bootstrap and catalog security
+# Native Jet4/ACE bootstrap and catalog security
 
-Fresh Jet4 databases include MSysObjects, MSysACEs, MSysQueries and
+Fresh Jet4 and ACE databases include MSysObjects, MSysACEs, MSysQueries and
 MSysRelationships, with the MSysDb, Tables, Databases and Relationships
 catalog objects. Core table slots are reserved before their rows and indexes
 are allocated. Variable Binary descriptors retain the native SID and query
@@ -21,6 +21,16 @@ placeholders are resolved to the database owner. When the container also has
 an explicit inheritable owner entry, DAO uses that entry's permission mask;
 it does not combine the masks. Native identities and oracle details are in
 [native-encryption-evidence.md](native-encryption-evidence.md).
+
+ACE catalog creation and schema rewrites use the same inheritance policy.
+In TestV2010 Table4, the native owner and Users identities are derived from
+that file's header; literal `7110`/`7010` identities belong to a particular
+bootstrap header and cannot be copied into another database. Native DAO read
+acceptance alone does not establish CompactDatabase
+preservation. Catalog inheritance therefore has its own format capability, separate
+from the Jet4-only password-change security remasking path. Fresh ACE creation
+initializes database/container owners and inheritable permissions before user
+and complex objects are emitted.
 
 Before catalog or relationship mutation, required security objects must have
 unique names and IDs, the expected types and nonempty owners. Malformed

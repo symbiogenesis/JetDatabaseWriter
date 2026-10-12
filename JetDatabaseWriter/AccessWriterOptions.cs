@@ -32,7 +32,7 @@ public sealed class AccessWriterOptions : AccessOptions
     /// database that already has a lockfile throws an <see cref="System.IO.IOException"/>.
     /// When <c>true</c>, lockfile creation is strict: if the lockfile cannot be created
     /// (for example, due to permissions), the open operation throws.
-    /// Set to <c>false</c> for best-effort lockfile behavior (previous behaviour).
+    /// Set to <c>false</c> for best-effort lockfile behavior.
     /// Default: true.
     /// </summary>
     public bool RespectExistingLockFile { get; init; } = true;
@@ -78,8 +78,10 @@ public sealed class AccessWriterOptions : AccessOptions
     /// <para>
     /// Cancellation is ignored once physical write-back starts. If restoration
     /// also fails, the writer rejects further mutations with <c>WriterFaulted</c>.
-    /// File-backed transactions recover interrupted physical writes on writer open.
-    /// Other caller-supplied streams retain undo images only for in-process failures.
+    /// File-backed transactions recover process-interrupted physical writes on writer open
+    /// under exclusive access, with the database and adjacent recovery journal retained
+    /// at their original path. Journal directory-entry persistence after power loss is
+    /// unverified. Other caller-supplied streams retain undo images only for in-process failures.
     /// Creation and physical shrinking use
     /// their separate maintenance paths.
     /// </para>

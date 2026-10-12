@@ -61,7 +61,7 @@ passed with 3342 succeeded and 0 failed.
 | TDEF length | Jet4/ACE indexed tables include 8 zero bytes after the `0xFFFF` index-name sentinel inside `tdef_len`. | H48 DAO baseline diff. |
 | Usage-map inline row | INLINE rows contain `+0` type, `+1..+4` little-endian `start_page`, then a bitmap through the actual row end. New writer rows are 69 bytes; existing Access rows can be larger and must retain their bounds. | DAO baselines and Access fixtures; Northwind's `MSysObjects` owned-pages row is 381 bytes. |
 | User-table usage maps | Writer-created user-table data pages are marked in the per-table owned/free maps. | DAO `OpenRecordset` and Compact & Repair validations. |
-| System-table inserts | Do not patch pre-existing system-table TDEF maps from the generic user-table page-allocation path. Instead, insert new system rows onto existing mapped system data pages whenever possible. | Marking system-table maps caused DAO `OpenDatabase` to raise `"Invalid argument"`; reusing existing system pages made compact preserve relationship/catalog rows. |
+| System-table inserts | Prefer existing mapped pages; when allocation is necessary, extend the actual Jet4/ACE owned/free map rows named by the system TDEF. Imported system tables require map maintenance too. | Earlier generic map changes raised DAO `"Invalid argument"`, so the writer avoided them. That workaround lost TestV2010 Table4 when a schema rewrite exhausted existing catalog-page space. A native scratch check repaired compact by adding the new catalog page to its owned map; current regression coverage exercises automatic maintenance. |
 | Real-index usage maps | New table maps place owned/free rows at 0/1 and index rows at 2+. Maintenance preserves the actual page and row pointer in each existing real-index descriptor and leaves unrelated map rows intact. | FK compact baselines; Northwind's `MSysObjects` indexes use rows 16/17 after its long-value maps. |
 | Single-leaf index maintenance | When a rebuilt index still fits on the existing single leaf, rewrite that leaf in place and keep `first_dp` stable. | Full suite and updated `IndexIncrementalMaintenanceTests`. |
 | AutoNumber high-water | TDEF bytes `0x14..0x17` store the last issued AutoNumber value, not the next value. | DAO-authored 10-row AutoNumber fixture stamped `0A 00 00 00`. |
@@ -139,7 +139,8 @@ and compact fixes listed above, but the practical preservation rules are:
 - Mark appended user-table data pages in both table owned and free usage-map
 	rows; DAO recordsets trust those maps.
 - Persist AutoNumber high-water at TDEF offset `0x14` as the last issued value.
-- Insert new system rows on mapped system-table data pages when possible;
+- Insert new system rows on mapped system-table data pages when possible, and
+  mark any newly allocated Jet4/ACE system data page in its actual owned map;
 	CompactDatabase can prune otherwise valid rows that live outside system-table
 	owned maps.
 - Relationship creation needs canonical `MSysRelationships` rows, Type 8

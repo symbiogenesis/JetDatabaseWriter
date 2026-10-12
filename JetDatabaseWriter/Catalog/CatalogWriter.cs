@@ -91,7 +91,7 @@ internal sealed class CatalogWriter(
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
-        msys.SetValueByName(values, "Owner", owner ?? (format.UsesHeaderMaskedSecuritySids ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false) : Constants.SystemObjects.DefaultOwnerBlob));
+        msys.SetValueByName(values, "Owner", owner ?? (format.InheritsCatalogPermissions ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false) : Constants.SystemObjects.DefaultOwnerBlob));
         if (lvProp is not null)
         {
             msys.SetValueByName(values, "LvProp", lvProp);
@@ -137,7 +137,7 @@ internal sealed class CatalogWriter(
 
         if (artifact.Owner is not null && msys.FindColumn("Owner") is not null)
         {
-            byte[] owner = format.UsesHeaderMaskedSecuritySids && artifact.AcePolicy != CatalogObjectAcePolicy.None
+            byte[] owner = format.InheritsCatalogPermissions && artifact.AcePolicy != CatalogObjectAcePolicy.None
                 ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false)
                 : artifact.Owner;
             msys.SetValueByName(values, "Owner", owner);
@@ -343,7 +343,7 @@ internal sealed class CatalogWriter(
             : throw new JetCorruptDataException($"MSysObjects has no valid {objectName} security owner.");
     }
 
-    /// <summary>Inherits native Jet4 container permissions and resolves the masked owner placeholder.</summary>
+    /// <summary>Inherits native Jet4/ACE container permissions and resolves the masked owner placeholder.</summary>
     /// <param name="relationships">Whether to inherit relationship-container permissions.</param>
     /// <param name="acesTdefPage">The permissions table page.</param>
     /// <param name="acesDef">The permissions table definition.</param>
@@ -351,7 +351,7 @@ internal sealed class CatalogWriter(
     /// <returns>The validated and remapped native permissions.</returns>
     /// <exception cref="JetCorruptDataException">Required security metadata is malformed.</exception>
     /// <exception cref="NotSupportedException">The container has no inheritable permissions.</exception>
-    private async ValueTask<(byte[] Sid, int Acm)[]> ReadInheritedJet4PermissionsAsync(
+    private async ValueTask<(byte[] Sid, int Acm)[]> ReadInheritedPermissionsAsync(
         bool relationships,
         long acesTdefPage,
         TableDef acesDef,
@@ -414,7 +414,7 @@ internal sealed class CatalogWriter(
             cancellationToken).ConfigureAwait(false);
         if (inherited.Count == 0)
         {
-            throw new NotSupportedException("The Jet4 database has no inheritable catalog permissions for the new object.");
+            throw new NotSupportedException("The database has no inheritable catalog permissions for the new object.");
         }
 
         byte[] header = await pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
@@ -456,7 +456,7 @@ internal sealed class CatalogWriter(
     /// <exception cref="JetCorruptDataException">The native permissions table is absent or malformed.</exception>
     internal async ValueTask ThrowIfNativeSecurityUnmaintainableAsync(bool relationships, CancellationToken cancellationToken)
     {
-        if (!format.UsesHeaderMaskedSecuritySids)
+        if (!format.InheritsCatalogPermissions)
         {
             return;
         }
@@ -464,17 +464,17 @@ internal sealed class CatalogWriter(
         long page = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (page <= 0)
         {
-            throw new JetCorruptDataException("The native Jet4 permissions table is absent.");
+            throw new JetCorruptDataException("The native permissions table is absent.");
         }
 
         _ = await this.ReadCatalogSecurityObjectAsync(Constants.SystemTableNames.Aces, checked((int)page), 1, cancellationToken).ConfigureAwait(false);
         TableDef definition = await tableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        _ = await this.ReadInheritedJet4PermissionsAsync(relationships, page, definition, cancellationToken).ConfigureAwait(false);
+        _ = await this.ReadInheritedPermissionsAsync(relationships, page, definition, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Writes permissions for a catalog object using its native container policy.</summary>
     /// <param name="objectId">The object identifier.</param>
-    /// <param name="useRestrictedOwnerAcm">Whether the non-Jet4 owner permissions are restricted.</param>
+    /// <param name="useRestrictedOwnerAcm">Whether legacy owner permissions are restricted.</param>
     /// <param name="useRelationshipGroupAcm">Whether to use relationship-container permissions.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <exception cref="JetCorruptDataException">The native permissions table is absent.</exception>
@@ -487,18 +487,18 @@ internal sealed class CatalogWriter(
         long acesTdefPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
         {
-            if (format.UsesHeaderMaskedSecuritySids)
+            if (format.InheritsCatalogPermissions)
             {
-                throw new JetCorruptDataException("The native Jet4 permissions table is absent.");
+                throw new JetCorruptDataException("The native permissions table is absent.");
             }
 
             return;
         }
 
         TableDef acesDef = await tableDefs.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        if (format.UsesHeaderMaskedSecuritySids)
+        if (format.InheritsCatalogPermissions)
         {
-            (byte[] Sid, int Acm)[] inherited = await this.ReadInheritedJet4PermissionsAsync(useRelationshipGroupAcm, acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
+            (byte[] Sid, int Acm)[] inherited = await this.ReadInheritedPermissionsAsync(useRelationshipGroupAcm, acesTdefPage, acesDef, cancellationToken).ConfigureAwait(false);
             foreach ((byte[] sid, int acm) in inherited)
             {
                 object[] values = acesDef.CreateNullValueRow();

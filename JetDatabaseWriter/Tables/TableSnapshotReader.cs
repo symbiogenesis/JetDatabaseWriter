@@ -214,14 +214,14 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             tableName: null,
             async (row, token) =>
             {
-                object?[] values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, plan, token).ConfigureAwait(false)
-                    ?? throw new JetCorruptDataException(JetErrorCode.MalformedValue, "A complex-parent predicate row cannot be decoded.", new JetErrorInfo { PageNumber = row.Location.PageNumber });
+                object?[] values = await this.CrackTypedRowWithContextAsync(row, plan, token).ConfigureAwait(false)
+                    ?? throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName: null, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
 
                 for (int index = 0; index < values.Length; index++)
                 {
                     if (values[index] is UnreadableLongValue)
                     {
-                        throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "A selected complex-parent long value cannot be read.", new JetErrorInfo { PageNumber = row.Location.PageNumber, ColumnName = tableDef.Columns[index].Name });
+                        throw new JetCorruptDataException(JetErrorCode.UnreadableLongValue, "A selected complex-parent long value cannot be read.", new JetErrorInfo { PageNumber = row.Location.DataPageNumber, ColumnName = tableDef.Columns[index].Name });
                     }
                 }
 
@@ -257,20 +257,8 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The row is shorter than its column-count field", token).ConfigureAwait(false);
                 }
 
-                object?[] values;
-                try
-                {
-                    values = await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, decodePlan, token).ConfigureAwait(false)
-                        ?? throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
-                }
-                catch (JetCorruptDataException failure) when (failure.ErrorCode == JetErrorCode.MalformedValue && failure.ErrorInfo.PageNumber is null)
-                {
-                    throw new JetCorruptDataException(
-                        failure.ErrorCode,
-                        failure.Message,
-                        failure.ErrorInfo with { PageNumber = row.Location.DataPageNumber },
-                        failure);
-                }
+                object?[] values = await this.CrackTypedRowWithContextAsync(row, decodePlan, token).ConfigureAwait(false)
+                    ?? throw await this.CreateUndecodableRowExceptionAsync(tdefPage, tableName, row.Location, "The stored row layout cannot be decoded", token).ConfigureAwait(false);
 
                 if (tableDef.HasHyperlinkColumns)
                 {
@@ -288,6 +276,32 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
             cancellationToken).ConfigureAwait(false);
 
         return result;
+    }
+
+    /// <summary>Adds physical row coordinates to scalar failures that have only column context.</summary>
+    /// <param name="row">The live row and the page holding its bytes.</param>
+    /// <param name="plan">The typed projection and write-back policy.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The decoded values, or <see langword="null"/> when the row layout cannot be decoded.</returns>
+    /// <exception cref="JetCorruptDataException">A selected scalar value cannot be decoded.</exception>
+    private async ValueTask<object?[]?> CrackTypedRowWithContextAsync(OwnedDataPages.TableRow row, RowDecodePlan plan, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await rows.CrackRowTypedAsync(row.Page, row.Location.RowStart, row.Location.RowSize, plan, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JetCorruptDataException failure) when (failure.ErrorCode == JetErrorCode.MalformedValue && failure.ErrorInfo.PageNumber is null)
+        {
+            throw new JetCorruptDataException(
+                failure.ErrorCode,
+                failure.Message,
+                failure.ErrorInfo with
+                {
+                    PageNumber = row.Location.DataPageNumber,
+                    Reason = $"Row slot {row.Location.DataRowIndex} at offset {row.Location.RowStart} occupies {row.Location.RowSize} bytes. {failure.ErrorInfo.Reason}",
+                },
+                failure);
+        }
     }
 
     /// <summary>Requires complete traversal and adds the snapshot's table identity to geometry failures.</summary>

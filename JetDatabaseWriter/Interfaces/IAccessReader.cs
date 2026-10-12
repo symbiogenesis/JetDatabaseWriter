@@ -34,7 +34,7 @@ public interface IAccessReader : IAccessBase
     /// <returns>True when the catalog contains the table; false when it is absent. Invalid names, corrupt catalog data and I/O errors still throw.</returns>
     public ValueTask<bool> TryLookupTableAsync(string tableName, CancellationToken cancellationToken = default);
 
-    /// <summary>Gets a value indicating whether GetUserTables logs verbose hex dumps for debugging. Default: false.</summary>
+    /// <summary>Gets a value indicating whether catalog diagnostics include verbose hex dumps for debugging. Default: false.</summary>
     public bool DiagnosticsEnabled { get; }
 
     /// <summary>Gets the maximum number of pages to keep in cache. Positive values enable caching; 0 or negative disables it. Default: 256 (1 MB for 4K pages).</summary>
@@ -86,10 +86,10 @@ public interface IAccessReader : IAccessBase
 
     /// <summary>
     /// Scans all data pages to count the live rows of the specified table asynchronously, overflow rows (rows Access moved to another page) included.
-    /// Rows whose layout is too damaged to decode are not counted, so the result matches the number of rows
-    /// <see cref="Rows(string, IProgress{long}?, CancellationToken)"/> and the other table reads return.
-    /// This is slower than reading the TDEF RowCount (which may be stale), but always accurate.
-    /// Use this after many deletes/imports when `Compact and Repair` hasn't been run.
+    /// Rows whose layout is too damaged to decode and unresolved overflow rows are not counted.
+    /// This scans row layouts rather than scalar values: a later row read can still fail while
+    /// decoding an assigned value. The stored TDEF RowCount may be stale; this method reports
+    /// the decodable live-row layouts observed by the scan, without proving every row is readable.
     /// </summary>
     /// <param name="tableName">Name of the table to count rows for (case-insensitive).</param>
     /// <param name="cancellationToken">A token used to cancel the asynchronous operation.</param>

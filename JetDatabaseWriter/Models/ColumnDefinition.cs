@@ -64,8 +64,8 @@ public sealed record ColumnDefinition
     /// <para>
     /// When <see cref="DefaultValueExpression"/> is not set, the value is also written into
     /// <c>MSysObjects.LvProp</c> as a literal <c>DefaultValue</c> expression (for example
-    /// <c>7</c>, <c>"text"</c>, <c>True</c> or <c>#2024-02-29 08:30:00#</c>), so a later
-    /// <see cref="AccessWriter"/> and Microsoft Access apply the same default. Text, Boolean,
+    /// <c>7</c>, <c>"text"</c>, <c>True</c> or <c>#2024-02-29 08:30:00#</c>) for later
+    /// readers. Native acceptance of each type and expression context remains fixture-specific. Text, Boolean,
     /// integer, floating-point, <see cref="decimal"/>, <see cref="DateTime"/> and
     /// <see cref="Guid"/> values can be written this way; any other type, such as
     /// <c>byte[]</c>, makes table creation or adding a column throw <see cref="NotSupportedException"/> before anything is written. The
@@ -84,7 +84,7 @@ public sealed record ColumnDefinition
     /// <see cref="DateTime"/> default is persisted and applied to the whole second, the
     /// resolution of an Access date literal. Boolean, text and date defaults use the
     /// expression engine's conversions in every writer: <c>true</c> on a Number column
-    /// stores -1. A literal the engine cannot evaluate or convert gives no default.
+    /// stores -1. A literal the engine cannot evaluate or convert refuses the insert.
     /// When <see cref="DefaultValueExpression"/> is also set to non-blank text, the declaring writer
     /// stores this value as given.
     /// </para>
@@ -92,32 +92,42 @@ public sealed record ColumnDefinition
     /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,
     /// <see cref="IsAttachment"/> or <see cref="IsMultiValue"/> columns, whose values Access
     /// generates: <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
-    /// <see cref="ArgumentException"/>. A <c>DefaultValue</c> property another tool stored on
-    /// such a column is kept in the file but never applied.
+    /// <see cref="ArgumentException"/>. Stored defaults on integer AutoNumber, calculated
+    /// and complex columns are retained but not applied. Generated GUID declarations
+    /// emit the native <c>GenGUID()</c> default internally; imported GUID fields honor
+    /// their actual stored default or its absence.
     /// </para>
     /// </remarks>
     public object? DefaultValue { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether this column auto-assigns a monotonically increasing
-    /// integer, or a fresh ReplicationID GUID, when an insert supplies null, <see cref="DBNull.Value"/> or
-    /// <see cref="DbDefault.Value"/>, or leaves the column out. The next value
+    /// Gets a value indicating whether this column generates integers or ReplicationID GUIDs.
+    /// Integer inserts generate for null, <see cref="DBNull.Value"/>, <see cref="DbDefault.Value"/>
+    /// or an omitted column. GUID inserts use the persisted <c>GenGUID()</c> default only
+    /// for omission or <see cref="DbDefault.Value"/>; explicit null follows nullability.
+    /// Imported GUID fields honor their actual stored default, including its absence.
+    /// The next integer value
     /// is seeded on first use from the larger of the table's persisted AutoNumber counter
-    /// and the largest existing value, plus one (<c>1</c> for a new table), and incremented
-    /// per insert. Valid for <see cref="short"/>, <see cref="int"/> and <see cref="Guid"/> columns.
+    /// and the largest existing integer value, plus one (<c>1</c> for a new table), and
+    /// incremented per insert. GUID values are generated independently of that counter.
+    /// Valid for <see cref="short"/>, <see cref="int"/> and <see cref="Guid"/> columns.
     /// Unsupported types are rejected before anything is written.
     /// </summary>
     /// <remarks>
-    /// Persisted in the JET TDEF column flags: integer <c>0x04</c> or GUID <c>0x40</c>. The
-    /// auto-increment behaviour is restored when the database is reopened. The TDEF
-    /// AutoNumber counter records the highest value inserted and is never lowered
+    /// Persisted in the JET TDEF column flags: integer <c>0x04</c> or GUID <c>0x40</c>.
+    /// GUID generation also persists the native <c>GenGUID()</c> default in the property blob.
+    /// Generation behavior is restored when the database is reopened. The TDEF
+    /// integer AutoNumber counter records the highest integer value inserted and is never lowered
     /// (AddColumn, DropColumn and RenameColumn carry it over to the rebuilt table), so
     /// values freed by deleting the top rows are not handed out again, in this or a
     /// later session. The counter is a single unsigned 32-bit value per table, shared
-    /// by every AutoNumber column in it, so it cannot record values above
-    /// <see cref="uint.MaxValue"/>. An update may assign an explicit value, which
+    /// by its integer AutoNumber columns, so it cannot record integer values above
+    /// <see cref="uint.MaxValue"/>. An integer update may assign an explicit value, which
     /// raises the stored high-water as an explicit insert value does, but setting the
-    /// column to null throws <see cref="InvalidOperationException"/>.
+    /// column to null throws <see cref="InvalidOperationException"/>. GUID updates may
+    /// assign an explicit GUID without changing the integer counter. A non-nullable GUID
+    /// POCO property holding <see cref="Guid.Empty"/> is omitted as a mapping convention;
+    /// positional or named-row inserts can explicitly store that value.
     /// </remarks>
     public bool IsAutoIncrement { get; init; }
 
@@ -243,15 +253,17 @@ public sealed record ColumnDefinition
     /// a result that cannot be converted to the column's type refuses the write with
     /// <see cref="JetDatabaseWriter.Exceptions.JetValidationRuleException"/> before mutation.
     /// A Null result is subject to the column's nullability constraint. <c>GenGUID()</c>
-    /// generates a GUID; <c>CurrentUser()</c> returns <c>Admin</c> for the supported session
-    /// without workgroup authentication.
+    /// generates a GUID; <c>CurrentUser()</c> returns <c>Admin</c> for the library session
+    /// without workgroup authentication. Native/workgroup equivalence is unverified.
     /// </para>
     /// <para>
     /// Not allowed on <see cref="IsAutoIncrement"/>, <see cref="IsCalculated"/>,
     /// <see cref="IsAttachment"/> or <see cref="IsMultiValue"/> columns, whose values Access
     /// generates: <c>CreateTableAsync</c> and <c>AddColumnAsync</c> throw
-    /// <see cref="ArgumentException"/>. A <c>DefaultValue</c> property another tool stored on
-    /// such a column is kept in the file but never applied.
+    /// <see cref="ArgumentException"/>. Stored defaults on integer AutoNumber, calculated
+    /// and complex columns are retained but not applied. Generated GUID declarations
+    /// emit the native <c>GenGUID()</c> default internally; imported GUID fields honor
+    /// their actual stored default or its absence.
     /// </para>
     /// <para>A blank expression is treated as absent; <see cref="DefaultValue"/> supplies the literal instead.</para>
     /// </remarks>
@@ -336,9 +348,9 @@ public sealed record ColumnDefinition
     /// plus the <c>MSysComplexColumns</c> catalog row.
     /// </para>
     /// <para>
-    /// Existing attachment columns read from an Access-authored database are
-    /// preserved through <c>AddColumnAsync</c> / <c>DropColumnAsync</c> /
-    /// <c>RenameColumnAsync</c>.
+    /// Supported schema rewrites retain surviving attachment references and flat-table
+    /// identities. Complete preservation and native validation of every descriptor,
+    /// property and multi-page schema variant remain incomplete.
     /// </para>
     /// </remarks>
     public bool IsAttachment { get; init; }
@@ -353,8 +365,8 @@ public sealed record ColumnDefinition
     /// Declaring a multi-value column follows the same emission path as
     /// <see cref="IsAttachment"/>: parent TDEF column descriptor plus a hidden
     /// flat child table and an <c>MSysComplexColumns</c> catalog row. Existing
-    /// multi-value columns survive <c>AddColumnAsync</c> /
-    /// <c>DropColumnAsync</c> / <c>RenameColumnAsync</c>.
+    /// multi-value columns are carried through supported schema rewrites, subject to the
+    /// descriptor and native-validation limits described for <see cref="IsAttachment"/>.
     /// </remarks>
     public bool IsMultiValue { get; init; }
 
@@ -396,9 +408,9 @@ public sealed record ColumnDefinition
     internal JetDatabaseWriter.Indexes.Collation.TextSortOrder? TextSortOrderOverride { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether this column can have a default value. Access
-    /// gives AutoNumber, calculated, Attachment and multi-value columns none, because
-    /// it generates their values.
+    /// Gets a value indicating whether callers may declare a default value.
+    /// Generated, calculated, Attachment and multi-value declarations refuse caller
+    /// defaults. GUID generation emits its native <c>GenGUID()</c> property internally.
     /// </summary>
     internal bool CanHaveDefault => !this.IsAutoIncrement && !this.IsCalculated && !this.IsAttachment && !this.IsMultiValue;
 
@@ -478,8 +490,9 @@ public sealed record ColumnDefinition
     /// The writer can create ACCDB calculated columns, stores caller-supplied
     /// row values as persisted cached results, fills missing values on insert
     /// when <see cref="CalculationExpression"/> is in the supported row-local
-    /// subset, and recomputes values on update. Microsoft Access will recompute
-    /// the value when it opens the file.
+    /// subset, and recomputes values on update. Expression syntax, coercion and
+    /// function admissibility have incomplete native coverage; successful library
+    /// evaluation or round-trip does not establish Microsoft Access acceptance.
     /// See <see href="docs/design/calculated-columns-format-notes.md" />.
     /// </para>
     /// </remarks>

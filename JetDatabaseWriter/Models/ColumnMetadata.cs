@@ -29,7 +29,7 @@ public sealed record ColumnMetadata
     /// <summary>Gets or initializes the maximum length for variable-length columns, or null for fixed-length.</summary>
     public int? MaxLength { get; init; }
 
-    /// <summary>Gets a value indicating whether the column allows null values (always true for JET databases).</summary>
+    /// <summary>Gets a value indicating whether null is permitted by the persisted Required property and integer AutoNumber flags. Missing Required metadata defaults to nullable for other columns, including generated GUIDs; primary-key indexes impose their own null refusal.</summary>
     public bool IsNullable { get; init; }
 
     /// <summary>Gets a value indicating whether the column is fixed-length.</summary>

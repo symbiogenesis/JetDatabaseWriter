@@ -22,8 +22,10 @@ using JetDatabaseWriter.Transactions;
 /// <para>
 /// Commit retains raw before-images and restores them after a write or flush
 /// failure. File-backed transactions persist recovery images beside the database;
-/// the next writer open recovers an interrupted commit. Other caller-supplied
-/// streams cannot recover after a process crash.
+/// the next writer open validates and recovers a process-interrupted commit under
+/// exclusive access, with the database and journal retained at their original path.
+/// Power-loss persistence of journal directory entries is unverified. Other
+/// caller-supplied streams cannot recover after a process crash.
 /// </para>
 /// <para>
 /// Only one transaction may be active at a time per <see cref="AccessWriter"/>;
@@ -35,9 +37,10 @@ using JetDatabaseWriter.Transactions;
 /// <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> caps the journal;
 /// exceeding the cap throws <see cref="JetLimitationException"/> from the next
 /// page write. The transaction stays active, but the operation that hit the
-/// cap is rolled back to its internal savepoint. The transaction remains usable. An implicit
-/// <see cref="AccessWriterOptions.UseTransactionalWrites"/> transaction is
-/// rolled back automatically.
+/// cap is rolled back to its internal savepoint. The transaction remains usable.
+/// Private statement transactions are automatic regardless of
+/// <see cref="AccessWriterOptions.UseTransactionalWrites"/>; that option controls
+/// the additional durable-flush request for non-file stores.
 /// </para>
 /// </remarks>
 public sealed class JetTransaction : IAsyncDisposable
@@ -62,9 +65,10 @@ public sealed class JetTransaction : IAsyncDisposable
     /// also set when <see cref="CommitAsync"/> fails and restores the original
     /// page images and file length.
     /// When <see cref="CommitAsync"/> throws and both this and
-    /// <see cref="IsCommitted"/> are <see langword="false"/>, the commit failed
-    /// and its undo failed. The writer then rejects further mutations; the
-    /// file may hold part of the transaction.
+    /// <see cref="IsCommitted"/> are <see langword="false"/>, the writer faulted
+    /// during journal preparation, undo, or an uncertain commit-decision flush.
+    /// Further mutations are refused; retain file recovery evidence and reopen
+    /// with the writer, or restore a custom stream through the caller's protocol.
     /// </summary>
     public bool IsRolledBack { get; private set; }
 

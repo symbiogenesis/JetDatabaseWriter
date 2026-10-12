@@ -1,12 +1,39 @@
 # Format notes: `MSysObjects.LvProp` (`KKD\0` / `MR2\0`)
 
-**Status:** Implemented
+**Status:** Parser and writer implemented for covered layouts; complete schema preservation and native mutation acceptance remain incomplete.
 
 This document captures the on-disk layout of the property blob stored in `MSysObjects.LvProp`. The parser ([`ColumnPropertyBlock`](../../JetDatabaseWriter/Schema/Models/ColumnPropertyBlock.cs)) and writer ([`ColumnPropertyBlockBuilder`](../../JetDatabaseWriter/Schema/ColumnPropertyBlockBuilder.cs)) follow the layout below; round-trip tests exercise both against Access-authored fixtures.
 
 Property names, target names and Text/Memo values use the database header's ANSI code page on Jet3 and UTF-16LE on Jet4/ACE. Jet3 writes use strict encoding: an unrepresentable character refuses the operation rather than becoming a best-fit character or question mark. Header code page zero defaults to Windows-1252; an unsupported nonzero code page is refused, never repaired by assuming UTF-8. The cp1251 property tests exercise names, values and linked ODBC NameMap entries; Microsoft-produced non-1252 fixtures remain part of the interoperability corpus work.
 
 Stored defaults and column rules must evaluate successfully before a row can be written. Null is a successful default result, not an evaluation failure. Required comes from persisted properties; the old library-private TDEF 0x08 marker is not interpreted as Required. GUID AutoNumbers use the GUID-specific 0x40 flag; flags on other column types retain their own meanings.
+
+The Microsoft-authored `TestV2003`/`TestV2010` Table4 and
+`TestIndexCodesV2000`/`TestIndexCodesV2010` Table13 GUID fields have a
+16-byte fixed slot, flags `0x43` and a `GenGUID()` default. DAO120 reports
+type 15 and attributes 1, and allows explicit GUID updates. Nullable Table13
+fields preserve explicitly assigned Null; the Table4 primary key refuses it.
+Omission uses the default. GUID generation is distinct from the numeric
+`dbAutoIncrField` attribute and does not imply a read-only or non-null field.
+
+Writer-generated GUID columns persist `GenGUID()` as a Memo (`0x0C`)
+property with DDL flag 1 alongside the `0x40` marker, and preserve
+nullable/Required semantics through schema rewrites. The Microsoft-authored
+fixtures also contain valid Text (`0x0A`)/DDL-1 defaults, which are preserved.
+A DDL-0 default can be visible through DAO metadata without being executed
+for an omitted native insert; matching the expression string alone does not
+establish native generation.
+DAO creation with `dbSystemField` and `GenGUID()` produces another native
+variant, flags `0x13`; its system bit is preserved independently of GUID
+generation. A plain GUID with a `GenGUID()` default has flags `0x03`.
+Removing or replacing the stored default can retain flags `0x43`; omission
+honors that actual default or stores Null when it is absent. Schema edits do
+not recreate a removed default. The descriptor marker alone does not request
+GUID generation.
+`ReplicationIdDescriptorTests` and `DaoReplicationIdTests` keep fixture,
+DAO-created and writer-created evidence separate. Non-nullable CLR POCO
+`Guid.Empty` omission is a library mapping convention; explicit row values
+can store that GUID.
 
 ## 1. Sources
 
@@ -119,7 +146,7 @@ The FK Compact investigation compared writer-authored and DAO-authored tables wi
 
 Observed DAO `MSysObjects.LvProp` facts:
 
-- AutoNumber columns do not carry a `Required` property, even when DAO field/index objects are marked required. Their non-null behavior comes from the AutoNumber column flag and PK/index metadata.
+- The integral AutoNumber columns in this baseline do not carry a `Required` property, even when DAO field/index objects are marked required. Their non-null behavior comes from the integral AutoNumber flag and PK/index metadata. Generated GUID fields retain independent `Required` and index semantics; the `0x40` GUID marker does not make a field non-null.
 - Text columns carry `AllowZeroLength = False` (`dataType = 0x01`, Boolean value `0x00`).
 - Non-null text columns carry `Required = True`; nullable text columns can carry `Required = False`.
 - Boolean property entries created by DAO use `ddlFlag = 0x01`.

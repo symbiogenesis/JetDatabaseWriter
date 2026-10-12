@@ -278,7 +278,8 @@ internal sealed class ConstraintRegistry(
     /// default, and a NOT NULL column rejects it. A column set to
     /// <see cref="DbDefault.Value"/> (which the insert front ends also put in
     /// the columns a row leaves out) gets its CLR or persisted default, or
-    /// null when it has none. An AutoNumber column generates its next value,
+    /// null when it has none; GUID AutoNumbers follow those default and null
+    /// rules. An integer AutoNumber generates its next value,
     /// a complex column gets the row's complex reference, and a calculated
     /// column is computed, for any of the three. The row's complex reference
     /// is shared by all its complex columns: one the caller supplies in any
@@ -370,20 +371,12 @@ internal sealed class ConstraintRegistry(
                     }
                 }
 
-                if (isNull && c.IsAutoIncrement)
+                if (isNull && c.IsAutoIncrement && c.ClrType != typeof(Guid))
                 {
-                    if (c.ClrType == typeof(Guid))
-                    {
-                        value = Guid.NewGuid();
-                    }
-                    else
-                    {
-                        long? previous = c.NextAutoValue;
-                        long next = await this.GetNextAutoValueAsync(tableName, tableDef, c, i, cancellationToken).ConfigureAwait(false);
-                        (checkpoints ??= new List<(ColumnConstraint, long?)>(1)).Add((c, previous));
-                        value = ConvertIntegral(next, c.ClrType);
-                    }
-
+                    long? previous = c.NextAutoValue;
+                    long next = await this.GetNextAutoValueAsync(tableName, tableDef, c, i, cancellationToken).ConfigureAwait(false);
+                    (checkpoints ??= new List<(ColumnConstraint, long?)>(1)).Add((c, previous));
+                    value = ConvertIntegral(next, c.ClrType);
                     isNull = false;
                 }
 
@@ -421,7 +414,7 @@ internal sealed class ConstraintRegistry(
     /// Applies the update-time constraint pass to <paramref name="values"/>, the
     /// full post-update image of one row. Every column in
     /// <paramref name="assignedColumns"/> is checked the way an insert checks a
-    /// supplied value: null is rejected for a NOT NULL or AutoNumber column, a
+    /// supplied value: null is rejected for a NOT NULL or integer AutoNumber column, a
     /// non-null value must satisfy the column's <see cref="ColumnConstraint.ValidationRule"/>
     /// delegate, and any value must satisfy its persisted
     /// <see cref="ColumnConstraint.ValidationRuleExpression"/>. Defaults are not
@@ -433,7 +426,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="values">The post-update row, in table-column order.</param>
     /// <param name="assignedColumns">The indexes of the columns the update assigns.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">An assigned NOT NULL or AutoNumber column is set to null.</exception>
+    /// <exception cref="InvalidOperationException">An assigned NOT NULL or integer AutoNumber column is set to null.</exception>
     /// <exception cref="ArgumentException">A validation rule rejects an assigned value.</exception>
     /// <exception cref="JetConstraintException">The operation is refused with a structured <see cref="JetConstraintException"/>.</exception>
     /// <exception cref="JetValidationRuleException">The operation is refused with a structured <see cref="JetValidationRuleException"/>.</exception>
@@ -463,10 +456,9 @@ internal sealed class ConstraintRegistry(
             object? value = values[i];
             bool isNull = value is null or DBNull;
 
-            // An AutoNumber column is NOT NULL whatever IsNullable says: insert
-            // only accepts null there because it generates a value, and an
-            // update never renumbers a row.
-            if (isNull && (!c.IsNullable || c.IsAutoIncrement))
+            // Integer AutoNumbers cannot be null. GUID AutoNumbers use a default
+            // only on omission; an explicit null follows Required and indexes.
+            if (isNull && (!c.IsNullable || (c.IsAutoIncrement && c.ClrType != typeof(Guid))))
             {
                 throw JetErrors.Constraint(JetErrorCode.NotNullViolation, $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
@@ -522,12 +514,17 @@ internal sealed class ConstraintRegistry(
 
     private static ColumnConstraint ToConstraint(ColumnDefinition def, JetFormat format)
     {
-        // Access gives AutoNumber, calculated and complex columns no default.
-        // CreateTable and AddColumn reject one declared on them, but a schema
-        // rewrite carries over a DefaultValue property another tool stored on
-        // one; as in HydrateFromTableDef, it must not stop the column generating
-        // its value. A DBNull CLR default is no default.
-        bool takesDefault = def.CanHaveDefault;
+        // Integer AutoNumber, calculated and complex columns take no default.
+        // Existing GUID identity columns follow their actual persisted default,
+        // including its absence. New GUID AutoNumber declarations use GenGUID.
+        // A carried default never changes integer AutoNumber generation.
+        bool takesDefault = def.CanHaveDefault || (def.IsAutoIncrement && def.ClrType == typeof(Guid));
+        string? defaultExpression = takesDefault ? NullIfBlank(def.DefaultValueExpression) ?? JetExpressionConverter.ToJetExpression(def.DefaultValue) : null;
+        if (def.IsAutoIncrement && def.ClrType == typeof(Guid) && def.SourceColumn is null)
+        {
+            defaultExpression ??= "GenGUID()";
+        }
+
         return new()
         {
             Name = def.Name,
@@ -537,7 +534,7 @@ internal sealed class ConstraintRegistry(
             DefaultValue = takesDefault ? ToAppliedClrDefault(def) : null,
             IsAutoIncrement = def.IsAutoIncrement,
             ValidationRule = def.ValidationRule,
-            DefaultValueExpression = takesDefault ? NullIfBlank(def.DefaultValueExpression) ?? JetExpressionConverter.ToJetExpression(def.DefaultValue) : null,
+            DefaultValueExpression = defaultExpression,
             ValidationRuleExpression = NullIfBlank(def.ValidationRuleExpression),
             ValidationText = def.ValidationText,
             IsCalculated = def.IsCalculated,
@@ -971,7 +968,7 @@ internal sealed class ConstraintRegistry(
             {
                 isNullable = true;
             }
-            else if (isAutoIncrement)
+            else if (isAutoIncrement && col.Type != GuidType)
             {
                 isNullable = false;
             }
@@ -986,9 +983,9 @@ internal sealed class ConstraintRegistry(
             JetFormat? propertyFormat = properties?.Format;
             string? calculationExpression = PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat!));
 
-            // Access gives AutoNumber, calculated and complex columns no default; a stray
-            // DefaultValue property on one must not stop the column generating its value.
-            bool takesDefault = !isComplex && !isAutoIncrement && !col.IsCalculated;
+            // GUID identity flags do not generate values without a persisted default.
+            // Integer AutoNumber, calculated and complex defaults are not applied.
+            bool takesDefault = !isComplex && (!isAutoIncrement || col.Type == GuidType) && !col.IsCalculated;
 
             ColumnConstraint c = new()
             {

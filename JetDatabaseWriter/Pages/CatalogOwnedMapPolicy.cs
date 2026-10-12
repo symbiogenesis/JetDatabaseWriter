@@ -1,6 +1,5 @@
 namespace JetDatabaseWriter.Pages;
 
-using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,16 +9,11 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 
 /// <summary>
-/// The writer's <see cref="IOwnedMapPolicy"/>, decided from the catalog. The
-/// writer may extend the owned-page usage map of a table whose map it created
-/// (<see cref="RegisterWritable"/>), and of a table whose <c>MSysObjects</c>
-/// row is a local table with a name that does not start with <c>MSys</c>. On
-/// Jet3 it extends none, because it keeps no table usage maps there. It leaves
-/// the maps of the system tables it did not create alone, <c>MSysObjects</c>'
-/// own included: Access populates and manages them, and DAO's
-/// <c>OpenDatabase</c> refuses a file in which they were changed ("Invalid
-/// argument"). Both answers are kept by TDEF page, so only the first append
-/// to a table scans <c>MSysObjects</c>.
+/// Decides whether the writer may extend a local table's owned-page usage map.
+/// Jet4/ACE user and system tables both need newly allocated data pages listed
+/// so native scans and compact retain their rows. Jet3 map mutation remains
+/// unsupported. Decisions are cached by TDEF page and restored on rollback;
+/// registration also permits a newly created table at a formerly refused page.
 /// </summary>
 /// <param name="format">The file's format profile.</param>
 /// <param name="tableDefs">Reads the <c>MSysObjects</c> table definition.</param>
@@ -47,13 +41,13 @@ internal sealed class CatalogOwnedMapPolicy(JetFormat format, TableDefReader tab
             return decided;
         }
 
-        // MSysObjects' own map, unless this writer built and registered it.
+        // MSysObjects has a fixed root and does not need a catalog lookup.
         if (tdefPageNumber == 2)
         {
-            return false;
+            return true;
         }
 
-        bool writable = await this.IsUserTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        bool writable = await this.IsLocalTableAsync(tdefPageNumber, cancellationToken).ConfigureAwait(false);
         this.RecordDecision(tdefPageNumber, writable);
         return writable;
     }
@@ -91,13 +85,12 @@ internal sealed class CatalogOwnedMapPolicy(JetFormat format, TableDefReader tab
 
     /// <summary>
     /// Returns whether the first <c>MSysObjects</c> table row that names
-    /// <paramref name="tdefPageNumber"/> is a user table: one with a name that
-    /// does not start with <c>MSys</c>.
+    /// <paramref name="tdefPageNumber"/> is a named local table.
     /// </summary>
     /// <param name="tdefPageNumber">The table's TDEF page number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns><see langword="true"/> for a user table; <see langword="false"/> for a system table or a page no table row names.</returns>
-    private async ValueTask<bool> IsUserTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
+    /// <returns><see langword="true"/> for a local table; <see langword="false"/> for an unnamed, nonlocal or unrepresented table.</returns>
+    private async ValueTask<bool> IsLocalTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
     {
         TableDef? msys = await tableDefs.ReadTableDefAsync(2, cancellationToken).ConfigureAwait(false);
         if (msys is null)
@@ -110,7 +103,7 @@ internal sealed class CatalogOwnedMapPolicy(JetFormat format, TableDefReader tab
         {
             if (row.TDefPage == tdefPageNumber && row.ObjectType == Constants.SystemObjects.UserTableType)
             {
-                return !string.IsNullOrEmpty(row.Name) && !row.Name.StartsWith("MSys", StringComparison.OrdinalIgnoreCase);
+                return !string.IsNullOrEmpty(row.Name);
             }
         }
 

@@ -181,8 +181,11 @@ internal sealed class JetFormat
     /// <summary>Gets a value indicating whether native core catalog tables are required during creation.</summary>
     internal bool SupportsCoreCatalogTables => !this.IsJet3;
 
-    /// <summary>Gets a value indicating whether security identities use the header-derived Jet4 SID mask.</summary>
+    /// <summary>Gets a value indicating whether native password conversion must remask security identities.</summary>
     internal bool UsesHeaderMaskedSecuritySids => this.Kind == DatabaseFormat.Jet4Mdb;
+
+    /// <summary>Gets a value indicating whether catalog objects inherit native container ownership and permissions.</summary>
+    internal bool InheritsCatalogPermissions => !this.IsJet3;
 
     /// <summary>Gets a value indicating whether the format has the Large Number (BigInt, type <c>0x13</c>) column type: ACE only.</summary>
     internal bool SupportsBigInt { get; }

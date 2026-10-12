@@ -12,21 +12,9 @@ using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Regression coverage for round-trip-openrecordset hypothesis H22: Jet4/ACE
-/// 25-byte column descriptors store <c>col_num</c> twice — once at offset 5-6
-/// (the primary slot) and again at offset 9-10 (the redundant slot). DAO reads
-/// both copies and rejects a table when they disagree.
-///
-/// <para>Test strategy:</para>
-/// <list type="number">
-///   <item><see cref="DaoAuthoredFixture_RedundantColNum_AlwaysEqualsPrimary"/>
-///     — establishes ground truth from the DAO-authored
-///     <c>NorthwindTraders.accdb</c> fixture: every user-table column
-///     descriptor must have bytes 9-10 == bytes 5-6 (== <c>col_num</c>).</item>
-///   <item><see cref="WriterAuthored_RedundantColNum_MatchesPrimary"/>
-///     — runs the same byte-level check against a freshly writer-created
-///     database so the writer keeps both descriptor copies synchronized.</item>
-/// </list>
+/// Records descriptor initialization in NorthwindTraders and freshly created
+/// writer tables. Offsets 5-6 and 9-10 coincide in these examples, but native
+/// TestV2010 Table4 has different values; equality is not a format invariant.
 /// </summary>
 public sealed class WriterColumnDescriptorRedundantColNumTests
 {
@@ -61,7 +49,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             {
                 Assert.True(
                     primary == redundant,
-                    $"DAO-authored {tableName}: column descriptor offset 5-6 ({primary}) != offset 9-10 ({redundant}). Ground-truth assumption broken — re-read mdbtools HACKING.md.");
+                    $"DAO-authored {tableName}: column descriptor offset 5-6 ({primary}) != offset 9-10 ({redundant}). Northwind descriptor initialization changed.");
                 totalColumnsChecked++;
             }
         }
@@ -81,7 +69,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             cancellationToken: TestContext.Current.CancellationToken))
         {
             // Mix column types so the regression guard covers descriptor branches
-            // that historically stamped the redundant col_num differently.
+            // with different descriptor initialization paths.
             await writer.CreateTableAsync(
                 "Customers",
                 [
@@ -117,12 +105,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             .ToArray();
 
         string detail = string.Join("; ", mismatches.Select(m => $"col[{m.Index}] primary={m.Primary} redundant={m.Redundant}"));
-        string failureMessage = $"""
-            Regression: writer-authored Customers TDEF has column descriptors whose redundant col_num
-            (bytes 9-10) does not match the primary col_num (bytes 5-6). Per mdbtools HACKING.md the Jet4
-            column descriptor stores col_num twice. DAO OpenRecordset reads the second copy and rejects
-            the table when it disagrees with the first. Mismatches: [{detail}].
-            """;
+        string failureMessage = $"New writer descriptors use matching values at offsets 5-6 and 9-10. Mismatches: [{detail}].";
 
         Assert.True(mismatches.Length == 0, failureMessage);
     }

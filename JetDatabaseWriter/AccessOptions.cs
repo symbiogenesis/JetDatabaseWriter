@@ -51,8 +51,9 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     public int MaxTableDefinitionBytes { get; init; } = 16 * 1024 * 1024;
 
     /// <summary>
-    /// Gets a value indicating whether a lockfile (.ldb / .laccdb) is created
-    /// alongside the database while it is open, and deleted on dispose.
+    /// Gets a value indicating whether a lockfile (.ldb / .laccdb) slot is maintained
+    /// alongside a file database while open. Disposal releases this opener's slot and
+    /// attempts to remove an unused lockfile; other holders or permissions can retain it.
     /// Default: true.
     /// </summary>
     public bool UseLockFile { get; init; } = true;
@@ -84,7 +85,8 @@ public abstract class AccessOptions(bool useByteRangeLocks)
 
     /// <summary>
     /// Gets the maximum time in milliseconds to wait when acquiring a contended
-    /// byte-range page lock before throwing <see cref="IOException"/>.
+    /// byte-range page lock before throwing <see cref="Exceptions.JetLockException"/>
+    /// with <see cref="Exceptions.JetErrorCode.LockTimeout"/>.
     /// Default: <c>5000</c>.
     /// </summary>
     public int LockTimeoutMilliseconds { get; init; } = DefaultLockTimeoutMilliseconds;

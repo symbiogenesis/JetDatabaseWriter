@@ -92,7 +92,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         // scan read + decrypted every page to find one with free space,
         // which dominated insert time for large databases. Appending is
         // O(1), and the owned-map update below keeps DAO sequential scans
-        // aware of the new page for tables whose maps this writer owns.
+        // aware of the new page for tables whose maps the writer can maintain.
         long newPageNumber = await pageAllocator.AllocatePageAsync(this.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         this.SetCachedInsertPageNumber(tdefPage, newPageNumber);
 
@@ -100,8 +100,8 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         // usage map. Without this, DAO's sequential / snapshot recordset
         // scans (which walk the usage map rather than the PK index) see
         // the table as empty, even though the row bytes are on disk and
-        // the data page's parent_tdef back-pointer is correct. The owned-map
-        // policy skips the system tables whose maps Access manages.
+        // the data page's parent_tdef back-pointer is correct. Imported Jet4/ACE
+        // system tables require the same maintenance as user tables.
         if (await ownedMaps.CanMaintainAsync(tdefPage, cancellationToken).ConfigureAwait(false))
         {
             await this.MarkPageInOwnedMapAsync(tdefPage, newPageNumber, cancellationToken).ConfigureAwait(false);

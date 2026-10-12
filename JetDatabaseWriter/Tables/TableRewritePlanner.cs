@@ -736,7 +736,7 @@ internal sealed class TableRewritePlanner(
         bool isAutoIncrement = column.IsAutoNumber;
         bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
             .GetBooleanValue(Constants.ColumnPropertyNames.Required);
-        bool isNullable = !isAutoIncrement && requiredFromLvProp is not true;
+        bool isNullable = (!isAutoIncrement || column.Type == GuidType) && requiredFromLvProp is not true;
 
         ColumnDefinition def = baseDef with
         {

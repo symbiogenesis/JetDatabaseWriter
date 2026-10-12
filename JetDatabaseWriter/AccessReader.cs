@@ -20,45 +20,34 @@ using JetDatabaseWriter.Queries;
 using JetDatabaseWriter.Transactions;
 
 /// <summary>
-/// <para>
-/// Pure-managed reader for Microsoft Access JET databases (.mdb / .accdb).
-/// No OleDB, ODBC, or ACE/Jet driver installation required.
-/// </para>
-/// <para>
-/// Supported formats:
-/// </para>
-/// <list type="bullet">
-///   <item><description>Jet3 – Access 97 (.mdb)</description></item>
-///   <item><description>Jet4+ – Access 2000-2019 (.mdb / .accdb)</description></item>
-/// </list>
-/// <para>
-/// Features:
-/// </para>
-/// <list type="bullet">
-///   <item><description>All standard data types (Text, Integer, Date, GUID, Currency, etc.).</description></item>
-///   <item><description>MEMO fields (inline, single-page, and multi-page LVAL chains).</description></item>
-///   <item><description>OLE Object fields — auto-detects images (JPEG/PNG/GIF/BMP), documents (PDF/DOC/RTF), and archives (ZIP).</description></item>
-///   <item><description>Streaming API — process millions of rows without OOM (StreamRows, ReadTable).</description></item>
-///   <item><description>Progress reporting — IProgress&lt;int&gt; callbacks for long operations.</description></item>
-///   <item><description>Page cache — 256-page LRU cache (default 1 MB) for 50%+ performance boost.</description></item>
-///   <item><description>Catalog caching — single MSysObjects scan, reused across calls.</description></item>
-///   <item><description>Non-Western text — auto-detects code page from database header (Cyrillic, Japanese, etc.).</description></item>
-///   <item><description>Password-protected databases — supports the implemented Jet/ACE encryption formats.</description></item>
-/// </list>
-/// <para>
-/// Limitations:
-/// </para>
-/// <list type="bullet">
-///   <item><description>Attachment and multi-value complex fields — decoded via hidden flat tables.</description></item>
-///   <item><description>Access-file linked tables — read-through via trusted source paths.</description></item>
-///   <item><description>CSV/text linked tables — managed string-valued delimited-text read-through via trusted source paths.</description></item>
-///   <item><description>ODBC linked tables — metadata only.</description></item>
-///   <item><description>Overflow rows (rows Access moved to another slot when they grew) — read through their pointer; one that cannot be resolved is skipped like an undecodable row.</description></item>
-/// </list>
-/// <para>
-/// Based on the <see href="https://github.com/mdbtools/mdbtools/blob/master/HACKING.md">mdbtools format specification</see>.
-/// </para>
+/// Pure-managed reader for Microsoft Access Jet3, Jet4 and ACE databases (.mdb / .accdb).
+/// No OleDB, ODBC, or ACE/Jet driver installation is required.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Format generations, column types, collations and encryption providers have varying
+/// coverage; recognition of a format does not establish support for every feature variant.
+/// Pre-Jet3 databases and Office encrypted compound packages are unsupported.
+/// </para>
+/// <para>
+/// Row APIs stream data or materialize it on request. Page caching and eligible page-scan
+/// read-ahead are configurable; memory use also includes schema metadata, individual long
+/// values and any results the caller retains. Resource budgets do not constitute a complete
+/// hostile-input audit or a process-wide memory limit.
+/// </para>
+/// <para>
+/// Access-file and supported delimited-text links require source-path authorization.
+/// Authorization remains path-based and does not bind permission to the opened file handle.
+/// ODBC links expose metadata only. Database content is not executed as SQL, macros or VBA.
+/// </para>
+/// <para>
+/// Keep the source unchanged throughout the reader lifetime; its caches do not refresh.
+/// File sharing excludes cooperating writers, subject to platform enforcement. Custom streams
+/// require caller-managed isolation. See <see cref="AccessReaderOptions.StrictParsing"/>
+/// for malformed-value behavior; unreadable row layouts and unresolved overflow rows can
+/// still be omitted by table scans.
+/// </para>
+/// </remarks>
 public sealed class AccessReader : AccessBase, IAccessReader
 {
     private readonly LockFileCoordinator lockFile;

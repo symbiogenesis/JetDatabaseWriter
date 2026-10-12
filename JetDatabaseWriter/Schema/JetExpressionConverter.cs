@@ -94,12 +94,17 @@ internal static class JetExpressionConverter
             ? ToJetExpression(col.DefaultValue)
             : col.DefaultValueExpression;
 
+        if (col.IsAutoIncrement && col.ClrType == typeof(Guid) && col.SourceColumn is null)
+        {
+            defaultExpr ??= "GenGUID()";
+        }
+
         // Required = true is persisted explicitly to match how DAO/Access surface
-        // NOT NULL constraints. AutoNumber columns are the DAO-observed exception:
+        // NOT NULL constraints. Integer AutoNumbers are the DAO-observed exception:
         // even when marked required, their non-null semantics come from the auto
         // column flag and DAO does not emit a Required property for them.
         bool emitAllowZeroLength = IsTextLikeColumn(col);
-        bool emitRequired = !col.IsAutoIncrement && (!col.IsNullable || emitAllowZeroLength);
+        bool emitRequired = (!col.IsAutoIncrement || col.ClrType == typeof(Guid)) && (!col.IsNullable || emitAllowZeroLength);
         bool any = emitRequired
             || emitAllowZeroLength
             || defaultExpr is not null
@@ -126,7 +131,16 @@ internal static class JetExpressionConverter
 
         if (defaultExpr is not null)
         {
-            target.AddText(Constants.ColumnPropertyNames.DefaultValue, defaultExpr, format);
+            if (col.ClrType == typeof(Guid))
+            {
+                // DAO-created GUID defaults use Memo properties with the DDL flag set.
+                target.AddMemoText(Constants.ColumnPropertyNames.DefaultValue, defaultExpr, format);
+                target.Entries[^1].DdlFlag = 0x01;
+            }
+            else
+            {
+                target.AddText(Constants.ColumnPropertyNames.DefaultValue, defaultExpr, format);
+            }
         }
 
         if (col.ValidationRuleExpression is not null)

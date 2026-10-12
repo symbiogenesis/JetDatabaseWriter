@@ -485,16 +485,18 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <summary>
-    /// Begins a transaction with bounded page buffering. Changed pages may
-    /// spill to the database before commit; before-images are retained in
-    /// memory or a temporary undo file. File-backed transactions also persist raw
-    /// recovery images beside the database. <see cref="JetTransaction.CommitAsync"/>
-    /// writes the remaining pages in place. Opening a file-backed writer recovers
-    /// interrupted spills or commits before parsing the database. Caller-supplied
-    /// streams other than FileStream cannot recover after a process crash.
+    /// Begins an explicit transaction whose changed pages remain buffered in memory
+    /// until commit, subject to <see cref="AccessWriterOptions.MaxTransactionPageBudget"/>.
+    /// <see cref="JetTransaction.CommitAsync"/> writes the buffered pages in place and
+    /// retains raw before-images for recovery. File-backed transactions also persist
+    /// recovery images beside the database; a subsequent writer open validates and
+    /// recovers process-interrupted commits before parsing the database. Keep the file
+    /// and journal at their original path under exclusive access. Power-loss persistence
+    /// is unverified; other caller-supplied streams have in-process rollback only.
     /// <see cref="JetTransaction.RollbackAsync"/> (and disposal of an uncommitted
-    /// transaction) restores early writes and cached state. An I/O failure also
-    /// attempts restoration; if undo fails, the writer rejects further mutations.
+    /// transaction) discards buffered changes and restores cached state. A commit I/O
+    /// failure attempts restoration; failed undo or an uncertain commit decision faults
+    /// the writer. Private statement transactions use a separate bounded spill policy.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The newly-started transaction.</returns>

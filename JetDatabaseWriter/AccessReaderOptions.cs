@@ -82,21 +82,22 @@ public sealed class AccessReaderOptions : AccessOptions
     /// <summary>Gets the page-I/O optimization mode. Default: <see cref="PageReadOptimizationMode.Auto" />.</summary>
     public PageReadOptimizationMode PageReadOptimizationMode { get; init; } = PageReadOptimizationMode.Auto;
 
-    /// <summary>Gets a value indicating whether the database format is validated on open. Default: true.</summary>
+    /// <summary>Gets a value indicating whether the database header format is validated on open; this does not validate every page or value. Default: true.</summary>
     public bool ValidateOnOpen { get; init; } = true;
 
     /// <summary>
-    /// Gets a value indicating whether strict value parsing is enforced when converting raw column
-    /// strings to their CLR types. When <see langword="true"/> (the default), values that cannot be parsed as
-    /// the target type cause a <see cref="FormatException"/> to be thrown. When <see langword="false"/>,
-    /// unparseable values are coerced to <see cref="DBNull.Value"/>. Unreadable
-    /// MEMO/OLE values produce a trace diagnostic and a missing value: DBNull
-    /// in typed rows, or null in string rows. Underlying I/O failures and resource
-    /// budget refusals always propagate.
-    /// Malformed fixed, variable-area and calculated scalar payloads
-    /// throw <see cref="Exceptions.JetCorruptDataException"/> in strict mode.
-    /// Lenient scalar reads emit a trace warning and return <see cref="DBNull.Value"/>
-    /// in typed rows, empty text in string rows, or an unassigned/default POCO property.
+    /// Gets a value indicating whether malformed assigned values are refused during decoding.
+    /// Default: <see langword="true"/>. Audited fixed, variable-area and calculated scalar
+    /// faults throw <see cref="Exceptions.JetCorruptDataException"/> with
+    /// <see cref="Exceptions.JetErrorCode.MalformedValue"/> in strict mode. Lenient scalar
+    /// reads emit a trace warning and return <see cref="DBNull.Value"/> in typed rows,
+    /// empty text in string rows, or an unassigned/default POCO property.
+    /// Unreadable MEMO/OLE descriptors or chains throw <see cref="InvalidDataException"/>
+    /// in strict mode; lenient reads emit a trace diagnostic and return a missing value:
+    /// <see cref="DBNull.Value"/> in typed rows, null in string rows, or a default POCO property.
+    /// Type-specific decoding coverage remains incomplete; this option does not make every
+    /// malformed database readable. Underlying I/O failures and resource-budget refusals
+    /// propagate in both modes. POCO assignment-conversion failures remain separate errors.
     /// </summary>
     public bool StrictParsing { get; init; } = true;
 
@@ -105,8 +106,9 @@ public sealed class AccessReaderOptions : AccessOptions
 
     /// <summary>
     /// Gets the requested file sharing mode. Default: Read. Write and delete sharing are excluded.
-    /// File-backed readers additionally hold a read-only lease that excludes writers
-    /// for their lifetime, so cached pages remain a consistent database snapshot.
+    /// Path-based readers restrict sharing to read access. A caller-supplied FileStream
+    /// additionally requires a compatible read-only lease. Windows enforces sharing;
+    /// other platforms require cooperating access. Keep the source unchanged while open.
     /// </summary>
     public FileShare FileShare { get; init; } = FileShare.Read;
 
@@ -115,6 +117,8 @@ public sealed class AccessReaderOptions : AccessOptions
     /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
     /// Leave empty to allow only source files under the opened database directory, unless
     /// <see cref="LinkedSourcePathValidator"/> explicitly approves a resolved path.
+    /// Symlink/reparse crossings are refused, but authorization is path-based:
+    /// opened-handle identity, hard links and path-swap races remain unverified.
     /// </summary>
     public IReadOnlyList<string> LinkedSourcePathAllowlist { get; init; } = [];
 
@@ -122,7 +126,8 @@ public sealed class AccessReaderOptions : AccessOptions
     /// Gets an optional callback to approve linked-table source paths.
     /// The callback receives linked-table metadata and the resolved absolute source path.
     /// Text links require approval of both the source directory and the final file path.
-    /// Return true to allow opening the source; false to block it.
+    /// Return true to allow opening the source; false to block it. Approval cannot
+    /// bypass symlink/reparse refusal and does not bind permission to the opened handle.
     /// </summary>
     public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; init; }
 

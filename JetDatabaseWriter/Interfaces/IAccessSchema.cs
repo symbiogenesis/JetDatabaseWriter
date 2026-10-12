@@ -24,10 +24,11 @@ using JetDatabaseWriter.Models;
 /// otherwise store its closest match or <c>?</c>.
 /// </para>
 /// <para>
-/// Implementations are <em>not</em> thread-safe; callers must serialize DDL calls
-/// against the same <see cref="IAccessBase"/> instance. DDL and DML operations
-/// (see <see cref="IAccessWriter"/>) may be freely interleaved on the same instance
-/// but must not overlap concurrently.
+/// <see cref="AccessWriter"/> serializes its own DDL, DML and lifecycle calls.
+/// Schema mutations use automatic statement rollback or an internal savepoint in
+/// the active explicit transaction. Independent writers still require exclusive
+/// file coordination. Preservation of every native descriptor, property layout
+/// and Access application-object dependency remains incomplete.
 /// </para>
 /// </summary>
 /// <remarks>
@@ -98,8 +99,8 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously appends a new column to an existing table. Existing rows receive
     /// <see cref="DBNull.Value"/> for the new column. Implemented by copying the
     /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
-    /// The existing columns keep their data, their type and every persisted property, and the
-    /// table keeps its own, as described for <see cref="RenameColumnAsync"/>; the new column gets the
+    /// Existing data and modeled schema are carried forward, subject to the preservation
+    /// limits described for <see cref="RenameColumnAsync"/>; the new column gets the
     /// properties <paramref name="column"/> declares.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
@@ -121,8 +122,9 @@ public interface IAccessSchema : IAccessBase
     /// and no other column's calculated expression, validation rule or default value
     /// expression may name it (change or drop that column first). A mention inside a string
     /// literal, or in the dropped column's own rule, does not count. The remaining columns
-    /// keep their data, their type and every persisted property, and the table keeps its own,
-    /// as described for <see cref="RenameColumnAsync"/>; the dropped column's properties go with it.
+    /// retain supported data and schema as described for <see cref="RenameColumnAsync"/>;
+    /// the dropped column's properties go with it. Nonempty table Filter or OrderBy
+    /// properties block the drop because their dependencies cannot be safely rewritten.
     /// </summary>
     /// <param name="tableName">Target table name (case-insensitive).</param>
     /// <param name="columnName">The column to drop (case-insensitive).</param>
@@ -135,23 +137,17 @@ public interface IAccessSchema : IAccessBase
     /// <summary>
     /// Asynchronously renames a column on an existing table. Implemented by copying the
     /// table to a new schema and renaming the result back to <paramref name="tableName"/>.
-    /// Row data is preserved, and so are each column's type, size, precision and scale,
-    /// Unicode compression and calculated expression, and every persisted
-    /// <c>MSysObjects.LvProp</c> property of the table and its columns as stored, including
-    /// those the writer does not model, such as a column's <c>Caption</c>, <c>Format</c> and
-    /// <c>AllowZeroLength</c> and the table-level <c>Filter</c>, <c>OrderBy</c> and
-    /// <c>ValidationRule</c>. The renamed column's properties move to its new name, and the
-    /// table-level <c>NameMap</c> is dropped. When the column is a
-    /// key column of a foreign-key relationship, the relationship's <c>MSysRelationships</c>
-    /// rows are updated to the new name. Every calculated expression, validation rule and
-    /// default value expression in the table that names the column is rewritten:
-    /// <c>[Old]</c> and a bare <c>Old</c> become <c>[New]</c>, so the expression keeps
-    /// evaluating. A reference qualified by the table's own name keeps the qualifier
-    /// (<c>[T].[Old]</c> becomes <c>[T].[New]</c> and <c>T.Old</c> becomes
-    /// <c>T.[New]</c>); the expression engine does not evaluate table-qualified references
-    /// yet, before or after the rename. The rest of each expression, including text inside
-    /// string literals, is kept as it was. The table-level <c>Filter</c>, <c>OrderBy</c> and
-    /// <c>ValidationRule</c> follows the renamed column; dropping a field it names is refused.
+    /// Supported row values, native column descriptors and surviving index/relationship
+    /// metadata are carried through the rewrite. Parsed <c>MSysObjects.LvProp</c> properties
+    /// are retained, the renamed column's target moves to its new name, and the table-level
+    /// <c>NameMap</c> is dropped. Complete preservation of unknown descriptors and property
+    /// layouts, multi-page variants and Access application-object dependencies is not established.
+    /// Calculated expressions and stored column/table rules referring to the column are
+    /// rewritten while retaining string literals. Supported same-table qualified calculated
+    /// references remain evaluable; stale table qualifiers after a table rename have narrower
+    /// support. Nonempty table <c>Filter</c> or <c>OrderBy</c> properties refuse the rename
+    /// before writing because their dependencies cannot be safely rewritten. Lookup RowSource
+    /// and saved-query dependencies are not fully handled.
     /// A rename may change only the letter case of the name, and is then handled like any other
     /// rename. A rename to the name the column already has, spelled as stored, changes nothing
     /// and does not rewrite the table. Both follow what Microsoft Access is believed to do,
@@ -310,9 +306,8 @@ public interface IAccessSchema : IAccessBase
     /// <remarks>
     /// Limitations: trailing FK real-index slots are reclaimed when doing so does
     /// not require renumbering other TDEF references; non-trailing orphaned slots
-    /// are left for Microsoft Access Compact &amp; Repair. The library does not roll
-    /// back runtime cascade-update / cascade-delete enforcement that ran inside
-    /// the same call before the drop.
+    /// are left for Microsoft Access Compact &amp; Repair. Failed metadata mutation
+    /// rolls back the call through its statement transaction or internal savepoint.
     /// </remarks>
     public ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default);
 
