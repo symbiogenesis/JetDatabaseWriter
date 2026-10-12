@@ -182,6 +182,42 @@ public sealed partial class PowerShellProcessRunnerTests
     }
 
     [Fact]
+    [SupportedOSPlatform("windows")]
+    public async Task DenyTerminateOnceStartedAsync_ProcessExitsBeforeHandleOpens_ReturnsNull()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+
+        string pidPath = Path.Combine(Path.GetTempPath(), $"ps-runner-{Guid.NewGuid():N}.txt");
+        using var stopGuard = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        stopGuard.CancelAfter(TimeSpan.FromSeconds(60));
+        Task<PowerShellRunResult> host = Task.Run(() => PowerShellProcessRunner.Run(
+            PowerShellPath,
+            CommandArguments($"Set-Content -LiteralPath {AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(pidPath)} -Value $PID; Start-Sleep -Seconds 120"),
+            TimeSpan.FromSeconds(60)));
+        try
+        {
+            using Process? process = await DenyTerminateOnceStartedAsync(pidPath, stopGuard.Token, beforeGuard: process =>
+            {
+                using var killer = Process.GetProcessById(process.Id);
+                killer.Kill();
+                Assert.True(killer.WaitForExit(TimeSpan.FromSeconds(10)), "The host did not exit before its handle was opened.");
+            });
+            Assert.Null(process);
+            PowerShellRunResult result = await host;
+            Assert.False(result.TimedOut);
+            Assert.True(result.OutputComplete);
+            Assert.NotEqual(0, result.ExitCode);
+        }
+        finally
+        {
+            await stopGuard.CancelAsync();
+            TryKill(ReadProcessId(pidPath));
+            _ = await host;
+            File.Delete(pidPath);
+        }
+    }
+
+    [Fact]
     public void Run_GrandchildKeepsPipeOpen_ReturnsAfterDrainTimeout()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
@@ -308,10 +344,11 @@ public sealed partial class PowerShellProcessRunnerTests
     /// </summary>
     /// <param name="pidPath">The file the host writes the ping's process id to.</param>
     /// <param name="stop">Stops the wait for the process id.</param>
-    /// <returns>The ping, whose own handle can still kill it, or <see langword="null"/> when no id was recorded before <paramref name="stop"/>.</returns>
+    /// <param name="beforeGuard">Allows a regression to terminate the process after lookup and before its handle opens.</param>
+    /// <returns>The ping, whose own handle can still kill it, or <see langword="null"/> when it exited or no id was recorded before <paramref name="stop"/>.</returns>
     /// <exception cref="InvalidOperationException">The current Windows identity has no user SID.</exception>
     [SupportedOSPlatform("windows")]
-    private static async Task<Process?> DenyTerminateOnceStartedAsync(string pidPath, CancellationToken stop)
+    private static async Task<Process?> DenyTerminateOnceStartedAsync(string pidPath, CancellationToken stop, Action<Process>? beforeGuard = null)
     {
         using var identity = WindowsIdentity.GetCurrent();
         SecurityIdentifier user = identity.User ?? throw new InvalidOperationException("The current Windows identity has no user SID.");
@@ -333,9 +370,20 @@ public sealed partial class PowerShellProcessRunnerTests
                 bool guarded = false;
                 try
                 {
+                    beforeGuard?.Invoke(ping);
                     ProcessSecurity.DenyTerminate(ping.SafeHandle, user);
                     guarded = true;
                     return ping;
+                }
+                catch (InvalidOperationException) when (ping.HasExited)
+                {
+                    // Opening the handle can race the same timeout after the process lookup succeeded.
+                    return null;
+                }
+                catch (Win32Exception) when (ping.HasExited)
+                {
+                    // Native handle or security queries may also fail after the process exits.
+                    return null;
                 }
                 finally
                 {
