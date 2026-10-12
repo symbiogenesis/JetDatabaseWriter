@@ -183,6 +183,21 @@ Two result types have Access-specific payload encodings inside the wrapper:
   (`0x80` for negative), then the 96-bit decimal mantissa in Access's calculated
   numeric byte order. This is not the normal 17-byte `Numeric` fixed slot.
 
+The committed Access fixture `calcFieldTestV2010.accdb`, `Table1.WeeklySalary`,
+uses a 16-byte Numeric payload with stored length 14. Its zero payload is
+`0E000000000000000000000000000000`: scale/sign zero and a full twelve-byte
+zero mantissa. `CalculatedNumericDecodePolicyTests` checks these native cached
+values and preserves both zero and an empty-envelope null result.
+
+A claimed, four-byte-aligned mantissa length cannot exceed the bytes available
+after the four-byte Numeric header. Contradictions raise a contextual
+`MalformedValue` failure on strict reads; lenient reads return their documented
+missing values with a diagnostic. An unrelated-column update refuses the same
+unreadable value without changing database bytes. The decoder zero-extends
+accepted shorter mantissas into its decimal buffer. Four/eight-byte controls
+pin existing decoder behavior only; native compact-width, nonpositive-prefix
+and empty-mantissa semantics remain unverified.
+
 Helpers in this codebase: `CalculatedColumnUtil.Wrap` / `.Unwrap` (round-trip
 verified by `CalculatedColumnUtilTests`).
 

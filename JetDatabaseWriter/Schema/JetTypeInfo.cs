@@ -152,8 +152,9 @@ internal static class JetTypeInfo
     /// <summary>
     /// Returns the CLR projection type for a column, accounting for the
     /// MEMO/Hyperlink override (<see cref="IsHyperlinkColumn"/>). Falls back
-    /// to <see cref="string"/> for unknown type codes — matching the
-    /// long-standing reader contract.
+    /// to <see cref="string"/> for unknown type codes as a diagnostic metadata
+    /// projection only. This fallback does not establish a value codec or a
+    /// writable row layout; use <see cref="GetClrType"/> to distinguish known codes.
     /// </summary>
     /// <param name="col">The column descriptor.</param>
     public static Type ResolveClrType(ColumnInfo col)

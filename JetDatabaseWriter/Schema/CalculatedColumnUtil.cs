@@ -154,7 +154,13 @@ internal static class CalculatedColumnUtil
 
         short storedLen = Ri16(payload, 0);
         int mantissaLen = AlignToFour((storedLen > 0 ? storedLen : payload.Length - 2) - 2);
-        mantissaLen = Math.Min(mantissaLen, payload.Length - 4);
+        if (mantissaLen > payload.Length - 4)
+        {
+            throw new ArgumentException(
+                $"Calculated Numeric payload declares a {mantissaLen}-byte mantissa, but only {payload.Length - 4} bytes are available.",
+                nameof(payload));
+        }
+
         if (mantissaLen <= 0)
         {
             return DBNull.Value;
@@ -187,6 +193,7 @@ internal static class CalculatedColumnUtil
         FixCalculatedNumericByteOrder(mantissa);
 
         Span<byte> padded = stackalloc byte[12];
+        padded.Clear();
         mantissa.CopyTo(padded[(12 - mantissa.Length)..]);
 
         uint hi = BinaryPrimitives.ReadUInt32BigEndian(padded[..4]);

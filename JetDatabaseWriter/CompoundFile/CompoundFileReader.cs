@@ -60,10 +60,17 @@ internal static class CompoundFileReader
         byte[] scratch = ArrayPool<byte>.Shared.Rent(hdr.SectorSize);
         try
         {
+            if (hdr.SectorSize > header.Length)
+            {
+                int paddingSize = hdr.SectorSize - header.Length;
+                await stream.ReadExactlyAsync(scratch.AsMemory(0, paddingSize), cancellationToken).ConfigureAwait(false);
+                ValidateZeroHeaderBytes(scratch.AsSpan(0, paddingSize));
+            }
+
             var ownedSectors = new HashSet<uint>();
             uint[] fat = await BuildFatAsync(stream, header, hdr, scratch, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
             uint[] miniFat = await ReadMiniFatAsync(stream, hdr, fat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
-            byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
+            byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, ownedSectors, budget, cancellationToken, expectedSectors: hdr.SectorSize == 512 ? -1L : hdr.NumDirSectors).ConfigureAwait(false);
             byte[] miniStream = await ReadMiniStreamAsync(stream, directory, hdr, fat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
 
             return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, ownedSectors, budget, cancellationToken).ConfigureAwait(false);
@@ -90,6 +97,13 @@ internal static class CompoundFileReader
 
     private static CfbHeader ParseHeader(byte[] header)
     {
+        ValidateZeroHeaderBytes(header.AsSpan(0x08, 16)); // Reserved header CLSID.
+        ValidateZeroHeaderBytes(header.AsSpan(0x22, 6));
+        if (BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.ByteOrder, 2)) != 0xFFFE)
+        {
+            throw new InvalidDataException("Unsupported CFB byte order.");
+        }
+
         ushort majorVersion = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MajorVersion, 2));
         ushort sectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.SectorShift, 2));
         ushort miniSectorShift = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MiniSectorShift, 2));
@@ -115,16 +129,44 @@ internal static class CompoundFileReader
             throw new InvalidDataException($"Unsupported CFB mini-sector shift: {miniSectorShift}.");
         }
 
+        uint numDirSectors = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.NumDirSectors, 4));
+        if (majorVersion == 3 && numDirSectors != 0)
+        {
+            throw new InvalidDataException("CFB version 3 must not declare a directory sector count.");
+        }
+
+        uint miniStreamCutoff = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MiniStreamCutoff, 4));
+
+        // The internal v3 diagnostic writer deliberately uses zero to place
+        // every stream in the regular FAT. Standard CFB requires 4096.
+        if (miniStreamCutoff != Constants.CompoundFile.StandardMiniStreamCutoff
+            && (majorVersion != 3 || miniStreamCutoff != 0))
+        {
+            throw new InvalidDataException($"Unsupported CFB mini-stream cutoff: {miniStreamCutoff}.");
+        }
+
         return new CfbHeader(
             SectorSize: 1 << sectorShift,
             MiniSectorSize: 1 << miniSectorShift,
+            NumDirSectors: numDirSectors,
             NumFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.NumFatSectors, 4)),
             FirstDirSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.FirstDirSector, 4)),
-            MiniStreamCutoff: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.MiniStreamCutoff, 4)),
+            MiniStreamCutoff: miniStreamCutoff,
             FirstMiniFatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.FirstMiniFatSector, 4)),
             NumMiniFatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.NumMiniFatSectors, 4)),
             FirstDifatSector: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.FirstDifatSector, 4)),
             NumDifatSectors: BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.NumDifatSectors, 4)));
+    }
+
+    private static void ValidateZeroHeaderBytes(ReadOnlySpan<byte> bytes)
+    {
+        foreach (byte value in bytes)
+        {
+            if (value != 0)
+            {
+                throw new InvalidDataException("CFB reserved header bytes must be zero.");
+            }
+        }
     }
 
     private static async ValueTask<uint[]> BuildFatAsync(
@@ -540,12 +582,18 @@ internal static class CompoundFileReader
 
     private static void ValidateHeaderCounts(CfbHeader hdr, long physicalSectors)
     {
-        if (hdr.NumFatSectors > physicalSectors
+        if (hdr.NumDirSectors > physicalSectors
+            || hdr.NumFatSectors > physicalSectors
             || hdr.NumDifatSectors > physicalSectors
             || hdr.NumMiniFatSectors > physicalSectors
-            || (long)hdr.NumFatSectors + hdr.NumDifatSectors + hdr.NumMiniFatSectors > physicalSectors)
+            || (long)hdr.NumDirSectors + hdr.NumFatSectors + hdr.NumDifatSectors + hdr.NumMiniFatSectors > physicalSectors)
         {
             throw new InvalidDataException("CFB metadata sector counts exceed the physical file.");
+        }
+
+        if (hdr.SectorSize == 4096)
+        {
+            ValidateChainStart(hdr.FirstDirSector, hdr.NumDirSectors, physicalSectors);
         }
 
         ValidateChainStart(hdr.FirstDifatSector, hdr.NumDifatSectors, physicalSectors);
@@ -597,6 +645,7 @@ internal static class CompoundFileReader
     private readonly record struct CfbHeader(
         int SectorSize,
         int MiniSectorSize,
+        uint NumDirSectors,
         uint NumFatSectors,
         uint FirstDirSector,
         uint MiniStreamCutoff,

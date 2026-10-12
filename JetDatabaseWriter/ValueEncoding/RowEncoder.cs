@@ -329,7 +329,7 @@ internal sealed class RowEncoder(JetFormat format)
     /// variable columns with an EOD the jump table cannot encode, or a fixed Text value
     /// exceeds its descriptor's encoded width, or a fixed Binary value exceeds its declared width.
     /// </exception>
-    /// <exception cref="NotSupportedException">A fixed Text descriptor cannot hold whole encoded padding spaces.</exception>
+    /// <exception cref="NotSupportedException">A column has an unknown descriptor or calculated result type, or a fixed Text descriptor cannot hold whole encoded padding spaces.</exception>
     internal byte[]? TrySerializeRow(TableDef tableDef, object[] values, out int rowLength)
     {
         int numCols = 0;
@@ -338,6 +338,17 @@ internal sealed class RowEncoder(JetFormat format)
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnInfo col = tableDef.Columns[i];
+            if (JetTypeInfo.GetClrType(col.Type) is null)
+            {
+                throw new NotSupportedException($"Column '{col.Name}': unknown JET column type {JetTypeInfo.GetTypeDisplayName(col.Type)} cannot be written.");
+            }
+
+            ColumnType valueType = JetTypeInfo.ResolveValueType(col);
+            if (JetTypeInfo.GetClrType(valueType) is null)
+            {
+                throw new NotSupportedException($"Column '{col.Name}': unknown calculated result type {JetTypeInfo.GetTypeDisplayName(valueType)} cannot be written.");
+            }
+
             numCols = Math.Max(numCols, col.ColNum + 1);
             if (col.IsFixed && col.Type != BooleanType)
             {

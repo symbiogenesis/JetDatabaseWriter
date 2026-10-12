@@ -18,7 +18,12 @@ public sealed record ColumnMetadata
     /// </summary>
     public string TypeName { get; init; } = string.Empty;
 
-    /// <summary>Gets or initializes the CLR type that best represents this column.</summary>
+    /// <summary>
+    /// Gets or initializes the CLR projection type for this column.
+    /// Unknown JET type codes use <see cref="string"/> only as a diagnostic projection;
+    /// this does not imply a supported value codec. Their <see cref="TypeName"/>
+    /// retains the hexadecimal type code (for example, <c>0xFE</c>).
+    /// </summary>
     public Type ClrType { get; init; } = typeof(object);
 
     /// <summary>Gets or initializes the maximum length for variable-length columns, or null for fixed-length.</summary>
