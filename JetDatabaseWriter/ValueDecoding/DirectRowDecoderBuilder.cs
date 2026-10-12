@@ -272,7 +272,7 @@ internal static class DirectRowDecoderBuilder
             ConstantExpression colExpr = Expression.Constant(col, typeof(ColumnInfo));
 
             // Emit one plan-owned slice lookup per bound column; the kind
-            // gate below leaves null/empty/malformed slices at defaults.
+            // gate below leaves null or explicitly lenient malformed slices at defaults.
             statements.Add(Expression.Assign(
                 sliceLocal,
                 Expression.Call(
@@ -283,6 +283,15 @@ internal static class DirectRowDecoderBuilder
                     rowSizeParam,
                     layoutLocal,
                     colExpr)));
+
+            if (col.IsFixed)
+            {
+                statements.Add(Expression.Call(
+                    decodePlanParam,
+                    GetRequiredMethod(typeof(RowDecodePlan), nameof(RowDecodePlan.ValidateFixedColumnSlice), InstanceNonPublic),
+                    colExpr,
+                    sliceLocal));
+            }
 
             if (col.Type == OleType)
             {

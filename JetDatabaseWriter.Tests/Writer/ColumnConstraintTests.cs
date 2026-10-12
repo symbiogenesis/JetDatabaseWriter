@@ -1403,7 +1403,7 @@ public sealed class ColumnConstraintTests
         Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
     }
 
-    /// <summary>Gets unsupported parser cases across every public mutation surface and write mode.</summary>
+    /// <summary>Gets unknown-function refusal cases across every public mutation surface and write mode.</summary>
     public static TheoryData<DatabaseFormat, string, WriteMode> UnsupportedRuleMutationCases
     {
         get
@@ -1424,7 +1424,7 @@ public sealed class ColumnConstraintTests
         }
     }
 
-    /// <summary>Unsupported persisted syntax refuses mutation without poisoning rollback or counters.</summary>
+    /// <summary>An unknown persisted function refuses mutation without poisoning rollback or counters.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="surface">The public mutation overload.</param>
     /// <param name="mode">The transaction mode.</param>
@@ -1498,6 +1498,94 @@ public sealed class ColumnConstraintTests
         await using AccessReader reader = await OpenReaderAsync(stream);
         using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal<int>([1, 2], rows.AsEnumerable().Select(row => (int)row["Id"]).Order());
+        Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
+    }
+
+    /// <summary>Gets parser-refused defaults across every insertion surface, format and write mode.</summary>
+    public static TheoryData<DatabaseFormat, string, WriteMode> ParserRefusalInsertCases
+    {
+        get
+        {
+            var cases = new TheoryData<DatabaseFormat, string, WriteMode>();
+            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
+            {
+                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
+                {
+                    foreach (string surface in new[] { "Array", "ArrayBatch", "Poco", "PocoBatch", "Named", "NamedBatch" })
+                    {
+                        cases.Add(format, surface, mode);
+                    }
+                }
+            }
+
+            return cases;
+        }
+    }
+
+    /// <summary>Parser refusal preserves the same writer's seeded AutoNumber and caller transaction.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="surface">The public insertion overload.</param>
+    /// <param name="mode">The transaction mode.</param>
+    /// <returns>The asynchronous test.</returns>
+    [Theory]
+    [MemberData(nameof(ParserRefusalInsertCases))]
+    public async Task UnsupportedDefault_EveryInsertSurface_PreservesCachedAutoNumberWithoutReopen(DatabaseFormat format, string surface, WriteMode mode)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        const string table = "ParserRefusal";
+        await using (AccessWriter writer = await OpenWriterAsync(
+            stream,
+            new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = mode == WriteMode.AutoCommit }))
+        {
+            await writer.CreateTableAsync(
+                table,
+                [
+                    new("Id", typeof(int)) { IsAutoIncrement = true },
+                    new("Score", typeof(int)) { DefaultValueExpression = "1 +" },
+                ],
+                TestContext.Current.CancellationToken);
+
+            // An explicit value avoids the unsupported default and seeds this writer's counter.
+            await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                byte[] before = stream.ToArray();
+                if (mode == WriteMode.ExplicitCommit)
+                {
+                    await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+                    await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+                    int pages = transaction.JournaledPageCount;
+                    Assert.True(pages > 0);
+                    _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: true));
+                    Assert.Equal(before, stream.ToArray());
+                    Assert.Equal(pages, transaction.JournaledPageCount);
+                    Assert.False(transaction.IsCommitted);
+                    Assert.False(transaction.IsRolledBack);
+
+                    await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+                    Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 3, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken));
+                    Assert.Equal(0, await writer.UpdateRowsAsync(table, "Id", 4, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken));
+                    await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+                    Assert.Equal(before, stream.ToArray());
+                }
+                else
+                {
+                    _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: true));
+                    Assert.Equal(before, stream.ToArray());
+                    await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+                }
+            }
+
+            if (mode == WriteMode.ExplicitCommit)
+            {
+                await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
+            }
+        }
+
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        using DataTable rows = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+        int[] expectedIds = mode == WriteMode.ExplicitCommit ? [1, 2] : [1, 2, 3];
+        Assert.Equal(expectedIds, rows.AsEnumerable().Select(row => (int)row["Id"]).Order());
         Assert.All(rows.AsEnumerable(), row => Assert.Equal(1, row["Score"]));
     }
 

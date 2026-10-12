@@ -15,20 +15,26 @@ internal static class RowValueDecodePolicy
     internal static object MalformedFixedDate(ColumnInfo column, Exception exception, bool strictParsing)
         => MalformedDate(column, exception, strictParsing, "fixed");
 
+    internal static object MalformedFixedValue(ColumnInfo column, Exception exception, bool strictParsing)
+        => MalformedValue(column, exception, strictParsing, "fixed", JetTypeInfo.GetTypeDisplayName(column.Type));
+
     private static DBNull MalformedDate(ColumnInfo column, Exception exception, bool strictParsing, string storage)
+        => MalformedValue(column, exception, strictParsing, storage, "Date/Time");
+
+    private static DBNull MalformedValue(ColumnInfo column, Exception exception, bool strictParsing, string storage, string valueType)
     {
         if (strictParsing)
         {
             throw new JetCorruptDataException(
                 JetErrorCode.MalformedValue,
-                $"Malformed {storage} Date/Time payload for column '{column.Name}'.",
+                $"Malformed {storage} {valueType} payload for column '{column.Name}'.",
                 new JetErrorInfo { ColumnName = column.Name, Reason = exception.Message },
                 exception);
         }
 
         try
         {
-            Trace.TraceWarning("The {0} Date/Time value for column '{1}' is unreadable and was returned as a missing value.", storage, column.Name);
+            Trace.TraceWarning("The {0} {1} value for column '{2}' is unreadable and was returned as a missing value.", storage, valueType, column.Name);
         }
 #pragma warning disable CA1031 // A diagnostic listener must not turn an explicitly lenient read into a failure.
         catch (Exception)

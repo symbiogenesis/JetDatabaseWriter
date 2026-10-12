@@ -172,6 +172,14 @@ public sealed class NativeBigBinaryTests
         stream.Position = 0;
         await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct))
         {
+            JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Samples", cancellationToken: ct));
+            Assert.Equal(JetErrorCode.MalformedValue, failure.ErrorCode);
+            Assert.Equal("Data", failure.ErrorInfo.ColumnName);
+        }
+
+        stream.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = false }, leaveOpen: true, ct))
+        {
             using DataTable table = await reader.ReadTableAsync("Samples", cancellationToken: ct);
             DataRow row = Assert.Single(table.AsEnumerable());
             Assert.Equal(7, row["Id"]);

@@ -134,7 +134,7 @@ JetDatabaseWriter/
 │   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, string rows, typed/direct slice decoding)
 │   ├── RowMapper.cs                       (cached object-array → POCO mapping and generic write projection, via EntityMap)
 │   ├── RowCriteriaEvaluator.cs            (compiles RowCriteria against a table, evaluates decoded rows)
-│   ├── RowValueDecodePolicy.cs          (shared string/typed/POCO malformed variable-value policy)
+│   ├── RowValueDecodePolicy.cs          (shared string/typed/POCO malformed value policy)
 │   ├── OleObjectDecoder.cs                (structured OLE Object parser behind OleObjectValue, media type from a signature at offset 0, data URIs of stored bytes)
 │   ├── LongValueDecoder.cs               (typed MEMO/OLE decode over LongValues, through the reader's page cache)
 │   ├── RowDecoder.cs                      (decodes a cached data page's rows to typed values or strings, resolving LVAL chains)

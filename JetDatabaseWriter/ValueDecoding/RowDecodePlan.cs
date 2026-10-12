@@ -220,8 +220,25 @@ internal sealed class RowDecodePlan
         {
             int start = rowFields.NumCols + col.FixedOff;
             int sz = col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
-            if (sz == 0 || start + sz > rowSize
-                || (col.Type == BigBinaryType && start + sz > Math.Min(layout.Eod, layout.NullMaskPos)))
+            int payloadEnd = Math.Min(layout.Eod, layout.NullMaskPos);
+            if (layout.VarTableStart < layout.NullMaskPos)
+            {
+                payloadEnd = Math.Min(payloadEnd, layout.VarTableStart - rowFields.Eod);
+            }
+
+            if (layout.VarLen > 0)
+            {
+                int firstEntry = layout.VarTableStart + ((layout.VarLen - 1) * rowFields.VarEntry);
+                int firstVariableStart = rowFields.ReadVarEntry(page, rowStart + firstEntry);
+                if (layout.JumpCount != 0)
+                {
+                    firstVariableStart += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, 0);
+                }
+
+                payloadEnd = Math.Min(payloadEnd, firstVariableStart);
+            }
+
+            if (sz == 0 || start < rowFields.NumCols || start > payloadEnd || sz > payloadEnd - start)
             {
                 return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
             }
@@ -311,6 +328,17 @@ internal sealed class RowDecodePlan
     {
         object value = this.DecodeFixedDate(page, start, column);
         return value is DateTime date ? date.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+    }
+
+    internal void ValidateFixedColumnSlice(ColumnInfo column, ColumnSlice slice)
+    {
+        if (column.IsFixed && slice.Kind == ColumnSliceKind.Empty)
+        {
+            _ = RowValueDecodePolicy.MalformedFixedValue(
+                column,
+                new ArgumentException("The assigned fixed slot extends outside the row's fixed payload."),
+                this.strictParsing || this.PreservesLongValueBytes);
+        }
     }
 
     internal bool ValidateDirectVariableSlot(ColumnInfo column, int length)
@@ -446,6 +474,7 @@ internal sealed class RowDecodePlan
 
             ColumnInfo column = this.columns[columnIndex];
             ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
+            this.ValidateFixedColumnSlice(column, slice);
             result[columnIndex] = await this.DecodeStringValueAsync(
                 source,
                 page,
@@ -485,6 +514,7 @@ internal sealed class RowDecodePlan
 
             ColumnInfo column = this.columns[columnIndex];
             ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
+            this.ValidateFixedColumnSlice(column, slice);
             buffer[columnIndex] = this.DecodeTypedValue(source, page, rowStart, slice, column, longValueDecoder, ref needsLongValue);
         }
 
@@ -514,6 +544,7 @@ internal sealed class RowDecodePlan
 
             ColumnInfo column = this.columns[columnOrdinal];
             ColumnSlice slice = ResolveColumnSlice(rowFields, page, rowStart, rowSize, layout, column);
+            this.ValidateFixedColumnSlice(column, slice);
             switch (slice.Kind)
             {
                 case ColumnSliceKind.Bool:

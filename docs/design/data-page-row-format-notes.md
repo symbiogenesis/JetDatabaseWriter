@@ -27,6 +27,15 @@ bytes unchanged. Storage I/O exceptions propagate unchanged. The malformed
 fixtures in `FixedDateDecodePolicyTests` and `VariableDateDecodePolicyTests`
 are synthetic corruption evidence.
 
+Assigned fixed-field slices are bounded by the fixed payload area, ending before
+variable data or the row trailer. An out-of-range descriptor offset or size is an
+unreadable assigned value, rather than a null field. String, typed, DataTable,
+direct POCO and hybrid POCO reads share contextual `MalformedValue` errors in
+strict mode and their normal missing-value representation with a Trace warning
+in lenient mode. Null bits are checked before fixed bounds. Writer snapshots
+refuse these malformed slices before changing bytes. The descriptor mutations
+in `FixedSlotBoundsDecodePolicyTests` are synthetic corruption evidence.
+
 ## Long-value integrity
 
 Stored MEMO/OLE payload lengths are exact. An inline payload is bounded by its column slice, not the remaining page; a single-row payload must contain its declared bytes. A chain must supply its declared length without truncation or cycling. Exact reads throw InvalidDataException for malformed payloads and propagate storage I/O failures. They never manufacture placeholder text or substitute an empty payload for unreadable data.

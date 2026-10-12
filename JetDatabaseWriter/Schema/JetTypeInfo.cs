@@ -233,13 +233,13 @@ internal static class JetTypeInfo
     /// <param name="paramName">The public parameter that carries <paramref name="column"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The declared column type.</returns>
     /// <exception cref="ArgumentException">The definition's flags conflict: both Attachment and multi-value, Currency on a complex or non-decimal column, or Date/Time Extended on a non-<see cref="DateTime"/> column.</exception>
-    /// <exception cref="NotSupportedException">The CLR type has no Access column type.</exception>
+    /// <exception cref="NotSupportedException">The CLR type has no Access column type or a descriptor/result override uses an unknown type code.</exception>
     /// <exception cref="InvalidOperationException">The CLR type is unknown.</exception>
     internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column, string paramName)
     {
         if (column.IsCalculated && column.CalculatedResultType != 0)
         {
-            return (ColumnType)column.CalculatedResultType;
+            return RequireKnownType((ColumnType)column.CalculatedResultType, column);
         }
 
         // Complex columns override the CLR-driven mapping. Access writes the
@@ -270,7 +270,7 @@ internal static class JetTypeInfo
 
         if (column.ColumnTypeOverride is ColumnType descriptorType)
         {
-            return descriptorType;
+            return RequireKnownType(descriptorType, column);
         }
 
         if (column.IsCurrency)
@@ -353,6 +353,16 @@ internal static class JetTypeInfo
                 throw new InvalidOperationException($"CLR type '{clrType}' is unknown.");
         }
     }
+
+    /// <summary>Refuses to author an unknown discriminator instead of inferring its layout from metadata defaults.</summary>
+    /// <param name="type">The declared type code.</param>
+    /// <param name="column">The column definition.</param>
+    /// <returns>The known type code.</returns>
+    /// <exception cref="NotSupportedException">The type has no known Access codec.</exception>
+    private static ColumnType RequireKnownType(ColumnType type, ColumnDefinition column)
+        => GetClrType(type) is not null
+            ? type
+            : throw new NotSupportedException($"Column '{column.Name}': unknown JET column type {GetTypeDisplayName(type)} cannot be written.");
 
     /// <summary>
     /// Checks a calculated column: the format has calculated columns
@@ -451,7 +461,7 @@ internal static class JetTypeInfo
     /// value the declared precision and scale allow: a scale of at most
     /// <see cref="CurrencyScale"/> and at most
     /// <see cref="CurrencyIntegerDigits"/> integer digits. Every other
-    /// type, and every type on Jet4 and ACCDB, is stored as declared. A
+    /// known type, and every known type on Jet4 and ACCDB, is stored as declared. A
     /// Numeric descriptor override on Jet3 is refused because that engine has no Numeric type.
     /// </summary>
     /// <param name="definition">The column definition.</param>
@@ -460,9 +470,11 @@ internal static class JetTypeInfo
     /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column type to write into the descriptor.</returns>
     /// <exception cref="ArgumentOutOfRangeException">A <c>Numeric</c> column's precision is not 1..28 or its scale is above its precision.</exception>
-    /// <exception cref="NotSupportedException">A Jet3 decimal column declares a precision or scale Currency cannot hold.</exception>
+    /// <exception cref="NotSupportedException">The type code is unknown or a Jet3 decimal column declares a precision or scale Currency cannot hold.</exception>
     internal static ColumnType ResolveStorageType(ColumnDefinition definition, ColumnType declaredType, JetFormat format, string paramName)
     {
+        _ = RequireKnownType(declaredType, definition);
+
         if (declaredType != NumericType)
         {
             return declaredType;
