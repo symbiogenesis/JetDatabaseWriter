@@ -5,7 +5,9 @@ Gates a published main commit on GitHub CI. Local builds and targeted tests are 
 .DESCRIPTION
 Integrate and publish main before calling this helper. It never pushes branches or tags. For -Sha, it verifies
 GitHub's main tip, reuses an existing CI run for that SHA, or dispatches ci.yml on main if none exists. Benchmark
-requests dispatch benchmarks.yml on main; a baseline must already belong to published main history.
+requests dispatch benchmarks.yml on main only after the newest matching CI run has completed successfully;
+a baseline must already belong to published main history. A refused prerequisite saves no dispatch intent,
+so the same benchmark request can be submitted after CI passes. Existing runs remain reportable without it.
 
 The default checks once and returns immediately. -WaitSeconds optionally bounds polling. Exit code 2 means the
 run is pending; call again with the same arguments. State is shared by worktrees and prevents repeated dispatches
@@ -239,6 +241,14 @@ try {
                 if (-not $run -and $RerunFailed) { throw 'No matching run exists to rerun.' }
                 $state = [pscustomobject]@{ sha = $full; workflow = $workflow; inputs = $inputsJson; dispatchedAt = $null; runId = $null; minimumAttempt = 1; rerunRequested = $false; rerunConfirmed = $false }
                 if (-not $run) {
+                    if ($Benchmarks) {
+                        $savedToken = $env:GITHUB_TOKEN
+                        try {
+                            $env:GITHUB_TOKEN = $headers.Authorization -replace '^Bearer ', ''
+                            & "$PSScriptRoot/assert-ci-success.ps1" -Sha $full -Repo $Repo
+                        }
+                        finally { $env:GITHUB_TOKEN = $savedToken }
+                    }
                     $state.dispatchedAt = [datetimeoffset]::UtcNow.ToString('o')
                     $body = @{ ref = 'main' }
                     if ($inputs.Count -gt 0) { $body.inputs = $inputs }

@@ -2,9 +2,11 @@
 .SYNOPSIS
 Exercises ci-gate with mocked Git and GitHub responses; never publishes or contacts GitHub.
 #>
+param([string] $OutputDirectory = [IO.Path]::GetTempPath())
+
 $ErrorActionPreference = 'Stop'
 $helper = Join-Path $PSScriptRoot '../ci-gate.ps1'
-$testRoot = Join-Path $PSScriptRoot "../../artifacts/ci-gate-tests-$([guid]::NewGuid().ToString('N'))"
+$testRoot = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "jdw-ci-gate-tests-$([guid]::NewGuid().ToString('N'))"
 [IO.Directory]::CreateDirectory($testRoot) | Out-Null
 $sha = '1111111111111111111111111111111111111111'
 $otherSha = '2222222222222222222222222222222222222222'
@@ -17,6 +19,10 @@ function New-Fixture([string] $name, [string] $status = 'completed', [string] $c
             id = 42; head_sha = $sha; head_branch = 'main'; run_attempt = 1; path = '.github/workflows/ci.yml@main'
             html_url = 'https://github.com/example/repo/actions/runs/42'
             status = $status; conclusion = $conclusion; created_at = [datetime]::UtcNow.ToString('o')
+        }
+        ciRun = [pscustomobject]@{
+            id = 41; head_sha = $sha; head_branch = 'main'; event = 'push'; path = '.github/workflows/ci.yml'
+            html_url = 'https://github.com/example/repo/actions/runs/41'; status = 'completed'; conclusion = 'success'
         }
         remoteSha = $sha
         runs = $true
@@ -69,6 +75,10 @@ function Invoke-RestMethod {
             return [pscustomobject]@{ total_count = 1; jobs = @(@{ name = 'Test'; conclusion = $fixture.run.conclusion; steps = @(@{ number = 1; name = 'Test'; conclusion = $fixture.run.conclusion }) }) }
         }
         '/runs/42/artifacts\??' { return [pscustomobject]@{ total_count = 0; artifacts = @() } }
+        '/workflows/ci\.yml/runs\?.*&page=' {
+            if ($Headers.Authorization -ne 'Bearer mock-token') { throw 'The prerequisite did not reuse authentication.' }
+            return [pscustomobject]@{ total_count = $(if ($fixture.ciRun) { 1 } else { 0 }); workflow_runs = @($fixture.ciRun | Where-Object { $_ }) }
+        }
         '/workflows/.+/runs\?' { return [pscustomobject]@{ workflow_runs = $(if ($fixture.runs) { @($fixture.run) } else { @() }) } }
         '/runs/42$' { return $fixture.run }
         default { throw "Unexpected API call: $Uri" }
@@ -142,7 +152,51 @@ New-Fixture 'benchmark-dispatch' 'queued' ''
 $fixture.run.path = '.github/workflows/benchmarks.yml'
 Invoke-Helper @{ Sha = $sha; Benchmarks = '*Example*'; Baseline = $otherSha; WaitSeconds = 0 }
 Assert ($exitCode -eq 2) 'Benchmark dispatch should return pending for its exact run ID.'
-Assert (-not ($fixture.calls -match '/workflows/.+/runs\?')) 'Benchmark runs must not be inferred from timestamps or unrelated concurrent dispatches.'
+Assert (-not ($fixture.calls -match '/workflows/benchmarks\.yml/runs\?')) 'Benchmark runs must not be inferred from timestamps or unrelated concurrent dispatches.'
+
+$savedToken = $env:GITHUB_TOKEN
+try {
+    $env:GITHUB_TOKEN = 'inherited-token'
+    foreach ($verdict in 'missing', 'pending', 'failed', 'wrong-sha', 'wrong-branch', 'wrong-workflow', 'pull-request') {
+        New-Fixture "benchmark-refuses-$verdict" 'queued' ''
+        $fixture.run.path = '.github/workflows/benchmarks.yml'
+        switch ($verdict) {
+            'missing' { $fixture.ciRun = $null }
+            'pending' { $fixture.ciRun.status = 'in_progress'; $fixture.ciRun.conclusion = '' }
+            'failed' { $fixture.ciRun.conclusion = 'failure' }
+            'wrong-sha' { $fixture.ciRun.head_sha = $otherSha }
+            'wrong-branch' { $fixture.ciRun.head_branch = 'work' }
+            'wrong-workflow' { $fixture.ciRun.path = '.github/workflows/portability.yml' }
+            'pull-request' { $fixture.ciRun.event = 'pull_request' }
+        }
+        Invoke-Helper @{ Sha = $sha; Benchmarks = '*Example*'; WaitSeconds = 0 }
+        Assert ($exitCode -eq 3) "$verdict CI must refuse a new benchmark request."
+        Assert (-not ($fixture.calls -match 'dispatches')) "$verdict CI must not dispatch benchmarks."
+        Assert (@($fixture.calls -match '/workflows/ci\.yml/runs\?').Count -eq 1) 'A refused prerequisite must not poll CI.'
+        Assert (@(Get-ChildItem -LiteralPath $fixture.root -Recurse -File | Where-Object Extension -eq '.json').Count -eq 0) "$verdict CI must not save an unconfirmed dispatch intent."
+        Assert ($env:GITHUB_TOKEN -eq 'inherited-token') 'A refused prerequisite must restore inherited authentication.'
+        $fixture.ciRun = [pscustomobject]@{
+            id = 41; head_sha = $sha; head_branch = 'main'; event = 'push'; path = '.github/workflows/ci.yml'
+            html_url = 'https://github.com/example/repo/actions/runs/41'; status = 'completed'; conclusion = 'success'
+        }
+        Invoke-Helper @{ Sha = $sha; Benchmarks = '*Example*'; WaitSeconds = 0 }
+        Assert ($exitCode -eq 2) 'A later successful CI verdict must permit the original benchmark request.'
+        Assert (@($fixture.calls -match 'dispatches').Count -eq 1) 'Refusing CI must not poison later dispatch state.'
+        Assert ($env:GITHUB_TOKEN -eq 'inherited-token') 'A successful prerequisite must restore inherited authentication.'
+        $fixture.calls.Clear()
+        $fixture.ciRun.status = 'in_progress'
+        Invoke-Helper @{ Sha = $sha; Benchmarks = '*Example*'; WaitSeconds = 0 }
+        Assert ($exitCode -eq 2) 'Existing benchmark runs must remain reportable after CI changes.'
+        Assert (-not ($fixture.calls -match '/workflows/ci\.yml/runs\?')) 'Reusing an existing benchmark run must not recheck the prerequisite.'
+    }
+    New-Fixture 'benchmark-report-without-prerequisite' 'queued' ''
+    $fixture.run.path = '.github/workflows/benchmarks.yml'
+    $fixture.ciRun = $null
+    Invoke-Helper @{ RunId = 42 }
+    Assert ($exitCode -eq 2) 'RunId benchmark reporting must not require current CI.'
+    Assert (-not ($fixture.calls -match '/workflows/ci\.yml/runs\?')) 'RunId reporting must not discover a CI prerequisite.'
+}
+finally { $env:GITHUB_TOKEN = $savedToken }
 
 New-Fixture 'missing-dispatch-id' 'queued' ''
 $fixture.runs = $false
