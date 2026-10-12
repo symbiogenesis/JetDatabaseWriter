@@ -91,6 +91,8 @@ foreach (ColumnMetadata col in meta)
 
 Access 2019+ Date/Time Extended columns decode to `DateTime` with `DateTimeKind.Unspecified`, preserving the 100 ns tick precision stored in the 42-byte Access payload. Metadata reports `TypeName == "Date/Time Extended"` and `ClrType == typeof(DateTime)`; `Rows(...)`, `Rows<T>(...)`, and `ReadTableAsync` surface row values as `DateTime`.
 
+Malformed classic and Extended date payloads raise `JetCorruptDataException` with `MalformedValue` and column context in strict mode. With `StrictParsing = false`, date reads emit a trace warning and return `DBNull` in typed rows, empty text in string rows, or an unassigned/default POCO property. This policy covers fixed and variable storage; unrelated-column updates refuse unreadable dates before changing database bytes.
+
 Classic `Date/Time` remains the default for `new ColumnDefinition("When", typeof(DateTime))`. To author a Date/Time Extended column in an ACCDB database, opt in explicitly:
 
 ```csharp

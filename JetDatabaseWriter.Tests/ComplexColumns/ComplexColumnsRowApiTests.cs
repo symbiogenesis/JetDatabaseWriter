@@ -40,7 +40,7 @@ public sealed class ComplexColumnsRowApiTests
         Assert.Equal(content.Length, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4)));
         Assert.Equal(content, wrapped[8..]);
 
-        bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
+        bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(ok);
         Assert.Equal("jpg", ext);
         Assert.Equal(payload, decoded);
@@ -64,7 +64,7 @@ public sealed class ComplexColumnsRowApiTests
         Assert.Equal(Adler32(content), BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4)));
         Assert.Equal(content, InflateZlib(wrapped[8..]));
 
-        bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
+        bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(ok);
         Assert.Equal("txt", ext);
         Assert.Equal(payload, decoded);
@@ -84,7 +84,7 @@ public sealed class ComplexColumnsRowApiTests
         Assert.Equal(14, BinaryPrimitives.ReadInt32LittleEndian(content));
         Assert.Equal(1, BinaryPrimitives.ReadInt32LittleEndian(content.AsSpan(8)));
 
-        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded));
+        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Equal(string.Empty, ext);
         Assert.Equal(payload, decoded);
     }
@@ -99,7 +99,7 @@ public sealed class ComplexColumnsRowApiTests
 
         Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
         Assert.Equal(AccessContent("jpg", payload), wrapped[8..]);
-        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out _));
+        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out _, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Equal("jpg", ext);
     }
 
@@ -130,7 +130,7 @@ public sealed class ComplexColumnsRowApiTests
         byte[] wrapped = AttachmentWrapper.Encode(extension, payload);
 
         Assert.Equal(expectedTypeFlag, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
-        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded));
+        Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Equal(extension, ext);
         Assert.Equal(payload, decoded);
     }
@@ -155,7 +155,7 @@ public sealed class ComplexColumnsRowApiTests
         byte[] rawBody = wrapped.AsSpan(8, BinaryPrimitives.ReadInt32LittleEndian(wrapped.AsSpan(4, 4))).ToArray();
         Assert.Throws<InvalidDataException>(() => InflateZlib(rawBody));
 
-        bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded);
+        bool ok = AttachmentWrapper.TryDecode(wrapped, out string ext, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.False(ok);
         Assert.Empty(ext);
@@ -178,7 +178,7 @@ public sealed class ComplexColumnsRowApiTests
         BinaryPrimitives.WriteInt32LittleEndian(wrapped.AsSpan(4), content.Length);
         body.CopyTo(wrapped, 8);
 
-        bool ok = AttachmentWrapper.TryDecode(wrapped, out string decodedExt, out byte[] decoded);
+        bool ok = AttachmentWrapper.TryDecode(wrapped, out string decodedExt, out byte[] decoded, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(ok);
         Assert.Equal("txt", decodedExt);
@@ -190,7 +190,7 @@ public sealed class ComplexColumnsRowApiTests
     {
         byte[] junk = new byte[32];
         junk[0] = 0xFF;
-        Assert.False(AttachmentWrapper.TryDecode(junk, out _, out _));
+        Assert.False(AttachmentWrapper.TryDecode(junk, out _, out _, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]

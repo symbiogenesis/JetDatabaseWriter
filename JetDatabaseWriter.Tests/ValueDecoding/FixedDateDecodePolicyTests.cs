@@ -5,6 +5,8 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -26,17 +28,25 @@ using Xunit;
 public sealed class FixedDateDecodePolicyTests
 {
     [Theory]
-    [InlineData(DatabaseFormat.Jet4Mdb, true)]
-    [InlineData(DatabaseFormat.Jet4Mdb, false)]
-    [InlineData(DatabaseFormat.AceAccdb, true)]
-    [InlineData(DatabaseFormat.AceAccdb, false)]
-    public async Task MalformedFixedDate_PublicReadsAgree(DatabaseFormat format, bool strict)
+    [InlineData(DatabaseFormat.Jet4Mdb, true, -1)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false, -1)]
+    [InlineData(DatabaseFormat.AceAccdb, true, -1)]
+    [InlineData(DatabaseFormat.AceAccdb, false, -1)]
+    [InlineData(DatabaseFormat.AceAccdb, true, 0)]
+    [InlineData(DatabaseFormat.AceAccdb, false, 0)]
+    [InlineData(DatabaseFormat.AceAccdb, true, 1)]
+    [InlineData(DatabaseFormat.AceAccdb, false, 1)]
+    [InlineData(DatabaseFormat.AceAccdb, true, 2)]
+    [InlineData(DatabaseFormat.AceAccdb, false, 2)]
+    [InlineData(DatabaseFormat.AceAccdb, true, 3)]
+    [InlineData(DatabaseFormat.AceAccdb, false, 3)]
+    public async Task MalformedFixedDate_PublicReadsAgree(DatabaseFormat format, bool strict, int extendedFault)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using var original = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(original, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
         {
-            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime)), new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], ct);
+            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime)) { IsDateTimeExtended = extendedFault >= 0 }, new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], ct);
             await writer.InsertRowAsync("Values", [new DateTime(2026, 1, 1), 1, new byte[] { 1, 2, 3 }], ct);
         }
 
@@ -63,7 +73,26 @@ public sealed class FixedDateDecodePolicyTests
                 ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(profile.RowFields, page, bound.RowStart, bound.RowSize, layout, column);
                 Assert.Equal(ColumnSliceKind.Fixed, slice.Kind);
                 int rowOffset = checked((int)(number * profile.PageSize)) + bound.RowStart;
-                BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(rowOffset + slice.DataStart, 8), BitConverter.DoubleToInt64Bits(double.NaN));
+                int valueOffset = rowOffset + slice.DataStart;
+                switch (extendedFault)
+                {
+                    case 0:
+                        bytes[valueOffset] = (byte)'x';
+                        break;
+                    case 1:
+                        bytes[valueOffset + 40] = (byte)'6';
+                        break;
+                    case 2:
+                        Encoding.ASCII.GetBytes("9999999999999999999").CopyTo(bytes, valueOffset);
+                        break;
+                    case 3:
+                        Encoding.ASCII.GetBytes("000000086400").CopyTo(bytes, valueOffset + 20);
+                        break;
+                    default:
+                        BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(valueOffset, 8), BitConverter.DoubleToInt64Bits(double.NaN));
+                        break;
+                }
+
                 damaged = true;
             }
 
@@ -88,9 +117,19 @@ public sealed class FixedDateDecodePolicyTests
             JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct)));
             JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
             Assert.Equal(poco.Message, hybrid.Message);
+            JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
+            Assert.Equal(typed.Message, table.Message);
             Assert.Equal(JetErrorCode.MalformedValue, strings.ErrorCode);
             Assert.Equal("Value", strings.ErrorInfo.ColumnName);
-            Assert.IsType<ArgumentException>(strings.InnerException, exactMatch: false);
+            if (extendedFault == 2)
+            {
+                Assert.IsType<OverflowException>(strings.InnerException);
+            }
+            else
+            {
+                Assert.IsType<ArgumentException>(strings.InnerException, exactMatch: false);
+            }
+
             Assert.Contains("Value", strings.Message, StringComparison.Ordinal);
             Assert.Equal(strings.Message, typed.Message);
             Assert.Equal(typed.Message, poco.Message);
@@ -103,20 +142,25 @@ public sealed class FixedDateDecodePolicyTests
             HybridValueRow hybrid = Assert.Single(await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
             Assert.Null(hybrid.Value);
             Assert.Equal(new byte[] { 1, 2, 3 }, hybrid.Payload);
+            Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[0]);
         }
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task ValidDatesAndNull_PublicReadsAgree(bool strict)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task ValidDatesAndNull_PublicReadsAgree(bool strict, bool extended)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using var stream = new MemoryStream();
-        DateTime[] dates = [DateTime.FromOADate(-657434), DateTime.FromOADate(-1.25), DateTime.FromOADate(2958465)];
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
+        DateTime[] dates = extended
+            ? [DateTime.MinValue, new DateTime(2026, 1, 1).AddTicks(1234567), DateTime.MaxValue]
+            : [DateTime.FromOADate(-657434), DateTime.FromOADate(-1.25), DateTime.FromOADate(2958465)];
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, extended ? DatabaseFormat.AceAccdb : DatabaseFormat.Jet4Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ct))
         {
-            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime))], ct);
+            await writer.CreateTableAsync("Values", [new ColumnDefinition("Value", typeof(DateTime)) { IsDateTimeExtended = extended }], ct);
             foreach (DateTime date in dates)
             {
                 await writer.InsertRowAsync("Values", [date], ct);
@@ -134,7 +178,7 @@ public sealed class FixedDateDecodePolicyTests
         {
             Assert.Equal(dates[index], typed[index][0]);
             Assert.Equal(dates[index], pocos[index].Value);
-            Assert.Equal(dates[index].ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), strings[index][0]);
+            Assert.Equal(dates[index].ToString(extended ? "yyyy-MM-dd HH:mm:ss.fffffff" : "yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture), strings[index][0]);
         }
 
         Assert.Equal(DBNull.Value, typed[3][0]);

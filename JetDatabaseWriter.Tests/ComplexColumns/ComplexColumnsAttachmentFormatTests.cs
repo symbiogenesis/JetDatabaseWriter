@@ -60,7 +60,7 @@ public sealed class ComplexColumnsAttachmentFormatTests
 
         foreach (StoredAttachment attachment in stored)
         {
-            Assert.True(AttachmentWrapper.TryDecode(attachment.FileData, out string extension, out byte[] payload), attachment.FileName);
+            Assert.True(AttachmentWrapper.TryDecode(attachment.FileData, out string extension, out byte[] payload, cancellationToken: TestContext.Current.CancellationToken), attachment.FileName);
             Assert.Equal(attachment.FileType, extension);
 
             byte[] reEncoded = AttachmentWrapper.Encode(attachment.FileType, payload);

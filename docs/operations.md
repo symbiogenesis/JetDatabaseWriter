@@ -127,6 +127,8 @@ var options = new AccessReaderOptions("secretPassword")
     PageReadOptimizationMode = PageReadOptimizationMode.Auto, // random-access/read-ahead policy (default)
     DiagnosticsEnabled       = false,  // verbose logging (default: false)
     MaxComplexDiscoveryEntries = 65_536, // aggregate metadata work per complex-column discovery
+    MaxAttachmentContentBytes = 64 * 1024 * 1024, // uncompressed content per attachment
+    MaxAttachmentContentBytesPerOperation = 256L * 1024 * 1024, // shared across one attachment read/table scan
     ValidateOnOpen           = true,   // format check on open (default: true)
     FileAccess               = FileAccess.Read,        // default
     FileShare                = FileShare.ReadWrite,    // default: tolerate Access also having the file open
@@ -147,6 +149,8 @@ var writerOptions = new AccessWriterOptions("secretPassword")
 };
 await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOptions);
 ```
+
+`MaxAttachmentContentBytesPerOperation` includes extension headers and is shared across attachment columns during one table scan. Each table in a multi-table read starts a fresh budget. Set a positive larger limit for trusted reads that exceed the 256 MiB default; `ValueTooLarge` refusals propagate in strict and lenient modes. Inflation checks cancellation between output chunks and before its final excess-byte check. A single decompressor read, checksum or copy remains a synchronous interval.
 
 ---
 

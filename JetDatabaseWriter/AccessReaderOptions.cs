@@ -47,6 +47,16 @@ public sealed class AccessReaderOptions : AccessOptions
     public int MaxAttachmentContentBytes { get; init; } = 64 * 1024 * 1024;
 
     /// <summary>
+    /// Gets the maximum aggregate uncompressed attachment content length for one
+    /// attachment read or table scan, including extension headers. Default: 256 MiB.
+    /// Set a positive value appropriate for the largest permitted read before
+    /// opening the file. A table scan shares this budget across its attachment
+    /// columns. Each table in a multi-table read starts a separate budget.
+    /// Budget refusals propagate in strict and lenient parsing modes.
+    /// </summary>
+    public long MaxAttachmentContentBytesPerOperation { get; init; } = 256 * 1024 * 1024;
+
+    /// <summary>
     /// Gets the maximum number of metadata entries inspected during complex-column
     /// discovery, including aggregate fallback scans for one table read. Default:
     /// 65,536. Set a positive value appropriate for the largest catalog permitted.
@@ -83,7 +93,7 @@ public sealed class AccessReaderOptions : AccessOptions
     /// MEMO/OLE values produce a trace diagnostic and a missing value: DBNull
     /// in typed rows, or null in string rows. Underlying I/O failures and resource
     /// budget refusals always propagate.
-    /// Malformed classic Date/Time payloads and variable Date/Time Extended payloads
+    /// Malformed classic Date/Time payloads and fixed or variable Date/Time Extended payloads
     /// throw <see cref="Exceptions.JetCorruptDataException"/> in strict mode.
     /// Lenient date reads emit a trace warning and return <see cref="DBNull.Value"/>
     /// in typed rows, empty text in string rows, or an unassigned/default POCO property.

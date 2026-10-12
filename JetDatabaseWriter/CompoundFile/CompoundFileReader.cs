@@ -14,9 +14,8 @@ using JetDatabaseWriter.Infrastructure;
 /// <summary>
 /// Minimal reader for the OLE / Microsoft Compound File Binary (CFB / OLE2)
 /// format ("MS-CFB"). Parses the FAT, mini-FAT, directory, and exposes
-/// named top-level streams as byte arrays. Used to unwrap Office Crypto
-/// API ("Agile") encrypted .accdb files which embed the encrypted database
-/// inside a compound document.
+/// named streams as byte arrays for internal container diagnostics and test
+/// support. Office compound packages are unsupported as public database inputs.
 /// </summary>
 internal static class CompoundFileReader
 {
@@ -58,12 +57,13 @@ internal static class CompoundFileReader
         byte[] scratch = ArrayPool<byte>.Shared.Rent(hdr.SectorSize);
         try
         {
-            uint[] fat = await BuildFatAsync(stream, header, hdr, scratch, cancellationToken).ConfigureAwait(false);
-            uint[] miniFat = await ReadMiniFatAsync(stream, hdr, fat, cancellationToken).ConfigureAwait(false);
-            byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, cancellationToken).ConfigureAwait(false);
-            byte[] miniStream = await ReadMiniStreamAsync(stream, directory, hdr, fat, cancellationToken).ConfigureAwait(false);
+            var ownedSectors = new HashSet<uint>();
+            uint[] fat = await BuildFatAsync(stream, header, hdr, scratch, ownedSectors, cancellationToken).ConfigureAwait(false);
+            uint[] miniFat = await ReadMiniFatAsync(stream, hdr, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
+            byte[] directory = await ReadChainAsync(stream, hdr.FirstDirSector, hdr.SectorSize, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
+            byte[] miniStream = await ReadMiniStreamAsync(stream, directory, hdr, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
 
-            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, maxBytes, cancellationToken).ConfigureAwait(false);
+            return await ExtractStreamsAsync(stream, directory, miniStream, hdr, fat, miniFat, ownedSectors, maxBytes, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -129,6 +129,7 @@ internal static class CompoundFileReader
         byte[] header,
         CfbHeader hdr,
         byte[] scratch,
+        HashSet<uint> ownedSectors,
         CancellationToken cancellationToken)
     {
         // Bound hostile DIFAT counts by the physical file geometry.
@@ -152,6 +153,7 @@ internal static class CompoundFileReader
             uint entry = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(Constants.CompoundFile.HeaderOffsets.HeaderDifat + (i * 4), 4));
             if (entry < Constants.CompoundFile.FatSectMin)
             {
+                ClaimSector(entry, ownedSectors, "FAT");
                 fatSectorIds.Add(entry);
             }
         }
@@ -169,12 +171,14 @@ internal static class CompoundFileReader
                 throw new InvalidDataException($"CFB DIFAT chain contains a cycle at sector {difatSector}.");
             }
 
+            ClaimSector(difatSector, ownedSectors, "DIFAT");
             await ReadSectorIntoAsync(stream, difatSector, scratch, hdr.SectorSize, cancellationToken).ConfigureAwait(false);
             for (int i = 0; i < entriesPerDifatSector; i++)
             {
                 uint entry = BinaryPrimitives.ReadUInt32LittleEndian(scratch.AsSpan(i * 4));
                 if (entry < Constants.CompoundFile.FatSectMin && fatSectorIds.Count < (int)safeFatSectors)
                 {
+                    ClaimSector(entry, ownedSectors, "FAT");
                     fatSectorIds.Add(entry);
                 }
             }
@@ -203,6 +207,7 @@ internal static class CompoundFileReader
         Stream stream,
         CfbHeader hdr,
         uint[] fat,
+        HashSet<uint> ownedSectors,
         CancellationToken cancellationToken)
     {
         if (hdr.NumMiniFatSectors == 0
@@ -212,7 +217,7 @@ internal static class CompoundFileReader
             return [];
         }
 
-        byte[] miniFatBytes = await ReadChainAsync(stream, hdr.FirstMiniFatSector, hdr.SectorSize, fat, cancellationToken).ConfigureAwait(false);
+        byte[] miniFatBytes = await ReadChainAsync(stream, hdr.FirstMiniFatSector, hdr.SectorSize, fat, ownedSectors, cancellationToken).ConfigureAwait(false);
         int count = miniFatBytes.Length / 4;
         uint[] miniFat = new uint[count];
         for (int i = 0; i < count; i++)
@@ -228,6 +233,7 @@ internal static class CompoundFileReader
         byte[] directory,
         CfbHeader hdr,
         uint[] fat,
+        HashSet<uint> ownedSectors,
         CancellationToken cancellationToken)
     {
         if (directory.Length < Constants.CompoundFile.DirEntrySize)
@@ -254,7 +260,7 @@ internal static class CompoundFileReader
 
         // Pass the exact size so the chain reader can allocate the final
         // buffer once and skip a trailing Array.Resize allocation+copy.
-        return await ReadChainAsync(stream, rootStart, hdr.SectorSize, fat, cancellationToken, rootSize).ConfigureAwait(false);
+        return await ReadChainAsync(stream, rootStart, hdr.SectorSize, fat, ownedSectors, cancellationToken, rootSize).ConfigureAwait(false);
     }
 
     private static async ValueTask<Dictionary<string, byte[]>> ExtractStreamsAsync(
@@ -264,6 +270,7 @@ internal static class CompoundFileReader
         CfbHeader hdr,
         uint[] fat,
         uint[] miniFat,
+        HashSet<uint> ownedSectors,
         int maxBytes,
         CancellationToken cancellationToken)
     {
@@ -273,6 +280,7 @@ internal static class CompoundFileReader
         // Upper-bound the capacity to the directory entry count so the
         // dictionary never has to rehash while we walk the directory.
         var streams = new Dictionary<string, byte[]>(dirCount, StringComparer.Ordinal);
+        var ownedMiniSectors = new HashSet<uint>();
         for (int i = 0; i < dirCount; i++)
         {
             int off = i * Constants.CompoundFile.DirEntrySize;
@@ -322,8 +330,8 @@ internal static class CompoundFileReader
             // Pass the exact size so the chain readers can size the
             // destination buffer precisely and avoid a tail Array.Resize.
             streams[name] = size < hdr.MiniStreamCutoff
-                ? ReadMiniChain(miniStream, startSector, hdr.MiniSectorSize, miniFat, size, cancellationToken)
-                : await ReadChainAsync(stream, startSector, hdr.SectorSize, fat, cancellationToken, size).ConfigureAwait(false);
+                ? ReadMiniChain(miniStream, startSector, hdr.MiniSectorSize, miniFat, ownedMiniSectors, size, cancellationToken)
+                : await ReadChainAsync(stream, startSector, hdr.SectorSize, fat, ownedSectors, cancellationToken, size).ConfigureAwait(false);
         }
 
         return streams;
@@ -348,6 +356,7 @@ internal static class CompoundFileReader
         uint startSector,
         int sectorSize,
         uint[] fat,
+        HashSet<uint> ownedSectors,
         CancellationToken cancellationToken,
         long exactSize = -1)
     {
@@ -355,7 +364,7 @@ internal static class CompoundFileReader
         // buffer can be sized exactly. This avoids both per-sector array
         // allocations and a final List<byte[]> → byte[] block-copy pass,
         // and (when exactSize is supplied) skips the trailing Array.Resize.
-        int chainLength = WalkChainLength(startSector, fat, "FAT", (stream.Length / sectorSize) - 1, cancellationToken);
+        int chainLength = WalkChainLength(startSector, fat, "FAT", (stream.Length / sectorSize) - 1, ownedSectors, cancellationToken);
         byte[] result = AllocateChainBuffer(chainLength, sectorSize, exactSize);
 
         uint sector = startSector;
@@ -386,11 +395,11 @@ internal static class CompoundFileReader
         return result;
     }
 
-    private static byte[] ReadMiniChain(byte[] miniStream, uint startSector, int miniSectorSize, uint[] miniFat, long exactSize, CancellationToken cancellationToken)
+    private static byte[] ReadMiniChain(byte[] miniStream, uint startSector, int miniSectorSize, uint[] miniFat, HashSet<uint> ownedSectors, long exactSize, CancellationToken cancellationToken)
     {
         // Pre-walk the mini-FAT to count the chain so we can size the
         // result buffer exactly and skip the intermediate index list.
-        int chainLength = WalkChainLength(startSector, miniFat, "mini-FAT", miniStream.Length / miniSectorSize, cancellationToken);
+        int chainLength = WalkChainLength(startSector, miniFat, "mini-FAT", miniStream.Length / miniSectorSize, ownedSectors, cancellationToken);
         byte[] result = AllocateChainBuffer(chainLength, miniSectorSize, exactSize);
 
         uint sector = startSector;
@@ -453,18 +462,18 @@ internal static class CompoundFileReader
     /// <summary>
     /// Walks a FAT/mini-FAT chain starting at <paramref name="startSector"/> and
     /// returns its length in sectors, validating that each link is in range and
-    /// that the chain neither loops nor exceeds the table size.
+    /// that the chain neither loops, shares sectors with another chain, nor exceeds the table size.
     /// </summary>
     /// <param name="startSector">The start sector.</param>
     /// <param name="fat">The FAT sector table.</param>
     /// <param name="fatKind">The fat kind.</param>
     /// <param name="physicalSectorCount">The number of sectors physically present.</param>
+    /// <param name="ownedSectors">Sectors already claimed by metadata or another chain in this address space.</param>
     /// <param name="cancellationToken">A token used to cancel traversal.</param>
-    /// <exception cref="InvalidDataException">Thrown when the sector chain points outside the FAT or exceeds the expected length.</exception>
-    private static int WalkChainLength(uint startSector, uint[] fat, string fatKind, long physicalSectorCount, CancellationToken cancellationToken)
+    /// <exception cref="InvalidDataException">The sector chain is out of range, cyclic, or shares sectors with another chain.</exception>
+    private static int WalkChainLength(uint startSector, uint[] fat, string fatKind, long physicalSectorCount, HashSet<uint> ownedSectors, CancellationToken cancellationToken)
     {
         int count = 0;
-        var visited = new HashSet<uint>();
         uint cur = startSector;
         while (cur is not Constants.CompoundFile.EndOfChain
             and not Constants.CompoundFile.FreeSect)
@@ -475,9 +484,9 @@ internal static class CompoundFileReader
                 throw new InvalidDataException($"CFB {fatKind} sector index {cur} exceeds {fatKind} length {fat.Length}.");
             }
 
-            if (!visited.Add(cur))
+            if (!ownedSectors.Add(cur))
             {
-                throw new InvalidDataException($"CFB {fatKind} chain contains a cycle.");
+                throw new InvalidDataException($"CFB {fatKind} sector {cur} forms a cycle or overlaps another chain.");
             }
 
             count++;
@@ -508,6 +517,14 @@ internal static class CompoundFileReader
 
         int length = checked((int)logicalLength);
         return new byte[length];
+    }
+
+    private static void ClaimSector(uint sector, HashSet<uint> ownedSectors, string sectorKind)
+    {
+        if (!ownedSectors.Add(sector))
+        {
+            throw new InvalidDataException($"CFB {sectorKind} sector {sector} overlaps another metadata sector.");
+        }
     }
 
     private readonly record struct CfbHeader(

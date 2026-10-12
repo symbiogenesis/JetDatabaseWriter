@@ -41,6 +41,11 @@ internal sealed class ReaderServices : IDisposable
             throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentContentBytes must be positive.");
         }
 
+        if (options.MaxAttachmentContentBytesPerOperation <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxAttachmentContentBytesPerOperation must be positive.");
+        }
+
         if (options.MaxComplexDiscoveryEntries <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "MaxComplexDiscoveryEntries must be positive.");
@@ -63,7 +68,7 @@ internal sealed class ReaderServices : IDisposable
         this.TableCatalog = new TableCatalog(db.Pages, tableDefs, catalogRows, columnProperties);
         this.Catalog = new CatalogReader(format, tableDefs, this.TableCatalog, catalogRows, rows);
 
-        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled, options.MaxAttachmentContentBytes, options.MaxComplexDiscoveryEntries);
+        var complexColumns = new ComplexColumnReader(format, tableDefs, this.Catalog, rows, options.DiagnosticsEnabled, options.MaxAttachmentContentBytes, options.MaxComplexDiscoveryEntries, options.MaxAttachmentContentBytesPerOperation);
         this.LinkedTables = new LinkedTableReader(this.Catalog, linkedSources);
         this.Tables = new TableReader(db.Format, db.Pages, tableDefs, db.OwnedPages, this.PageCache, rows, this.Catalog, complexColumns, this.LinkedTables, this.Operations, options);
         this.Indexes = new IndexRowReader(format, tableDefs, this.PageCache, rows, this.Catalog, complexColumns, this.Tables, this.Operations);

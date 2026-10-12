@@ -316,7 +316,7 @@ internal static class DirectRowDecoderBuilder
                 formatParam);
 
             ParameterExpression? dateValue = null;
-            if (col.Type == DateTimeType || (!col.IsFixed && col.Type == DateTimeExtendedType))
+            if (col.Type is DateTimeType or DateTimeExtendedType)
             {
                 dateValue = Expression.Variable(typeof(DateTime), "dateValue");
                 locals.Add(dateValue);

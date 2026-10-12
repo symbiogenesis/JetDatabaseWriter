@@ -203,6 +203,8 @@ So a `.txt` file has `headerLen` 20 and `dataLen` = 20 + the file length. A comp
 
 `AttachmentWrapper.TryDecode` reads the extension from bytes `[12, headerLen)` up to its NUL. A typeFlag-1 body must carry a native zlib header, inflate to exactly dataLen bytes and match its Adler-32 checksum. Inflation stops at the declared length plus one byte to detect excess output. Raw-deflate payloads from unreleased library builds are rejected; they are not a Microsoft compatibility requirement.
 
+`MaxAttachmentContentBytes` limits one declared uncompressed content length, including the extension header. `MaxAttachmentContentBytesPerOperation` reserves each declared length before decompression or raw-content copying and defaults to 256 MiB for one attachment read or table scan, shared across that scan's attachment columns. Linked readers inherit both limits. Positive caller overrides permit larger trusted reads; budget refusal propagates in lenient mode. Inflation checks cancellation before allocation, around each output read of at most 8 KiB, and around the final excess-byte read. Multi-table reads reset the budget per table, compressed input work is not charged, and a single synchronous decompressor read, checksum or copy is not interrupted; those remaining aggregate-work requirements are in S2.
+
 ### 3.2 When to compress
 
 Access stores a small set of formats raw and deflates everything else, including formats that are compressed already, such as gz and mp3. The writer uses Jackcess 4.0.12's list, which its author took from Access ("Use the file formats which ms access stores uncompressed when writing an attachment ... and deflate everything else"):

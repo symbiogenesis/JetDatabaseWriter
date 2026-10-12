@@ -107,7 +107,7 @@ public sealed class AttachmentCorruptionTests
         byte[] wrapped = AttachmentWrapper.Encode("txt", new byte[1024 * 1024]);
         BinaryPrimitives.WriteUInt32LittleEndian(wrapped.AsSpan(4), 14);
 
-        Assert.False(AttachmentWrapper.TryDecode(wrapped, out _, out _));
+        Assert.False(AttachmentWrapper.TryDecode(wrapped, out _, out _, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public sealed class AttachmentCorruptionTests
         byte[] wrapped = AttachmentWrapper.Encode("txt", [1, 2, 3]);
         wrapped[^1] ^= 1;
 
-        Assert.False(AttachmentWrapper.TryDecode(wrapped, out _, out _));
+        Assert.False(AttachmentWrapper.TryDecode(wrapped, out _, out _, cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -127,6 +127,6 @@ public sealed class AttachmentCorruptionTests
         wrapped.AsSpan(0, 8).CopyTo(malformed);
         wrapped.AsSpan(10, wrapped.Length - 14).CopyTo(malformed.AsSpan(8));
 
-        Assert.False(AttachmentWrapper.TryDecode(malformed, out _, out _));
+        Assert.False(AttachmentWrapper.TryDecode(malformed, out _, out _, cancellationToken: TestContext.Current.CancellationToken));
     }
 }

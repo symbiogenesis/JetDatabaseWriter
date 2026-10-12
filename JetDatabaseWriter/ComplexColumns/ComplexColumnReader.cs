@@ -33,7 +33,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="diagnosticsEnabled">Whether suppressed best-effort failures are traced.</param>
 /// <param name="maxAttachmentContentBytes">The maximum uncompressed attachment content size.</param>
 /// <param name="maxComplexDiscoveryEntries">The maximum aggregate metadata entries inspected during discovery.</param>
-internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536)
+/// <param name="maxAttachmentContentBytesPerOperation">The maximum aggregate attachment content length for one attachment read or table scan.</param>
+internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536, long maxAttachmentContentBytesPerOperation = 256 * 1024 * 1024)
 {
     /// <summary>The <c>MSysComplexColumns</c> columns the descriptor join reads.</summary>
     private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
@@ -194,6 +195,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         Dictionary<int, Dictionary<int, byte[]>>? result = null;
         IReadOnlyList<ComplexColumnInfo>? complexColumns = null;
         var discovery = new DiscoveryBudget(maxComplexDiscoveryEntries);
+        var attachmentContent = new AttachmentWrapper.ContentBudget(maxAttachmentContentBytesPerOperation);
 
         for (int i = 0; i < columns.Count; i++)
         {
@@ -207,7 +209,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             }
 
             complexColumns ??= await this.TryGetComplexColumnsAsync(tableName, cancellationToken).ConfigureAwait(false);
-            Dictionary<int, byte[]>? colData = await this.LoadColumnCellsAsync(tableName, col.Name, complexColumns, discovery, cancellationToken).ConfigureAwait(false);
+            Dictionary<int, byte[]>? colData = await this.LoadColumnCellsAsync(tableName, col.Name, complexColumns, discovery, attachmentContent, cancellationToken).ConfigureAwait(false);
             if (colData?.Count > 0)
             {
                 result ??= [];
@@ -227,7 +229,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     internal async ValueTask<IReadOnlyList<AttachmentRecord>> ReadAttachmentsAsync(ComplexColumnInfo column, CancellationToken cancellationToken)
     {
         FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
-        return flat == null ? [] : await this.ReadAttachmentsAsync(flat, column.ColumnName, cancellationToken).ConfigureAwait(false);
+        return flat == null ? [] : await this.ReadAttachmentsAsync(flat, column.ColumnName, new AttachmentWrapper.ContentBudget(maxAttachmentContentBytesPerOperation), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -927,6 +929,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         string columnName,
         IReadOnlyList<ComplexColumnInfo> complexColumns,
         DiscoveryBudget discovery,
+        AttachmentWrapper.ContentBudget attachmentContent,
         CancellationToken cancellationToken)
     {
         try
@@ -951,7 +954,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             if (kind == ComplexColumnKind.Attachment)
             {
                 cells = GroupCells(
-                    await this.ReadAttachmentsAsync(flat, columnName, cancellationToken).ConfigureAwait(false),
+                    await this.ReadAttachmentsAsync(flat, columnName, attachmentContent, cancellationToken).ConfigureAwait(false),
                     static attachment => attachment.ConceptualTableId,
                     ComplexCellValue.EncodeAttachments);
             }
@@ -1007,7 +1010,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         return td == null ? null : new FlatTable(tdefPage, td);
     }
 
-    private async ValueTask<IReadOnlyList<AttachmentRecord>> ReadAttachmentsAsync(FlatTable flat, string columnName, CancellationToken cancellationToken)
+    private async ValueTask<IReadOnlyList<AttachmentRecord>> ReadAttachmentsAsync(FlatTable flat, string columnName, AttachmentWrapper.ContentBudget attachmentContent, CancellationToken cancellationToken)
     {
         TableDef td = flat.Definition;
         int idxFk = FindForeignKeyIndex(td, columnName);
@@ -1024,7 +1027,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
             string fileType = ReadStringOrNull(row, idxFileType) ?? string.Empty;
             if (fileData.Length > 0)
             {
-                if (!AttachmentWrapper.TryDecode(fileData, out string wrappedType, out byte[] payload, maxAttachmentContentBytes))
+                if (!AttachmentWrapper.TryDecode(fileData, out string wrappedType, out byte[] payload, maxAttachmentContentBytes, attachmentContent, cancellationToken))
                 {
                     throw new InvalidDataException($"The attachment wrapper for complex column '{columnName}' is malformed.");
                 }

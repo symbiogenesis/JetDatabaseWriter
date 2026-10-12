@@ -327,7 +327,7 @@ internal sealed class RowDecodePlan
     private string DecodeFixedDateString(byte[] page, int start, ColumnInfo column)
     {
         object value = this.DecodeFixedDate(page, start, column);
-        return value is DateTime date ? date.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+        return value is DateTime date ? FormatDatePayload(date, column.Type) : string.Empty;
     }
 
     internal void ValidateFixedColumnSlice(ColumnInfo column, ColumnSlice slice)
@@ -635,7 +635,7 @@ internal sealed class RowDecodePlan
         {
             ColumnSliceKind.Bool => slice.BoolValue ? "True" : "False",
             ColumnSliceKind.Null or ColumnSliceKind.Empty => string.Empty,
-            ColumnSliceKind.Fixed when column.Type == DateTimeType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
+            ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDateString(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedString(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => await this.DecodeStringVariableValueAsync(
                 source,
@@ -817,7 +817,7 @@ internal sealed class RowDecodePlan
                     Reason = "The native fixed BIGBINARY slot is malformed or truncated.",
                 }),
             ColumnSliceKind.Null or ColumnSliceKind.Empty => DBNull.Value,
-            ColumnSliceKind.Fixed when column.Type == DateTimeType => this.DecodeFixedDate(page, rowStart + slice.DataStart, column),
+            ColumnSliceKind.Fixed when column.Type is DateTimeType or DateTimeExtendedType => this.DecodeFixedDate(page, rowStart + slice.DataStart, column),
             ColumnSliceKind.Fixed => JetTypeInfo.ReadFixedTyped(page, rowStart + slice.DataStart, column, slice.DataLen, this.strictParsing),
             ColumnSliceKind.Var => this.DecodeTypedVariableValue(source, page, rowStart + slice.DataStart, slice.DataLen, column, longValueDecoder, ref needsLongValue),
             _ => DBNull.Value,

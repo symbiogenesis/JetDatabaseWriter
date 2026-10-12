@@ -7,6 +7,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Interfaces;
@@ -81,9 +82,12 @@ internal static class AttachmentWrapper
     /// <param name="fileExtension">The file extension.</param>
     /// <param name="payload">The payload.</param>
     /// <param name="maxContentBytes">The maximum uncompressed content size.</param>
+    /// <param name="contentBudget">The aggregate content budget for this operation.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="JetLimitationException">The declared content exceeds the configured byte budget.</exception>
-    public static bool TryDecode(byte[] wrapped, out string fileExtension, out byte[] payload, int maxContentBytes = 64 * 1024 * 1024)
+    public static bool TryDecode(byte[] wrapped, out string fileExtension, out byte[] payload, int maxContentBytes = 64 * 1024 * 1024, ContentBudget? contentBudget = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         fileExtension = string.Empty;
         payload = wrapped ?? [];
         if (wrapped == null || wrapped.Length < WrapperHeaderSize + ContentHeaderSize)
@@ -103,6 +107,7 @@ internal static class AttachmentWrapper
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The attachment declares {dataLen} content byte(s), exceeding the configured limit {maxContentBytes}.");
         }
 
+        contentBudget?.Consume(dataLen);
         int bodyLength = wrapped.Length - WrapperHeaderSize;
         if (typeFlag == 0)
         {
@@ -120,9 +125,14 @@ internal static class AttachmentWrapper
             return false;
         }
 
-        return TryRawInflate(wrapped, WrapperHeaderSize + 2, bodyLength - 6, (int)dataLen, out byte[] content)
-            && Adler32.Compute(content) == BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4))
-            && TryParseContent(content, ref fileExtension, ref payload);
+        if (!TryRawInflate(wrapped, WrapperHeaderSize + 2, bodyLength - 6, (int)dataLen, cancellationToken, out byte[] content))
+        {
+            return false;
+        }
+
+        bool checksumMatches = Adler32.Compute(content) == BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4));
+        cancellationToken.ThrowIfCancellationRequested();
+        return checksumMatches && TryParseContent(content, ref fileExtension, ref payload);
     }
 
     /// <summary>
@@ -219,11 +229,11 @@ internal static class AttachmentWrapper
         return true;
     }
 
-    private static bool TryRawInflate(byte[] data, int offset, int length, int expectedLength, out byte[] content)
+    private static bool TryRawInflate(byte[] data, int offset, int length, int expectedLength, CancellationToken cancellationToken, out byte[] content)
     {
         try
         {
-            content = RawInflate(data, offset, length, expectedLength);
+            content = RawInflate(data, offset, length, expectedLength, cancellationToken);
             return true;
         }
         catch (InvalidDataException)
@@ -233,16 +243,30 @@ internal static class AttachmentWrapper
         }
     }
 
-    private static byte[] RawInflate(byte[] data, int offset, int length, int expectedLength)
+    private static byte[] RawInflate(byte[] data, int offset, int length, int expectedLength, CancellationToken cancellationToken)
     {
         using var input = new MemoryStream(data, offset, length);
-        using var deflate = new DeflateStream(input, CompressionMode.Decompress);
+        return Inflate(input, expectedLength, cancellationToken);
+    }
+
+    /// <summary>Inflates exactly the declared content length from a caller-owned deflate stream.</summary>
+    /// <param name="input">The compressed input.</param>
+    /// <param name="expectedLength">The declared uncompressed content length.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <returns>The uncompressed content.</returns>
+    /// <exception cref="InvalidDataException">The content length differs from its declaration.</exception>
+    internal static byte[] Inflate(Stream input, int expectedLength, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var deflate = new DeflateStream(input, CompressionMode.Decompress, leaveOpen: true);
         using var output = new MemoryStream();
         byte[] buffer = new byte[8192];
         while (output.Length < expectedLength)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int wanted = Math.Min(buffer.Length, expectedLength - checked((int)output.Length));
             int read = deflate.Read(buffer, 0, wanted);
+            cancellationToken.ThrowIfCancellationRequested();
             if (read == 0)
             {
                 throw new InvalidDataException("The attachment content is shorter than its declared length.");
@@ -251,11 +275,34 @@ internal static class AttachmentWrapper
             output.Write(buffer, 0, read);
         }
 
-        if (deflate.ReadByte() != -1)
+        cancellationToken.ThrowIfCancellationRequested();
+        int extraByte = deflate.ReadByte();
+        cancellationToken.ThrowIfCancellationRequested();
+        if (extraByte != -1)
         {
             throw new InvalidDataException("The attachment content exceeds its declared length.");
         }
 
         return output.ToArray();
+    }
+
+    /// <summary>Bounds aggregate content decoded by one attachment read or table scan.</summary>
+    /// <param name="limit">The maximum aggregate content length.</param>
+    internal sealed class ContentBudget(long limit)
+    {
+        private long remaining = limit;
+
+        /// <summary>Reserves content bytes before allocating or decompressing them.</summary>
+        /// <param name="byteCount">The declared uncompressed content length.</param>
+        /// <exception cref="JetLimitationException">The aggregate content limit is exceeded.</exception>
+        internal void Consume(uint byteCount)
+        {
+            if (byteCount > this.remaining)
+            {
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Attachment content for this read exceeds MaxAttachmentContentBytesPerOperation.");
+            }
+
+            this.remaining -= byteCount;
+        }
     }
 }
