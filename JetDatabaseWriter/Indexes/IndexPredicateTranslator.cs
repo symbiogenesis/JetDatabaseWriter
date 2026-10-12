@@ -17,13 +17,13 @@ using JetDatabaseWriter.Models;
 /// <para>
 /// Only conjuncts combined with logical AND (<c>&amp;&amp;</c>) are extracted.
 /// Each AND conjunct is a necessary condition that every matching row must
-/// satisfy, so an index seek built from any subset of them returns a
-/// <em>superset</em> of the true matches; the caller then applies the fully
-/// compiled predicate to discard the surplus. Conjuncts the translator cannot
-/// model — OR branches, method calls, computed members such as
-/// <c>o.When.Year</c>, column-to-column comparisons, and so on — are simply
-/// omitted and left to that client-side filter, so the extracted criteria are
-/// always sound.
+/// satisfy, so an index seek returns a <em>superset</em> of the true matches;
+/// the caller then applies the fully compiled predicate to discard the surplus.
+/// Comparisons are extracted in evaluation order until the first conjunct the
+/// translator cannot model — OR branches, method calls, computed members such
+/// as <c>o.When.Year</c>, column-to-column comparisons, and so on. That conjunct
+/// and every later one stay in the client-side filter: seeking a later condition
+/// could skip a row whose earlier residual condition must throw.
 /// </para>
 /// <para>
 /// Each property resolves to its column through <see cref="EntityMap"/>, the same
@@ -56,7 +56,7 @@ internal static class IndexPredicateTranslator
     };
 
     /// <summary>
-    /// Pulls the AND-combined comparisons that can be modelled as
+    /// Pulls the leading AND-combined comparisons that can be modelled as
     /// <see cref="ColumnPredicate"/> values out of <paramref name="predicate"/>.
     /// </summary>
     /// <param name="predicate">The row predicate to inspect.</param>
@@ -97,10 +97,13 @@ internal static class IndexPredicateTranslator
 
         foreach (Expression conjunct in conjuncts)
         {
-            if (TryTranslateComparison(conjunct, parameter, map!, out ColumnPredicate? model))
+            if (!TryTranslateComparison(conjunct, parameter, map!, out ColumnPredicate? model))
             {
-                criteria.Add(model);
+                // A later seek must not suppress exceptions from this residual conjunct.
+                break;
             }
+
+            criteria.Add(model);
         }
 
         return criteria;
@@ -109,7 +112,7 @@ internal static class IndexPredicateTranslator
     private static void CollectAndConjuncts(Expression expression, List<Expression> conjuncts)
     {
         Expression unwrapped = StripConvert(expression);
-        if (unwrapped is BinaryExpression { NodeType: ExpressionType.AndAlso } and)
+        if (unwrapped is BinaryExpression { NodeType: ExpressionType.AndAlso, Method: null } and)
         {
             CollectAndConjuncts(and.Left, conjuncts);
             CollectAndConjuncts(and.Right, conjuncts);
@@ -126,7 +129,7 @@ internal static class IndexPredicateTranslator
         [NotNullWhen(true)] out ColumnPredicate? predicate)
     {
         predicate = null;
-        if (expression is not BinaryExpression binary)
+        if (expression is not BinaryExpression binary || !HasNonThrowingComparisonOperator(binary))
         {
             return false;
         }
@@ -153,6 +156,18 @@ internal static class IndexPredicateTranslator
 
         return false;
     }
+
+    /// <summary>Recognizes built-in operators and nonthrowing framework comparisons.</summary>
+    /// <param name="comparison">The comparison expression.</param>
+    /// <returns>Whether the operator is safe to seek or skip before a later conjunct.</returns>
+    private static bool HasNonThrowingComparisonOperator(BinaryExpression comparison) =>
+        comparison.Method is not MethodInfo method
+        || method.DeclaringType == typeof(string)
+        || method.DeclaringType == typeof(decimal)
+        || method.DeclaringType == typeof(DateTime)
+        || method.DeclaringType == typeof(DateTimeOffset)
+        || method.DeclaringType == typeof(TimeSpan)
+        || method.DeclaringType == typeof(Guid);
 
     private static ColumnPredicate? Build(string column, ColumnPredicateOperator @operator, object? value) => @operator switch
     {

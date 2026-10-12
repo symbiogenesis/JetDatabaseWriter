@@ -112,7 +112,7 @@ public sealed class QualifiedExpressionReferenceTests
     {
         Assert.False(ColumnDefaultValue.Compile(reference + " * 3").TryEvaluate(typeof(int), () => Context("T"), out _));
         Assert.False(ColumnValidationRule.Compile(reference + " > 0", "Price").IsSupported);
-        Assert.Throws<NotSupportedException>(() => CalculatedExpressionPlan.Parse(reference + " > 0", allowQualifiedReferences: false));
+        Assert.Throws<NotSupportedException>(() => CalculatedExpressionPlan.Parse(reference + " > 0", isCalculatedColumn: false));
     }
 
     [Theory]

@@ -66,7 +66,7 @@ internal sealed class ColumnDefaultValue
 
         try
         {
-            return new ColumnDefaultValue(null, null, CalculatedExpressionPlan.Parse(text, allowQualifiedReferences: false));
+            return new ColumnDefaultValue(null, null, CalculatedExpressionPlan.Parse(text, isCalculatedColumn: false));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or FormatException)
         {

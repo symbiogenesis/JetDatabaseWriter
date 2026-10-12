@@ -9,9 +9,9 @@ using Xunit;
 /// <summary>
 /// Unit tests for <see cref="IndexPredicateTranslator"/>: confirms which AND-combined
 /// comparisons over direct column members are extracted as pushable
-/// <see cref="ColumnPredicate"/> values, and that non-seekable shapes (OR branches,
-/// computed members, column-to-column comparisons, method calls) are omitted so the
-/// residual client-side filter handles them.
+/// <see cref="ColumnPredicate"/> values until a non-seekable shape (OR branches,
+/// computed members, column-to-column comparisons, method calls) stops extraction.
+/// That shape and later conjuncts remain in the residual client-side filter.
 /// </summary>
 public sealed class IndexPredicateTranslatorTests
 {
@@ -171,6 +171,52 @@ public sealed class IndexPredicateTranslatorTests
     }
 
     [Fact]
+    public void ResidualBeforeComparison_BlocksLaterSeekCriteria()
+    {
+        Assert.Empty(Extract(r => checked((byte)r.Id) == 1 && r.Id == 1).Predicates);
+        Assert.Empty(Extract(r => r.Name.StartsWith('A') && r.Id == 1).Predicates);
+#pragma warning disable CS8629 // Nullable unwrapping must run before the later equality.
+        Assert.Empty(Extract(r => (int)r.Optional == 1 && r.Id == 1).Predicates);
+#pragma warning restore CS8629
+    }
+
+    [Fact]
+    public void CustomComparisonBeforeEquality_BlocksLaterSeekCriteria()
+    {
+        Expression<Func<int, int, bool>> comparison = (left, right) => ThrowingComparison(left, right);
+        ParameterExpression parameter = Expression.Parameter(typeof(Row), "r");
+        MemberExpression id = Expression.Property(parameter, nameof(Row.Id));
+        BinaryExpression first = Expression.Equal(id, Expression.Constant(1), liftToNull: false, ((MethodCallExpression)comparison.Body).Method);
+        var predicate = Expression.Lambda<Func<Row, bool>>(
+            Expression.AndAlso(first, Expression.Equal(id, Expression.Constant(1))), parameter);
+
+        Assert.Empty(Extract(predicate).Predicates);
+    }
+
+    [Fact]
+    public void ResidualBetweenComparisons_KeepsOnlyLeadingSeekCriteria()
+    {
+#pragma warning disable IDE0047 // Keep a right-nested AND to exercise evaluation-order flattening.
+        RowCriteria criteria = Extract(r => r.Score >= 0 && (checked((byte)r.Id) == 1 && r.Id == 1));
+#pragma warning restore IDE0047
+
+        ColumnPredicate predicate = Assert.Single(criteria.Predicates);
+        Assert.Equal("Score", predicate.ColumnName);
+        Assert.Equal(ColumnPredicateOperator.GreaterThanOrEqual, predicate.Operator);
+        Assert.Equal(0, predicate.Operand);
+    }
+
+    [Fact]
+    public void ResidualAfterComparison_KeepsLeadingSeekCriteria()
+    {
+        RowCriteria criteria = Extract(r => r.Id == 1 && checked((byte)r.Id) == 1);
+
+        ColumnPredicate predicate = Assert.Single(criteria.Predicates);
+        Assert.Equal("Id", predicate.ColumnName);
+        Assert.Equal(1, predicate.Operand);
+    }
+
+    [Fact]
     public void Between_ViaTwoComparisons_PushesBothBounds()
     {
         DateTime start = new(2024, 1, 1);
@@ -184,6 +230,8 @@ public sealed class IndexPredicateTranslatorTests
         Assert.Equal(ColumnPredicateOperator.LessThanOrEqual, criteria.Predicates[1].Operator);
         Assert.Equal(end, criteria.Predicates[1].Operand);
     }
+
+    private static bool ThrowingComparison(int left, int right) => throw new InvalidOperationException($"Comparison: {left}, {right}.");
 
     private static void AssertSameCriteria(Expression<Func<Row, bool>> literal, Expression<Func<Row, bool>> captured)
     {

@@ -294,6 +294,19 @@ internal sealed class RowDecodePlan
             ? DateTime.FromOADate(JetTypeInfo.ReadDoubleLittleEndian(payload[..8]))
             : JetTypeInfo.ReadDateTimeExtended(payload, 0, payload.Length);
 
+    private static void ValidateComplexReference(byte[] page, int start, int length)
+    {
+        if (length != JetTypeInfo.GetFixedSize(ComplexType))
+        {
+            throw new ArgumentException("A Complex reference slot must contain exactly four bytes.", nameof(length));
+        }
+
+        if (JetTypeInfo.Ri32(page, start) <= 0)
+        {
+            throw new ArgumentException("An assigned Complex reference must be positive.", nameof(page));
+        }
+    }
+
     private static string FormatDatePayload(DateTime date, ColumnType type)
         => date.ToString(type == DateTimeType ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss.fffffff", System.Globalization.CultureInfo.InvariantCulture);
 
@@ -701,6 +714,11 @@ internal sealed class RowDecodePlan
 
         try
         {
+            if (column.Type == ComplexType)
+            {
+                ValidateComplexReference(page, start, length);
+            }
+
             if (column.Type is DateTimeType or DateTimeExtendedType)
             {
                 return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing)
@@ -870,6 +888,11 @@ internal sealed class RowDecodePlan
 
         try
         {
+            if (column.Type == ComplexType)
+            {
+                ValidateComplexReference(page, start, length);
+            }
+
             if (column.Type is DateTimeType or DateTimeExtendedType)
             {
                 return RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes)

@@ -15,8 +15,8 @@ internal sealed class FilterStage(LambdaExpression predicate) : QueryStage
 
     /// <summary>
     /// AND-combines a leading run of filter predicates into one typed predicate so the
-    /// reader's index inference can push it as a seek instead of scanning. Filters commute,
-    /// so combining the leading run preserves LINQ ordering semantics.
+    /// reader's index inference can push its safe leading conditions as a seek. Combining
+    /// in written order with short-circuit AND preserves each filter's evaluation order.
     /// </summary>
     /// <typeparam name="T">The entity type the predicates filter.</typeparam>
     /// <param name="filters">The leading run of filter stages, in written order.</param>

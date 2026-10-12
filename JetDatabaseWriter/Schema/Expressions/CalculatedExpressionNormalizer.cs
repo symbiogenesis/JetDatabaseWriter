@@ -24,15 +24,19 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 internal static class CalculatedExpressionNormalizer
 {
     internal static string Normalize(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable)
+        => Normalize(expression, out placeholderToColumn, out placeholderToTable, out _);
+
+    internal static string Normalize(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions)
     {
-        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn, out placeholderToTable);
+        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn, out placeholderToTable, out functions);
         return AccessExpressionNormalizer.Normalize(prepared, expression);
     }
 
-    private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable)
+    private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions)
     {
         placeholderToColumn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         placeholderToTable = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        functions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string trimmed = expression.Trim();
         if (trimmed.StartsWith('='))
         {
@@ -97,6 +101,22 @@ internal static class CalculatedExpressionNormalizer
 
                 if (table is null && !bracketed)
                 {
+                    int next = end;
+                    if (next < trimmed.Length && trimmed[next] == '$')
+                    {
+                        next++;
+                    }
+
+                    while (next < trimmed.Length && char.IsWhiteSpace(trimmed[next]))
+                    {
+                        next++;
+                    }
+
+                    if (next < trimmed.Length && trimmed[next] == '(')
+                    {
+                        functions.Add(first);
+                    }
+
                     builder.Append(first);
                 }
                 else

@@ -376,10 +376,15 @@ Delivered:
   - It then adds the arguments up as an OLE date serial. So
     `TimeSerial(25, 0, 0)` is 12/31/1899 1:00 AM, and `TimeSerial(-1, 0, 0)`
     is -0.0417, which OLE reads as 1:00 AM on day 0.
-- Conversions follow OLE Automation's `VariantChangeType`, which VBA uses
-  (measured with oleaut32 on Windows; Access itself was not checked): a
-  Boolean is 255 or 0 in a Byte result column and in `CByte`, and a number or
-  Boolean is a date serial (days since 1899-12-30, so `True` is 1899-12-29) in
+- The evaluator's conversions currently follow OLE Automation's
+  `VariantChangeType`, which VBA uses (measured with oleaut32 on Windows): a
+  Boolean becomes 255 or 0 in its Byte result coercion and in `CByte`. DAO120
+  instead exposes a null/missing result for True and 0 for False from a Byte calculated field
+  whose expression is `[Flag]`. DAO120 also refuses an explicit calculated
+  `CByte([Flag])`. The native COM result is null rather than `DBNull`, so
+  calculation-error/missing-result semantics remain unverified. Native conversion remains
+  an open discrepancy under R4. A number or Boolean is a date serial (days
+  since 1899-12-30, so `True` is 1899-12-29) in
   a Date result column, `CDate` and the date functions. `CByte(-1)` and
   `CByte(256)` overflow. `IsDate` is True only for a date or text that parses
   as one, so `IsDate(5)` is False as in VBA.
@@ -447,7 +452,7 @@ Supported subset:
   `Weekday`, `WeekdayName`, `CInt`, `CLng`, `CDbl`, `CSng`, `CCur`/`CDec`,
   `CStr`, `CDate`/`CVDate`, `CBool`, `CByte`, `CVar`, `VarType`, `TypeName`,
   `Hex`, `Oct`, `Val`, common financial helpers (`FV`, `PV`, `Pmt`, `NPer`,
-  `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose`, `Switch`, and `Partition`.
+  `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose` and `Switch`. `Partition` is supported for stored rules and defaults; table calculated columns refuse it before mutation, matching DAO120.
 
 Still intentionally out of scope: domain aggregate functions (`DLookup`,
 `DCount`, `DSum`, `DAvg`, `DMin`, `DMax`) because DAO/Access rejects them in
@@ -478,8 +483,13 @@ every Access-authored fixture expression against the values Access cached.
   `DaoTextCollationTests` case verifies a native table validation rule, selected
   formatting boundaries and DAO write/compact after a writer update. Library
   regressions cover persisted rules on Jet3/Jet4/ACE, int32 bounds, coercion and
-  byte-preserving rejected writes. Native table calculated-column acceptance
-  still needs real fixture evidence; specialized functions remain separate work.
+  byte-preserving rejected writes. DAO120 refuses direct, case-insensitive and
+  nested `Partition` calls when appending a table calculated field, with error
+  3859 and no added field; an adjacent supported calculation still succeeds.
+  `PartitionCalculatedColumnTests` matches that refusal for create/add and
+  for recalculating a synthetically persisted expression, preserving bytes.
+  Field names and string literals containing `Partition` remain valid.
+  Specialized functions remain separate work.
 
 ## Why phased
 

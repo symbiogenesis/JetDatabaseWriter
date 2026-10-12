@@ -21,12 +21,12 @@ internal sealed class CalculatedExpressionPlan
 
     public Dictionary<string, string> PlaceholderToTable { get; }
 
-    public static CalculatedExpressionPlan Parse(string expression, bool allowQualifiedReferences = true)
+    public static CalculatedExpressionPlan Parse(string expression, bool isCalculatedColumn = true)
     {
         ValidateExpressionShape(expression, MaxExpressionLength, "Calculated-column expression");
-        string normalized = CalculatedExpressionNormalizer.Normalize(expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable);
+        string normalized = CalculatedExpressionNormalizer.Normalize(expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions);
         ValidateExpressionShape(normalized, MaxNormalizedExpressionLength, "Normalized calculated-column expression");
-        if (!allowQualifiedReferences && placeholderToTable.Count != 0)
+        if (!isCalculatedColumn && placeholderToTable.Count != 0)
         {
             throw new NotSupportedException("Access table and field rules and defaults do not accept table-qualified field references.");
         }
@@ -37,6 +37,11 @@ internal sealed class CalculatedExpressionPlan
                 normalized,
                 placeholderToColumn,
                 CalculatedExpressionAstFactory.Instance);
+            if (isCalculatedColumn && functions.Contains("Partition"))
+            {
+                throw new NotSupportedException("Access table calculated columns do not accept the Partition function.");
+            }
+
             return new CalculatedExpressionPlan(root, placeholderToColumn, placeholderToTable);
         }
         catch (ParsingException ex)

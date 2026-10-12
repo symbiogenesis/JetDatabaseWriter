@@ -66,7 +66,8 @@ public sealed class CalculatedExpressionPartitionTests
             new() { Name = "Calc", ClrType = typeof(string), IsCalculated = true, CalculationExpression = expression },
         };
         object[] values = [DBNull.Value];
-        CalculatedExpressionEvaluator.Apply(table, constraints, values, force: false);
-        return values[0];
+        var context = new CalculatedExpressionEvaluationContext(table, constraints, values, force: false);
+        var plan = CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false);
+        return plan.Root.Evaluate(context, plan);
     }
 }

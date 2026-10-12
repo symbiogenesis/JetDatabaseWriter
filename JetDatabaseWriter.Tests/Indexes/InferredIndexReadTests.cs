@@ -155,6 +155,49 @@ public sealed class InferredIndexReadTests
             await reader.Query<Person>("People").Where(predicate).ToListAsync(TestContext.Current.CancellationToken));
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task CheckedNarrowingBeforeSeekComparison_PreservesScanOverflow(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await BuildPeopleDatabaseAsync(format);
+        await AddWrappingIdsAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Expression<Func<Person, bool>> predicate = p => checked((byte)p.Id) == 1 && p.Id == 1;
+#pragma warning disable IDE0047 // Keep a right-nested AND to exercise evaluation-order flattening.
+        Expression<Func<Person, bool>> nested = p => p.Score >= 0 && (checked((byte)p.Id) == 1 && p.Id == 1);
+#pragma warning restore IDE0047
+
+        foreach (Expression<Func<Person, bool>> filter in new[] { predicate, nested })
+        {
+            await Assert.ThrowsAsync<OverflowException>(async () => await ReadIdsAsync(reader, filter));
+            await Assert.ThrowsAsync<OverflowException>(async () =>
+                await reader.Query<Person>("People").Where(filter).ToListAsync(TestContext.Current.CancellationToken));
+        }
+
+        await Assert.ThrowsAsync<OverflowException>(async () =>
+            await reader.Query<Person>("People").Where(p => checked((byte)p.Id) == 1).Where(p => p.Id == 1)
+                .ToListAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    public async Task SeekComparisonBeforeCheckedNarrowing_PreservesShortCircuit(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await BuildPeopleDatabaseAsync(format);
+        await AddWrappingIdsAsync(stream);
+        await using AccessReader reader = await OpenReaderAsync(stream);
+        Expression<Func<Person, bool>> predicate = p => p.Id == 1 && checked((byte)p.Id) == 1;
+
+        int[] ids = await ReadIdsAsync(reader, predicate);
+        Assert.Equal([1], ids);
+        Person person = Assert.Single(await reader.Query<Person>("People").Where(predicate).ToListAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1, person.Id);
+    }
+
     private static async Task AddWrappingIdsAsync(MemoryStream stream)
     {
         stream.Position = 0;
