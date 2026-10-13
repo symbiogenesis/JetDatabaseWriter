@@ -102,7 +102,7 @@ internal sealed class IndexMaintainer(
         CancellationToken cancellationToken = default)
     {
         this.LastSystemTableIndexMaintenancePath = SystemTableIndexMaintenancePath.None;
-        RowLocation loc = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken).ConfigureAwait(false);
+        RowLocation loc = await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, values, updateTDefRowCount, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var hint = new List<(RowLocation Loc, object[] Row)>(1) { (loc, values) };
         this.LastSystemTableIndexMaintenancePath = await this.MaintainSystemTableIndexesIncrementallyAsync(
@@ -165,7 +165,7 @@ internal sealed class IndexMaintainer(
         foreach (object[] row in rows)
         {
             object[] rowValues = (object[])row.Clone();
-            await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken).ConfigureAwait(false);
+            await tableRows.InsertRowDataLocAsync(tdefPage, tableDef, rowValues, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         await tableRows.SetTDefRowCountAsync(tdefPage, checked((uint)rows.Count), cancellationToken).ConfigureAwait(false);
@@ -793,7 +793,9 @@ internal sealed class IndexMaintainer(
     /// a cascade from a related table, <c>CreateRelationshipAsync</c>, and a
     /// complex item added to a row whose complex slot is null. It runs the
     /// same resolver as <see cref="RebuildIndexesAsync"/>, which throws the
-    /// same exception.
+    /// same exception. For <c>MSysObjects</c>, it also proves that every
+    /// reachable catalog index leaf has a complete payload and matching
+    /// end sentinel, before a temporary table can be inserted.
     /// </summary>
     /// <param name="tdefPage">The table's first TDEF page.</param>
     /// <param name="tableDef">The table's definition.</param>
@@ -801,8 +803,34 @@ internal sealed class IndexMaintainer(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the check has passed.</returns>
     /// <exception cref="JetLimitationException">The index section cannot be parsed or runs past the end of the table definition, or an index names a column the table does not have; the message names the table, and the index when its name can be read.</exception>
+    /// <exception cref="JetCorruptDataException">A catalog index page is malformed; the error identifies the catalog and page.</exception>
     internal async ValueTask ThrowIfIndexesUnmaintainableAsync(long tdefPage, TableDef tableDef, string tableName, CancellationToken cancellationToken)
-        => _ = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+    {
+        (TdefPreamble preamble, IndexCatalogReader.ResolvedIndexCatalog? catalog) = await this.ResolveMaintainableIndexesAsync(tdefPage, tableDef, tableName, cancellationToken).ConfigureAwait(false);
+        if (tdefPage == 2 && catalog is not null)
+        {
+            await this.ValidateCatalogIndexPagesAsync(tdefPage, preamble, catalog, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static List<IndexEntry> DecodeRequiredCatalogLeaf(long pageNumber, byte[] page, JetFormat profile)
+    {
+        if (!IndexPageCodec.TryDecodeLeafEntries(profile.IndexPage, page, profile.PageSize, out List<IndexEntry> entries))
+        {
+            throw CreateCorruptCatalogIndexException(pageNumber, indexName: null, "The leaf payload cannot be decoded completely.");
+        }
+
+        return entries;
+    }
+
+    private static JetCorruptDataException CreateCorruptCatalogIndexException(long pageNumber, string? indexName, string reason)
+        => new(JetErrorCode.CorruptIndex, $"The MSysObjects catalog index is corrupt at page {pageNumber}.", new JetErrorInfo
+        {
+            TableName = Constants.SystemTableNames.Objects,
+            IndexName = indexName,
+            PageNumber = pageNumber,
+            Reason = reason,
+        });
 
     private static long[][] CreateEmptyPageGroups(int numRealIdx)
     {
@@ -845,6 +873,69 @@ internal sealed class IndexMaintainer(
         }
 
         return true;
+    }
+
+    private async ValueTask ValidateCatalogIndexPagesAsync(long tdefPage, TdefPreamble preamble, IndexCatalogReader.ResolvedIndexCatalog catalog, CancellationToken cancellationToken)
+    {
+        foreach ((int indexNumber, RealIdxEntry index) in catalog.RealIdxByNum)
+        {
+            long root = (uint)Ri32(preamble.Buffer, index.FirstDpOffset);
+            var pending = new Stack<long>();
+            var seen = new HashSet<long>();
+            pending.Push(root);
+            while (pending.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                long pageNumber = pending.Pop();
+                if (pageNumber <= 2 || pageNumber >= pager.PageCount)
+                {
+                    throw CreateCorruptCatalogIndexException(pageNumber, catalog.Catalog.GetNameOrFallback(indexNumber), "An index pointer lies outside the database.");
+                }
+
+                if (!seen.Add(pageNumber))
+                {
+                    continue;
+                }
+
+                byte[] page = await this.ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                if (Ri32(page, 4) != tdefPage)
+                {
+                    throw CreateCorruptCatalogIndexException(pageNumber, catalog.Catalog.GetNameOrFallback(indexNumber), "The index page belongs to another table.");
+                }
+
+                if (IndexPageCodec.IsLeaf(page))
+                {
+                    _ = DecodeRequiredCatalogLeaf(pageNumber, page, format);
+                    long next = IndexPageCodec.ReadNextPage(format.IndexPage, page);
+                    if (next != 0)
+                    {
+                        pending.Push(next);
+                    }
+                }
+                else if (IndexPageCodec.TryDecodeIntermediateEntries(format.IndexPage, page, format.PageSize, out List<DecodedIntermediateEntry> entries))
+                {
+                    foreach (DecodedIntermediateEntry entry in entries)
+                    {
+                        pending.Push(entry.ChildPage);
+                    }
+
+                    long tail = IndexPageCodec.ReadTailPage(format.IndexPage, page);
+                    if (tail != 0)
+                    {
+                        pending.Push(tail);
+                    }
+
+                    if (entries.Count == 0 && tail == 0)
+                    {
+                        throw CreateCorruptCatalogIndexException(pageNumber, catalog.Catalog.GetNameOrFallback(indexNumber), "An intermediate index page has no children.");
+                    }
+                }
+                else
+                {
+                    throw CreateCorruptCatalogIndexException(pageNumber, catalog.Catalog.GetNameOrFallback(indexNumber), "The index page payload cannot be decoded completely.");
+                }
+            }
+        }
     }
 
     private async ValueTask<long[][]?> ReadIndexPageGroupsFromUsageMapAsync(
@@ -1327,6 +1418,10 @@ internal sealed class IndexMaintainer(
         CancellationToken cancellationToken)
     {
         this.LastIncrementalBail = null;
+        if (tdefPage == 2)
+        {
+            await this.ThrowIfIndexesUnmaintainableAsync(tdefPage, tableDef, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        }
 
         int addCount = insertedRows?.Count ?? 0;
         int delCount = deletedRows?.Count ?? 0;
@@ -1348,6 +1443,38 @@ internal sealed class IndexMaintainer(
                 insertedRows,
                 deletedRows,
                 runs,
+                preserveStoredKeys: false,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!runs.IsEmpty)
+            {
+                await runs.ReleaseAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>Moves a catalog row's index pointers while preserving its unchanged native keys.</summary>
+    /// <param name="tableDef">The catalog definition.</param>
+    /// <param name="original">The original row.</param>
+    /// <param name="replacement">The replacement row at its new location.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether every catalog index was maintained.</returns>
+    internal async ValueTask<bool> TryRelocateCatalogRowAsync(TableDef tableDef, LocatedRow original, LocatedRow replacement, CancellationToken cancellationToken)
+    {
+        this.LastIncrementalBail = null;
+        await this.ThrowIfIndexesUnmaintainableAsync(2, tableDef, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        var runs = new ReservedPageRuns(pageAllocator);
+        try
+        {
+            return await this.TryMaintainIndexesIncrementalCoreAsync(
+                2,
+                tableDef,
+                [(replacement.Location, replacement.Values)],
+                [(original.Location, original.Values)],
+                runs,
+                preserveStoredKeys: true,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -1370,6 +1497,7 @@ internal sealed class IndexMaintainer(
     /// <param name="insertedRows">The inserted rows.</param>
     /// <param name="deletedRows">The deleted rows.</param>
     /// <param name="runs">The reserved runs not yet linked through the TDEF.</param>
+    /// <param name="preserveStoredKeys">Whether only one unchanged catalog row pointer moves.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<bool> TryMaintainIndexesIncrementalCoreAsync(
         long tdefPage,
@@ -1377,6 +1505,7 @@ internal sealed class IndexMaintainer(
         List<(RowLocation Loc, object[] Row)>? insertedRows,
         List<(RowLocation Loc, object[] Row)>? deletedRows,
         ReservedPageRuns runs,
+        bool preserveStoredKeys,
         CancellationToken cancellationToken)
     {
         // Jet3 (.mdb Access 97) participates in the
@@ -1496,6 +1625,71 @@ internal sealed class IndexMaintainer(
             }
 
             byte[] rootPage = await this.ReadAndClonePageAsync(firstDp, cancellationToken).ConfigureAwait(false);
+
+            if (preserveStoredKeys)
+            {
+                foreach (KeyColumnInfo key in keyColInfos)
+                {
+                    if (!Equals(deletedRows![0].Row[key.SnapIdx], insertedRows![0].Row[key.SnapIdx]))
+                    {
+                        this.LastIncrementalBail = "A preserved catalog index value was assigned.";
+                        return false;
+                    }
+                }
+
+                List<IndexEntry> stored = await this.ReadStoredIndexEntriesAsync(layout, firstDp, rootPage, cancellationToken).ConfigureAwait(false);
+                for (int entryIndex = 1; entryIndex < stored.Count; entryIndex++)
+                {
+                    if (IndexPageCodec.CompareKeyBytes(stored[entryIndex - 1].Key, stored[entryIndex].Key) >= 0)
+                    {
+                        this.LastIncrementalBail = "Preserved native catalog keys must be unique and ordered.";
+                        return false;
+                    }
+                }
+
+                RowLocation oldLocation = deletedRows![0].Loc;
+                RowLocation newLocation = insertedRows![0].Loc;
+                int match = stored.FindIndex(candidate => candidate.DataPage == oldLocation.PageNumber && candidate.DataRow == oldLocation.RowIndex);
+                if (match < 0)
+                {
+                    if (rie.IgnoreNulls && IndexHelpers.CountNullKeyColumns(keyColInfos, deletedRows[0].Row) == keyColInfos.Count)
+                    {
+                        continue;
+                    }
+
+                    this.LastIncrementalBail = "The original catalog row has no stored index entry.";
+                    return false;
+                }
+
+                if (stored.FindIndex(match + 1, candidate => candidate.DataPage == oldLocation.PageNumber && candidate.DataRow == oldLocation.RowIndex) >= 0)
+                {
+                    this.LastIncrementalBail = "The original catalog row has duplicate stored index entries.";
+                    return false;
+                }
+
+                stored[match] = stored[match] with { DataPage = newLocation.PageNumber, DataRow = checked((byte)newLocation.RowIndex) };
+                byte[]? relocatedLeaf = IndexPageCodec.IsSingleRootLeaf(layout, rootPage)
+                    ? IndexPageCodec.TryBuildLeafPage(layout, format.PageSize, tdefPage, stored)
+                    : null;
+                if (relocatedLeaf is not null)
+                {
+                    await pager.WritePageAsync(firstDp, relocatedLeaf, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    IndexBTreeBuildResult? relocated = await this.btreeEditor.TryPlaceTreeAsync(layout, tdefPage, stored, runs, cancellationToken).ConfigureAwait(false);
+                    if (relocated is not { } tree)
+                    {
+                        this.LastIncrementalBail = "The preserved catalog index tree could not be rebuilt.";
+                        return false;
+                    }
+
+                    Wi32(metadata.Buffer, rie.FirstDpOffset, checked((int)tree.RootPageNumber));
+                    metadata.Dirty = true;
+                }
+
+                continue;
+            }
 
             // Encode the change-set keys for this index. Used by both the
             // single-leaf splice and the multi-level rebuild path below.
@@ -1652,7 +1846,7 @@ internal sealed class IndexMaintainer(
                         return false;
                     }
 
-                    allExisting.AddRange(IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize));
+                    allExisting.AddRange(tdefPage == 2 ? DecodeRequiredCatalogLeaf(walkPage, leaf, format) : IndexPageCodec.DecodeLeafEntries(layout, leaf, format.PageSize));
                     walkPage = IndexPageCodec.ReadNextPage(layout, leaf);
                 }
 
@@ -1681,7 +1875,7 @@ internal sealed class IndexMaintainer(
                 continue;
             }
 
-            List<IndexEntry> existing = IndexPageCodec.DecodeLeafEntries(layout, rootPage, format.PageSize);
+            List<IndexEntry> existing = tdefPage == 2 ? DecodeRequiredCatalogLeaf(firstDp, rootPage, format) : IndexPageCodec.DecodeLeafEntries(layout, rootPage, format.PageSize);
             List<IndexEntry>? spliced = IndexEntrySplicer.Splice(existing, addEntries, removePtrs);
             if (spliced is null)
             {
@@ -1714,6 +1908,37 @@ internal sealed class IndexMaintainer(
         }
 
         return await this.CommitIncrementalMetadataAsync(tdefPage, layout, slots, numRealIdx, metadata, runs, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<List<IndexEntry>> ReadStoredIndexEntriesAsync(IndexPageLayout layout, long root, byte[] rootPage, CancellationToken cancellationToken)
+    {
+        if (IndexPageCodec.IsSingleRootLeaf(layout, rootPage))
+        {
+            return DecodeRequiredCatalogLeaf(root, rootPage, format);
+        }
+
+        long pageNumber = await this.btreeEditor.DescendToLeftmostLeafAsync(layout, root, cancellationToken).ConfigureAwait(false);
+        var seen = new HashSet<long>();
+        var entries = new List<IndexEntry>();
+        while (pageNumber > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pageNumber >= pager.PageCount || !seen.Add(pageNumber))
+            {
+                throw new JetCorruptDataException("The preserved catalog index contains an invalid leaf chain.");
+            }
+
+            byte[] leaf = await this.ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
+            {
+                throw new JetCorruptDataException("The preserved catalog index chain contains a non-leaf page.");
+            }
+
+            entries.AddRange(DecodeRequiredCatalogLeaf(pageNumber, leaf, format));
+            pageNumber = IndexPageCodec.ReadNextPage(layout, leaf);
+        }
+
+        return entries;
     }
 
     /// <summary>
@@ -1925,6 +2150,8 @@ internal sealed class IndexMaintainer(
             format.Index,
             format.Index.GetIndexSection(realIdxDescStart, numRealIdx, numIdx),
             tableDef.Columns);
+
+        await this.ValidateCatalogIndexPagesAsync(tdefPage, preamble, catalog, cancellationToken).ConfigureAwait(false);
 
         foreach ((int ri, RealIdxEntry rie) in catalog.RealIdxByNum)
         {

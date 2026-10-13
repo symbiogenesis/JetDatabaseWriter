@@ -613,52 +613,22 @@ internal static class IndexPageCodec
         byte[] page,
         int pageSize)
     {
-        var result = new List<IndexEntry>();
-        if (!TryGetPayloadEnd(layout, page, pageSize, out int payloadEnd)
-            || payloadEnd <= layout.FirstEntryOffset)
-        {
-            return result;
-        }
-
-        int prefixLength = ReadPrefixLength(layout, page);
-        byte[]? sharedPrefix = null;
-        int entryStart = layout.FirstEntryOffset;
-        bool isFirstEntry = true;
-        while (entryStart < payloadEnd)
-        {
-            int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
-            int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
-            int storedLength = entryEnd - entryStart;
-            byte[] fullEntry = DecodeCanonicalKey(page, entryStart, storedLength, prefixLength, sharedPrefix, isFirstEntry);
-            if (fullEntry.Length < LeafTrailerSize || (isFirstEntry && prefixLength > fullEntry.Length))
-            {
-                break;
-            }
-
-            if (isFirstEntry && prefixLength > 0)
-            {
-                sharedPrefix = new byte[prefixLength];
-                Buffer.BlockCopy(fullEntry, 0, sharedPrefix, 0, prefixLength);
-            }
-
-            int keyLength = fullEntry.Length - LeafTrailerSize;
-            byte[] canonicalKey = new byte[keyLength];
-            Buffer.BlockCopy(fullEntry, 0, canonicalKey, 0, keyLength);
-            long dataPage = ReadUInt24BigEndian(fullEntry.AsSpan(keyLength, 3));
-            byte dataRow = fullEntry[keyLength + 3];
-            result.Add(new IndexEntry(canonicalKey, dataPage, dataRow));
-
-            isFirstEntry = false;
-            if (nextEntryStart < 0)
-            {
-                break;
-            }
-
-            entryStart = nextEntryStart;
-        }
-
+        _ = TryDecodeLeafEntriesCore(layout, page, pageSize, strict: false, out List<IndexEntry> result);
         return result;
     }
+
+    /// <summary>Decodes leaf entries only when the entire payload is valid.</summary>
+    /// <param name="layout">The page layout.</param>
+    /// <param name="page">The page bytes.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="result">The decoded entries, possibly partial on failure.</param>
+    /// <returns>Whether every entry in the payload was decoded.</returns>
+    public static bool TryDecodeLeafEntries(
+        IndexPageLayout layout,
+        byte[] page,
+        int pageSize,
+        out List<IndexEntry> result)
+        => TryDecodeLeafEntriesCore(layout, page, pageSize, strict: true, out result);
 
     /// <summary>
     /// Decodes intermediate entries into canonical summary key, row pointer,
@@ -1298,6 +1268,90 @@ internal static class IndexPageCodec
         }
 
         return Math.Min(prefixLength, 0xFFFF);
+    }
+
+    private static bool TryDecodeLeafEntriesCore(
+        IndexPageLayout layout,
+        byte[] page,
+        int pageSize,
+        bool strict,
+        out List<IndexEntry> result)
+    {
+        result = [];
+        if ((strict && !IsLeaf(page))
+            || !TryGetPayloadEnd(layout, page, pageSize, out int payloadEnd)
+            || (strict && !HasExactLeafPayloadBoundary(layout, page, payloadEnd)))
+        {
+            return false;
+        }
+
+        int prefixLength = ReadPrefixLength(layout, page);
+        if (payloadEnd == layout.FirstEntryOffset)
+        {
+            return !strict || prefixLength == 0;
+        }
+
+        byte[]? sharedPrefix = null;
+        int entryStart = layout.FirstEntryOffset;
+        bool isFirstEntry = true;
+        while (entryStart < payloadEnd)
+        {
+            int nextEntryStart = NextEntryStart(layout, page, payloadEnd, entryStart);
+            int entryEnd = nextEntryStart < 0 ? payloadEnd : nextEntryStart;
+            int storedLength = entryEnd - entryStart;
+            byte[] fullEntry = DecodeCanonicalKey(page, entryStart, storedLength, prefixLength, sharedPrefix, isFirstEntry);
+            if (fullEntry.Length < LeafTrailerSize || (isFirstEntry && prefixLength > fullEntry.Length))
+            {
+                return false;
+            }
+
+            if (isFirstEntry && prefixLength > 0)
+            {
+                sharedPrefix = new byte[prefixLength];
+                Buffer.BlockCopy(fullEntry, 0, sharedPrefix, 0, prefixLength);
+            }
+
+            int keyLength = fullEntry.Length - LeafTrailerSize;
+            byte[] canonicalKey = new byte[keyLength];
+            Buffer.BlockCopy(fullEntry, 0, canonicalKey, 0, keyLength);
+            long dataPage = ReadUInt24BigEndian(fullEntry.AsSpan(keyLength, 3));
+            byte dataRow = fullEntry[keyLength + 3];
+            result.Add(new IndexEntry(canonicalKey, dataPage, dataRow));
+
+            isFirstEntry = false;
+            if (nextEntryStart < 0)
+            {
+                break;
+            }
+
+            entryStart = nextEntryStart;
+        }
+
+        return true;
+    }
+
+    private static bool HasExactLeafPayloadBoundary(IndexPageLayout layout, byte[] page, int payloadEnd)
+    {
+        int payloadLength = payloadEnd - layout.FirstEntryOffset;
+        int bitmapLength = (layout.FirstEntryOffset - layout.BitmaskOffset) * 8;
+        if (payloadLength < 0 || payloadLength >= bitmapLength)
+        {
+            return false;
+        }
+
+        // The first entry is implicit. Only a non-empty payload has an end sentinel.
+        for (int bit = 0; bit < bitmapLength; bit++)
+        {
+            bool isSet = (page[layout.BitmaskOffset + (bit / 8)] & (1 << (bit % 8))) != 0;
+            if ((bit == 0 && isSet)
+                || (bit > payloadLength && isSet)
+                || (bit == payloadLength && isSet != (payloadLength > 0)))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool TryGetPayloadEnd(

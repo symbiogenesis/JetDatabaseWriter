@@ -15,8 +15,8 @@ using Xunit;
 
 /// <summary>
 /// Pins <see cref="CatalogOwnedMapPolicy"/>, which decides whose owned-page
-/// usage maps the writer may extend when it appends a data page: local Jet4/ACE
-/// user and system tables, with decisions cached by TDEF page; never on Jet3.
+/// usage maps the writer may extend when it appends a data page: local user tables,
+/// MSysObjects and Jet4/ACE system tables, with decisions cached by TDEF page.
 /// The fixed MSysObjects root needs no scan or cached decision, and a table
 /// that a rolled-back transaction created is forgotten.
 /// </summary>
@@ -27,12 +27,11 @@ public sealed class OwnedMapPolicyTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     /// <summary>
-    /// On Jet3 the writer extends no table's owned-page map, neither one it
-    /// created, even once registered, nor one Access wrote, and it decides so
-    /// without reading a page.
+    /// Native and writer-created Jet3 user maps remain writable after reopen,
+    /// while other imported system maps remain outside this policy.
     /// </summary>
     [Fact]
-    public async Task Jet3_NeverMaintainsAnOwnedMap()
+    public async Task Jet3_UserAndObjectCatalogMapsAreWritableAfterReopen()
     {
         await using (MemoryStream created = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb))
         await using (var counting = new CountingStream(created))
@@ -42,10 +41,12 @@ public sealed class OwnedMapPolicyTests
             long tdefPage = await TDefPageOfAsync(harness, TableName);
 
             counting.Reset();
-            Assert.False(await policy.CanMaintainAsync(tdefPage, Ct));
+            Assert.True(await policy.CanMaintainAsync(tdefPage, Ct));
+            counting.Reset();
             policy.RegisterWritable(tdefPage);
-            Assert.False(await policy.CanMaintainAsync(tdefPage, Ct));
-            Assert.True(counting.BytesRead == 0, "The Jet3 answer read pages.");
+            Assert.True(await policy.CanMaintainAsync(tdefPage, Ct));
+            Assert.True(await policy.CanMaintainAsync(2, Ct));
+            Assert.True(counting.BytesRead == 0, "A cached Jet3 answer read pages.");
         }
 
         await using var fixture = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.Jet3Test, Ct));
@@ -54,7 +55,7 @@ public sealed class OwnedMapPolicyTests
         Assert.NotEmpty(tables);
         foreach (CatalogEntry table in tables)
         {
-            Assert.False(await accessAuthored.Services.OwnedMaps.CanMaintainAsync(table.TDefPage, Ct));
+            Assert.True(await accessAuthored.Services.OwnedMaps.CanMaintainAsync(table.TDefPage, Ct));
         }
     }
 

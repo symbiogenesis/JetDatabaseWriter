@@ -272,8 +272,8 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         page[0] = Constants.PageTypes.Data;
         page[1] = 0x01;
 
-        int row0Off = format.PageSize - Constants.UsageMap.RowSize;
-        int row1Off = row0Off - Constants.UsageMap.RowSize;
+        int row0Off = format.PageSize - format.UsageMapRowSize;
+        int row1Off = row0Off - format.UsageMapRowSize;
 
         Wi32(page, format.DataPage.TDefOff, 0);
         Wu16(page, format.DataPage.NumRows, 2);
@@ -328,45 +328,57 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         }
     }
 
-    /// <summary>
-    /// Matches the DAO-observed shape for a real-index usage-map page: table rows
-    /// 0/1 first, then one 69-byte usage-map row per real index, INLINE when one
-    /// window holds the index's pages and REFERENCE otherwise
-    /// (<see cref="UsageMapEditor.WriteRowAsync"/>).
-    /// </summary>
-    /// <param name="leafPageNumbers">An array of leaf page numbers, one per real index on the table. Each page number is stored in a separate usage-map row at index i+2.</param>
-    /// <param name="cancellationToken">Token used to cancel the operation.</param>
-    /// <returns>The page number of the newly allocated usage-map page.</returns>
-    internal ValueTask<long> AppendIndexUsageMapPageAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
-        => this.AppendIndexUsageMapPageAsync(ToSinglePageGroups(leafPageNumbers), cancellationToken);
-
-    internal async ValueTask<long> AppendIndexUsageMapPageAsync(IReadOnlyList<long[]> indexPageGroups, CancellationToken cancellationToken)
+    /// <summary>Creates native-width table and index usage-map rows, spilling index rows across pages.</summary>
+    /// <param name="leafPageNumbers">One initial leaf page per real index.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The table map page and each index's independently addressed map row.</returns>
+    internal async ValueTask<(long TableMapPage, UsageMapPointer[] IndexMaps)> AppendIndexUsageMapPagesAsync(long[] leafPageNumbers, CancellationToken cancellationToken)
     {
-        byte[] page = new byte[format.PageSize];
-        page[0] = Constants.PageTypes.Data;
-        page[1] = 0x01;
-
-        int rowCount = indexPageGroups.Count + 2;
-        int rowStart = format.PageSize;
-        for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+        long[][] indexPageGroups = ToSinglePageGroups(leafPageNumbers);
+        int rowsPerPage = Math.Min(byte.MaxValue + 1, (format.PageSize - format.DataPage.RowsStart) / (format.UsageMapRowSize + 2));
+        var indexMaps = new UsageMapPointer[indexPageGroups.Length];
+        int totalRows = indexPageGroups.Length + 2;
+        int firstRow = 0;
+        long tableMapPage = 0;
+        while (firstRow < totalRows)
         {
-            rowStart -= Constants.UsageMap.RowSize;
-            Wu16(page, format.DataPage.RowsStart + (rowIndex * 2), rowStart);
-
-            if (rowIndex < 2)
+            byte[] page = new byte[format.PageSize];
+            page[0] = Constants.PageTypes.Data;
+            page[1] = 0x01;
+            int rowCount = Math.Min(rowsPerPage, totalRows - firstRow);
+            int rowStart = format.PageSize;
+            for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
             {
-                continue;
+                rowStart -= format.UsageMapRowSize;
+                Wu16(page, format.DataPage.RowsStart + (rowIndex * 2), rowStart);
+                int logicalRow = firstRow + rowIndex;
+                if (logicalRow >= 2)
+                {
+                    await usageMaps.WriteRowAsync(page, rowStart, format.UsageMapRowSize, indexPageGroups[logicalRow - 2], keepReferencePages: false, cancellationToken).ConfigureAwait(false);
+                }
             }
 
-            await usageMaps.WriteRowAsync(page, rowStart, Constants.UsageMap.RowSize, indexPageGroups[rowIndex - 2], keepReferencePages: false, cancellationToken).ConfigureAwait(false);
+            Wu16(page, format.DataPage.NumRows, rowCount);
+            Wu16(page, 2, rowStart - (format.DataPage.RowsStart + (rowCount * 2)));
+            long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+            if (firstRow == 0)
+            {
+                tableMapPage = pageNumber;
+            }
+
+            for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
+            {
+                int logicalRow = firstRow + rowIndex;
+                if (logicalRow >= 2)
+                {
+                    indexMaps[logicalRow - 2] = new UsageMapPointer(rowIndex, checked((int)pageNumber));
+                }
+            }
+
+            firstRow += rowCount;
         }
 
-        Wi32(page, format.DataPage.TDefOff, 0);
-        Wu16(page, format.DataPage.NumRows, rowCount);
-        int freeSpace = rowStart - (format.DataPage.RowsStart + (rowCount * 2));
-        Wu16(page, 2, freeSpace);
-
-        return await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+        return (tableMapPage, indexMaps);
     }
 
     internal async ValueTask<UsageMapPointer[]> UpdateTableIndexUsageMapRowsAsync(
@@ -416,8 +428,8 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
                     }
                     else
                     {
-                        rowStart -= Constants.UsageMap.RowSize;
-                        rows[group] = new RowBound(rowCount++, rowStart, Constants.UsageMap.RowSize);
+                        rowStart -= format.UsageMapRowSize;
+                        rows[group] = new RowBound(rowCount++, rowStart, format.UsageMapRowSize);
                     }
                 }
 

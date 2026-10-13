@@ -299,7 +299,7 @@ internal sealed class TableDataWriter(
             // The new version is encoded and measured once it is final, after
             // the cascade plan.
             UnreadableLongValue.ThrowIfAny(newRow, tableName);
-            this.ThrowIfTextNotStorable(tableName, tableDef, newRow);
+            this.ThrowIfTextNotStorable(tableName, tableDef, newRow, rows[i].GetPreservedFixedText(newRow, updateIndexes.Keys));
 
             pendingUpdates.Add((i, oldRow, newRow));
         }
@@ -343,9 +343,9 @@ internal sealed class TableDataWriter(
         // encode it: a value the encoder refuses, or a row longer than a data
         // page, refuses the update before any row is deleted. A row is never
         // measured with a key the plan replaces.
-        foreach ((_, _, object[] newRow) in pendingUpdates)
+        foreach ((int index, _, object[] newRow) in pendingUpdates)
         {
-            _ = tableRows.EncodeRow(tableDef, newRow);
+            _ = tableRows.EncodeRow(tableDef, newRow, rows[index].GetPreservedFixedText(newRow, updateIndexes.Keys));
         }
 
         // Pre-write unique-index enforcement: after FK checks succeed,
@@ -372,7 +372,7 @@ internal sealed class TableDataWriter(
             RowLocation oldLoc = rows[i].Location;
             await tableRows.MarkRowDeletedAsync(oldLoc.PageNumber, oldLoc.RowIndex, tableDef, cancellationToken).ConfigureAwait(false);
             updateDeletedHints.Add((oldLoc, oldRow));
-            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, cancellationToken: cancellationToken).ConfigureAwait(false);
+            RowLocation newLoc = await tableRows.InsertRowDataLocAsync(entry.TDefPage, tableDef, newRow, updateTDefRowCount: false, fixedTextBytes: rows[i].GetPreservedFixedText(newRow, updateIndexes.Keys), cancellationToken: cancellationToken).ConfigureAwait(false);
             updateInsertedHints.Add((newLoc, newRow));
         }
 
@@ -678,8 +678,9 @@ internal sealed class TableDataWriter(
     /// <param name="tableName">The table name, for the message.</param>
     /// <param name="tableDef">The table definition.</param>
     /// <param name="row">The finished row, after defaults, in table-column order.</param>
+    /// <param name="fixedTextBytes">Unassigned fixed Text slots copied without re-encoding.</param>
     /// <exception cref="JetLimitationException">A Text or Memo value holds a character the database's code page does not have.</exception>
-    private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row)
+    private void ThrowIfTextNotStorable(string tableName, TableDef tableDef, object[] row, IReadOnlyDictionary<int, byte[]>? fixedTextBytes = null)
     {
         if (!format.IsJet3)
         {
@@ -689,7 +690,7 @@ internal sealed class TableDataWriter(
         for (int i = 0; i < tableDef.Columns.Count && i < row.Length; i++)
         {
             ColumnInfo column = tableDef.Columns[i];
-            if (row[i] is null or DBNull
+            if (fixedTextBytes?.ContainsKey(i) == true || row[i] is null or DBNull
                 || JetTypeInfo.ResolveValueType(column) is not (ColumnType.TextType or ColumnType.MemoType))
             {
                 continue;

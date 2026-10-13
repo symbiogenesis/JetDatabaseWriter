@@ -15,4 +15,8 @@ using JetDatabaseWriter.Pages.Models;
 /// every key change the update cascades to that row. A row appears once,
 /// however many relationships reach it.
 /// </param>
-internal sealed record CascadeUpdate(string TableName, ResolvedTable Table, List<(RowLocation Location, object[] NewRow)> Rows);
+internal sealed record CascadeUpdate(string TableName, ResolvedTable Table, List<(RowLocation Location, object[] NewRow)> Rows)
+{
+    /// <summary>Gets unchanged fixed Text slots retained by each planned row rewrite.</summary>
+    internal Dictionary<RowLocation, IReadOnlyDictionary<int, byte[]>?> FixedTextBytes { get; } = [];
+}

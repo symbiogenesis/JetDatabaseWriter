@@ -56,10 +56,13 @@ succeeded for AddColumn, DropColumn, RenameColumn, unrelated updates and new
 fixed Text rows in both Unicode fixtures, including U+FEFF and embedded NUL.
 
 The schema preservation tests compare surviving descriptor bytes and fixed
-slots across all four files. Their Jet3 schema rewrite cases establish library
-preservation only. Native DAO36 rewrite acceptance remains unresolved:
-Add/Drop/RenameColumn also fails for an independently DAO-created table with
-only two Long fields (`Id`, `Spare`), exposing zero fields and refusing reads
-with "no read permission" after a writer rewrite. The fixed Text decoder fix
-does not resolve that generic schema/permissions issue. Malformed unassigned
-raw Text preservation also remains outside this fixture evidence.
+slots across all four files. `NativeJet3SchemaRewriteTests` uses x86 DAO36 to
+verify native Add/Drop/Rename readback and compact of both Jet3 files, with an
+explicit destination code page. Schema rewrites retain the native table
+object ID, owner and permissions, and preserve unchanged catalog keys.
+
+Synthetic mutations of these native slots verify preservation of malformed
+UTF-16, invalid CP932 and bytes under null values through unrelated updates,
+schema edits and cascades. Explicit assignments encode normally; unstorable
+assignments refuse without changing bytes. These mutations establish raw
+preservation, rather than native acceptance of malformed content.

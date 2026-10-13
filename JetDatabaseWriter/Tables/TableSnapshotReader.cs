@@ -270,7 +270,27 @@ internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, T
                     values[i] ??= DBNull.Value;
                 }
 
-                result.Add(new LocatedRow(row.Location, (object[])values));
+                Dictionary<int, byte[]>? fixedTextBytes = null;
+                if (RowDecodePlan.TryParseRowLayout(format.RowFields, row.Page, row.Location.RowStart, row.Location.RowSize, tableDef.HasVarColumns, out RowLayout layout))
+                {
+                    for (int index = 0; index < tableDef.Columns.Count; index++)
+                    {
+                        ColumnInfo column = tableDef.Columns[index];
+                        if (!column.IsFixed || column.IsCalculated || column.Type != TextType || column.ColNum >= layout.NumCols)
+                        {
+                            continue;
+                        }
+
+                        ColumnSlice slice = RowDecodePlan.ResolveFixedColumnSlice(format.RowFields, row.Page, row.Location.RowStart, layout, column);
+                        if (slice.Kind == ColumnSliceKind.Var)
+                        {
+                            fixedTextBytes ??= [];
+                            fixedTextBytes.Add(index, row.Page.AsSpan(row.Location.RowStart + slice.DataStart, slice.DataLen).ToArray());
+                        }
+                    }
+                }
+
+                result.Add(new LocatedRow(row.Location, (object[])values) { FixedTextBytes = fixedTextBytes });
                 return true;
             },
             cancellationToken).ConfigureAwait(false);

@@ -488,10 +488,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 }
 
                 page[format.Index.FlagsAbsoluteOffset(phys)] = flagsByte;
-                if (jet4)
-                {
-                    usedPagesOffsets[i] = format.Index.FirstDpAbsoluteOffset(phys) - 4;
-                }
+                usedPagesOffsets[i] = format.Index.FirstDpAbsoluteOffset(phys) - 4;
 
                 firstDpOffsets[i] = format.Index.FirstDpAbsoluteOffset(phys);
 
@@ -543,12 +540,15 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             namePos = npos;
         }
 
-        // Native Jet4/ACE tables terminate the metadata even without indexes.
-        // The sentinel and eight reserved bytes belong to the declared TDEF length.
-        if (jet4)
+        // Native tables terminate metadata with a sentinel and eight reserved bytes,
+        // including Jet3 scalar tables with no indexes.
+        Wu16(page, namePos, ushort.MaxValue);
+        namePos += 10;
+        if (!jet4)
         {
-            Wu16(page, namePos, ushort.MaxValue);
-            namePos += 10;
+            // DAO3.6 writes the VC signature rather than a free-space count.
+            page[2] = 0x56;
+            page[3] = 0x43;
         }
 
         Wi32(page, 8, Math.Max(0, namePos - 8));

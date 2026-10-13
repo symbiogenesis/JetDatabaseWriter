@@ -12,6 +12,7 @@ using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -145,11 +146,11 @@ internal sealed class CatalogArtifactWriter(
             tdefPageBuilder.WriteLogicalTDefI32(tdefPages, firstDpLogicalOffsets[i], checked((int)leafPageNumber));
         }
 
-        long usageMapPageNumber = await dataPages.AppendIndexUsageMapPageAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
+        (long usageMapPageNumber, UsageMapPointer[] indexMaps) = await dataPages.AppendIndexUsageMapPagesAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
 
         for (int i = 0; i < usedPagesLogicalOffsets.Length; i++)
         {
-            tdefPageBuilder.WriteLogicalUsedPagesPointer(tdefPages, usedPagesLogicalOffsets[i], i + 2, usageMapPageNumber);
+            tdefPageBuilder.WriteLogicalUsedPagesPointer(tdefPages, usedPagesLogicalOffsets[i], indexMaps[i].RowIndex, indexMaps[i].PageNumber);
         }
 
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], format.TDef, checked((int)usageMapPageNumber));
@@ -332,7 +333,7 @@ internal sealed class CatalogArtifactWriter(
         }
 
         // Allocate a per-table usage-map data page and patch the TDEF
-        // `used_pages` / `free_pages` pointers (Jet4/ACE only). DAO Compact
+        // `used_pages` / `free_pages` pointers. DAO Compact
         // & Repair walks every catalog row and dereferences `used_pages` to
         // enumerate the table's data pages; a zero pointer here aborts the
         // walk with "could not find object 'MSysDb'". The companion
@@ -341,11 +342,19 @@ internal sealed class CatalogArtifactWriter(
         // NorthwindTraders.accdb (every user table has byte 0x18 == 0x01,
         // including ones without an autonumber column). See
         // docs/design/round-trip-openrecordset-hypothesis.md.
-        if (tableArtifact.EmitUsageMap && !format.IsJet3)
+        if (tableArtifact.EmitUsageMap)
         {
-            long usageMapPageNumber = leafPageNumbers is null
-                ? await dataPages.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false)
-                : await dataPages.AppendIndexUsageMapPageAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
+            long usageMapPageNumber;
+            UsageMapPointer[] indexMaps;
+            if (leafPageNumbers is null)
+            {
+                usageMapPageNumber = await dataPages.AppendUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
+                indexMaps = [];
+            }
+            else
+            {
+                (usageMapPageNumber, indexMaps) = await dataPages.AppendIndexUsageMapPagesAsync(leafPageNumbers, cancellationToken).ConfigureAwait(false);
+            }
 
             if (leafPageNumbers is not null)
             {
@@ -354,8 +363,8 @@ internal sealed class CatalogArtifactWriter(
                     tdefPageBuilder.WriteLogicalUsedPagesPointer(
                         tdefPages,
                         usedPagesLogicalOffsets[usedPagesIndex],
-                        usedPagesIndex + 2,
-                        usageMapPageNumber);
+                        indexMaps[usedPagesIndex].RowIndex,
+                        indexMaps[usedPagesIndex].PageNumber);
                 }
             }
 
@@ -363,7 +372,11 @@ internal sealed class CatalogArtifactWriter(
             // TDEF header (offset 0x18 and the used_pages / free_pages pointers), which always live on
             // the first physical page.
             DataPageInserter.PatchUsageMapPointers(tdefPages[0], format.TDef, checked((int)usageMapPageNumber));
-            DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
+            if (!format.IsJet3)
+            {
+                DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
+            }
+
             ownedMaps.RegisterWritable(tdefPageNumber);
             tdefDirty = true;
         }

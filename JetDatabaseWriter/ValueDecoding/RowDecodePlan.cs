@@ -219,32 +219,7 @@ internal sealed class RowDecodePlan
 
         if (col.IsFixed)
         {
-            int start = rowFields.NumCols + col.FixedOff;
-            int sz = col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
-            int payloadEnd = Math.Min(layout.Eod, layout.NullMaskPos);
-            if (layout.VarTableStart < layout.NullMaskPos)
-            {
-                payloadEnd = Math.Min(payloadEnd, layout.VarTableStart - rowFields.Eod);
-            }
-
-            if (layout.VarLen > 0)
-            {
-                int firstEntry = layout.VarTableStart + ((layout.VarLen - 1) * rowFields.VarEntry);
-                int firstVariableStart = rowFields.ReadVarEntry(page, rowStart + firstEntry);
-                if (layout.JumpCount != 0)
-                {
-                    firstVariableStart += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, 0);
-                }
-
-                payloadEnd = Math.Min(payloadEnd, firstVariableStart);
-            }
-
-            if (sz == 0 || start < rowFields.NumCols || start > payloadEnd || sz > payloadEnd - start)
-            {
-                return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
-            }
-
-            return new ColumnSlice(col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
+            return ResolveFixedColumnSlice(rowFields, page, rowStart, layout, col);
         }
 
         if (col.VarIdx >= layout.VarLen)
@@ -287,6 +262,42 @@ internal sealed class RowDecodePlan
         }
 
         return new ColumnSlice(ColumnSliceKind.Var, dataStart, dataLen, false);
+    }
+
+    /// <summary>Resolves a fixed slot's physical bounds independently of its null bit.</summary>
+    /// <param name="rowFields">The format's row field sizes.</param>
+    /// <param name="page">The containing page.</param>
+    /// <param name="rowStart">The row's start offset.</param>
+    /// <param name="layout">The parsed row layout.</param>
+    /// <param name="col">The fixed column descriptor.</param>
+    internal static ColumnSlice ResolveFixedColumnSlice(in RowFieldSizes rowFields, ReadOnlySpan<byte> page, int rowStart, in RowLayout layout, ColumnInfo col)
+    {
+        int start = rowFields.NumCols + col.FixedOff;
+        int sz = col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
+        int payloadEnd = Math.Min(layout.Eod, layout.NullMaskPos);
+        if (layout.VarTableStart < layout.NullMaskPos)
+        {
+            payloadEnd = Math.Min(payloadEnd, layout.VarTableStart - rowFields.Eod);
+        }
+
+        if (layout.VarLen > 0)
+        {
+            int firstEntry = layout.VarTableStart + ((layout.VarLen - 1) * rowFields.VarEntry);
+            int firstVariableStart = rowFields.ReadVarEntry(page, rowStart + firstEntry);
+            if (layout.JumpCount != 0)
+            {
+                firstVariableStart += Jet3JumpTable.HighPart(page, rowStart, layout.JumpTableEnd, layout.JumpCount, 0);
+            }
+
+            payloadEnd = Math.Min(payloadEnd, firstVariableStart);
+        }
+
+        if (sz == 0 || start < rowFields.NumCols || start > payloadEnd || sz > payloadEnd - start)
+        {
+            return new ColumnSlice(ColumnSliceKind.Empty, 0, 0, false);
+        }
+
+        return new ColumnSlice(col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
     }
 
     private static DateTime ReadDatePayload(ReadOnlySpan<byte> payload, ColumnType type)

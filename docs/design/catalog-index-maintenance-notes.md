@@ -25,6 +25,33 @@ Before caching a user-table list or resolving a system-table name, `CatalogRowRe
 
 Negative ODBC IDs identify catalog-only objects whose cached schema can live in `LvProp`; their low bits are not page pointers. Those objects participate in name checks but do not resolve to a local TDEF. These checks apply in both strict and lenient modes, and a failed scan cannot publish a partial user-table cache. Access/text links also participate in alias and identity checks without treating their IDs as physical pages. Missing required linked metadata columns are corruption errors in every mode; incomplete Access/text source metadata is rejected strictly or omitted leniently, while native ODBC cached-schema entries can lack connection metadata. Complex discovery validates parent, template and flat-table schemas with the configurable aggregate budget described in [the complex-column notes](complex-columns-format-notes.md).
 
+## Jet3 schema identity and catalog keys
+
+Column rewrites transplant rebuilt storage onto the original table's TDEF
+root. Its catalog row keeps the original object ID, owner, dates and other
+unassigned values, and original permission rows remain attached. Unchanged
+catalog index values retain their stored keys while the row pointer moves.
+Duplicate or unordered stored keys refuse the rewrite. Before a catalog mutation, every reachable catalog index page must decode completely, with bounded pointers and the correct table owner. Strict leaf decoding requires a complete entry trailer after prefix reconstruction and an exact payload-end bitmap sentinel. Malformed later entries cannot turn a valid prefix into a replacement tree. Refusals report `CorruptIndex` with catalog/page context and leave the complete database unchanged in direct, automatic-transaction and explicit-transaction modes. This matters for
+CP932: native catalog keys differ from the General97 encoder even when their
+sort metadata has LCID 0x0409 and no version. Raw-key relocation adds no claim
+of a complete CP932 key encoder.
+
+Jet3 TDEF roots and continuations carry `VC`; the declared metadata includes
+`FF FF` and eight reserved bytes. Owned/free map rows use the native 133-byte
+width. Index map rows spill onto additional pages when necessary, and each
+physical descriptor receives its own row/page pointer at `first_dp - 4`.
+Jet3's 0x18 byte belongs to its variable-column count, so the Jet4 AutoNumber
+flag is not written there. MSysObjects and named user-table maps can grow after
+writer reopening. Other Jet3 system/index/LVAL map behavior remains open.
+Native map pages can serve multiple tables and long values, so reclamation
+requires separate ownership evidence.
+
+`NativeJet3SchemaRewriteTests` verifies native open, read, mutation and compact
+through x86 DAO3.6 for scalar/wide indexed tables and CP1252/CP932 fixed Text.
+Its frozen-fixture checks also retain exact catalog keys and security without
+a native engine. Wider collation and bootstrap requirements remain in the
+validation matrix and TODO.
+
 ## 1. Background
 
 `AccessWriter.CreateTableAsync` performs three operations against the live database:

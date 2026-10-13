@@ -10,9 +10,9 @@ using JetDatabaseWriter.Schema;
 
 /// <summary>
 /// Decides whether the writer may extend a local table's owned-page usage map.
-/// Jet4/ACE user and system tables both need newly allocated data pages listed
-/// so native scans and compact retain their rows. Jet3 map mutation remains
-/// unsupported. Decisions are cached by TDEF page and restored on rollback;
+/// User tables, MSysObjects and Jet4/ACE system tables need allocated data pages listed
+/// so native scans and compact retain their rows. Other imported Jet3 system maps
+/// remain untouched. Decisions are cached by TDEF page and restored on rollback;
 /// registration also permits a newly created table at a formerly refused page.
 /// </summary>
 /// <param name="format">The file's format profile.</param>
@@ -31,7 +31,7 @@ internal sealed class CatalogOwnedMapPolicy(JetFormat format, TableDefReader tab
     /// <inheritdoc/>
     public async ValueTask<bool> CanMaintainAsync(long tdefPageNumber, CancellationToken cancellationToken)
     {
-        if (format.IsJet3 || tdefPageNumber <= 0)
+        if (tdefPageNumber <= 0)
         {
             return false;
         }
@@ -103,7 +103,7 @@ internal sealed class CatalogOwnedMapPolicy(JetFormat format, TableDefReader tab
         {
             if (row.TDefPage == tdefPageNumber && row.ObjectType == Constants.SystemObjects.UserTableType)
             {
-                return !string.IsNullOrEmpty(row.Name);
+                return !string.IsNullOrEmpty(row.Name) && (!format.IsJet3 || (unchecked((uint)row.Flags) & Constants.SystemObjects.SystemTableMask) == 0);
             }
         }
 

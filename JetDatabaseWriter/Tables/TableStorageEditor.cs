@@ -101,10 +101,11 @@ internal sealed class TableStorageEditor(
         long autoNumberHighWater = plan.AutoNumberHighWater;
         long complexHighWater = plan.ComplexHighWater;
         var writtenRows = new List<LocatedRow>(projectedRows.Count);
-        foreach (object[] projected in projectedRows)
+        for (int rowIndex = 0; rowIndex < projectedRows.Count; rowIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, cancellationToken: cancellationToken).ConfigureAwait(false);
+            object[] projected = projectedRows[rowIndex];
+            RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, fixedTextBytes: plan.FixedTextBytes[rowIndex], cancellationToken: cancellationToken).ConfigureAwait(false);
             writtenRows.Add(new LocatedRow(location, projected));
             autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
             complexHighWater = Math.Max(complexHighWater, AutoNumberMaintainer.MaxComplexReference(tempDef, projected));

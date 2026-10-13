@@ -165,6 +165,9 @@ internal sealed class JetFormat
     /// </summary>
     internal IndexLayout Index { get; }
 
+    /// <summary>Gets the native owned/free usage-map row width, including its five-byte inline header.</summary>
+    internal int UsageMapRowSize => this.IsJet3 ? 133 : Constants.UsageMap.RowSize;
+
     /// <summary>Gets the per-format index page header layout — see <see cref="IndexPageLayout"/>.</summary>
     internal IndexPageLayout IndexPage { get; }
 

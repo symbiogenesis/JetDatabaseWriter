@@ -20,6 +20,7 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.ValueDecoding;
+using JetDatabaseWriter.ValueDecoding.Models;
 using JetDatabaseWriter.ValueEncoding;
 
 /// <summary>
@@ -37,6 +38,7 @@ using JetDatabaseWriter.ValueEncoding;
 /// <param name="constraints">Follows table renames in the client-side constraint registry.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="pager">The writer page file.</param>
+/// <param name="snapshots">Reads existing catalog values for preservation.</param>
 internal sealed class CatalogWriter(
     JetFormat format,
     TableDefReader tableDefs,
@@ -47,7 +49,8 @@ internal sealed class CatalogWriter(
     LongValueEncoder longValueEncoder,
     ConstraintRegistry constraints,
     CatalogRowReader catalogRows,
-    Pager pager)
+    Pager pager,
+    TableSnapshotReader snapshots)
 {
     private int checkedCatalogGeneration = -1;
 
@@ -79,7 +82,7 @@ internal sealed class CatalogWriter(
     {
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, tableName, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(msys, Constants.SystemObjects.TablesParentId, tableName, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         object[] values = msys.CreateNullValueRow();
         DateTime now = DateTime.UtcNow;
@@ -97,7 +100,7 @@ internal sealed class CatalogWriter(
             msys.SetValueByName(values, "LvProp", lvProp);
         }
 
-        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken: cancellationToken).ConfigureAwait(false);
         await this.RequireCatalogIndexSpliceAsync(msys, loc, values, tableName, cancellationToken).ConfigureAwait(false);
     }
 
@@ -118,7 +121,7 @@ internal sealed class CatalogWriter(
 
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         TableDef msys = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        await this.EnsureCatalogContainerNameAvailableAsync(msys, artifact.ParentId, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(msys, artifact.ParentId, artifact.ObjectName, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         int objectId = artifact.ObjectIdPolicy == CatalogObjectIdPolicy.AllocateNonTable
             ? await this.AllocateNonTableObjectIdAsync(msys, cancellationToken).ConfigureAwait(false)
@@ -166,7 +169,7 @@ internal sealed class CatalogWriter(
             msys.SetValueByName(values, "Connect", artifact.Connect);
         }
 
-        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken).ConfigureAwait(false);
+        RowLocation loc = await tableRows.InsertRowDataLocAsync(2, msys, values, updateTDefRowCount: true, cancellationToken: cancellationToken).ConfigureAwait(false);
         await this.RequireCatalogIndexSpliceAsync(msys, loc, values, artifact.ObjectName, cancellationToken).ConfigureAwait(false);
 
         if (artifact.AcePolicy != CatalogObjectAcePolicy.None)
@@ -627,6 +630,11 @@ internal sealed class CatalogWriter(
     {
         await this.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
 
+        if (format.IsJet3)
+        {
+            return await this.ReplaceJet3CatalogEntryAsync(existingName, replacementName, tdefPage, lvProp, includeSystemTables, missingMessage, cancellationToken).ConfigureAwait(false);
+        }
+
         UserTableCatalogDeletionResult deleted = await this.DeleteUserTableCatalogRowsAsync(
             existingName,
             tdefPage,
@@ -647,6 +655,70 @@ internal sealed class CatalogWriter(
             cancellationToken: cancellationToken).ConfigureAwait(false);
         catalog.Invalidate();
         return replacementTdefPage;
+    }
+
+    private async ValueTask<long> ReplaceJet3CatalogEntryAsync(
+        string existingName,
+        string replacementName,
+        long? tdefPage,
+        byte[]? lvProp,
+        bool includeSystemTables,
+        string? missingMessage,
+        CancellationToken cancellationToken)
+    {
+        TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        int nameIndex = objects.FindColumnIndex("Name");
+        int idIndex = objects.FindColumnIndex("Id");
+        int typeIndex = objects.FindColumnIndex("Type");
+        int flagsIndex = objects.FindColumnIndex("Flags");
+        int propertyIndex = objects.FindColumnIndex("LvProp");
+        if (nameIndex < 0 || idIndex < 0 || typeIndex < 0 || flagsIndex < 0 || propertyIndex < 0)
+        {
+            throw new JetCorruptDataException("MSysObjects lacks required table identity or property columns.");
+        }
+
+        List<LocatedRow> matches = (await snapshots.ReadRowsAsync(2, cancellationToken).ConfigureAwait(false)).FindAll(row =>
+            string.Equals(row.Values[nameIndex] as string, existingName, StringComparison.OrdinalIgnoreCase)
+            && Convert.ToInt32(row.Values[typeIndex], System.Globalization.CultureInfo.InvariantCulture) == Constants.SystemObjects.UserTableType
+            && (includeSystemTables || (unchecked((uint)Convert.ToInt32(row.Values[flagsIndex], System.Globalization.CultureInfo.InvariantCulture)) & Constants.SystemObjects.SystemTableMask) == 0)
+            && (tdefPage is null || CatalogValueReader.TdefPageFromId(Convert.ToInt64(row.Values[idIndex], System.Globalization.CultureInfo.InvariantCulture)) == tdefPage));
+        if (matches.Count != 1)
+        {
+            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, missingMessage ?? $"Table '{existingName}' has {matches.Count} matching catalog rows.", new JetErrorInfo { ObjectName = existingName });
+        }
+
+        LocatedRow original = matches[0];
+        long originalTdefPage = CatalogValueReader.TdefPageFromId(Convert.ToInt64(original.Values[idIndex], System.Globalization.CultureInfo.InvariantCulture));
+        await this.EnsureCatalogContainerNameAvailableAsync(objects, Constants.SystemObjects.TablesParentId, replacementName, excludedTdefPage: originalTdefPage, cancellationToken: cancellationToken).ConfigureAwait(false);
+        object[] replacement = (object[])original.Values.Clone();
+        replacement[nameIndex] = replacementName;
+        replacement[propertyIndex] = lvProp ?? (object)DBNull.Value;
+        UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
+        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [nameIndex, propertyIndex]);
+        _ = tableRows.EncodeRow(objects, replacement, fixedTextBytes);
+        await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
+        await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, objects, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+        RowLocation inserted = await tableRows.InsertRowDataLocAsync(2, objects, replacement, updateTDefRowCount: false, fixedTextBytes: fixedTextBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (string.Equals(existingName, replacementName, StringComparison.Ordinal))
+        {
+            bool maintained = await indexes.TryRelocateCatalogRowAsync(objects, original, new LocatedRow(inserted, replacement), cancellationToken).ConfigureAwait(false);
+            if (!maintained)
+            {
+                throw new JetCorruptDataException($"The native catalog indexes for '{existingName}' could not retain their stored keys.");
+            }
+        }
+        else
+        {
+            await this.RequireMsysObjectsIndexMaintenanceAsync(
+                objects,
+                [(inserted, replacement)],
+                [(original.Location, original.Values)],
+                $"preserving catalog row for '{existingName}'",
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        catalog.Invalidate();
+        return originalTdefPage;
     }
 
     internal async ValueTask<UserTableCatalogDeletionResult> DeleteUserTableCatalogRowsAsync(
@@ -779,14 +851,14 @@ internal sealed class CatalogWriter(
         await indexes.MaintainIndexesAsync(2, msys, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask EnsureCatalogContainerNameAvailableAsync(TableDef msys, int parentId, string objectName, CancellationToken cancellationToken)
+    private async ValueTask EnsureCatalogContainerNameAvailableAsync(TableDef msys, int parentId, string objectName, long? excludedTdefPage = null, CancellationToken cancellationToken = default)
     {
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         foreach (CatalogRow row in rows)
         {
             bool sameParent = row.ParentId == parentId
                 || (parentId == Constants.SystemObjects.TablesParentId && row.ParentId == 0);
-            if (sameParent && string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase))
+            if (sameParent && row.TDefPage != excludedTdefPage && string.Equals(row.Name, objectName, StringComparison.OrdinalIgnoreCase))
             {
                 throw new JetObjectExistsException(JetErrorCode.ObjectExists, $"An object named '{objectName}' already exists.", errorInfo: new JetErrorInfo { ObjectName = objectName });
             }

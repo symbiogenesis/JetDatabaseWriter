@@ -73,11 +73,18 @@ assignments are refused instead of silently truncated.
 `FixedTextFixtureTests` uses DAO36-authored CP1252/CP932 Jet3 fixtures and
 DAO120-authored Jet4/ACE fixtures. `NativeFixedTextPreservationTests` compares
 native descriptors and raw slots through unrelated updates and Add/Drop/Rename.
-DAO36 accepts writer row updates/inserts and explicit-CP932 compact of the Jet3
-fixtures; DAO120 accepts Jet4/ACE schema edits and row mutation/compact.
-The Jet3 schema-edit comparisons are library/raw-byte evidence only: native
-DAO36 loses table access after generic column rewrites, tracked in S13.
-Malformed unassigned encoding preservation remains open in F2/I6.
+DAO36 accepts Jet3 Add/Drop/Rename, row updates/inserts and code-page-preserving
+compact of the CP1252/CP932 fixtures. DAO120 accepts Jet4/ACE schema edits and
+row mutation/compact. `NativeJet3SchemaRewriteTests` additionally verifies
+native scalar/wide indexed rewrites, preserved object/security identity and
+unchanged catalog keys through native open, mutation and compact.
+
+Writer snapshots retain original fixed Text slots, including bytes under null
+values. Unrelated updates, schema projections and cascades copy unassigned
+slots without decoding and re-encoding them, preserving malformed UTF-16 and
+invalid multibyte sequences. Explicit assignments encode normally, even when
+their decoded values equal the originals. Slot bounds and descriptor widths
+remain validated before mutation.
 
 ## Long-value integrity
 

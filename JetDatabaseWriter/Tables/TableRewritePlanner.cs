@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tables;
 
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -12,6 +11,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Expressions;
@@ -163,7 +163,7 @@ internal sealed class TableRewritePlanner(
         // Snapshot existing rows AND existing indexes BEFORE we mutate the catalog,
         // so the snapshot reader sees the original schema and we can forward
         // surviving index definitions to the rebuilt table.
-        using DataTable snapshot = await snapshots.ReadTableSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
+        List<LocatedRow> snapshot = await snapshots.ReadRowsAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<IndexMetadata> existingIndexes = await snapshots.ReadIndexMetadataSnapshotAsync(tableName, cancellationToken).ConfigureAwait(false);
 
         // Forward every Normal / PrimaryKey index whose key columns all survive,
@@ -174,13 +174,30 @@ internal sealed class TableRewritePlanner(
         // Project every row before creating the temp table, so a MEMO / OLE value
         // the snapshot could not read refuses the rewrite before anything changes.
         // A dropped column's unreadable value is projected away and does not block.
-        var projectedRows = new List<object[]>(snapshot.Rows.Count);
-        foreach (DataRow row in snapshot.Rows)
+        var projectedRows = new List<object[]>(snapshot.Count);
+        var projectedFixedText = new List<IReadOnlyDictionary<int, byte[]>?>(snapshot.Count);
+        foreach (LocatedRow row in snapshot)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            object[] projected = projectRow(TableSnapshotReader.GetDbNullNormalizedItemArray(row), tableDef);
+            object[] projected = projectRow(row.Values, tableDef);
             UnreadableLongValue.ThrowIfAny(projected, tableName);
             projectedRows.Add(projected);
+            Dictionary<int, byte[]>? fixedTextBytes = null;
+            if (row.FixedTextBytes is not null)
+            {
+                foreach ((int sourceIndex, byte[] bytes) in row.FixedTextBytes)
+                {
+                    string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
+                    int targetIndex = newDefs.FindIndex(column => string.Equals(column.Name, targetName, StringComparison.OrdinalIgnoreCase));
+                    if (targetIndex >= 0)
+                    {
+                        fixedTextBytes ??= [];
+                        fixedTextBytes.Add(targetIndex, bytes);
+                    }
+                }
+            }
+
+            projectedFixedText.Add(fixedTextBytes);
         }
 
         await this.InitializeNewComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
@@ -224,7 +241,9 @@ internal sealed class TableRewritePlanner(
             }
         }
 
-        bool transplant = newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0;
+        // Jet3 permissions and application metadata name the original object id.
+        // Keep that identity and its native ACE rows when replacing its storage.
+        bool transplant = format.IsJet3 || (newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0);
 
         long autoNumberHighWater = await autoNumbers.ReadHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         long complexHighWater = await autoNumbers.ReadComplexHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
@@ -238,6 +257,7 @@ internal sealed class TableRewritePlanner(
             persistedProperties,
             persistedLvProp,
             projectedRows,
+            projectedFixedText,
             relationshipState,
             mapColumnName,
             newComplexById,

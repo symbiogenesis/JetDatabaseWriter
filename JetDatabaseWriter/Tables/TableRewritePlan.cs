@@ -16,6 +16,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="Properties">The projected persisted property block.</param>
 /// <param name="PropertyBytes">The serialized catalog property payload.</param>
 /// <param name="Rows">The validated projected row values.</param>
+/// <param name="FixedTextBytes">Original fixed Text slots in projected column order, paired with each row.</param>
 /// <param name="Relationships">The captured relationship identities.</param>
 /// <param name="MapColumnName">The column identity projection.</param>
 /// <param name="ComplexColumns">Surviving complex columns by their persisted ID.</param>
@@ -33,6 +34,7 @@ internal sealed record TableRewritePlan(
     ColumnPropertyBlock Properties,
     byte[]? PropertyBytes,
     List<object[]> Rows,
+    List<IReadOnlyDictionary<int, byte[]>?> FixedTextBytes,
     RelationshipRewriteState Relationships,
     Func<string, string?> MapColumnName,
     Dictionary<int, ColumnDefinition> ComplexColumns,

@@ -626,8 +626,11 @@ internal sealed class RelationshipEnforcer(
         // refuses, or a row longer than a data page, refuses the update before
         // any row is deleted. The caller encodes its own rows, which are final
         // once the plan returns.
-        foreach ((string tableName, ResolvedTable table, List<(RowLocation Location, object[] NewRow)> rewrites) in cascades)
+        foreach (CascadeUpdate cascade in cascades)
         {
+            string tableName = cascade.TableName;
+            ResolvedTable table = cascade.Table;
+            List<(RowLocation Location, object[] NewRow)> rewrites = cascade.Rows;
             await indexes.ThrowIfIndexesUnmaintainableAsync(table.Entry.TDefPage, table.Definition, tableName, cancellationToken).ConfigureAwait(false);
             List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
             var replacements = new Dictionary<(long PageNumber, int RowIndex), object[]>();
@@ -645,19 +648,24 @@ internal sealed class RelationshipEnforcer(
             }
 
             var pendingUpdates = new List<(int Index, object[] OldRow, object[] NewRow)>();
+            var storedRows = new Dictionary<RowLocation, LocatedRow>();
             for (int index = 0; index < existingRows.Count; index++)
             {
                 LocatedRow existing = existingRows[index];
                 if (replacements.TryGetValue((existing.Location.PageNumber, existing.Location.RowIndex), out object[]? replacement))
                 {
                     pendingUpdates.Add((index, existing.Values, replacement));
+                    storedRows.Add(existing.Location, existing);
                 }
             }
 
             await this.uniqueIndexes.CheckUniqueIndexesPreUpdateAsync(table.Entry.TDefPage, table.Definition, tableName, existingRows, pendingUpdates, cancellationToken).ConfigureAwait(false);
-            foreach ((_, object[] newRow) in rewrites)
+            foreach ((RowLocation location, object[] newRow) in rewrites)
             {
-                _ = tableRows.EncodeRow(table.Definition, newRow);
+                LocatedRow stored = storedRows[location];
+                IReadOnlyDictionary<int, byte[]>? fixedTextBytes = stored.GetPreservedFixedText(newRow, keyAssignments[newRow].Columns);
+                cascade.FixedTextBytes.Add(location, fixedTextBytes);
+                _ = tableRows.EncodeRow(table.Definition, newRow, fixedTextBytes);
             }
         }
 
@@ -697,15 +705,16 @@ internal sealed class RelationshipEnforcer(
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
     public async ValueTask ApplyCascadeUpdatesAsync(IReadOnlyList<CascadeUpdate> cascades)
     {
-        foreach ((string tableName, ResolvedTable table, List<(RowLocation Location, object[] NewRow)> rewrites) in cascades)
+        foreach (CascadeUpdate cascade in cascades)
         {
-            foreach ((RowLocation location, object[] newRow) in rewrites)
+            ResolvedTable table = cascade.Table;
+            foreach ((RowLocation location, object[] newRow) in cascade.Rows)
             {
                 await tableRows.MarkRowDeletedAsync(location.PageNumber, location.RowIndex, table.Definition, CancellationToken.None).ConfigureAwait(false);
-                await tableRows.InsertRowDataAsync(table.Entry.TDefPage, table.Definition, newRow, updateTDefRowCount: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                _ = await tableRows.InsertRowDataLocAsync(table.Entry.TDefPage, table.Definition, newRow, updateTDefRowCount: false, fixedTextBytes: cascade.FixedTextBytes[location], cancellationToken: CancellationToken.None).ConfigureAwait(false);
             }
 
-            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, tableName, CancellationToken.None).ConfigureAwait(false);
+            await indexes.MaintainIndexesAsync(table.Entry.TDefPage, table.Definition, cascade.TableName, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

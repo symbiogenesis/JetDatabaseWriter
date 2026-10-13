@@ -173,6 +173,12 @@ internal sealed class LogicalTDefChain
             byte[] page = new byte[pageSizeBytes];
             page[0] = Constants.PageTypes.TableDefinition;
             page[1] = 0x01;
+            if (pageSizeBytes == Constants.PageSizes.Jet3 && logicalBytes[2] == 0x56 && logicalBytes[3] == 0x43)
+            {
+                page[2] = logicalBytes[2];
+                page[3] = logicalBytes[3];
+            }
+
             Wi32(page, 4, GetNextPageNumber(pageNumbers, pageIndex));
 
             int sourceOffset = pageSizeBytes + ((pageIndex - 1) * bodyPerContinuation);
