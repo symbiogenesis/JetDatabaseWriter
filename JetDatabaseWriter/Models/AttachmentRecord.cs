@@ -27,7 +27,7 @@ public sealed record AttachmentRecord
     /// <summary>Gets the display file name from the flat table's <c>FileName</c> column.</summary>
     public string FileName { get; init; } = string.Empty;
 
-    /// <summary>Gets the lowercase file extension from the flat table's <c>FileType</c> column.</summary>
+    /// <summary>Gets the file extension from the flat table's <c>FileType</c> column with its stored casing.</summary>
     public string FileType { get; init; } = string.Empty;
 
     /// <summary>Gets the optional source URL from the flat table's <c>FileURL</c> column.</summary>

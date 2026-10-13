@@ -24,14 +24,17 @@ using System.Text;
 /// chains even when the evaluator refuses their stored syntax. A one-segment
 /// chain is a candidate, and so is the second
 /// segment of a two-segment chain whose first segment is the table's own name
-/// (<c>[T].[Price]</c>, <c>T.Price</c>). Other chains, such as
+/// (<c>[T].[Price]</c>) or an adjacent bare qualifier (<c>Alias.Price</c>),
+/// which DAO binds to the current row. Other chains, such as
 /// <c>Forms![F]![Price]</c> or <c>[Other].[Price]</c>, never are.
 /// </para>
 /// <para>
-/// A bracketed candidate is a field reference, as the evaluator reads it. A
-/// bare candidate is not when it is a keyword (<see cref="AccessExpressionKeywords"/>),
-/// a built-in constant such as <c>vbTrue</c>, a function call (followed by
-/// <c>(</c>) or a name with a <c>$</c> suffix. Names compare without regard to
+/// A bracketed candidate is a field reference, as the evaluator reads it. An
+/// unqualified bare candidate is not when it is a keyword (<see cref="AccessExpressionKeywords"/>)
+/// or a built-in constant such as <c>vbTrue</c>. A qualified second segment names
+/// the actual field even when it spells a keyword or constant. Bare function
+/// calls (followed by <c>(</c>) and names with a <c>$</c> suffix remain excluded.
+/// Names compare without regard to
 /// case, as the evaluator resolves them. An unterminated string, <c>[</c> or
 /// <c>{</c> ends the scan, and the rest of the text is left as it is.
 /// </para>
@@ -156,7 +159,7 @@ internal static class ExpressionFieldReferences
                 }
 
                 if (TryGetCandidate(segments, tableName, out Segment candidate)
-                    && IsReferenceTo(candidate, fieldName, isCall: NextNonSpace(text, index) == '('))
+                    && IsReferenceTo(candidate, fieldName, isCall: NextNonSpace(text, index) == '(', isQualified: segments.Count == 2))
                 {
                     found.Add((candidate.Start, candidate.End));
                 }
@@ -245,7 +248,9 @@ internal static class ExpressionFieldReferences
             return true;
         }
 
-        if (segments.Count == 2 && string.Equals(segments[0].Name, tableName, StringComparison.OrdinalIgnoreCase))
+        if (segments.Count == 2
+            && (string.Equals(segments[0].Name, tableName, StringComparison.OrdinalIgnoreCase)
+                || (!segments[0].Bracketed && !segments[0].HasDollarSuffix && segments[1].Start == segments[0].End + 1)))
         {
             candidate = segments[1];
             return true;
@@ -255,7 +260,7 @@ internal static class ExpressionFieldReferences
         return false;
     }
 
-    private static bool IsReferenceTo(Segment candidate, string fieldName, bool isCall)
+    private static bool IsReferenceTo(Segment candidate, string fieldName, bool isCall, bool isQualified)
     {
         if (!string.Equals(candidate.Name, fieldName, StringComparison.OrdinalIgnoreCase))
         {
@@ -263,12 +268,14 @@ internal static class ExpressionFieldReferences
         }
 
         // The evaluator reads a bracketed name as a field whatever it spells;
-        // a bare one only when it is not a keyword, constant or function.
+        // a qualified second segment also names the actual field, even when
+        // it spells a keyword or constant. Unqualified tokens retain their meaning.
         return candidate.Bracketed
             || (!candidate.HasDollarSuffix
                 && !isCall
-                && !AccessExpressionKeywords.IsKeyword(candidate.Name)
-                && !CalculatedExpressionCoercion.TryGetBuiltinConstant(candidate.Name, out _));
+                && (isQualified
+                    || (!AccessExpressionKeywords.IsKeyword(candidate.Name)
+                        && !CalculatedExpressionCoercion.TryGetBuiltinConstant(candidate.Name, out _))));
     }
 
     /// <summary>Returns the index after the string literal opening at <paramref name="index"/>, or -1 when it is not closed.</summary>

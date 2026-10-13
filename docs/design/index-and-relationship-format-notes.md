@@ -24,6 +24,22 @@ Non-primary unique indexes allow multiple all-Null keys; partly Null composite k
 
 Cascade updates plan the transitive relationship graph against stored old rows and merged new rows before mutation, with cancellation and a depth limit. Foreign-key checks use the composed parent rows so a simple stable cycle can establish its new keys within the statement. Moves from distinct parent tables to the same child column are refused, including agreeing diamond paths; DAO120 refuses the characterized diamond before changing its rows. Paths from the same parent table must agree on each assigned column, using relationship key normalization including fixed binary padding rather than object identity. Contradictory assignments are deliberately refused: the characterized DAO update of two distinct parent keys accepted the update but left the child matching only one relationship. Restricted deletes count seek locations without loading child MEMO/OLE payloads; unsupported seeks retain the snapshot fallback. Broader graph/DAO characterization remains explicit in the TODO.
 
+For a simultaneous self-referencing update, DAO120 preserves the caller's
+entire foreign key when any component is explicitly assigned, including an
+assignment equal to the stored value. Only an unassigned FK follows its own
+cascade. Thus changing `[Id]=1` to 5 while explicitly retaining `[ParentId]=1`
+is refused; assigning 5, another stable parent or scalar Null is allowed when
+the remaining dependents satisfy the cascade policy. Final validation checks
+an unchanged FK if the composed statement removes its previously referenced
+parent. It still permits unrelated updates to an already orphaned unchanged
+key. `DaoSelfRelationshipUpdateTests` compares scalar and non-Null composite
+cases on DAO-authored Jet4/ACE databases, opens the writer output natively and
+verifies compact/readback. Ordinary regressions cover all write modes,
+byte-identical refusal and continued caller-transaction use followed by rollback.
+Native partial-Null composite self-references differ from the writer's blanket
+any-Null exemption; their precise reproduction and remaining policy work are
+tracked as R10. Jet3 native self-update/cycle evidence remains open under R6.
+
 Unenforced relationships persist catalog metadata without physical foreign-key
 indexes. Native DAO emits only the existing primary indexes for a relationship
 with dbRelationDontEnforce, permits orphans and allows related table deletion.

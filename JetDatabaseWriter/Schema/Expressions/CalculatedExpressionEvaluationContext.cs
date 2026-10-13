@@ -99,8 +99,11 @@ internal sealed class CalculatedExpressionEvaluationContext
 
     public object GetNameValue(string name, CalculatedExpressionPlan plan)
     {
+        // DAO binds a bare qualifier (even another existing table name) to this
+        // row. A bracketed qualifier still requires the matching table context.
         if (plan.PlaceholderToTable.TryGetValue(name, out string? qualifier)
-            && (this.tableName is null || !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase)))
+            && (this.tableName is null
+                || (!plan.RowLocalQualifiedNames.Contains(name) && !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase))))
         {
             throw new NotSupportedException($"Expression reference to table '{qualifier}' cannot be evaluated in the current row context.");
         }

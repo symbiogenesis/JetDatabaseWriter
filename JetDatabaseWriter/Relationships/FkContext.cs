@@ -33,6 +33,10 @@ internal sealed class FkContext(IReadOnlyList<FkRelationship> all)
     public Dictionary<string, HashSet<string>> PlannedParentKeys { get; }
         = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Gets original parent keys that the composed update removes from each relationship.</summary>
+    public Dictionary<string, HashSet<string>> RemovedParentKeys { get; }
+        = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Gets the tables whose relationship key descriptors passed native policy.</summary>
     public HashSet<string> ValidatedKeyTables { get; } = new(StringComparer.OrdinalIgnoreCase);
 

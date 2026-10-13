@@ -94,7 +94,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
         {
             foreach (WriteMode mode in Enum.GetValues<WriteMode>())
             {
-                data.Add(format, mode, 1);
+                data.Add(format, mode, 5);
                 data.Add(format, mode, 3);
             }
         }
@@ -725,10 +725,9 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
 
     /// <summary>
     /// When the update of self-referencing row [1, 1] also assigns its foreign
-    /// key, the row keeps the assigned value unless that value is the key the
-    /// update moves: assigning 3 gives [5, 3], and assigning 1, the old key,
-    /// gives [5, 5]. Either way row [2, 1] follows to [2, 5] and the row is
-    /// rewritten once.
+    /// key, the row keeps the assigned value: assigning 3 gives [5, 3], and
+    /// assigning 5, the new key, gives [5, 5]. Either way row [2, 1] follows
+    /// to [2, 5] and the row is rewritten once.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">How the writer runs the update.</param>
@@ -746,7 +745,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
                 Assert.Equal(1, await writer.UpdateRowsAsync("Tree", RowCriteria.Where("Id", 1), new RowValues { ["Id"] = 5, ["ParentId"] = assignedParentId }, Ct)));
         }
 
-        string movedRow = assignedParentId == 1 ? "5|5" : "5|3";
+        string movedRow = assignedParentId == 5 ? "5|5" : "5|3";
         Assert.Equal(["2|5", "3|", movedRow], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "Tree"));
         long[] rowCounts = await ReadRowCountsAsync(ms, "Tree");
         Assert.Equal([3L], rowCounts);

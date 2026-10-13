@@ -19,28 +19,36 @@ calculated field. A DAO-created field using each spelling evaluates Price 4
 to 8 for multiplication by 2. The same engine rejects these spellings when
 assigned to table validation rules, field validation rules or defaults.
 
-Calculated plans retain the table qualifier separately from the column name
-and resolve it only against an explicit, matching current-table context.
-Cross-table and multi-segment object references are refused; no embedded code
-is executed. Defaults and validation rules reject qualified references before
-mutation, including setting a rule on an empty table. Column renames preserve
-the qualifier and rewrite the matching field dependency. DAO120 rejects all
-nine tested variants with a space before, after or on both sides of the
-separator in `[T].[Price]`, `T.Price` and `[T]![Price]`; the evaluator rejects
-them too. Each native refusal leaves the field collection unchanged, and the
-adjacent spelling succeeds in the same database.
+Calculated plans retain qualifier syntax separately from the column name.
+An adjacent bare qualifier binds to the current row, even when its name is
+another existing table: DAO120 evaluates `Other.Price` and `Other![Price]`
+from `T.Price`, leaving the separate `Other` table unchanged. A bracketed
+qualifier requires a matching current-table context. Plans require an explicit
+row/table context; multi-segment object references are refused, and no
+embedded code or cross-table lookup is executed. Defaults and validation
+rules reject every qualified reference before mutation. Column rename and
+drop dependency checks recognize row-local bare aliases while preserving
+the original qualifier spelling. A qualified second segment is a field even
+when it spells a builtin constant or keyword (such as `vbTrue`, `Null` or
+`And`); unqualified builtin constants keep their usual meanings.
+`QualifiedReservedFieldTests` checks dependency refusal, rename and native
+recalculation/compact for these names. DAO120 rejects all nine tested whitespace
+variants of `[T].[Price]`, `T.Price` and `[T]![Price]`; the evaluator rejects
+them too. Each native refusal leaves the field collection unchanged, and
+the adjacent spelling succeeds in the same database.
 
 DAO120 table renames retain the original calculated-expression text. After
-renaming `T` to `Renamed T`, bare table qualifiers `T.Price` and `T![Price]`
-continue evaluating new and updated rows after reopen, and compact preserves
-the expression and results. Bracketed table qualifiers `[T].[Price]`,
-`[T]![Price]` and `[T].Price` instead return Null after rename, and compact
-refuses them with DAO error 3790. `TableRenamedQualifiedExpressionTests`
-characterizes all five variants. The writer refuses recalculation with a
-stale table qualifier before changing bytes, including on the native files.
-Supporting the legitimate bare aliases requires verified binding metadata;
-matching an arbitrary foreign qualifier to the current row would lose the
-native distinction.
+renaming `T` to `Renamed T`, bare qualifiers `T.Price` and `T![Price]`
+continue evaluating new and updated rows after reopen. The writer follows
+that row-local binding through insert, update and field rename; DAO then
+updates, compacts and reads the resulting expressions and values.
+`TableRenamedQualifiedExpressionTests` also uses the bare `Other` qualifier
+with a real separate table, and verifies that table's data is untouched.
+Bracketed qualifiers `[T].[Price]`, `[T]![Price]` and `[T].Price` instead
+return Null after native table rename, and compact refuses them with DAO
+error 3790. The writer still refuses these stale bracketed qualifiers before
+changing bytes. Their native Null semantics remain open; allowing arbitrary
+bracketed foreign qualifiers would erase the syntax distinction.
 
 ## On-disk format
 
@@ -156,8 +164,9 @@ it, so an expression the engine cannot parse (a stored `%`) is renamed too. It
 skips string, `#date#` and `{guid ...}` literals, numbers and radix literals,
 and rewrites `[Old]` and a bare `Old` (not a keyword, a `vb` constant, a
 function call or a `$` name) as `[New]`. A reference qualified by the table's
-own name keeps the qualifier: `[Table].[Old]` becomes `[Table].[New]` and
-`Table.Old` becomes `Table.[New]`. Same-table qualified references evaluate
+own name or an adjacent bare alias keeps the qualifier: `[Table].[Old]` becomes
+`[Table].[New]`, `Alias.Old` becomes `Alias.[New]`, and `Table.Old` becomes
+`Table.[New]`. Same-table qualified references evaluate
 before and after column rename. Other qualified names (`[Other].[Old]`,
 `Forms![F]![Old]`) are left alone. The text scanner also groups spaced name
 chains conservatively, so unsupported stored syntax such as `[Other] . [Old]`

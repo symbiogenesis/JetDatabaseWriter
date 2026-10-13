@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.ComplexColumns.Models;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -52,17 +51,17 @@ internal static class AttachmentWrapper
     /// Wraps <paramref name="payload"/> per spec §3.1 as Access does: typeFlag
     /// <c>0</c> (stored raw) when the extension is one Access stores raw, else
     /// <c>1</c> (a zlib stream); <c>dataLen</c> is the length of the uncompressed
-    /// content stream either way. The content header holds the lowercased
+    /// content stream either way. The content header preserves the
     /// extension as NUL-terminated UTF-16LE, with its length counted in
     /// characters including the NUL.
     /// </summary>
-    /// <param name="fileExtension">The extension without its leading dot (e.g. <c>"pdf"</c>); it is stored lowercased.</param>
+    /// <param name="fileExtension">The extension without its leading dot (e.g. <c>"pdf"</c>); its casing is preserved.</param>
     /// <param name="payload">Raw uncompressed file bytes.</param>
     public static byte[] Encode(string fileExtension, byte[] payload)
     {
         Guard.NotNull(payload, nameof(payload));
 
-        string extension = NormalizeExtension(fileExtension);
+        string extension = fileExtension ?? string.Empty;
         bool compress = ShouldCompress(extension);
         byte[] content = BuildContent(extension, payload);
         byte[] body = compress ? ZlibDeflate(content) : content;
@@ -145,16 +144,12 @@ internal static class AttachmentWrapper
     public static bool ShouldCompress(string fileExtension)
         => !RawFormats.Contains(fileExtension ?? string.Empty);
 
-    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Access and Jackcess store attachment extensions in lowercase.")]
-    private static string NormalizeExtension(string? fileExtension)
-        => string.IsNullOrEmpty(fileExtension) ? string.Empty : fileExtension.ToLowerInvariant();
-
     /// <summary>
     /// Builds the content stream: <c>headerLen</c>, the flag <c>1</c>, the
     /// extension length in characters including its NUL, the extension as
     /// NUL-terminated UTF-16LE, then the file bytes.
     /// </summary>
-    /// <param name="extension">The extension, already lowercased.</param>
+    /// <param name="extension">The extension with its original casing.</param>
     /// <param name="payload">The file bytes.</param>
     private static byte[] BuildContent(string extension, byte[] payload)
     {

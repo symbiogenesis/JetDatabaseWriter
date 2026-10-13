@@ -27,16 +27,20 @@ internal static class CalculatedExpressionNormalizer
         => Normalize(expression, out placeholderToColumn, out placeholderToTable, out _);
 
     internal static string Normalize(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions)
+        => Normalize(expression, out placeholderToColumn, out placeholderToTable, out functions, out _);
+
+    internal static string Normalize(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions, out HashSet<string> rowLocalQualifiedNames)
     {
-        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn, out placeholderToTable, out functions);
+        string prepared = ReplaceFieldReferencesAndDateLiterals(expression, out placeholderToColumn, out placeholderToTable, out functions, out rowLocalQualifiedNames);
         return AccessExpressionNormalizer.Normalize(prepared, expression);
     }
 
-    private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions)
+    private static string ReplaceFieldReferencesAndDateLiterals(string expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions, out HashSet<string> rowLocalQualifiedNames)
     {
         placeholderToColumn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         placeholderToTable = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         functions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        rowLocalQualifiedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string trimmed = expression.Trim();
         if (trimmed.StartsWith('='))
         {
@@ -133,6 +137,10 @@ internal static class CalculatedExpressionNormalizer
                     if (table is not null)
                     {
                         placeholderToTable.Add(placeholder, table);
+                        if (!bracketed)
+                        {
+                            rowLocalQualifiedNames.Add(placeholder);
+                        }
                     }
 
                     builder.Append(placeholder);

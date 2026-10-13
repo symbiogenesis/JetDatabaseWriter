@@ -137,7 +137,8 @@ internal sealed class RelationshipEnforcer(
     /// changes. As in Access, a relationship is checked only on the rows whose
     /// foreign key the update changes to a non-null value: a relationship none
     /// of whose foreign-key columns the update assigns is skipped, and so is a
-    /// row whose key keeps its value, even when that key has no parent row.
+    /// row whose key keeps its value, even when that key has no parent row,
+    /// unless the same statement removes the parent it previously referenced.
     /// </summary>
     /// <param name="foreignTable">The table being updated.</param>
     /// <param name="foreignDef">The table's definition.</param>
@@ -175,7 +176,8 @@ internal sealed class RelationshipEnforcer(
 
                 string? newKey = RelationshipKeyBuilder.Build(newRow, foreignColumnIndexes, foreignDef);
                 if (newKey == null
-                    || string.Equals(newKey, RelationshipKeyBuilder.Build(oldRow, foreignColumnIndexes, foreignDef), StringComparison.Ordinal))
+                    || (string.Equals(newKey, RelationshipKeyBuilder.Build(oldRow, foreignColumnIndexes, foreignDef), StringComparison.Ordinal)
+                        && (!ctx.RemovedParentKeys.TryGetValue(rel.Name, out HashSet<string>? removed) || !removed.Contains(newKey))))
                 {
                     continue;
                 }
@@ -240,10 +242,21 @@ internal sealed class RelationshipEnforcer(
             }
 
             var keys = new HashSet<string>(StringComparer.Ordinal);
+            var removedKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (LocatedRow stored in await snapshots.ReadRowsAsync(parent.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                object[] finalRow = tableReplacements.TryGetValue((stored.Location.PageNumber, stored.Location.RowIndex), out object[]? replacement) ? replacement : stored.Values;
+                object[] finalRow = stored.Values;
+                if (tableReplacements.TryGetValue((stored.Location.PageNumber, stored.Location.RowIndex), out object[]? replacement))
+                {
+                    finalRow = replacement;
+                    string? originalKey = RelationshipKeyBuilder.Build(stored.Values, columns, parent.Definition);
+                    if (originalKey != null)
+                    {
+                        _ = removedKeys.Add(originalKey);
+                    }
+                }
+
                 string? key = RelationshipKeyBuilder.Build(finalRow, columns, parent.Definition);
                 if (key != null)
                 {
@@ -252,6 +265,8 @@ internal sealed class RelationshipEnforcer(
             }
 
             ctx.PlannedParentKeys[rel.Name] = keys;
+            removedKeys.ExceptWith(keys);
+            ctx.RemovedParentKeys[rel.Name] = removedKeys;
         }
 
         await this.EnforceFkOnForeignUpdateAsync(primaryTable, primaryDef, CreateOrdinals(primaryDef.Columns.Count), rows, ctx, cancellationToken).ConfigureAwait(false);
@@ -377,7 +392,8 @@ internal sealed class RelationshipEnforcer(
     /// rewritten once, with every key change. Through a self-relationship, a
     /// row of
     /// <paramref name="rows"/> is a dependent row when its new foreign key
-    /// still names a key the update moves; its cascaded key is written into
+    /// still names a key the update moves and the caller did not explicitly
+    /// assign any column of that foreign key; its cascaded key is written into
     /// its new row, which the caller rewrites, rather than planned as a
     /// second rewrite. Last, every rewritten child row is encoded and measured
     /// as its re-insert will encode it (<see cref="TableRowStore.EncodeRow"/>);
@@ -462,7 +478,13 @@ internal sealed class RelationshipEnforcer(
                 // the stale row would leave two live rows.
                 bool self = string.Equals(rel.ForeignTable, primaryTable, StringComparison.OrdinalIgnoreCase);
                 var ownDependents = new List<(object[] NewRow, object[] NewPkSubset)>();
-                if (self)
+                bool callerAssignedForeignKey = Array.Exists(fkIdx, assignedColumns.Contains);
+
+                // DAO preserves the entire caller key when the statement assigns
+                // any of its foreign-key columns, even an unchanged composite
+                // component. An explicitly retained old key must fail the final
+                // foreign-key check rather than be replaced by its own cascade.
+                if (self && (!rel.CascadeUpdates || !callerAssignedForeignKey))
                 {
                     foreach ((_, _, object[] newRow) in rows)
                     {

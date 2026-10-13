@@ -13,7 +13,7 @@ using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
-/// <summary>Qualified expression references resolve only within their explicit row context.</summary>
+/// <summary>Calculated qualifiers preserve DAO syntax while resolving within the current row.</summary>
 public sealed class QualifiedExpressionReferenceTests
 {
     [Theory]
@@ -27,6 +27,74 @@ public sealed class QualifiedExpressionReferenceTests
         CalculatedExpressionEvaluationContext context = Context("T");
         var plan = CalculatedExpressionPlan.Parse(reference + " * 2");
         Assert.Equal(8m, Assert.IsType<decimal>(plan.Root.Evaluate(context, plan)));
+    }
+
+    [Theory]
+    [InlineData("Other.Price")]
+    [InlineData("Other![Price]")]
+    [InlineData("T.Price")]
+    [InlineData("T![Price]")]
+    public void BareQualifier_BindsToCurrentRowEvenWhenNameDiffers(string reference)
+    {
+        var plan = CalculatedExpressionPlan.Parse(reference + " * 2");
+        Assert.Equal(8m, Assert.IsType<decimal>(plan.Root.Evaluate(Context("Renamed T"), plan)));
+        Assert.False(ColumnDefaultValue.Compile(reference).TryEvaluate(typeof(int), () => Context("Renamed T"), out _));
+        Assert.Throws<NotSupportedException>(() => CalculatedExpressionPlan.Parse(reference, isCalculatedColumn: false));
+    }
+
+    [Theory]
+    [InlineData("Other.Price", "Other.[Cost]")]
+    [InlineData("Other![Price]", "Other![Cost]")]
+    public void BareQualifier_RenameAndDependencyFollowCurrentRow(string expression, string expected)
+    {
+        Assert.True(ExpressionFieldReferences.References(expression, "Price", "Renamed T"));
+        string renamed = Assert.IsType<string>(ExpressionFieldReferences.Rename(expression, "Price", "Cost", "Renamed T"));
+        Assert.Equal(expected, renamed);
+        var plan = CalculatedExpressionPlan.Parse(renamed);
+        Assert.Equal(4, plan.Root.Evaluate(Context("Renamed T", "Cost"), plan));
+    }
+
+    [Theory]
+    [InlineData("T", "vbTrue")]
+    [InlineData("Other", "vbTrue")]
+    [InlineData("[T]", "vbTrue")]
+    [InlineData("T", "Yes")]
+    [InlineData("Other", "Yes")]
+    [InlineData("[T]", "Yes")]
+    [InlineData("T", "Null")]
+    [InlineData("Other", "Null")]
+    [InlineData("[T]", "Null")]
+    [InlineData("T", "And")]
+    [InlineData("Other", "And")]
+    [InlineData("[T]", "And")]
+    [InlineData("T", "Mod")]
+    [InlineData("Other", "Mod")]
+    [InlineData("[T]", "Mod")]
+    [InlineData("T", "Date")]
+    [InlineData("Other", "Date")]
+    [InlineData("[T]", "Date")]
+    public void QualifiedReservedName_RenameAndDependencyFollowActualField(string qualifier, string fieldName)
+    {
+        string expression = qualifier + "." + fieldName + " * 2";
+        var plan = CalculatedExpressionPlan.Parse(expression);
+        Assert.Equal(8m, Assert.IsType<decimal>(plan.Root.Evaluate(Context("T", fieldName), plan)));
+        Assert.True(ExpressionFieldReferences.References(expression, fieldName, "T"));
+        string renamed = Assert.IsType<string>(ExpressionFieldReferences.Rename(expression, fieldName, "Cost", "T"));
+        Assert.Equal(qualifier + ".[Cost] * 2", renamed);
+        var renamedPlan = CalculatedExpressionPlan.Parse(renamed);
+        Assert.Equal(8m, Assert.IsType<decimal>(renamedPlan.Root.Evaluate(Context("T", "Cost"), renamedPlan)));
+    }
+
+    [Theory]
+    [InlineData("vbTrue")]
+    [InlineData("Yes")]
+    [InlineData("Null")]
+    [InlineData("And")]
+    [InlineData("Mod")]
+    public void UnqualifiedReservedToken_IsNotAFieldDependency(string name)
+    {
+        Assert.False(ExpressionFieldReferences.References(name, name, "T"));
+        Assert.Equal(name, ExpressionFieldReferences.Rename(name, name, "Cost", "T"));
     }
 
     [Theory]
@@ -45,7 +113,6 @@ public sealed class QualifiedExpressionReferenceTests
 
     [Theory]
     [InlineData("[Other].[Price]", "T")]
-    [InlineData("Other.Price", "T")]
     [InlineData("[Other]![Price]", "T")]
     [InlineData("[T].[Price]", null)]
     [InlineData("T.Price", null)]

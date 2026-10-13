@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.ComplexColumns;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -1025,7 +1024,6 @@ internal sealed class ComplexColumnManager(
         return values;
     }
 
-    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Attachment FileType is intentionally stored in lowercase to match the existing attachment contract and Access conventions.")]
     private static string DeriveExtension(string fileName)
     {
         if (string.IsNullOrEmpty(fileName))
@@ -1039,7 +1037,7 @@ internal sealed class ComplexColumnManager(
             return string.Empty;
         }
 
-        return fileName[(dot + 1)..].ToLowerInvariant();
+        return fileName[(dot + 1)..];
     }
 
     // ── Cascade-on-delete for complex (Attachment / MultiValue) columns ──

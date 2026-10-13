@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -13,12 +14,59 @@ using Xunit;
 public sealed class TableRenamedQualifiedExpressionTests
 {
     [Theory]
-    [InlineData("[T].[Price]")]
+    [InlineData("Other.Price")]
+    [InlineData("Other![Price]")]
     [InlineData("T.Price")]
-    [InlineData("[T]![Price]")]
     [InlineData("T![Price]")]
+    public async Task BareQualifier_InsertUpdateAndColumnRenameBindToCurrentRow(string reference)
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
+            stream, DatabaseFormat.AceAccdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Other", [new ColumnDefinition("Price", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Other", [99], TestContext.Current.CancellationToken);
+            await writer.CreateTableAsync(
+                "Renamed T",
+                [
+                    new ColumnDefinition("Price", typeof(int)),
+                    new ColumnDefinition("Calculated", typeof(int)) { IsCalculated = true, CalculationExpression = reference + " * 2" },
+                ],
+                TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Renamed T", [4, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(
+            stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.UpdateRowsAsync("Renamed T", "Price", 4, new Dictionary<string, object?> { ["Price"] = 5 }, TestContext.Current.CancellationToken);
+            byte[] before = stream.ToArray();
+            await Assert.ThrowsAsync<JetOperationException>(async () => await writer.DropColumnAsync("Renamed T", "Price", TestContext.Current.CancellationToken));
+            Assert.Equal(before, stream.ToArray());
+            await writer.RenameColumnAsync("Renamed T", "Price", "Cost", TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Renamed T", [3, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        stream.Position = 0;
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
+        var values = new Dictionary<int, int>();
+        await foreach (object[] row in reader.Rows("Renamed T", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            values.Add(Assert.IsType<int>(row[0]), Assert.IsType<int>(row[1]));
+        }
+
+        Assert.Equal(2, values.Count);
+        Assert.Equal(10, values[5]);
+        Assert.Equal(6, values[3]);
+    }
+
+    [Theory]
+    [InlineData("[T].[Price]")]
+    [InlineData("[T]![Price]")]
     [InlineData("[T].Price")]
-    public async Task ForeignQualifiedCalculation_InsertAndUpdateRefuseWithoutChangingImage(string reference)
+    public async Task BracketedForeignQualifiedCalculation_InsertAndUpdateRefuseWithoutChangingImage(string reference)
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -74,9 +122,12 @@ public sealed class TableRenamedQualifiedExpressionTests
         Assert.True(created.ExitCode == 0, $"DAO failed: {created.StdOut}\n{created.StdErr}");
         Assert.Contains("BEFORE=8", created.StdOut, StringComparison.Ordinal);
 
-        // Native-authored stale qualifiers remain refused until their binding
-        // metadata is understood; a row-local fallback would erase this distinction.
-        await AssertWriterRefusesWithoutChangingImageAsync(await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
+        // Bracketed stale qualifiers remain refused without changing bytes;
+        // the bare forms bind to the current row and have separate writer coverage.
+        if (returnsNull)
+        {
+            await AssertWriterRefusesWithoutChangingImageAsync(await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken));
+        }
 
         const string updateScript = """
             Write-Output ('EXPRESSION=' + $db.TableDefs('Renamed T').Fields('Calculated').Properties('Expression').Value)
@@ -146,6 +197,100 @@ public sealed class TableRenamedQualifiedExpressionTests
         Assert.Equal(2, values.Count);
         Assert.Equal(6, values[3]);
         Assert.Equal(10, values[5]);
+    }
+
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [Trait("Category", "RequiresMicrosoftAccess")]
+    [InlineData("T.Price")]
+    [InlineData("T![Price]")]
+    [InlineData("Other.Price")]
+    [InlineData("Other![Price]")]
+    public async Task NativeBareQualifier_WriterRecalculatesRenamesAndCompactsWithoutForeignLookup(string reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        await using var session = AccessRoundTripSession.CreateEmpty("JetDatabaseWriter.Tests.NativeBareQualification");
+        string path = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
+        string expression = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(reference + " * 2");
+        string bracketedForeign = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(reference.Replace("Other", "[Other]", StringComparison.Ordinal) + " * 2");
+        AccessRoundTripEnvironment.CompactResult created = session.RunDaoEngineScript(
+            $$"""
+            $db = $engine.CreateDatabase({{path}}, ';LANGID=0x0409;CP=1252;COUNTRY=0')
+            try {
+                $db.Execute('CREATE TABLE [T] ([Price] LONG)')
+                $db.Execute('CREATE TABLE [Other] ([Price] LONG)')
+                $db.Execute('INSERT INTO [Other] ([Price]) VALUES (99)', 128)
+                $db.TableDefs.Refresh()
+                $tdf = $db.TableDefs('T')
+                if ({{bracketedForeign}} -like '[[]Other[]]*') {
+                    $rejected = $tdf.CreateField('Rejected', 4)
+                    $rejected.Properties('Expression').Value = {{bracketedForeign}}
+                    $refused = $false
+                    try { $tdf.Fields.Append($rejected) }
+                    catch [System.Runtime.InteropServices.COMException] { $refused = $true }
+                    if (!$refused) { throw 'DAO accepted a bracketed foreign-table qualifier.' }
+                    $tdf.Fields.Refresh()
+                    if ($tdf.Fields.Count -ne 1) { throw 'DAO retained the rejected field.' }
+                }
+                $field = $tdf.CreateField('Calculated', 4)
+                $field.Properties('Expression').Value = {{expression}}
+                $tdf.Fields.Append($field)
+                $db.Execute('INSERT INTO [T] ([Price]) VALUES (4)', 128)
+                $rs = $db.OpenRecordset('SELECT [Calculated] FROM [T]')
+                try { Write-Output ('BEFORE=' + [string]$rs.Fields('Calculated').Value) }
+                finally { $rs.Close() }
+                $tdf.Name = 'Renamed T'
+            } finally { $db.Close() }
+            """,
+            TimeSpan.FromMinutes(1));
+        Assert.True(created.ExitCode == 0, $"DAO failed: {created.StdOut}\n{created.StdErr}");
+        Assert.Contains("BEFORE=8", created.StdOut, StringComparison.Ordinal);
+
+        await using (AccessWriter writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
+        {
+            await writer.InsertRowAsync("Renamed T", [3, DBNull.Value], TestContext.Current.CancellationToken);
+            await writer.UpdateRowsAsync("Renamed T", "Price", 4, new Dictionary<string, object?> { ["Price"] = 5 }, TestContext.Current.CancellationToken);
+            await writer.RenameColumnAsync("Renamed T", "Price", "Cost", TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Renamed T", [2, DBNull.Value], TestContext.Current.CancellationToken);
+        }
+
+        AccessRoundTripEnvironment.CompactResult updated = session.RunDaoDatabaseScriptThenCompact(
+            """
+            $db.Execute('UPDATE [Renamed T] SET [Cost]=6 WHERE [Cost]=5', 128)
+            $rs = $db.OpenRecordset('SELECT [Cost],[Calculated] FROM [Renamed T] ORDER BY [Cost]')
+            try {
+                while (!$rs.EOF) {
+                    Write-Output ('ROW=' + [string]$rs.Fields('Cost').Value + ':' + [string]$rs.Fields('Calculated').Value)
+                    $rs.MoveNext()
+                }
+            } finally { $rs.Close() }
+            $rs = $db.OpenRecordset('SELECT [Price] FROM [Other]')
+            try { Write-Output ('OTHER=' + [string]$rs.Fields('Price').Value) }
+            finally { $rs.Close() }
+            """,
+            TimeSpan.FromMinutes(1));
+        Assert.True(updated.ExitCode == 0, $"DAO failed: {updated.StdOut}\n{updated.StdErr}");
+        Assert.Contains("ROW=2:4", updated.StdOut, StringComparison.Ordinal);
+        Assert.Contains("ROW=3:6", updated.StdOut, StringComparison.Ordinal);
+        Assert.Contains("ROW=6:12", updated.StdOut, StringComparison.Ordinal);
+        Assert.Contains("OTHER=99", updated.StdOut, StringComparison.Ordinal);
+        await using AccessReader reader = await AccessReader.OpenAsync(
+            session.CompactedPath, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
+        IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Renamed T", TestContext.Current.CancellationToken);
+        int separator = reference.IndexOfAny(['.', '!']);
+        Assert.Equal(reference[..(separator + 1)] + "[Cost] * 2", columns[1].CalculationExpression?.TrimEnd('\0'));
+        var values = new Dictionary<int, int>();
+        await foreach (object[] row in reader.Rows("Renamed T", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            values.Add(Assert.IsType<int>(row[0]), Assert.IsType<int>(row[1]));
+        }
+
+        Assert.Equal(3, values.Count);
+        Assert.Equal(4, values[2]);
+        Assert.Equal(6, values[3]);
+        Assert.Equal(12, values[6]);
     }
 
     private static async Task AssertWriterRefusesWithoutChangingImageAsync(byte[] image)

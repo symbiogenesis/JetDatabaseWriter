@@ -8,11 +8,12 @@ using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
 internal sealed class CalculatedExpressionPlan
 {
-    private CalculatedExpressionPlan(CalculatedExpressionNode root, Dictionary<string, string> placeholderToColumn, Dictionary<string, string> placeholderToTable)
+    private CalculatedExpressionPlan(CalculatedExpressionNode root, Dictionary<string, string> placeholderToColumn, Dictionary<string, string> placeholderToTable, HashSet<string> rowLocalQualifiedNames)
     {
         this.Root = root;
         this.PlaceholderToColumn = placeholderToColumn;
         this.PlaceholderToTable = placeholderToTable;
+        this.RowLocalQualifiedNames = rowLocalQualifiedNames;
     }
 
     public CalculatedExpressionNode Root { get; }
@@ -21,10 +22,12 @@ internal sealed class CalculatedExpressionPlan
 
     public Dictionary<string, string> PlaceholderToTable { get; }
 
+    public HashSet<string> RowLocalQualifiedNames { get; }
+
     public static CalculatedExpressionPlan Parse(string expression, bool isCalculatedColumn = true)
     {
         ValidateExpressionShape(expression, MaxExpressionLength, "Calculated-column expression");
-        string normalized = CalculatedExpressionNormalizer.Normalize(expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions);
+        string normalized = CalculatedExpressionNormalizer.Normalize(expression, out Dictionary<string, string> placeholderToColumn, out Dictionary<string, string> placeholderToTable, out HashSet<string> functions, out HashSet<string> rowLocalQualifiedNames);
         ValidateExpressionShape(normalized, MaxNormalizedExpressionLength, "Normalized calculated-column expression");
         if (!isCalculatedColumn && placeholderToTable.Count != 0)
         {
@@ -48,7 +51,7 @@ internal sealed class CalculatedExpressionPlan
                 }
             }
 
-            return new CalculatedExpressionPlan(root, placeholderToColumn, placeholderToTable);
+            return new CalculatedExpressionPlan(root, placeholderToColumn, placeholderToTable, rowLocalQualifiedNames);
         }
         catch (ParsingException ex)
         {

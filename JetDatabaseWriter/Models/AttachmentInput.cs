@@ -41,8 +41,8 @@ public sealed record AttachmentInput
     public byte[] FileData { get; }
 
     /// <summary>
-    /// Gets the lowercase file extension without the leading <c>.</c>. When null,
-    /// the extension is derived from <see cref="FileName"/>.
+    /// Gets the file extension without the leading <c>.</c>. When null,
+    /// the extension is derived from <see cref="FileName"/>. Casing is preserved.
     /// </summary>
     public string? FileType { get; init; }
 

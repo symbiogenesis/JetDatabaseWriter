@@ -73,8 +73,8 @@ public sealed class ComplexColumnsRowApiTests
     [Fact]
     public void AttachmentWrapper_Encode_EmptyExtension_WritesNulOnlyExtension()
     {
-        // Follows Jackcess: the extension is just its NUL, so the count is 1
-        // and the content header is 14 bytes. What Access writes here is unchecked.
+        // Native DAO writes only the NUL for an extensionless file, so the
+        // count is 1 and the content header is 14 bytes.
         byte[] payload = [1, 2, 3];
         byte[] wrapped = AttachmentWrapper.Encode(string.Empty, payload);
 
@@ -90,17 +90,16 @@ public sealed class ComplexColumnsRowApiTests
     }
 
     [Fact]
-    public void AttachmentWrapper_Encode_UpperCaseExtension_LowercasesIt()
+    public void AttachmentWrapper_Encode_UpperCaseExtension_PreservesNativeCase()
     {
-        // Jackcess lowercases the extension before choosing raw storage and
-        // writing it into the content header.
+        // DAO preserves extension casing; raw-format selection ignores case.
         byte[] payload = Encoding.UTF8.GetBytes("FAKE-JPEG-PAYLOAD");
         byte[] wrapped = AttachmentWrapper.Encode("JPG", payload);
 
         Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(wrapped));
-        Assert.Equal(AccessContent("jpg", payload), wrapped[8..]);
+        Assert.Equal(AccessContent("JPG", payload), wrapped[8..]);
         Assert.True(AttachmentWrapper.TryDecode(wrapped, out string ext, out _, cancellationToken: TestContext.Current.CancellationToken));
-        Assert.Equal("jpg", ext);
+        Assert.Equal("JPG", ext);
     }
 
     [Theory]

@@ -34,10 +34,15 @@ qualified calculated-reference forms survive writer mutation, column rename
 and DAO compact/readback. Targeted x64 DAO120 checks on both frameworks also
 verify read/write/compact after scrub and physical shrink of the native JET4 RC4
 and ACE Agile fixtures. `TableRenamedQualifiedExpressionTests` separately
-records DAO120 table-rename behavior: bare table qualifiers retain evaluation
-after reopen/update/compact, while stale bracketed qualifiers yield Null and
-compact error 3790. Writer recalculation is refused without byte changes until
-native binding metadata is understood. Nine whitespace variants of qualified calculated
+records DAO120 table-rename behavior: bare qualifiers bind to the current row,
+including a name shared with another existing table. Writer insert, update
+and column rename preserve that behavior through native update and compact,
+without changing the other table. `QualifiedReservedFieldTests` verifies that
+qualified `vbTrue`, `Yes`, `Null`, `And`, `Mod` and `Date` names bind actual
+fields and keep rename/drop dependencies through native recalculation/compact.
+Stale bracketed qualifiers yield native Null
+and compact error 3790; writer recalculation of those variants remains refused
+without byte changes. Nine whitespace variants of qualified calculated
 references are refused without adding a field; their adjacent controls succeed
 in the same DAO databases. See [Jet4 bootstrap security](jet4-bootstrap-security.md)
 and [calculated expression notes](calculated-columns-format-notes.md).
@@ -76,6 +81,7 @@ The library regressions below distinguish their round trips from explicit DAO ch
 
 - `NativeAceCatalogSecurityTests` compares created and rewritten ACE owners/permissions with native MSysDb/container metadata and checks coherent fresh bootstrap. `CatalogOwnedUsageMapTests` checks literal imported system-map membership independently of the reader's ownership fallback. `DaoReplicationIdTests.MicrosoftGuidFixture_SchemaOperation_PreservesNativeCompact` checks native compact after Add/Rename/Drop on the Microsoft ACE GUID fixture; catalog map maintenance preserves the relocated catalog row. This does not establish complete native schema, security or column-owned LVAL map coverage.
 - `ForeignKeyCascadeUpdateTests` covers contradictory-path and diamond refusal without byte changes, simple stable cycles and independently allocated equal binary keys across formats and write modes. DAO120 characterization accepts a chain and a simple cycle, refuses the converging diamond with or without a return edge, and compacts every resulting database. The guarded graph test compares native and writer behavior on a DAO-created database; composite and broader graph variants remain separate evidence gaps.
+- `DaoSelfRelationshipUpdateTests` compares simultaneous scalar and non-Null composite self-key assignments on DAO-authored Jet4/ACE files. Explicit caller FK assignments survive planning; retaining a removed old parent is refused instead of silently cascading to the new key. Native opens and compact/readback verify accepted and refused output. Ordinary `ForeignKeySelfAssignmentTests`, cascade and update-scope regressions preserve bytes, counts, indexes and caller rollback across formats and write modes, including already orphaned unchanged keys. Native cycle comparisons retain the existing graph evidence. Jet3 native variants remain R6 work; partial-Null composite self-key behavior remains the precise R10 gap.
 - `DaoTextCollationTests` table-rule cases cover getters/setters, rename/drop dependencies, unrelated updates, Null-result acceptance, cascades and transaction rollback, plus interpretation of a native `Partition(...)` table rule and selected DAO formatting boundaries. `PartitionTableValidationRuleTests` separately establish reopened-writer evaluation and byte-identical rejected inserts/updates on library fixtures across Jet3/Jet4/ACE. DAO120 reopens, enforces, writes and compacts the resulting databases. A synthetically Text-typed version of a DAO source rule separately verifies edited-output acceptance while preserving validation text; it is not a native fixture for that encoding. These four guarded cases passed on both target frameworks through x64 DAO120 on 2026-10-08. Broader engine-generation evidence remains in E2.
 - `ColumnPropertyBlockTests`, `PersistedPropertyProjectorTests`, `SchemaRewritePropertyPreservationTests` and `TableValidationRuleTests` cover opaque target headers, native name lengths and preservation of entry padding, original indices/order and unused/duplicate names through property edits and schema rewrites. Repeated equivalent rule/text entries and table targets update or clear consistently, while contradictory original repeats refuse mutation. `DuplicateSchemaPropertyTests` covers consistent duplicate/split modeled targets, rename/remove projection, cold-reopen Required/default/rule/calculation binding and metadata, plus byte-preserving refusal of contradictory calculated Expression/ResultType entries. These repeated-entry/target layouts are synthetic evidence. `LvPropReadTests` refuses malformed external property chains before Add/Drop/Rename and table-rule replacement/removal across Jet3/Jet4/ACE and write modes, preserving bytes and caller transaction state. Long-value page pointers are checked against the readable page count before reading. `DaoPropertyMutationTests` verifies DAO120 acceptance, metadata, rule enforcement, data and Compact & Repair for edited single-pool Jet4/ACE sources carrying synthetic padding and duplicate/unused names. Repeated identical name-pool controls lose the native table rule and refuse native insertion as corrupt before any writer edit; native-accepted multiple-pool layouts and Jet3 property edits remain unverified.
 - `NativeSchemaPreservationTests` pins the distinct native descriptor identities in Microsoft-authored TestV2010 Table4 through Add/Drop/Rename, noncolliding added identities, and root/continuation/value/index preservation on 202-column attachment tables in every write mode. `ColumnDescriptorPreservationTests` includes identity bytes in surviving-descriptor comparisons. `NativeSchemaDaoTests` verifies native read and compact for the Microsoft fixture and extraction, insert/update/delete and compact for rewritten DAO-authored wide attachment tables. Both framework legs execute these guarded cases through x64 DAO120. This does not establish complete preservation of unmodeled TDEF headers/trailers, index descriptors or wider native metadata.
@@ -109,6 +115,17 @@ The library regressions below distinguish their round trips from explicit DAO ch
 
 - `LongValueSlotBoundsDecodePolicyTests` mutates assigned MEMO/OLE offsets and removes variable slots on Jet3/Jet4/ACE, including ACE calculated MEMO. Strict string, typed, POCO, OLE hybrid and materialized reads report contextual long-value corruption; lenient reads return their documented missing values with payload-free diagnostics and tolerate listener failures. Writer updates refuse before changing bytes. Null-mask and absent-column controls remain missing without diagnostics; variable Complex assignment checks use synthetic decode plans, not native variable Complex fixtures.
 - `IndexCursorTests` checks self-cycles and two-leaf cycles before any leaf is reread in Contains, exact/list-range and streaming traversal. Cycles raise `CorruptIndex` with page context instead of hanging or silently completing with partial matches. Matching valid chains and cancellation controls preserve normal reads. These synthetic checks establish bounded leaf traversal, not complete index corruption auditing or Microsoft interoperability.
+
+`AttachmentWrapperDaoTests` creates extensionless, empty, raw, compressed,
+uppercase and longer-extension attachments through DAO120 LoadFromFile.
+It verifies native on-disk headers, preserved FileType case, raw wrapper parity
+and compressed content/header/checksum parity with writer copies. DAO extracts
+both native and writer payloads before and after compact; captured native
+empty/extensionless wrappers also run as ordinary decoder regressions.
+`AttachmentResourceLimitTests` separately verifies per-value, aggregate-content
+and decode-work budgets; these synthetic refusal checks do not establish
+native acceptance of malformed wrappers. Additional complex descriptor variants
+remain F11 requirements.
 
 ## Validation Levels
 

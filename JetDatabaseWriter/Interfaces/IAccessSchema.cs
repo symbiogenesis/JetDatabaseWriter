@@ -143,9 +143,9 @@ public interface IAccessSchema : IAccessBase
     /// <c>NameMap</c> is dropped. Complete preservation of unknown descriptors and property
     /// layouts, multi-page variants and Access application-object dependencies is not established.
     /// Calculated expressions and stored column/table rules referring to the column are
-    /// rewritten while retaining string literals. Supported same-table qualified calculated
-    /// references remain evaluable; stale table qualifiers after a table rename have narrower
-    /// support. Nonempty table <c>Filter</c> or <c>OrderBy</c> properties refuse the rename
+    /// rewritten while retaining string literals. Bare calculated qualifiers bind to the current
+    /// row, including after a table rename; bracketed qualifiers require the current table name.
+    /// Nonempty table <c>Filter</c> or <c>OrderBy</c> properties refuse the rename
     /// before writing because their dependencies cannot be safely rewritten. Lookup RowSource
     /// and saved-query dependencies are not fully handled.
     /// A rename may change only the letter case of the name, and is then handled like any other
