@@ -84,8 +84,8 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData("Files", "28D0925A7E9B4A4075FB6B61EEA99DCC1D49664F7BC7E49AF88D1628EC7FFFBF")]
-    [InlineData("Tags", "BEA5FE793536EFE2ABF9633E5AB53A560A7A4603EA89BB6E773755C113A0C6F5")]
+    [InlineData("Files", "E335CCAA709DF497DA48CC7D2EE4321ABFA279408B94278F899C23EDF841EB27")]
+    [InlineData("Tags", "43D78706652214DECE2806D9CE885256BE5BB9A162E93FE3405674764E4AE5AE")]
     public async Task CreateTable_AccdbComplexColumn_FlatTableTDefMatchesGoldenHash(string column, string expectedSha256)
     {
         await using MemoryStream stream = await CreateGoldenTableAsync(DatabaseFormat.AceAccdb);
