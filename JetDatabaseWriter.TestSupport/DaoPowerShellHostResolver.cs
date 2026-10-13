@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 internal static class DaoPowerShellHostResolver
 {
     private const string PowerShellRelativePath = @"WindowsPowerShell\v1.0\powershell.exe";
-    private const string DaoProbeScript = "$ErrorActionPreference = 'Stop'; $engine = New-Object -ComObject DAO.DBEngine.120; try { exit 0 } finally { if ($null -ne $engine) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null }; [GC]::Collect(); [GC]::WaitForPendingFinalizers() }";
+    private const string DaoProbeScript = "$ErrorActionPreference = 'Stop'; $previousProcessDirectory = [Environment]::CurrentDirectory; Push-Location -LiteralPath $previousProcessDirectory; try { [Environment]::CurrentDirectory = $previousProcessDirectory; $engine = New-Object -ComObject DAO.DBEngine.120; try { exit 0 } finally { if ($null -ne $engine) { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($engine) | Out-Null }; [GC]::Collect(); [GC]::WaitForPendingFinalizers() } } finally { [Environment]::CurrentDirectory = $previousProcessDirectory; Pop-Location }";
 
     /// <summary>
     /// How long one host may take to activate DAO. Starting Windows PowerShell took 12 s on a

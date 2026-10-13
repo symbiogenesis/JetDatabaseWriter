@@ -101,6 +101,46 @@ public sealed class LvPropReadTests
         return data;
     }
 
+    /// <summary>Gets every property rewrite with malformed content and broken external chains.</summary>
+    /// <returns>The format, rewrite, write mode and corruption choices.</returns>
+    public static TheoryData<DatabaseFormat, Rewrite, WriteMode, bool> MalformedRewrites()
+    {
+        var data = new TheoryData<DatabaseFormat, Rewrite, WriteMode, bool>();
+        foreach (DatabaseFormat format in Formats)
+        {
+            foreach (Rewrite rewrite in Enum.GetValues<Rewrite>())
+            {
+                foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+                {
+                    data.Add(format, rewrite, mode, false);
+                    data.Add(format, rewrite, mode, true);
+                }
+            }
+        }
+
+        return data;
+    }
+
+    /// <summary>Gets table-rule replacements and removals with each property corruption.</summary>
+    /// <returns>The format, write mode, corruption and rule-removal choices.</returns>
+    public static TheoryData<DatabaseFormat, WriteMode, bool, bool> MalformedTableRuleEdits()
+    {
+        var data = new TheoryData<DatabaseFormat, WriteMode, bool, bool>();
+        foreach (DatabaseFormat format in Formats)
+        {
+            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
+            {
+                foreach (bool breakChain in new[] { false, true })
+                {
+                    data.Add(format, mode, breakChain, false);
+                    data.Add(format, mode, breakChain, true);
+                }
+            }
+        }
+
+        return data;
+    }
+
     /// <summary>
     /// Gets the Access-authored tables whose <c>MSysObjects</c> Id shares its low
     /// 24 bits with an earlier catalog row: a form, report, module or query whose
@@ -425,18 +465,19 @@ public sealed class LvPropReadTests
     /// <param name="format">The database format.</param>
     /// <param name="rewrite">The requested rewrite.</param>
     /// <param name="mode">The write mode.</param>
+    /// <param name="breakChain">Whether to break an external property chain instead of its magic.</param>
     /// <returns>A task representing the asynchronous check.</returns>
     [Theory]
-    [MemberData(nameof(FormatsRewritesAndModes))]
-    public async Task MalformedPresentLvProp_RefusesRewriteWithoutChangingBytes(DatabaseFormat format, Rewrite rewrite, WriteMode mode)
+    [MemberData(nameof(MalformedRewrites))]
+    public async Task MalformedPresentLvProp_RefusesRewriteWithoutChangingBytes(DatabaseFormat format, Rewrite rewrite, WriteMode mode, bool breakChain)
     {
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            await initial.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { Description = "Stored rule" }, new("Note", typeof(string), maxLength: 20)], Ct);
+            await initial.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { Description = breakChain ? new string('x', 10_000) : "Stored rule" }, new("Note", typeof(string), maxLength: 20)], Ct);
         }
 
-        await PatchLvPropAsync(ms, "T", breakChain: false);
+        await PatchLvPropAsync(ms, "T", breakChain);
         byte[] before = ms.ToArray();
         await using AccessWriter writer = await OpenWriterAsync(ms, mode);
         await Assert.ThrowsAsync<JetCorruptDataException>(() => RunAsync(writer, mode, async () =>
@@ -462,22 +503,25 @@ public sealed class LvPropReadTests
     /// <summary>Malformed properties prevent table rule edits in every write mode.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
+    /// <param name="breakChain">Whether to break an external property chain instead of its magic.</param>
+    /// <param name="removeRule">Whether to remove an existing rule.</param>
     /// <returns>The asynchronous test.</returns>
     [Theory]
-    [MemberData(nameof(FormatsAndModes))]
-    public async Task MalformedPresentLvProp_RefusesTableRuleEditWithoutChangingBytes(DatabaseFormat format, WriteMode mode)
+    [MemberData(nameof(MalformedTableRuleEdits))]
+    public async Task MalformedPresentLvProp_RefusesTableRuleEditWithoutChangingBytes(DatabaseFormat format, WriteMode mode, bool breakChain, bool removeRule)
     {
         await using MemoryStream ms = await CreateDatabaseAsync(format);
         await using (AccessWriter initial = await OpenWriterAsync(ms, WriteMode.Direct))
         {
-            await initial.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { Description = "Stored property" }], Ct);
+            await initial.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { Description = breakChain ? new string('x', 10_000) : "Stored property" }], Ct);
+            await initial.SetTableValidationRuleAsync("T", new TableValidationRule("[Id] > 0"), Ct);
         }
 
-        await PatchLvPropAsync(ms, "T", breakChain: false);
+        await PatchLvPropAsync(ms, "T", breakChain);
         byte[] before = ms.ToArray();
         await using AccessWriter writer = await OpenWriterAsync(ms, mode);
         await Assert.ThrowsAsync<JetCorruptDataException>(() => RunAsync(writer, mode, async () =>
-            await writer.SetTableValidationRuleAsync("T", new TableValidationRule("[Id] > 0"), Ct)));
+            await writer.SetTableValidationRuleAsync("T", removeRule ? null : new TableValidationRule("[Id] > 1"), Ct)));
         Assert.Equal(before, ms.ToArray());
     }
 

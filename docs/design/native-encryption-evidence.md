@@ -151,7 +151,7 @@ engine evidence is specific to the pinned fixtures, not every possible custom
 security configuration or every Cartesian product of algorithms. Directory-entry
 power-loss durability, native crash semantics for physical shrink,
 and complete hostile-input resistance remain separate gaps in `docs/todo.md`
-(E1, E2, F3, F6, S1-S2 and I5). Library-generated round trips alone are not native
+(E1, E2, F3, F6, S1 and I5). Library-generated round trips alone are not native
 interoperability oracles.
 
 ## Upstream JET3 oracle

@@ -110,6 +110,19 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         var descriptors = new List<ColumnInfo>(columns.Count);
         int fixedOffset = 0;
         int nextVarIndex = 0;
+        var nativeIdentities = new HashSet<int>();
+        int nextNativeIdentity = 0;
+        if (!format.IsJet3)
+        {
+            foreach (ColumnDefinition definition in columns)
+            {
+                if (definition.SourceColumn is { } source)
+                {
+                    _ = nativeIdentities.Add(source.NativeIdentity);
+                    nextNativeIdentity = Math.Max(nextNativeIdentity, source.NativeIdentity + 1);
+                }
+            }
+        }
 
         for (int i = 0; i < columns.Count; i++)
         {
@@ -184,11 +197,22 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
             flags = definition.DescriptorFlagsOverride ?? flags;
 
+            if (nextNativeIdentity > ushort.MaxValue)
+            {
+                nextNativeIdentity = 0;
+            }
+
+            while (nativeIdentities.Contains(nextNativeIdentity))
+            {
+                nextNativeIdentity++;
+            }
+
             var column = new ColumnInfo
             {
                 Name = definition.Name,
                 Type = type,
                 ColNum = i,
+                NativeIdentity = nextNativeIdentity,
                 VarIdx = variable ? nextVarIndex : 0,
                 FixedOff = variable ? 0 : fixedOffset,
                 Size = size,
@@ -201,6 +225,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             };
 
             descriptors.Add(column);
+            _ = nativeIdentities.Add(nextNativeIdentity++);
 
             if (variable)
             {
@@ -278,12 +303,8 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
             if (jet4)
             {
-                // New descriptors use the column number at offset 9-10 too.
-                // These fields coincide in NorthwindTraders, but native Table4
-                // in TestV2010 has different values. Equality is not a format
-                // invariant; preserving that identity through rewrites remains
-                // part of complete schema preservation.
-                Wu16(page, o + 9, col.ColNum);
+                // Native identities need not equal the row-layout column number.
+                Wu16(page, o + 9, col.NativeIdentity);
             }
 
             if (!jet4)
@@ -379,7 +400,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 Wu16(page, o + format.ColumnDescriptor.NumOff, col.ColNum);
                 Wu16(page, o + format.ColumnDescriptor.VarOff, col.VarIdx);
                 Wu16(page, o + format.ColumnDescriptor.FixedOff, col.FixedOff);
-                Wu16(page, o + (jet4 ? 9 : 5), col.ColNum);
+                Wu16(page, o + (jet4 ? 9 : 5), jet4 ? col.NativeIdentity : col.ColNum);
             }
 
             byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : format.EncodeAnsiText(col.Name);

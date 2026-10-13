@@ -199,6 +199,24 @@ internal sealed class ColumnPropertyBlock
         return null;
     }
 
+    /// <summary>Finds the first target carrying a property across repeated target blocks.</summary>
+    /// <param name="targetName">The table or column target name.</param>
+    /// <param name="propertyName">The property name.</param>
+    /// <returns>The matching target, or null when the property is absent.</returns>
+    internal ColumnPropertyTarget? FindPropertyTarget(string targetName, string propertyName)
+    {
+        foreach (ColumnPropertyTarget target in this.Targets)
+        {
+            if (string.Equals(target.Name, targetName, StringComparison.OrdinalIgnoreCase)
+                && target.Find(propertyName) is not null)
+            {
+                return target;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Serializes the block for <paramref name="format"/> through
     /// <see cref="ColumnPropertyBlockBuilder"/>. Returns <see langword="null"/>

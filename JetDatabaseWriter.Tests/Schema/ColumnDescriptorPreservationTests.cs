@@ -55,7 +55,7 @@ public sealed class ColumnDescriptorPreservationTests
             Assert.Equal(source.Size, rewritten.Size);
             byte[] expected = source.RawDescriptor.ToArray();
             byte[] actual = rewritten.RawDescriptor.ToArray();
-            foreach (int offset in new[] { 5, 7, 9, 21 })
+            foreach (int offset in new[] { 5, 7, 21 })
             {
                 expected[offset] = actual[offset];
                 expected[offset + 1] = actual[offset + 1];

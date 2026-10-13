@@ -8,6 +8,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.ComplexColumns.Models;
+using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
@@ -19,7 +20,6 @@ using JetDatabaseWriter.Relationships;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
-using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
 /// Table DDL workflows behind <see cref="Interfaces.IAccessSchema"/>: create
@@ -84,11 +84,7 @@ internal sealed class TableSchemaEditor(
         ColumnPropertyBlock? properties = await snapshots.ReadLvPropBlockAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
         ConstraintRegistry.ValidatePersistedConstraintProperties(tableName, properties);
         ColumnPropertyBlockBuilder builder = properties is null ? new ColumnPropertyBlockBuilder() : ColumnPropertyBlockBuilder.FromBlock(properties);
-        ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
-        ColumnPropertyEntryBuilder? originalRule = target.Entries.Find(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase));
-        ColumnPropertyEntryBuilder? originalText = target.Entries.Find(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase));
-        target.Entries.RemoveAll(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase));
+        _ = builder.GetOrAddTableTarget();
         if (rule != null)
         {
             Guard.NotNullOrEmpty(rule.Expression, nameof(rule));
@@ -97,15 +93,36 @@ internal sealed class TableSchemaEditor(
             {
                 await constraints.ValidateTableRuleAsync(tableName, table.Definition, row.Values, candidate, cancellationToken).ConfigureAwait(false);
             }
+        }
 
-            target.AddMemoText(Constants.ColumnPropertyNames.ValidationRule, rule.Expression, format);
-            target.Entries[^1].DataType = originalRule?.DataType ?? MemoType;
-            target.Entries[^1].DdlFlag = originalRule?.DdlFlag ?? 0x01;
-            if (rule.ValidationText != null)
+        ColumnType ruleType = ColumnType.MemoType;
+        ColumnType textType = ColumnType.TextType;
+        foreach (ColumnPropertyTargetBuilder target in builder.Targets)
+        {
+            if (target.Name.Length != 0)
             {
-                target.AddText(Constants.ColumnPropertyNames.ValidationText, rule.ValidationText, format);
-                target.Entries[^1].DataType = originalText?.DataType ?? TextType;
-                target.Entries[^1].DdlFlag = originalText?.DdlFlag ?? 0x01;
+                continue;
+            }
+
+            foreach (ColumnPropertyEntryBuilder entry in target.Entries)
+            {
+                if (string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase))
+                {
+                    ruleType = entry.DataType;
+                }
+                else if (string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase))
+                {
+                    textType = entry.DataType;
+                }
+            }
+        }
+
+        foreach (ColumnPropertyTargetBuilder target in builder.Targets)
+        {
+            if (target.Name.Length == 0)
+            {
+                UpdateTableRuleProperty(target, Constants.ColumnPropertyNames.ValidationRule, rule?.Expression, ruleType, format);
+                UpdateTableRuleProperty(target, Constants.ColumnPropertyNames.ValidationText, rule?.ValidationText, textType, format);
             }
         }
 
@@ -479,6 +496,45 @@ internal sealed class TableSchemaEditor(
             (oldRow, _) => oldRow,
             name => string.Equals(name, oldColumnName, StringComparison.OrdinalIgnoreCase) ? newColumnName : name,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Updates every repeated table property without changing its stored entry structure.</summary>
+    /// <param name="target">The table property target.</param>
+    /// <param name="name">The property name.</param>
+    /// <param name="value">The replacement text, or null to remove every matching entry.</param>
+    /// <param name="newType">The consistent stored type to use when adding a missing entry.</param>
+    /// <param name="format">The database format.</param>
+    private static void UpdateTableRuleProperty(ColumnPropertyTargetBuilder target, string name, string? value, ColumnType newType, JetFormat format)
+    {
+        if (value is null)
+        {
+            target.Entries.RemoveAll(entry => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase));
+            return;
+        }
+
+        int count = target.Entries.Count;
+        target.AddText(name, value, format);
+        ColumnPropertyEntryBuilder replacement = target.Entries[^1];
+        bool found = false;
+        for (int index = 0; index < count; index++)
+        {
+            ColumnPropertyEntryBuilder entry = target.Entries[index];
+            if (string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                entry.Value = replacement.Value;
+                found = true;
+            }
+        }
+
+        if (found)
+        {
+            target.Entries.RemoveAt(count);
+        }
+        else
+        {
+            replacement.DataType = newType;
+            replacement.DdlFlag = 0x01;
+        }
     }
 
     /// <summary>

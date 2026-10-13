@@ -12,6 +12,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -34,7 +35,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="maxAttachmentContentBytes">The maximum uncompressed attachment content size.</param>
 /// <param name="maxComplexDiscoveryEntries">The maximum aggregate metadata entries inspected during discovery.</param>
 /// <param name="maxAttachmentContentBytesPerOperation">The maximum aggregate attachment content length for one attachment read or table scan.</param>
-internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536, long maxAttachmentContentBytesPerOperation = 256 * 1024 * 1024)
+/// <param name="maxAttachmentDecodeWorkBytesPerOperation">The maximum aggregate attachment byte-processing work.</param>
+/// <param name="attachmentReads">The operation budget context shared by nested and linked reads.</param>
+internal sealed class ComplexColumnReader(JetFormat format, TableDefReader tableDefs, CatalogReader catalog, RowDecoder rows, bool diagnosticsEnabled, int maxAttachmentContentBytes = 64 * 1024 * 1024, int maxComplexDiscoveryEntries = 65536, long maxAttachmentContentBytesPerOperation = 256 * 1024 * 1024, long maxAttachmentDecodeWorkBytesPerOperation = 2L * 1024 * 1024 * 1024, AttachmentReadContext? attachmentReads = null)
 {
     /// <summary>The <c>MSysComplexColumns</c> columns the descriptor join reads.</summary>
     private static readonly string[] ComplexColumnJoinColumns = ["ColumnName", "ComplexID", "FlatTableID", "ConceptualTableID", "ComplexTypeObjectID"];
@@ -195,7 +198,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
         Dictionary<int, Dictionary<int, byte[]>>? result = null;
         IReadOnlyList<ComplexColumnInfo>? complexColumns = null;
         var discovery = new DiscoveryBudget(maxComplexDiscoveryEntries);
-        var attachmentContent = new AttachmentWrapper.ContentBudget(maxAttachmentContentBytesPerOperation);
+        AttachmentWrapper.ContentBudget attachmentContent = this.GetAttachmentBudget();
 
         for (int i = 0; i < columns.Count; i++)
         {
@@ -229,8 +232,11 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     internal async ValueTask<IReadOnlyList<AttachmentRecord>> ReadAttachmentsAsync(ComplexColumnInfo column, CancellationToken cancellationToken)
     {
         FlatTable? flat = await this.ResolveFlatTableAsync(column, cancellationToken).ConfigureAwait(false);
-        return flat == null ? [] : await this.ReadAttachmentsAsync(flat, column.ColumnName, new AttachmentWrapper.ContentBudget(maxAttachmentContentBytesPerOperation), cancellationToken).ConfigureAwait(false);
+        return flat == null ? [] : await this.ReadAttachmentsAsync(flat, column.ColumnName, this.GetAttachmentBudget(), cancellationToken).ConfigureAwait(false);
     }
+
+    private AttachmentWrapper.ContentBudget GetAttachmentBudget()
+        => attachmentReads?.Budget ?? new(maxAttachmentContentBytesPerOperation, maxAttachmentDecodeWorkBytesPerOperation);
 
     /// <summary>
     /// Reads every value in the flat table behind <paramref name="column"/>,

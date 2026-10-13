@@ -58,6 +58,23 @@ public sealed partial class PowerShellProcessRunnerTests
     }
 
     [Fact]
+    public void Run_DefaultWorkingDirectory_IsIsolatedUnderTemp()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+
+        PowerShellRunResult result = PowerShellProcessRunner.Run(
+            PowerShellPath,
+            CommandArguments("[Console]::WriteLine([Environment]::CurrentDirectory)"),
+            TimeSpan.FromSeconds(60));
+
+        Assert.Equal(0, result.ExitCode);
+        string directory = result.StandardOutput.Trim();
+        Assert.True(Path.IsPathFullyQualified(directory));
+        Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()), directory, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(Path.GetFullPath(Environment.CurrentDirectory), directory);
+    }
+
+    [Fact]
     public async Task Run_HostOutlivesTimeout_KillsHostAndGrandchild()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);

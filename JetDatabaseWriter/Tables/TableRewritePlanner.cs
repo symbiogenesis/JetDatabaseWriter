@@ -103,17 +103,17 @@ internal sealed class TableRewritePlanner(
             }
 
             ColumnPropertyTarget? target = originalProperties?.FindTarget(col.Name);
-            if (target is not null)
+            if (originalProperties is not null)
             {
                 baseDef = baseDef with
                 {
-                    DefaultValueExpression = PersistedExpressionText.Normalize(target.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format))
+                    DefaultValueExpression = PersistedExpressionText.Normalize(originalProperties.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.DefaultValue)?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format))
                         ?? baseDef.DefaultValueExpression,
-                    ValidationRuleExpression = PersistedExpressionText.Normalize(target.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format))
+                    ValidationRuleExpression = PersistedExpressionText.Normalize(originalProperties.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ValidationRule)?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format))
                         ?? baseDef.ValidationRuleExpression,
-                    ValidationText = target.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format)
+                    ValidationText = originalProperties.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ValidationText)?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format)
                         ?? baseDef.ValidationText,
-                    Description = target.GetTextValue(Constants.ColumnPropertyNames.Description, format)
+                    Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, format)
                         ?? baseDef.Description,
                 };
             }
@@ -494,43 +494,60 @@ internal sealed class TableRewritePlanner(
     /// <exception cref="JetOperationException">The rewrite drops a field used by the table rule.</exception>
     private ColumnPropertyBlock? ProjectTableRuleReferences(string tableName, ColumnPropertyBlock? properties, IReadOnlyList<ColumnDefinition> existing, Func<string, string?> mapColumnName)
     {
-        string? expression = PersistedExpressionText.Normalize(properties?.FindTableTarget()?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format));
-        if (expression is null)
+        if (properties is null)
         {
-            return properties;
+            return null;
         }
 
-        string projected = expression;
-        foreach (ColumnDefinition column in existing)
+        var builder = ColumnPropertyBlockBuilder.FromBlock(properties);
+        bool changed = false;
+        foreach (ColumnPropertyTargetBuilder target in builder.Targets)
         {
-            if (!ExpressionFieldReferences.References(expression, column.Name, tableName))
+            if (target.Name.Length != 0)
             {
                 continue;
             }
 
-            if (mapColumnName(column.Name) is not { } newName)
+            foreach (ColumnPropertyEntryBuilder entry in target.Entries)
             {
-                throw new JetOperationException(JetErrorCode.ColumnReferencedByExpression, $"Cannot drop column '{column.Name}' from table '{tableName}': its table validation rule ('{expression}') names it.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+                if (!string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
+                    || entry.DataType is not (TextType or MemoType))
+                {
+                    continue;
+                }
+
+                string? expression = PersistedExpressionText.Normalize((target.TextEncoding ?? format.PropertyTextEncoding).GetString(entry.Value));
+                if (expression is null)
+                {
+                    continue;
+                }
+
+                string projected = expression;
+                foreach (ColumnDefinition column in existing)
+                {
+                    if (!ExpressionFieldReferences.References(expression, column.Name, tableName))
+                    {
+                        continue;
+                    }
+
+                    if (mapColumnName(column.Name) is not { } newName)
+                    {
+                        throw new JetOperationException(JetErrorCode.ColumnReferencedByExpression, $"Cannot drop column '{column.Name}' from table '{tableName}': its table validation rule ('{expression}') names it.", errorInfo: new JetErrorInfo { TableName = tableName, ColumnName = column.Name });
+                    }
+
+                    projected = ExpressionFieldReferences.Rename(projected, column.Name, newName, tableName)!;
+                }
+
+                if (!string.Equals(projected, expression, StringComparison.Ordinal))
+                {
+                    _ = CalculatedExpressionPlan.Parse(projected);
+                    entry.Value = (target.TextEncoding ?? format.PropertyTextEncoding).GetBytes(projected);
+                    changed = true;
+                }
             }
-
-            projected = ExpressionFieldReferences.Rename(projected, column.Name, newName, tableName)!;
         }
 
-        if (string.Equals(projected, expression, StringComparison.Ordinal))
-        {
-            return properties;
-        }
-
-        _ = CalculatedExpressionPlan.Parse(projected);
-        var builder = ColumnPropertyBlockBuilder.FromBlock(properties!);
-        ColumnPropertyTargetBuilder target = builder.GetOrAddTableTarget();
-        int entryIndex = target.Entries.FindIndex(static entry => string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase));
-        ColumnPropertyEntryBuilder entry = target.Entries[entryIndex];
-        target.AddText(entry.Name, projected, format);
-        ColumnPropertyEntryBuilder replacement = target.Entries[^1];
-        entry.Value = replacement.Value;
-        target.Entries.RemoveAt(target.Entries.Count - 1);
-        return ColumnPropertyBlock.Parse(builder.ToBytes(format), format);
+        return changed ? ColumnPropertyBlock.Parse(builder.ToBytes(format), format) : properties;
     }
 
     /// <summary>
@@ -734,7 +751,7 @@ internal sealed class TableRewritePlanner(
         // Complex) return early above because their Flags byte is the magic 0x07
         // marker rather than real flag bits.
         bool isAutoIncrement = column.IsAutoNumber;
-        bool? requiredFromLvProp = properties?.FindTarget(column.Name)?
+        bool? requiredFromLvProp = properties?.FindPropertyTarget(column.Name, Constants.ColumnPropertyNames.Required)?
             .GetBooleanValue(Constants.ColumnPropertyNames.Required);
         bool isNullable = (!isAutoIncrement || column.Type == GuidType) && requiredFromLvProp is not true;
 
@@ -759,7 +776,7 @@ internal sealed class TableRewritePlanner(
 
         if (column.IsCalculated)
         {
-            ColumnPropertyTarget? target = properties?.FindTarget(column.Name);
+            ColumnPropertyTarget? target = properties?.FindPropertyTarget(column.Name, Constants.ColumnPropertyNames.ResultType);
             byte resultType = (byte)valueType;
             ColumnPropertyEntry? resultTypeEntry = target?.Find(Constants.ColumnPropertyNames.ResultType);
             if (resultTypeEntry?.Value.Length >= 1)
@@ -770,7 +787,7 @@ internal sealed class TableRewritePlanner(
             def = def with
             {
                 IsCalculated = true,
-                CalculationExpression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format)),
+                CalculationExpression = PersistedExpressionText.Normalize(properties?.FindPropertyTarget(column.Name, Constants.ColumnPropertyNames.Expression)?.GetTextValue(Constants.ColumnPropertyNames.Expression, format)),
                 CalculatedResultType = resultType,
                 IsCompressedUnicode = false,
             };

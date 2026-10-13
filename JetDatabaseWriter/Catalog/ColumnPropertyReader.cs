@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Catalog;
 
 using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -76,22 +77,33 @@ internal sealed class ColumnPropertyReader(JetFormat format, TableDefReader tabl
         bool[] wantedColumns = new bool[msys.Columns.Count];
         wantedColumns[idxId] = true;
         wantedColumns[idxLvProp] = true;
-        await foreach (object?[] row in rows.EnumerateTypedRowsMatchingColumnAsync(2, msys, wantedColumns, idxId, checked((int)tdefPage), cancellationToken).ConfigureAwait(false))
+        try
         {
-            if (row[idxId] is int id && id == tdefPage)
+            await foreach (object?[] row in rows.EnumerateTypedRowsMatchingColumnAsync(2, msys, wantedColumns, idxId, checked((int)tdefPage), cancellationToken).ConfigureAwait(false))
             {
-                if (row[idxLvProp] is null or DBNull)
+                if (row[idxId] is int id && id == tdefPage)
                 {
-                    return null;
-                }
+                    if (row[idxLvProp] is null or DBNull)
+                    {
+                        return null;
+                    }
 
-                if (row[idxLvProp] is not byte[] blob)
-                {
-                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects.LvProp is not a readable stored byte value.", new JetErrorInfo { TableName = "MSysObjects", ColumnName = "LvProp", PageNumber = tdefPage });
-                }
+                    if (row[idxLvProp] is not byte[] blob)
+                    {
+                        throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects.LvProp is not a readable stored byte value.", new JetErrorInfo { TableName = "MSysObjects", ColumnName = "LvProp", PageNumber = tdefPage });
+                    }
 
-                return ColumnPropertyBlock.Parse(blob, format);
+                    return ColumnPropertyBlock.Parse(blob, format);
+                }
             }
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptCatalog,
+                "MSysObjects.LvProp contains an unreadable stored property value.",
+                new JetErrorInfo { TableName = "MSysObjects", ColumnName = "LvProp", PageNumber = tdefPage, Reason = "Unreadable property payload" },
+                exception);
         }
 
         return null;

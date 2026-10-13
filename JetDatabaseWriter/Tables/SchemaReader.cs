@@ -59,9 +59,9 @@ internal sealed class SchemaReader(
         ResolvedTable table = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false)
             ?? throw new JetObjectNotFoundException(JetErrorCode.TableNotFound, $"Table '{tableName}' was not found.", nameof(tableName), new JetErrorInfo { TableName = tableName });
         ColumnPropertyBlock? properties = await catalog.ReadLvPropForTableAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        ColumnPropertyTarget? target = properties?.FindTableTarget();
+        ColumnPropertyTarget? target = properties?.FindPropertyTarget(string.Empty, Constants.ColumnPropertyNames.ValidationRule);
         string? expression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format));
-        return string.IsNullOrWhiteSpace(expression) ? null : new TableValidationRule(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format));
+        return string.IsNullOrWhiteSpace(expression) ? null : new TableValidationRule(expression, properties?.FindPropertyTarget(string.Empty, Constants.ColumnPropertyNames.ValidationText)?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format));
     }
 
     /// <summary>Returns the names of all user tables in the database.</summary>
@@ -207,9 +207,9 @@ internal sealed class SchemaReader(
             ColumnPropertyTarget? target = properties?.FindTarget(col.Name);
             bool isCalc = col.IsCalculated;
             string? calcExpr = isCalc
-                ? PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.Expression, format))
+                ? PersistedExpressionText.Normalize(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.Expression)?.GetTextValue(Constants.ColumnPropertyNames.Expression, format))
                 : null;
-            ColumnType calcResultType = isCalc ? CatalogReader.ResolveCalculatedResultType(target) : default;
+            ColumnType calcResultType = isCalc ? CatalogReader.ResolveCalculatedResultType(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ResultType)) : default;
 
             return new ColumnMetadata
             {
@@ -221,14 +221,14 @@ internal sealed class SchemaReader(
                         : ResolveTypeName(col),
                 ClrType = ResolveClrType(col),
                 MaxLength = GetMetadataMaxLength(col),
-                IsNullable = ResolveIsNullable(col, target),
+                IsNullable = ResolveIsNullable(col, properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.Required)),
                 IsFixedLength = col.IsFixed,
                 IsHyperlink = IsHyperlinkColumn(col),
                 Ordinal = index,
                 Size = GetColumnSize(ResolveValueType(col), GetMetadataDeclaredSize(col)),
-                DefaultValueExpression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format)),
-                ValidationRuleExpression = PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format)),
-                ValidationText = target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format),
+                DefaultValueExpression = PersistedExpressionText.Normalize(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.DefaultValue)?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, format)),
+                ValidationRuleExpression = PersistedExpressionText.Normalize(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ValidationRule)?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, format)),
+                ValidationText = properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ValidationText)?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, format),
                 Description = target?.GetTextValue(Constants.ColumnPropertyNames.Description, format),
                 NumericPrecision = col.NumericPrecision,
                 NumericScale = col.NumericScale,

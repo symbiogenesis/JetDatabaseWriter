@@ -11,6 +11,7 @@ internal sealed record ColumnInfo
 {
     private static readonly IReadOnlyList<byte> EmptyDescriptor = [];
     private readonly IReadOnlyList<byte> rawDescriptor = EmptyDescriptor;
+    private readonly int? nativeIdentity;
 
     /// <summary>Initializes a new instance of the <see cref="ColumnInfo"/> class without a source descriptor.</summary>
     internal ColumnInfo()
@@ -27,6 +28,19 @@ internal sealed record ColumnInfo
     {
         get => this.rawDescriptor;
         init => this.rawDescriptor = value.Count == 0 ? EmptyDescriptor : Array.AsReadOnly(value.ToArray());
+    }
+
+    /// <summary>
+    /// Gets the Jet4/ACE identity at descriptor bytes 9–10. Native identities
+    /// can differ from the row-layout column number and survive schema edits.
+    /// Newly constructed descriptors default to their column number.
+    /// </summary>
+    internal int NativeIdentity
+    {
+        get => this.nativeIdentity ?? (this.rawDescriptor.Count == 25
+            ? this.rawDescriptor[9] | (this.rawDescriptor[10] << 8)
+            : this.ColNum);
+        init => this.nativeIdentity = value;
     }
 
     public ColumnType Type { get; init; }

@@ -189,7 +189,9 @@ internal sealed class ConstraintRegistry(
                 bool modelled = string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationRule, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(entry.Name, Constants.ColumnPropertyNames.ValidationText, StringComparison.OrdinalIgnoreCase)
                     || (target.Name.Length != 0 && (string.Equals(entry.Name, Constants.ColumnPropertyNames.DefaultValue, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(entry.Name, Constants.ColumnPropertyNames.Required, StringComparison.OrdinalIgnoreCase)));
+                        || string.Equals(entry.Name, Constants.ColumnPropertyNames.Required, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(entry.Name, Constants.ColumnPropertyNames.Expression, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(entry.Name, Constants.ColumnPropertyNames.ResultType, StringComparison.OrdinalIgnoreCase)));
                 if (!modelled)
                 {
                     continue;
@@ -870,9 +872,9 @@ internal sealed class ConstraintRegistry(
     private void CacheTableValidationRule(string tableName, ColumnPropertyBlock? properties)
     {
         ValidatePersistedConstraintProperties(tableName, properties);
-        ColumnPropertyTarget? target = properties?.FindTableTarget();
+        ColumnPropertyTarget? target = properties?.FindPropertyTarget(string.Empty, Constants.ColumnPropertyNames.ValidationRule);
         string? expression = NullIfBlank(PersistedExpressionText.Normalize(target?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, properties!.Format)));
-        this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, target?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties!.Format));
+        this.tableRules[tableName] = expression is null ? null : new TableValidationConstraint(expression, properties?.FindPropertyTarget(string.Empty, Constants.ColumnPropertyNames.ValidationText)?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, properties.Format));
     }
 
     private async ValueTask<List<ColumnConstraint>> GetOrHydrateAsync(string tableName, TableDef tableDef, CancellationToken cancellationToken)
@@ -954,7 +956,7 @@ internal sealed class ConstraintRegistry(
         var list = new List<ColumnConstraint>(tableDef.Columns.Count);
         foreach (ColumnInfo col in tableDef.Columns)
         {
-            ColumnPropertyTarget? propertyTarget = properties?.FindTarget(col.Name);
+            ColumnPropertyTarget? propertyTarget = properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ResultType);
 
             // Complex columns (Attachment / Complex) carry a magic Flags = 0x07
             // marker rather than real flag bits.
@@ -974,14 +976,14 @@ internal sealed class ConstraintRegistry(
             }
             else
             {
-                bool? required = propertyTarget?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
+                bool? required = properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.Required)?.GetBooleanValue(Constants.ColumnPropertyNames.Required);
                 isNullable = required is not true;
             }
 
             ColumnType calculatedResultType = ResolveCalculatedResultType(col, propertyTarget);
             ColumnType constraintType = calculatedResultType != default ? calculatedResultType : col.Type;
             JetFormat? propertyFormat = properties?.Format;
-            string? calculationExpression = PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat!));
+            string? calculationExpression = PersistedExpressionText.Normalize(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.Expression)?.GetTextValue(Constants.ColumnPropertyNames.Expression, propertyFormat!));
 
             // GUID identity flags do not generate values without a persisted default.
             // Integer AutoNumber, calculated and complex defaults are not applied.
@@ -997,12 +999,12 @@ internal sealed class ConstraintRegistry(
                 IsNullable = isNullable,
                 IsAutoIncrement = isAutoIncrement,
                 DefaultValueExpression = takesDefault
-                    ? NullIfBlank(PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat!)))
+                    ? NullIfBlank(PersistedExpressionText.Normalize(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.DefaultValue)?.GetTextValue(Constants.ColumnPropertyNames.DefaultValue, propertyFormat!)))
                     : null,
                 ValidationRuleExpression = isComplex
                     ? null
-                    : NullIfBlank(PersistedExpressionText.Normalize(propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, propertyFormat!))),
-                ValidationText = propertyTarget?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, propertyFormat!),
+                    : NullIfBlank(PersistedExpressionText.Normalize(properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ValidationRule)?.GetTextValue(Constants.ColumnPropertyNames.ValidationRule, propertyFormat!))),
+                ValidationText = properties?.FindPropertyTarget(col.Name, Constants.ColumnPropertyNames.ValidationText)?.GetTextValue(Constants.ColumnPropertyNames.ValidationText, propertyFormat!),
 
                 IsCalculated = col.IsCalculated,
                 CalculationExpression = calculationExpression,

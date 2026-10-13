@@ -31,9 +31,10 @@ using JetDatabaseWriter.Tables;
 /// <param name="indexes">Serves pushed-down filters and index-ordered reads.</param>
 /// <param name="schema">Supplies the relationship and column metadata that includes need.</param>
 /// <param name="table">The table being queried.</param>
+/// <param name="operations">The reader operation gate, including the aggregate attachment budget.</param>
 [RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
 [RequiresDynamicCode("LINQ queries and Include construct generic types at runtime. Use typed row readers for NativeAOT applications.")]
-internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(TableReader tables, IndexRowReader indexes, SchemaReader schema, string table) : IQueryProvider, IAccessQueryEngine
+internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(TableReader tables, IndexRowReader indexes, SchemaReader schema, string table, AsyncReentrantOperationGate operations) : IQueryProvider, IAccessQueryEngine
     where T : class, new()
 {
     public IQueryable CreateQuery(Expression expression) =>
@@ -124,6 +125,8 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         bool maySkipSource,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        using AsyncReentrantOperationGate.Lease operation = operations.Enter();
+
         // Ordinary translated plans advance a reader that validates the table.
         // Empty Take and in-memory tails can bypass that source entirely.
         if (maySkipSource)
@@ -138,6 +141,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         {
             cancellationToken.ThrowIfCancellationRequested();
             yield return item;
+            operation.Resume();
         }
     }
 

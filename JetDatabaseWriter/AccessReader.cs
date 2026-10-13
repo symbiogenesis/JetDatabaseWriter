@@ -320,7 +320,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        var provider = new AccessQueryProvider<T>(this.services.Tables, this.services.Indexes, this.services.Schema, tableName);
+        var provider = new AccessQueryProvider<T>(this.services.Tables, this.services.Indexes, this.services.Schema, tableName, this.services.Operations);
         return new AccessQueryable<T>(provider);
     }
 

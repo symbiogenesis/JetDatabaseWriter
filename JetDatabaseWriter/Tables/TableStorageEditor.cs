@@ -134,18 +134,13 @@ internal sealed class TableStorageEditor(
             return;
         }
 
-        byte[] tdef = await pager.ReadPageAsync(copy.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (tdef[0] != Constants.PageTypes.TableDefinition || Ri32(tdef, 4) != 0)
-            {
-                throw new NotSupportedException("Complex table schema rewrite currently requires a single-page rebuilt TDEF.");
-            }
-        }
-        finally
-        {
-            PageBuffers.Return(tdef);
-        }
+        _ = await LogicalTDefChain.ReadRequiredAsync(
+            copy.Entry.TDefPage,
+            format.PageSize,
+            pager.ReadPageAsync,
+            PageBuffers.Return,
+            retainPageNumbers: false,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ReplaceOriginalAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
@@ -224,7 +219,7 @@ internal sealed class TableStorageEditor(
     /// <summary>
     /// Moves the rebuilt copy onto the original TDEF page, so the complex columns'
     /// <c>MSysComplexColumns</c> rows keep naming the table, and frees the original's
-    /// storage.
+    /// storage. The rebuilt continuation pages remain linked from the transferred root.
     /// </summary>
     /// <param name="tableName">The table being rewritten.</param>
     /// <param name="originalTdefPage">The original's TDEF page, which the copy takes over.</param>
@@ -234,7 +229,6 @@ internal sealed class TableStorageEditor(
     /// <param name="lvProp">The persisted properties for the table's catalog row.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the copy has replaced the original.</returns>
-    /// <exception cref="NotSupportedException">The rebuilt copy's TDEF spans more than one page.</exception>
     private async ValueTask TransplantTempTableToOriginalAsync(
         string tableName,
         long originalTdefPage,

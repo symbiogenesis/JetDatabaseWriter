@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Infrastructure;
 
 using System;
+using System.Threading;
 
 /// <summary>
 /// The Adler-32 checksum that ends a zlib stream (RFC 1950 §8.2). The
@@ -20,13 +21,15 @@ internal static class Adler32
 
     /// <summary>Computes the Adler-32 checksum of <paramref name="data"/>.</summary>
     /// <param name="data">The bytes to checksum.</param>
+    /// <param name="cancellationToken">A token checked between bounded checksum chunks.</param>
     /// <returns>The checksum, <c>(b &lt;&lt; 16) | a</c>.</returns>
-    public static uint Compute(ReadOnlySpan<byte> data)
+    public static uint Compute(ReadOnlySpan<byte> data, CancellationToken cancellationToken = default)
     {
         uint a = 1;
         uint b = 0;
         while (!data.IsEmpty)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int run = Math.Min(data.Length, MaxRun);
             foreach (byte value in data[..run])
             {
@@ -39,6 +42,7 @@ internal static class Adler32
             data = data[run..];
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return (b << 16) | a;
     }
 }

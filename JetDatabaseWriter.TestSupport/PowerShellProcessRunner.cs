@@ -36,18 +36,28 @@ internal static class PowerShellProcessRunner
     /// A child process that inherited the pipes can keep them open; the run then returns the
     /// output captured so far with <see cref="PowerShellRunResult.OutputComplete"/> false. Defaults to 5 seconds.
     /// </param>
+    /// <param name="workingDirectory">An absolute directory for the child process, or a new isolated temp directory.</param>
     /// <returns>The exit code (-1 after a timeout) and the captured output.</returns>
+    /// <exception cref="ArgumentException">The child working directory is relative.</exception>
     /// <exception cref="Win32Exception">The program could not be started.</exception>
     /// <exception cref="InvalidOperationException">The process did not start.</exception>
     public static PowerShellRunResult Run(
         string powerShellPath,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
-        TimeSpan? drainTimeout = null)
+        TimeSpan? drainTimeout = null,
+        string? workingDirectory = null)
     {
+        if (workingDirectory is not null && !Path.IsPathFullyQualified(workingDirectory))
+        {
+            throw new ArgumentException("The child working directory must be absolute.", nameof(workingDirectory));
+        }
+
+        workingDirectory ??= Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"jet-powershell-{Guid.NewGuid():N}")).FullName;
         var startInfo = new ProcessStartInfo(powerShellPath)
         {
             UseShellExecute = false,
+            WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,

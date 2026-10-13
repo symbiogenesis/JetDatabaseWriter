@@ -104,6 +104,8 @@ internal static class LinkedTableManager
             MaxLongValueBytes = options.MaxLongValueBytes,
             MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,
             MaxAttachmentContentBytesPerOperation = options.MaxAttachmentContentBytesPerOperation,
+            MaxAttachmentDecodeWorkBytesPerOperation = options.MaxAttachmentDecodeWorkBytesPerOperation,
+            AttachmentReadContext = options.AttachmentReadContext,
             MaxComplexDiscoveryEntries = options.MaxComplexDiscoveryEntries,
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,

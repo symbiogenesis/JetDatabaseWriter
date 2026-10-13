@@ -26,6 +26,7 @@ internal static class AttachmentWrapper
     private const int WrapperHeaderSize = 8;
     private const int ContentHeaderSize = 12;
     private const uint ContentHeaderFlag = 1;
+    private const int ProcessingChunkSize = 8192;
 
     /// <summary>The zlib CMF byte Access writes: deflate with a 32 KB window.</summary>
     private const byte ZlibCmf = 0x78;
@@ -107,12 +108,12 @@ internal static class AttachmentWrapper
             throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The attachment declares {dataLen} content byte(s), exceeding the configured limit {maxContentBytes}.");
         }
 
-        contentBudget?.Consume(dataLen);
+        (contentBudget ?? new ContentBudget(256 * 1024 * 1024, 2L * 1024 * 1024 * 1024)).Consume(dataLen, wrapped.Length);
         int bodyLength = wrapped.Length - WrapperHeaderSize;
         if (typeFlag == 0)
         {
             return dataLen <= (uint)bodyLength
-                && TryParseContent(wrapped.AsSpan(WrapperHeaderSize, (int)dataLen).ToArray(), ref fileExtension, ref payload);
+                && TryParseContent(wrapped, WrapperHeaderSize, (int)dataLen, ref fileExtension, ref payload, cancellationToken);
         }
 
         // Native Access compressed attachments use zlib without a dictionary.
@@ -130,9 +131,9 @@ internal static class AttachmentWrapper
             return false;
         }
 
-        bool checksumMatches = Adler32.Compute(content) == BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4));
+        bool checksumMatches = Adler32.Compute(content, cancellationToken) == BinaryPrimitives.ReadUInt32BigEndian(wrapped.AsSpan(wrapped.Length - 4));
         cancellationToken.ThrowIfCancellationRequested();
-        return checksumMatches && TryParseContent(content, ref fileExtension, ref payload);
+        return checksumMatches && TryParseContent(content, 0, content.Length, ref fileExtension, ref payload, cancellationToken);
     }
 
     /// <summary>
@@ -199,33 +200,63 @@ internal static class AttachmentWrapper
     /// <param name="content">The content stream.</param>
     /// <param name="offset">Where the extension starts.</param>
     /// <param name="length">The bytes the header leaves for it.</param>
-    private static string DecodeExtension(byte[] content, int offset, int length)
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private static string DecodeExtension(byte[] content, int offset, int length, CancellationToken cancellationToken)
     {
         int chars = 0;
         while (((chars + 1) * 2) <= length
             && (content[offset + (chars * 2)] != 0 || content[offset + (chars * 2) + 1] != 0))
         {
+            if (chars % (ProcessingChunkSize / 2) == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             chars++;
         }
 
-        return chars == 0 ? string.Empty : Encoding.Unicode.GetString(content, offset, chars * 2);
+        cancellationToken.ThrowIfCancellationRequested();
+        return string.Create(chars, (Content: content, Offset: offset, Length: chars * 2, Cancellation: cancellationToken), static (destination, state) =>
+        {
+            Decoder decoder = Encoding.Unicode.GetDecoder();
+            int bytesRead = 0;
+            int charsWritten = 0;
+            while (bytesRead < state.Length)
+            {
+                state.Cancellation.ThrowIfCancellationRequested();
+                int count = Math.Min(ProcessingChunkSize, state.Length - bytesRead);
+                charsWritten += decoder.GetChars(state.Content.AsSpan(state.Offset + bytesRead, count), destination[charsWritten..], flush: bytesRead + count == state.Length);
+                bytesRead += count;
+            }
+
+            state.Cancellation.ThrowIfCancellationRequested();
+        });
     }
 
-    private static bool TryParseContent(byte[] content, ref string fileExtension, ref byte[] payload)
+    private static bool TryParseContent(byte[] content, int offset, int length, ref string fileExtension, ref byte[] payload, CancellationToken cancellationToken)
     {
-        if (content.Length < ContentHeaderSize)
+        if (length < ContentHeaderSize)
         {
             return false;
         }
 
-        uint headerLen = Ru32(content, 0);
-        if (headerLen < ContentHeaderSize || headerLen > (uint)content.Length)
+        uint headerLen = Ru32(content, offset);
+        if (headerLen < ContentHeaderSize || headerLen > (uint)length)
         {
             return false;
         }
 
-        fileExtension = DecodeExtension(content, ContentHeaderSize, (int)headerLen - ContentHeaderSize);
-        payload = content.AsSpan((int)headerLen).ToArray();
+        fileExtension = DecodeExtension(content, offset + ContentHeaderSize, (int)headerLen - ContentHeaderSize, cancellationToken);
+        payload = new byte[length - (int)headerLen];
+        for (int copied = 0; copied < payload.Length;)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int count = Math.Min(ProcessingChunkSize, payload.Length - copied);
+            content.AsSpan(offset + (int)headerLen + copied, count).CopyTo(payload.AsSpan(copied));
+            copied += count;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
         return true;
     }
 
@@ -258,21 +289,22 @@ internal static class AttachmentWrapper
     internal static byte[] Inflate(Stream input, int expectedLength, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        using var deflate = new DeflateStream(input, CompressionMode.Decompress, leaveOpen: true);
-        using var output = new MemoryStream();
-        byte[] buffer = new byte[8192];
-        while (output.Length < expectedLength)
+        using var boundedInput = new CancellationCheckingStream(input, cancellationToken);
+        using var deflate = new DeflateStream(boundedInput, CompressionMode.Decompress, leaveOpen: true);
+        byte[] output = new byte[expectedLength];
+        int position = 0;
+        while (position < expectedLength)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            int wanted = Math.Min(buffer.Length, expectedLength - checked((int)output.Length));
-            int read = deflate.Read(buffer, 0, wanted);
+            int wanted = Math.Min(ProcessingChunkSize, expectedLength - position);
+            int read = deflate.Read(output, position, wanted);
             cancellationToken.ThrowIfCancellationRequested();
             if (read == 0)
             {
                 throw new InvalidDataException("The attachment content is shorter than its declared length.");
             }
 
-            output.Write(buffer, 0, read);
+            position += read;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -283,26 +315,88 @@ internal static class AttachmentWrapper
             throw new InvalidDataException("The attachment content exceeds its declared length.");
         }
 
-        return output.ToArray();
+        return output;
     }
 
-    /// <summary>Bounds aggregate content decoded by one attachment read or table scan.</summary>
+    /// <summary>Bounds aggregate declared content and byte-processing work decoded by one operation.</summary>
     /// <param name="limit">The maximum aggregate content length.</param>
-    internal sealed class ContentBudget(long limit)
+    /// <param name="workLimit">The maximum aggregate byte-processing work.</param>
+    internal sealed class ContentBudget(long limit, long workLimit)
     {
+#if NET9_0_OR_GREATER
+        private readonly Lock budgetLock = new();
+#else
+        private readonly object budgetLock = new();
+#endif
         private long remaining = limit;
+        private long workRemaining = workLimit;
 
         /// <summary>Reserves content bytes before allocating or decompressing them.</summary>
         /// <param name="byteCount">The declared uncompressed content length.</param>
+        /// <param name="storedLength">The full stored wrapper length.</param>
         /// <exception cref="JetLimitationException">The aggregate content limit is exceeded.</exception>
-        internal void Consume(uint byteCount)
+        internal void Consume(uint byteCount, int storedLength)
         {
-            if (byteCount > this.remaining)
+            long work = storedLength + (4L * byteCount);
+            lock (this.budgetLock)
             {
-                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Attachment content for this read exceeds MaxAttachmentContentBytesPerOperation.");
-            }
+                if (byteCount > this.remaining)
+                {
+                    throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Attachment content for this read exceeds MaxAttachmentContentBytesPerOperation.");
+                }
 
-            this.remaining -= byteCount;
+                if (work > this.workRemaining)
+                {
+                    throw new JetLimitationException(JetErrorCode.ValueTooLarge, "Attachment decoding for this read exceeds MaxAttachmentDecodeWorkBytesPerOperation.");
+                }
+
+                this.remaining -= byteCount;
+                this.workRemaining -= work;
+            }
         }
+    }
+
+    /// <summary>Checks cancellation even when the inflater consumes many empty blocks in a single read.</summary>
+    /// <param name="input">The caller-owned compressed stream.</param>
+    /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    private sealed class CancellationCheckingStream(Stream input, CancellationToken cancellationToken) : Stream
+    {
+        public override bool CanRead => input.CanRead;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int read = input.Read(buffer, offset, Math.Min(count, ProcessingChunkSize));
+            cancellationToken.ThrowIfCancellationRequested();
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int read = input.Read(buffer[..Math.Min(buffer.Length, ProcessingChunkSize)]);
+            cancellationToken.ThrowIfCancellationRequested();
+            return read;
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

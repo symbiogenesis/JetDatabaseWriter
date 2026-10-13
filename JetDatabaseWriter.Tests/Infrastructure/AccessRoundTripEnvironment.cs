@@ -230,12 +230,6 @@ internal static class AccessRoundTripEnvironment
     /// <exception cref="InvalidOperationException">Thrown when the DAO round-trip environment is unavailable.</exception>
     public static CompactResult RunDaoCompact(string source, string dest, TimeSpan timeout)
     {
-        if (!IsAvailable)
-        {
-            throw new InvalidOperationException(SkipReason);
-        }
-
-        string scriptPath = Path.Combine(Path.GetDirectoryName(dest)!, $"compact-{Guid.NewGuid():N}.ps1");
         string script = $$"""
                 $ErrorActionPreference = 'Stop'
                 $src = {{ToPowerShellSingleQuotedLiteral(source)}}
@@ -251,16 +245,7 @@ internal static class AccessRoundTripEnvironment
                 }
 
                 """;
-        File.WriteAllText(scriptPath, script);
-
-        try
-        {
-            return RunScriptFile(scriptPath, timeout);
-        }
-        finally
-        {
-            TryDelete(scriptPath);
-        }
+        return RunDaoScript(script, Path.GetDirectoryName(dest)!, timeout);
     }
 
     /// <summary>
@@ -273,6 +258,7 @@ internal static class AccessRoundTripEnvironment
     /// <param name="timeout">Maximum wait for the PowerShell host to exit.</param>
     /// <returns>Process exit code, captured stdout, captured stderr.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the DAO round-trip environment is unavailable.</exception>
+    /// <exception cref="ArgumentException">The DAO working directory is relative.</exception>
     public static CompactResult RunDaoScript(string script, string workDir, TimeSpan timeout)
     {
         if (!IsAvailable)
@@ -280,6 +266,21 @@ internal static class AccessRoundTripEnvironment
             throw new InvalidOperationException(SkipReason);
         }
 
+        if (!Path.IsPathFullyQualified(workDir))
+        {
+            throw new ArgumentException("The DAO working directory must be absolute.", nameof(workDir));
+        }
+
+        script = $$"""
+                $previousProcessDirectory = [Environment]::CurrentDirectory
+                Push-Location -LiteralPath {{ToPowerShellSingleQuotedLiteral(workDir)}}
+                try {
+                    [Environment]::CurrentDirectory = {{ToPowerShellSingleQuotedLiteral(workDir)}}
+                {{IndentScript(script, "  ")}}} finally {
+                    [Environment]::CurrentDirectory = $previousProcessDirectory
+                    Pop-Location
+                }
+                """;
         string scriptPath = Path.Combine(workDir, $"dao-script-{Guid.NewGuid():N}.ps1");
         File.WriteAllText(scriptPath, script);
 
@@ -298,7 +299,8 @@ internal static class AccessRoundTripEnvironment
         PowerShellRunResult run = PowerShellProcessRunner.Run(
             PowerShellPath!,
             ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
-            timeout);
+            timeout,
+            workingDirectory: Path.GetDirectoryName(scriptPath));
         return run.TimedOut
             ? new CompactResult(-1, run.StandardOutput, run.StandardError + $"\n[timeout after {timeout.TotalSeconds}s]")
             : new CompactResult(run.ExitCode, run.StandardOutput, run.StandardError);

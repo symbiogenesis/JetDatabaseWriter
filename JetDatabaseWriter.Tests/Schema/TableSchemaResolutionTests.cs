@@ -43,9 +43,11 @@ public sealed class TableSchemaResolutionTests
     }
 
     [Theory]
-    [InlineData(ColumnType.ByteType)]
-    [InlineData(ColumnType.LongIntegerType)]
-    public void CalculatedResultType_ProjectsPersistedTypeAndKeepsFallback(ColumnType resultType)
+    [InlineData(ColumnType.ByteType, false)]
+    [InlineData(ColumnType.ByteType, true)]
+    [InlineData(ColumnType.LongIntegerType, false)]
+    [InlineData(ColumnType.LongIntegerType, true)]
+    public void CalculatedResultType_ProjectsPersistedTypeAndKeepsFallback(ColumnType resultType, bool splitTargets)
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
         byte[] bytes = new byte[format.PageSize];
@@ -60,7 +62,15 @@ public sealed class TableSchemaResolutionTests
         Assert.Equal(ColumnType.MemoType, TableSchema.CreateDefinition(image, null).Columns[0].Type);
         Assert.Equal(default, TableSchema.CreateDefinition(image, null).Columns[0].CalculatedResultType);
         var builder = new ColumnPropertyBlockBuilder();
-        builder.GetOrAddTarget("C").AddByte(Constants.ColumnPropertyNames.ResultType, (byte)resultType);
+        ColumnPropertyTargetBuilder target = builder.GetOrAddTarget("C");
+        if (splitTargets)
+        {
+            target.AddText("Caption", "Keep caption", format);
+            target = new ColumnPropertyTargetBuilder { Name = "C", ChunkType = ColumnPropertyChunkType.PropertyBlockAlt1 };
+            builder.Targets.Add(target);
+        }
+
+        target.AddByte(Constants.ColumnPropertyNames.ResultType, (byte)resultType);
         var properties = ColumnPropertyBlock.Parse(builder.ToBytes(JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb)), JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb));
         TableDef definition = TableSchema.CreateDefinition(image, properties);
         Assert.Equal(resultType, definition.Columns[0].CalculatedResultType);

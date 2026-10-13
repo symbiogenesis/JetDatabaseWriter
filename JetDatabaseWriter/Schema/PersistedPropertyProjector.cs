@@ -149,7 +149,6 @@ internal static class PersistedPropertyProjector
     {
         List<ColumnPropertyEntryBuilder> before = ModelledEntries(builder, existing, format);
         List<ColumnPropertyEntryBuilder> after = ModelledEntries(builder, projected, format);
-        ColumnPropertyTargetBuilder? target = null;
 
         foreach (ColumnPropertyEntryBuilder entry in after)
         {
@@ -158,19 +157,33 @@ internal static class PersistedPropertyProjector
                 continue;
             }
 
-            target ??= builder.GetOrAddTarget(projected.Name);
-            int index = target.Entries.FindIndex(e => string.Equals(e.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
-            if (index < 0)
+            bool found = false;
+            foreach (ColumnPropertyTargetBuilder target in builder.Targets)
             {
-                target.Entries.Add(entry);
-                continue;
+                if (!string.Equals(target.Name, projected.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                foreach (ColumnPropertyEntryBuilder stored in target.Entries)
+                {
+                    if (!string.Equals(stored.Name, entry.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    found = true;
+                    stored.Value = entry.Value;
+                    if (!(IsText(stored.DataType) && IsText(entry.DataType)))
+                    {
+                        stored.DataType = entry.DataType;
+                    }
+                }
             }
 
-            ColumnPropertyEntryBuilder stored = target.Entries[index];
-            stored.Value = entry.Value;
-            if (!(IsText(stored.DataType) && IsText(entry.DataType)))
+            if (!found)
             {
-                stored.DataType = entry.DataType;
+                builder.GetOrAddTarget(projected.Name).Entries.Add(entry);
             }
         }
 
@@ -178,8 +191,13 @@ internal static class PersistedPropertyProjector
         {
             if (FindEntry(after, entry.Name) is null)
             {
-                target ??= builder.Targets.Find(t => string.Equals(t.Name, projected.Name, StringComparison.OrdinalIgnoreCase));
-                _ = target?.Entries.RemoveAll(e => string.Equals(e.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
+                foreach (ColumnPropertyTargetBuilder target in builder.Targets)
+                {
+                    if (string.Equals(target.Name, projected.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _ = target.Entries.RemoveAll(e => string.Equals(e.Name, entry.Name, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
             }
         }
     }

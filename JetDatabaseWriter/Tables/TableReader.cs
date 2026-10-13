@@ -540,15 +540,27 @@ internal sealed class TableReader(
         var result = new Dictionary<string, DataTable>(StringComparer.OrdinalIgnoreCase);
         List<CatalogEntry> tables = await catalog.GetUserTablesAsync(cancellationToken).ConfigureAwait(false);
 
-        for (int i = 0; i < tables.Count; i++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            CatalogEntry table = tables[i];
-            progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
-            result[table.Name] = await this.ReadTableAsync(table.Name, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
-        }
+            for (int i = 0; i < tables.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                CatalogEntry table = tables[i];
+                progress?.Report(new TableProgress { TableName = table.Name, TableIndex = i, TableCount = tables.Count });
+                result[table.Name] = await this.ReadTableAsync(table.Name, maxRows: null, progress: null, cancellationToken).ConfigureAwait(false);
+            }
 
-        return result;
+            return result;
+        }
+        catch
+        {
+            foreach (DataTable table in result.Values)
+            {
+                table.Dispose();
+            }
+
+            throw;
+        }
     }
 
     private static void EndDataTableLoad(DataTable table, ref bool dataLoadStarted)

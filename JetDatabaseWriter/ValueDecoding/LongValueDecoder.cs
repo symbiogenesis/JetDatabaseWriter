@@ -31,7 +31,7 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     internal ValueTask<LvalRowLocation> LocateLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
     {
         int lvalPage = LongValueStore.PageNumber(lvalDp);
-        if (lvalPage <= 0)
+        if (lvalPage <= 0 || lvalPage >= pages.PageCount)
         {
             return new ValueTask<LvalRowLocation>(new LvalRowLocation([], 0, 0, $"invalid page {lvalPage}"));
         }

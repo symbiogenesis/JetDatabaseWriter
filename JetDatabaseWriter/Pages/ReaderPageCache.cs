@@ -67,6 +67,9 @@ internal sealed class ReaderPageCache : IDisposable
     /// <summary>Gets the number of page reads that went to the file.</summary>
     internal long Misses => this.pageCache?.Misses ?? 0;
 
+    /// <summary>Gets the readable page count, including a writer's pending appended pages.</summary>
+    internal long PageCount => this.pages.PageCount;
+
     /// <summary>
     /// Reads a page through the cache when one is configured. Cached buffers
     /// are owned by the cache: callers must not return them to the pool.

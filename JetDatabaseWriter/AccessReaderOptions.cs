@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Relationships;
 
@@ -48,13 +49,26 @@ public sealed class AccessReaderOptions : AccessOptions
 
     /// <summary>
     /// Gets the maximum aggregate uncompressed attachment content length for one
-    /// attachment read or table scan, including extension headers. Default: 256 MiB.
+    /// reader operation, including extension headers. Default: 256 MiB.
     /// Set a positive value appropriate for the largest permitted read before
     /// opening the file. A table scan shares this budget across its attachment
-    /// columns. Each table in a multi-table read starts a separate budget.
+    /// columns, nested table reads and linked sources. Independent operations
+    /// start independent budgets, including concurrent operations on one reader.
     /// Budget refusals propagate in strict and lenient parsing modes.
     /// </summary>
     public long MaxAttachmentContentBytesPerOperation { get; init; } = 256 * 1024 * 1024;
+
+    /// <summary>
+    /// Gets the maximum aggregate attachment decoding work for one reader operation,
+    /// measured in bytes. Default: 2 GiB. Each wrapper reserves its stored byte length
+    /// plus four times its declared content length before decoding, bounding compressed
+    /// input and content processing together. This includes conservative allowances
+    /// for inflation, checksum, extension decoding and payload copying. Increase this
+    /// positive limit explicitly for trusted large or costly compressed values.
+    /// Nested reads and linked sources share this budget. Refusals propagate in both
+    /// strict and lenient modes; cancellation is checked in bounded processing chunks.
+    /// </summary>
+    public long MaxAttachmentDecodeWorkBytesPerOperation { get; init; } = 2L * 1024 * 1024 * 1024;
 
     /// <summary>
     /// Gets the maximum number of metadata entries inspected during complex-column
@@ -179,17 +193,21 @@ public sealed class AccessReaderOptions : AccessOptions
     /// <summary>Gets or sets the budget inherited by linked readers.</summary>
     internal EncryptionWorkBudget? EncryptionWorkBudget { get; set; }
 
-    /// <summary>Creates private options with a fresh root budget, or preserves an inherited budget.</summary>
+    /// <summary>Gets or sets the operation budget context inherited by linked readers.</summary>
+    internal AttachmentReadContext? AttachmentReadContext { get; set; }
+
+    /// <summary>Creates private options with fresh root work budgets, or preserves inherited budgets.</summary>
     /// <returns>The private options used for this reader.</returns>
     internal AccessReaderOptions WithEncryptionWorkBudget()
     {
-        if (this.EncryptionWorkBudget is not null)
+        if (this.EncryptionWorkBudget is not null && this.AttachmentReadContext is not null)
         {
             return this;
         }
 
         var options = (AccessReaderOptions)this.MemberwiseClone();
-        options.EncryptionWorkBudget = new EncryptionWorkBudget(this.MaxTotalEncryptionSpinCount);
+        options.EncryptionWorkBudget ??= new EncryptionWorkBudget(this.MaxTotalEncryptionSpinCount);
+        options.AttachmentReadContext ??= new(this.MaxAttachmentContentBytesPerOperation, this.MaxAttachmentDecodeWorkBytesPerOperation);
         return options;
     }
 

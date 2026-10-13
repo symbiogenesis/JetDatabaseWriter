@@ -32,7 +32,7 @@ internal sealed class TableSchema(TDefImage image, ColumnPropertyBlock? properti
         foreach (ColumnInfo column in source.Columns)
         {
             ColumnType resultType = column.IsCalculated
-                ? ColumnPropertyReader.ResolveCalculatedResultType(properties?.FindTarget(column.Name))
+                ? ColumnPropertyReader.ResolveCalculatedResultType(properties?.FindPropertyTarget(column.Name, Constants.ColumnPropertyNames.ResultType))
                 : default;
             columns.Add(resultType == default ? column : column.WithCalculatedResultType(resultType));
         }
