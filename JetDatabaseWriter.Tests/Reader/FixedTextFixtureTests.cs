@@ -29,6 +29,91 @@ public sealed class FixedTextFixtureTests
     ];
 
     [Theory]
+    [InlineData(1252)]
+    [InlineData(932)]
+    public async Task NativeJet3FixedText_PreservesPaddingNullAndEmbeddedNul(int codePage)
+    {
+        string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", $"NativeFixedTextJet3Cp{codePage}.mdb");
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.True(harness.Database.Format.IsJet3);
+        Assert.Equal(codePage, harness.Database.Format.CodePage);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("FixedText", TestContext.Current.CancellationToken));
+        TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
+        ColumnInfo value = Assert.Single(definition.Columns, column => column.Name == "Value");
+        Assert.True(value.IsFixed);
+        Assert.Equal(6, value.Size);
+        await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync("FixedText", cancellationToken: TestContext.Current.CancellationToken);
+        object[] expected = codePage == 932
+            ? ["      ", "A     ", "ABCDEF", "A\0B   ", DBNull.Value, "漢字  "]
+            : ["      ", "A     ", "ABCDEF", "A\0B   ", DBNull.Value];
+        Assert.Equal(expected.Length, table.Rows.Count);
+        foreach (DataRow row in table.Rows)
+        {
+            Assert.Equal(expected[(int)row["Id"] - 1], row["Value"]);
+        }
+
+        await foreach (FixedRow row in reader.Rows<FixedRow>("FixedText", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            Assert.Equal(row.Id == 5 ? null : expected[row.Id - 1], row.Value);
+        }
+
+        int ordinal = table.Columns["Value"]!.Ordinal;
+        int idOrdinal = table.Columns["Id"]!.Ordinal;
+        await foreach (string[] row in reader.RowsAsStrings("FixedText", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            int id = int.Parse(row[idOrdinal], System.Globalization.CultureInfo.InvariantCulture);
+            Assert.Equal(id == 5 ? string.Empty : expected[id - 1], row[ordinal]);
+        }
+    }
+
+    [Theory]
+    [InlineData(1252, "A\0B", new byte[] { 65, 0, 66, 32, 32, 32 })]
+    [InlineData(932, "漢字", new byte[] { 0x8A, 0xBF, 0x8E, 0x9A, 32, 32 })]
+    public async Task NativeJet3FixedText_EncoderMatchesNativeBytes(int codePage, string text, byte[] expected)
+    {
+        string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", $"NativeFixedTextJet3Cp{codePage}.mdb");
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        var definition = new TableDef
+        {
+            Columns = [new ColumnInfo { Name = "Value", Type = ColumnType.TextType, Size = 6, Flags = Constants.ColumnDescriptorFlags.Fixed }],
+        };
+        var encoder = new RowEncoder(harness.Database.Format);
+        byte[] row = encoder.SerializeRow(definition, [text]);
+        Assert.Equal(expected, row[1..7]);
+        Assert.Throws<JetLimitationException>(() => encoder.SerializeRow(definition, [text + "ABCDE"]));
+    }
+
+    [Theory]
+    [InlineData("NativeFixedTextJet4.mdb")]
+    [InlineData("NativeFixedTextAce.accdb")]
+    public async Task NativeUnicodeFixedText_LeadingBomIsContentAcrossReaders(string fileName)
+    {
+        string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", fileName);
+        await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
+        using DataTable table = await reader.ReadTableAsync("FixedText", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("\uFEFFA    ", Assert.Single(table.Select("Id = 7"))["Value"]);
+        Assert.Equal("A\0B   ", Assert.Single(table.Select("Id = 4"))["Value"]);
+        await foreach (FixedRow row in reader.Rows<FixedRow>("FixedText", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            if (row.Id == 7)
+            {
+                Assert.Equal("\uFEFFA    ", row.Value);
+            }
+        }
+
+        int valueOrdinal = table.Columns["Value"]!.Ordinal;
+        int idOrdinal = table.Columns["Id"]!.Ordinal;
+        await foreach (string[] row in reader.RowsAsStrings("FixedText", cancellationToken: TestContext.Current.CancellationToken))
+        {
+            if (row[idOrdinal] == "7")
+            {
+                Assert.Equal("\uFEFFA    ", row[valueOrdinal]);
+            }
+        }
+    }
+
+    [Theory]
     [MemberData(nameof(Fixtures))]
     public async Task FixedText_ReadsThroughTypedStringAndPocoPaths(string path)
     {
@@ -135,5 +220,12 @@ public sealed class FixedTextFixtureTests
     {
         [Column("c_flag_")]
         public string? Flag { get; set; }
+    }
+
+    private sealed class FixedRow
+    {
+        public int Id { get; set; }
+
+        public string? Value { get; set; }
     }
 }

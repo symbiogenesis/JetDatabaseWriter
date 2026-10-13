@@ -7,6 +7,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -20,6 +22,39 @@ using Xunit;
 /// </summary>
 public sealed class ComplexColumnsFlatIndexesTests
 {
+    [Fact]
+    public async Task ComplexFlatTables_UseNativeUserTableType()
+    {
+        await using var ms = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync(
+                "Documents",
+                [
+                    new ColumnDefinition("Id", typeof(int)),
+                    new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true },
+                    new ColumnDefinition("Tags", typeof(object), maxLength: 50) { IsMultiValue = true, MultiValueElementType = typeof(string) },
+                ],
+                TestContext.Current.CancellationToken);
+        }
+
+        IReadOnlyList<ComplexColumnInfo> columns;
+        ms.Position = 0;
+        await using (AccessReader reader = await AccessReader.OpenAsync(ms, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
+        {
+            columns = await reader.GetComplexColumnsAsync("Documents", TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(2, columns.Count);
+        ms.Position = 0;
+        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        foreach (ComplexColumnInfo column in columns)
+        {
+            byte[] page = await harness.Pager.ReadPageCopyAsync(column.FlatTableId, TestContext.Current.CancellationToken);
+            Assert.Equal(Constants.TableDefinition.UserTableType, page[harness.Database.Format.TDef.TableType]);
+        }
+    }
+
     [Fact]
     public async Task Attachment_FlatTable_HasAutoincrementScalarPkColumn()
     {

@@ -395,6 +395,18 @@ internal sealed class JetFormat
     }
 
     /// <summary>
+    /// Decodes a fixed Text slot without interpreting its contents as a
+    /// compressed-Unicode header. Native fixed Text uses its descriptor's
+    /// full byte width, so a leading U+FEFF is stored content.
+    /// </summary>
+    /// <param name="bytes">The row bytes.</param>
+    /// <param name="start">The slot's start.</param>
+    /// <param name="len">The slot's byte width.</param>
+    /// <returns>The stored text, including padding and embedded NULs.</returns>
+    internal string DecodeFixedText(byte[] bytes, int start, int len)
+        => this.IsJet3 ? this.AnsiEncoding.GetString(bytes, start, len) : Encoding.Unicode.GetString(bytes, start, len);
+
+    /// <summary>
     /// Encodes a string for storage using the format-appropriate codec
     /// (Jet4 with optional compression vs Jet3 ANSI code-page bytes).
     /// </summary>

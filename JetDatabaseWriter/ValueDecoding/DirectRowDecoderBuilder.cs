@@ -38,6 +38,9 @@ internal static class DirectRowDecoderBuilder
     private static readonly MethodInfo DecodeTextMethod =
         GetRequiredMethod(typeof(JetFormat), nameof(JetFormat.DecodeText), InstanceNonPublic);
 
+    private static readonly MethodInfo DecodeFixedTextMethod =
+        GetRequiredMethod(typeof(JetFormat), nameof(JetFormat.DecodeFixedText), InstanceNonPublic);
+
     private static readonly MethodInfo ReadBinarySliceMethod =
         GetRequiredMethod(typeof(BinaryBuffer), nameof(BinaryBuffer.CopySlice), StaticNonPublic);
 
@@ -436,7 +439,7 @@ internal static class DirectRowDecoderBuilder
             DateTimeType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDateTimeLE), StaticNonPublic), pageParam, offsetExpr),
             GuidType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadGuidAt), StaticNonPublic), pageParam, offsetExpr),
             NumericType => Expression.Call(GetRequiredMethod(typeof(JetTypeInfo), nameof(JetTypeInfo.ReadDecimalLE), StaticNonPublic), pageParam, offsetExpr, Expression.Constant((int)column.NumericScale)),
-            TextType => Expression.Call(formatParam, DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
+            TextType => Expression.Call(formatParam, column.IsFixed ? DecodeFixedTextMethod : DecodeTextMethod, pageParam, offsetExpr, dataLenExpr),
             BinaryType or BigBinaryType => Expression.Call(ReadBinarySliceMethod, pageParam, offsetExpr, dataLenExpr),
             DateTimeExtendedType => Expression.Call(ReadDateTimeExtendedMethod, pageParam, offsetExpr),
             OleType or

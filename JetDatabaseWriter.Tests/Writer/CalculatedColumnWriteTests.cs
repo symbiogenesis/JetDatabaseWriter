@@ -216,7 +216,7 @@ public sealed class CalculatedColumnWriteTests
                     new("LabelCode", typeof(string), maxLength: 20)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "Left([Label], 2) & CStr(Len([Label]))",
+                        CalculationExpression = "Left([Label], 2) & (Len([Label]))",
                     },
                 ],
                 TestContext.Current.CancellationToken);
@@ -375,7 +375,7 @@ public sealed class CalculatedColumnWriteTests
                     new("FunctionText", typeof(string), maxLength: 80)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "Replace(UCase([Label]), \"A\", \"@\") & \"-\" & CStr(DatePart(\"yyyy\", DateSerial(2025, 2, 3)))",
+                        CalculationExpression = "Replace(UCase([Label]), \"A\", \"@\") & \"-\" & (DatePart(\"yyyy\", DateSerial(2025, 2, 3)))",
                     },
                     new("AtnValue", typeof(double))
                     {
@@ -390,7 +390,7 @@ public sealed class CalculatedColumnWriteTests
                     new("TypeInfo", typeof(string), maxLength: 40)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "TypeName([Label]) & \":\" & CStr(VarType([Score]))",
+                        CalculationExpression = "TypeName([Label]) & \":\" & (VarType([Score]))",
                     },
                     new("StringAliases", typeof(string), maxLength: 40)
                     {
@@ -500,22 +500,22 @@ public sealed class CalculatedColumnWriteTests
                     new("NullEdge", typeof(string), maxLength: 80)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "Nz(Null, \"fallback\") & \":\" & CStr(IsNull(Null)) & \":\" & CStr(IsNumeric(\"12.5\")) & \":\" & CStr(IsDate(\"2025-02-03\"))",
+                        CalculationExpression = "Nz(Null, \"fallback\") & \":\" & (IsNull(Null)) & \":\" & (IsNumeric(\"12.5\")) & \":\" & (IsDate(\"2025-02-03\"))",
                     },
                     new("TextEdge", typeof(string), maxLength: 80)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "Mid(\"Access\", 2, 3) & \":\" & CStr(InStr(\"alphabet\", \"ph\")) & \":\" & CStr(InStrRev(\"banana\", \"na\")) & \":\" & String(3, \"xy\") & \":\" & StrReverse(\"stressed\")",
+                        CalculationExpression = "Mid(\"Access\", 2, 3) & \":\" & (InStr(\"alphabet\", \"ph\")) & \":\" & (InStrRev(\"banana\", \"na\")) & \":\" & String(3, \"xy\") & \":\" & StrReverse(\"stressed\")",
                     },
                     new("DateEdge", typeof(string), maxLength: 80)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "CStr(Year(DateAdd(\"m\", 1, DateSerial(2025, 12, 31)))) & \":\" & CStr(DateDiff(\"d\", DateSerial(2025, 1, 1), DateSerial(2025, 1, 31))) & \":\" & WeekdayName(2, True, 1) & \":\" & MonthName(2)",
+                        CalculationExpression = "(Year(DateAdd(\"m\", 1, DateSerial(2025, 12, 31)))) & \":\" & (DateDiff(\"d\", DateSerial(2025, 1, 1), DateSerial(2025, 1, 31))) & \":\" & WeekdayName(2, True, 1) & \":\" & MonthName(2)",
                     },
                     new("NumericEdge", typeof(string), maxLength: 80)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "CStr(Int(-1.2)) & \":\" & CStr(Fix(-1.2)) & \":\" & CStr(Round(2.5, 0)) & \":\" & Hex(255) & \":\" & Oct(8) & \":\" & CStr(Val(\" 12 apples\"))",
+                        CalculationExpression = "(Int(-1.2)) & \":\" & (Fix(-1.2)) & \":\" & (Round(2.5, 0)) & \":\" & Hex(255) & \":\" & Oct(8) & \":\" & (Val(\" 12 apples\"))",
                     },
                     new("FormattingEdge", typeof(string), maxLength: 80)
                     {
@@ -530,7 +530,7 @@ public sealed class CalculatedColumnWriteTests
                     new("MetadataEdge", typeof(string), maxLength: 40)
                     {
                         IsCalculated = true,
-                        CalculationExpression = "TypeName(Null) & \":\" & CStr(VarType(Null)) & \":\" & CStr(CVar(7))",
+                        CalculationExpression = "TypeName(Null) & \":\" & (VarType(Null)) & \":\" & (CVar(7))",
                     },
                 ],
                 TestContext.Current.CancellationToken);
@@ -1447,9 +1447,8 @@ public sealed class CalculatedColumnWriteTests
     }
 
     /// <summary>
-    /// A Boolean expression in a Byte calculated column stores 255 for True and 0
-    /// for False (the OLE Automation conversion), on insert and when an update
-    /// recomputes it.
+    /// A Boolean expression in a Byte calculated column stores 0 for False and
+    /// refuses True before changing bytes, on inserts and updates.
     /// </summary>
     /// <param name="mode">WriteMode.Direct, WriteMode.AutoCommit (UseTransactionalWrites) or WriteMode.ExplicitCommit (a committed transaction).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
@@ -1457,7 +1456,7 @@ public sealed class CalculatedColumnWriteTests
     [InlineData(WriteMode.Direct)]
     [InlineData(WriteMode.AutoCommit)]
     [InlineData(WriteMode.ExplicitCommit)]
-    public async Task InsertAndUpdate_BooleanExpressionInByteColumn_Stores255(WriteMode mode)
+    public async Task InsertAndUpdate_BooleanExpressionInByteColumn_RefusesTrueAtomically(WriteMode mode)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -1474,20 +1473,25 @@ public sealed class CalculatedColumnWriteTests
 
         await WriteInModeAsync(stream, mode, async writer =>
         {
-            await writer.InsertRowAsync("CalcByteFlag", [1, 3, DBNull.Value], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("CalcByteFlag", [2, 0, DBNull.Value], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("CalcByteFlag", [3, 5, DBNull.Value], TestContext.Current.CancellationToken);
-            int updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 2, new Dictionary<string, object?> { ["Score"] = 9 }, TestContext.Current.CancellationToken);
-            Assert.Equal(1, updated);
-            updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 3, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("CalcByteFlag", [1, 0, DBNull.Value], TestContext.Current.CancellationToken);
+            byte[] before = stream.ToArray();
+            OverflowException insert = await Assert.ThrowsAsync<OverflowException>(async () =>
+                await writer.InsertRowAsync("CalcByteFlag", [2, 3, DBNull.Value], TestContext.Current.CancellationToken));
+            Assert.Contains("'Flag'", insert.Message, StringComparison.Ordinal);
+            Assert.Contains("'CalcByteFlag'", insert.Message, StringComparison.Ordinal);
+            Assert.Equal(before, stream.ToArray());
+            await Assert.ThrowsAsync<OverflowException>(async () => await writer.UpdateRowsAsync(
+                "CalcByteFlag", "Id", 1, new Dictionary<string, object?> { ["Score"] = 9 }, TestContext.Current.CancellationToken));
+            Assert.Equal(before, stream.ToArray());
+            await writer.InsertRowAsync("CalcByteFlag", [2, DBNull.Value, DBNull.Value], TestContext.Current.CancellationToken);
+            int updated = await writer.UpdateRowsAsync("CalcByteFlag", "Id", 1, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken);
             Assert.Equal(1, updated);
         });
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable table = await reader.ReadTableAsync("CalcByteFlag", cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Equal((byte)255, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Flag"]);
-        Assert.Equal((byte)255, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Flag"]);
-        Assert.Equal((byte)0, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 3)["Flag"]);
+        Assert.Equal((byte)0, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 1)["Flag"]);
+        Assert.Equal(DBNull.Value, Assert.Single(table.AsEnumerable(), r => (int)r["Id"] == 2)["Flag"]);
     }
 
     /// <summary>

@@ -471,7 +471,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type == TextType)
             {
-                value = source.DecodeText(page, start, length);
+                value = column.IsFixed ? source.DecodeFixedText(page, start, length) : source.DecodeText(page, start, length);
                 return true;
             }
 
@@ -754,7 +754,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type == TextType)
             {
-                return source.DecodeText(page, start, length);
+                return column.IsFixed ? source.DecodeFixedText(page, start, length) : source.DecodeText(page, start, length);
             }
 
             if (column.Type is BinaryType or BigBinaryType)
@@ -929,7 +929,7 @@ internal sealed class RowDecodePlan
 
             if (column.Type == TextType)
             {
-                return source.DecodeText(page, start, length);
+                return column.IsFixed ? source.DecodeFixedText(page, start, length) : source.DecodeText(page, start, length);
             }
 
             if (column.Type is BinaryType or BigBinaryType)

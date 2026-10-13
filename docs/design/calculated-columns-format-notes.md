@@ -376,18 +376,24 @@ Delivered:
   - It then adds the arguments up as an OLE date serial. So
     `TimeSerial(25, 0, 0)` is 12/31/1899 1:00 AM, and `TimeSerial(-1, 0, 0)`
     is -0.0417, which OLE reads as 1:00 AM on day 0.
-- The evaluator's conversions currently follow OLE Automation's
-  `VariantChangeType`, which VBA uses (measured with oleaut32 on Windows): a
-  Boolean becomes 255 or 0 in its Byte result coercion and in `CByte`. DAO120
-  instead exposes a null/missing result for True and 0 for False from a Byte calculated field
-  whose expression is `[Flag]`. DAO120 also refuses an explicit calculated
-  `CByte([Flag])`. The native COM result is null rather than `DBNull`, so
-  calculation-error/missing-result semantics remain unverified. Native conversion remains
-  an open discrepancy under R4. A number or Boolean is a date serial (days
-  since 1899-12-30, so `True` is 1899-12-29) in
-  a Date result column, `CDate` and the date functions. `CByte(-1)` and
-  `CByte(256)` overflow. `IsDate` is True only for a date or text that parses
-  as one, so `IsDate(5)` is False as in VBA.
+- Defaults and validation rules use OLE Automation conversion semantics:
+  `CByte(True)` yields 255 and False yields 0. A Boolean calculated result
+  instead becomes -1 or 0 before coercion to Byte. True overflows; the writer
+  refuses that result before changing bytes, as it refuses other result
+  overflows. DAO120 caches an error for True and for numeric Byte results
+  outside 0-255: a 39-byte envelope with first UInt32 6, zero payload length
+  and all remaining bytes zero. Ordinary Null is a 23-byte zero envelope;
+  valid Byte results carry a one-byte payload. DAO exposes errors as COM null,
+  whereas ordinary Null is `DBNull`; `IsNull` and `IsError` also return COM null
+  for these errors. Public reads still conflate empty error and Null payloads,
+  and native error-envelope writes remain open under R4. The COM distinction is pinned by
+  `CalculatedConversionDaoTests`; the envelope layout was measured in native
+  byte probes, distinct from
+  the writer's byte-preserving refusal regressions.
+  A number or Boolean is a date serial (days since 1899-12-30, so True is
+  1899-12-29) in a Date result or the shared rule/default interpreter.
+  `CByte(-1)` and `CByte(256)` overflow. `IsDate` is True only for a date or
+  text that parses as one, so `IsDate(5)` is False as in VBA.
 - Arithmetic follows the OLE Automation Variant rules (`VarAdd`, `VarSub`,
   `VarIdiv`, `VarMod`; `AccessVariantOperators`). A date plus or minus a
   number, a Boolean, numeric text or another date is a date (`#2020-01-31# + 1`
@@ -453,6 +459,18 @@ Supported subset:
   `CStr`, `CDate`/`CVDate`, `CBool`, `CByte`, `CVar`, `VarType`, `TypeName`,
   `Hex`, `Oct`, `Val`, common financial helpers (`FV`, `PV`, `Pmt`, `NPer`,
   `IPmt`, `PPmt`, `DDB`, `SLN`, `SYD`, `Rate`), `Choose` and `Switch`. `Partition` is supported for stored rules and defaults; table calculated columns refuse it before mutation, matching DAO120.
+
+The list above describes the shared row-local interpreter for defaults and
+validation rules. Native table calculated columns additionally refuse
+`CBool`, `CByte`, `CInt`, `CLng`, `CSng`, `CCur`, `CDec`, `CStr`, `CDate`,
+`TimeValue` and `DateValue`, including nested calls and normalized `$` aliases.
+`CalculatedExpressionPlan` applies this restriction only in calculated-column
+context, before create/add/recalculation changes bytes. Existing cached values
+remain readable. `CalculatedConversionContextTests` separates those refusals
+from supported defaults/rules and literal text. `CalculatedConversionDaoTests`
+checks DAO120's refusal set and accepted `CDbl`, `DateSerial`, `TimeSerial`
+and date literals, then verifies writer updates and native compact/readback.
+This evidence does not establish all other functions' native admissibility.
 
 Still intentionally out of scope: domain aggregate functions (`DLookup`,
 `DCount`, `DSum`, `DAvg`, `DMin`, `DMax`) because DAO/Access rejects them in

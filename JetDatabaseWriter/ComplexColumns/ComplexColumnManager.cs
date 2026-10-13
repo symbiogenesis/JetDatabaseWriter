@@ -506,6 +506,7 @@ internal sealed class ComplexColumnManager(
                         flatCols,
                         flatIndexes,
                         Constants.SystemObjects.ComplexFlatTableFlags,
+                        MarkSystemTableTdef: false,
                         EmitAceRows: true)],
                     []),
                 cancellationToken).ConfigureAwait(false);

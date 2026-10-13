@@ -37,9 +37,15 @@ internal sealed class CalculatedExpressionPlan
                 normalized,
                 placeholderToColumn,
                 CalculatedExpressionAstFactory.Instance);
-            if (isCalculatedColumn && functions.Contains("Partition"))
+            if (isCalculatedColumn)
             {
-                throw new NotSupportedException("Access table calculated columns do not accept the Partition function.");
+                foreach (string function in functions)
+                {
+                    if (function.ToUpperInvariant() is "PARTITION" or "CBOOL" or "CBYTE" or "CINT" or "CLNG" or "CSNG" or "CCUR" or "CDEC" or "CSTR" or "CDATE" or "TIMEVALUE" or "DATEVALUE")
+                    {
+                        throw new NotSupportedException($"Access table calculated columns do not accept the {function} function.");
+                    }
+                }
             }
 
             return new CalculatedExpressionPlan(root, placeholderToColumn, placeholderToTable);

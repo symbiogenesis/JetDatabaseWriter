@@ -241,19 +241,27 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     }
 
     /// <summary>
-    /// A Boolean stored in a Byte result is 255 or 0, the OLE Automation
-    /// Bool-to-Byte conversion (VBA's <c>CByte(True)</c> is 255), not -1.
+    /// False can be stored in a calculated Byte result; True overflows instead
+    /// of using OLE Automation's unsigned Boolean conversion.
     /// </summary>
     /// <param name="a">The field value.</param>
     /// <param name="expected">The stored byte.</param>
     [Theory]
-    [InlineData(3, 255)]
     [InlineData(0, 0)]
-    public void ByteResult_FromBoolean_Is255OrZero(int a, int expected)
+    public void ByteResult_FromFalse_IsZero(int a, int expected)
     {
         object result = Evaluate("[A] > 1", typeof(byte), ("A", a));
 
         Assert.Equal((byte)expected, Assert.IsType<byte>(result));
+    }
+
+    [Fact]
+    public void ByteResult_FromTrue_RefusesOverflow()
+    {
+        OverflowException exception = Assert.Throws<OverflowException>(() => Evaluate("[A] > 1", typeof(byte), ("A", 3)));
+        Assert.Contains("'Calc'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("[A] > 1", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Byte", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -347,7 +355,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
         var tableDef = new TableDef { Columns = [new ColumnInfo { Name = "Inner" }, new ColumnInfo { Name = "Outer" }] };
         ColumnConstraint[] constraints =
         [
-            new() { Name = "Inner", ClrType = typeof(int), IsCalculated = true, CalculationExpression = "CByte(-1)" },
+            new() { Name = "Inner", ClrType = typeof(byte), IsCalculated = true, CalculationExpression = "-1" },
             new() { Name = "Outer", ClrType = typeof(int), IsCalculated = true, CalculationExpression = "[Inner] + 1" },
         ];
         object[] values = [DBNull.Value, DBNull.Value];
@@ -898,6 +906,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
             ClrType = resultType,
             IsCalculated = true,
             CalculationExpression = expression,
+            CalculatedExpressionPlan = CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false),
         });
         values[^1] = DBNull.Value;
 

@@ -75,7 +75,7 @@ internal sealed class CalculatedExpressionEvaluationContext
             constraint.CalculatedExpressionPlan ??= CalculatedExpressionPlan.Parse(constraint.CalculationExpression);
             raw = constraint.CalculatedExpressionPlan.Root.Evaluate(this, constraint.CalculatedExpressionPlan);
             storing = true;
-            object coerced = CoerceResult(raw, constraint.ClrType);
+            object coerced = CoerceResult(raw, constraint.ClrType, isCalculatedColumn: true);
             this.values[index] = coerced;
             this.evaluated[index] = true;
             return coerced;

@@ -60,6 +60,7 @@ public sealed class CalculatedExpressionRadixSubtypeTests
                 ClrType = typeof(string),
                 IsCalculated = true,
                 CalculationExpression = expression,
+                CalculatedExpressionPlan = CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false),
             },
         ];
         object[] values = [DBNull.Value];

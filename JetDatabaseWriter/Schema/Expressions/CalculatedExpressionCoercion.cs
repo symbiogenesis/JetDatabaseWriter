@@ -14,7 +14,7 @@ internal static class CalculatedExpressionCoercion
     /// <summary>OLE Automation day 0, 1899-12-30, whose date part General Date text leaves out.</summary>
     private static readonly DateTime OleDateZero = new(1899, 12, 30);
 
-    internal static object CoerceResult(object? value, Type targetType)
+    internal static object CoerceResult(object? value, Type targetType, bool isCalculatedColumn = false)
     {
         if (IsNull(value))
         {
@@ -27,13 +27,14 @@ internal static class CalculatedExpressionCoercion
             return value!;
         }
 
-        // Access converts True the OLE Automation way (VariantChangeType):
-        // -1 in a signed numeric column, "-1" in a text column (ToText), 255 in
-        // a Byte column, and day -1 (1899-12-29) as a date. Excel and Convert
-        // use 1 and "True".
+        // Access converts True to -1 in numeric calculated results. A Byte
+        // result then overflows; DAO stores an error envelope, not 255 or
+        // an ordinary Null. Until error-envelope writes are supported, refuse
+        // it just like other result overflows. Defaults keep the OLE Automation
+        // Bool-to-Byte conversion used by CByte.
         if (value is bool boolean && targetType != typeof(bool) && targetType != typeof(string))
         {
-            if (targetType == typeof(byte))
+            if (targetType == typeof(byte) && !isCalculatedColumn)
             {
                 return ToByte(boolean);
             }

@@ -12,7 +12,7 @@ the Access-authored fixtures in `JetDatabaseWriter.Tests/Databases`.
 
 ## Value decode policy
 
-`RowValueDecodePolicy` validates nonempty fixed-size payloads stored in variable slots and calculated envelopes before the string, typed or compiled POCO decoder reads them. Strict parsing reports malformed values with the column name; lenient parsing returns empty text for string output, `DBNull.Value` for typed rows and an unassigned/default POCO property. A valid zero-length Text or binary value retains its normal empty representation. A validated calculated scalar envelope with no cached payload represents null; a nonempty payload shorter than its scalar type requires is malformed. Calculated MEMO/OLE envelopes use the same validation after exact long-value retrieval. Write-back snapshots retain the unreadable-long-value sentinel, and storage I/O failures propagate.
+`RowValueDecodePolicy` validates nonempty fixed-size payloads stored in variable slots and calculated envelopes before the string, typed or compiled POCO decoder reads them. Strict parsing reports malformed values with the column name; lenient parsing returns empty text for string output, `DBNull.Value` for typed rows and an unassigned/default POCO property. A valid zero-length Text or binary value retains its normal empty representation. A validated calculated scalar envelope with no cached payload currently maps to null; native code-6 calculation errors also have empty payloads, so distinguishing those errors remains open under R4; a nonempty payload shorter than its scalar type requires is malformed. Calculated MEMO/OLE envelopes use the same validation after exact long-value retrieval. Write-back snapshots retain the unreadable-long-value sentinel, and storage I/O failures propagate.
 
 Fixed and variable native Date/Time and Date/Time Extended slots,
 and cached classic calculated dates use the same public failure policy when their
@@ -59,6 +59,25 @@ The public MEMO/OLE and calculated MEMO mutations in
 synthetic corruption behavior using writer-created storage with a complete
 complex catalog. Native fixtures use fixed references; these mutations add no
 native acceptance evidence for variable Complex storage.
+
+## Fixed-length Text
+
+Native fixed Text occupies the descriptor's full byte width. Jet3 uses the
+database code page; Jet4/ACE uses uncompressed UTF-16LE. Its leading `FF FE`
+bytes can be U+FEFF content and must not select the variable-Text compression
+codec. Typed, string, direct POCO and hybrid POCO reads use
+`JetFormat.DecodeFixedText`, preserving that character, spaces and embedded
+NULs. Short assignments are space-padded to the byte width; over-width
+assignments are refused instead of silently truncated.
+
+`FixedTextFixtureTests` uses DAO36-authored CP1252/CP932 Jet3 fixtures and
+DAO120-authored Jet4/ACE fixtures. `NativeFixedTextPreservationTests` compares
+native descriptors and raw slots through unrelated updates and Add/Drop/Rename.
+DAO36 accepts writer row updates/inserts and explicit-CP932 compact of the Jet3
+fixtures; DAO120 accepts Jet4/ACE schema edits and row mutation/compact.
+The Jet3 schema-edit comparisons are library/raw-byte evidence only: native
+DAO36 loses table access after generic column rewrites, tracked in S13.
+Malformed unassigned encoding preservation remains open in F2/I6.
 
 ## Long-value integrity
 
