@@ -16,6 +16,7 @@ using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -175,11 +176,39 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
     public async Task IncrementalTreeMerge_ReclaimsUnreachablePagesAndRollsBack(DatabaseFormat format, bool rollback)
     {
         await using var stream = new MemoryStream();
+        var protectedPages = new SortedSet<long>();
+        var replacedPages = new SortedSet<long>();
+        UsageMapPointer protectedPointer = default;
+        byte[]? protectedMapRow = null;
+        byte[]? protectedLeaf = null;
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
         {
             await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], this.ct);
+            if (format == DatabaseFormat.Jet3Mdb)
+            {
+                await using var initial = new MemoryStream(stream.ToArray());
+                await using WriterHarness initialHarness = await WriterHarness.OpenAsync(initial, cancellationToken: this.ct);
+                CatalogEntry initialTable = (await initialHarness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
+                long initialRoot = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(initialHarness.Database, initialTable.TDefPage, this.ct));
+                (protectedPointer, protectedMapRow, List<long> mappedPages) = await this.ReadSingleInlineIndexMapAsync(initialHarness, initialTable.TDefPage);
+                Assert.Equal([initialRoot], mappedPages);
+                protectedLeaf = await initialHarness.Database.Pages.ReadPageCopyAsync(initialRoot, this.ct);
+                _ = protectedPages.Add(initialRoot);
+            }
+
             await writer.InsertRowsAsync("T", Enumerable.Range(0, 4000).Select(static id => new object?[] { id }), this.ct);
             byte[] before = stream.ToArray();
+            await using (var grown = new MemoryStream(before))
+            await using (WriterHarness grownHarness = await WriterHarness.OpenAsync(grown, cancellationToken: this.ct))
+            {
+                CatalogEntry grownTable = (await grownHarness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
+                Assert.Equal(protectedPages, await PageAudit.FindUnreachableIndexPagesAsync(grownHarness.Database, grownHarness.Services.PageAllocator, grownTable.TDefPage, this.ct));
+                foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(grownHarness.Database, grownTable.TDefPage, this.ct))
+                {
+                    replacedPages.UnionWith(await IndexLeafChain.ReadTreePagesAsync(grownHarness.Database, grownTable.TDefPage, root, this.ct));
+                }
+            }
+
             await using JetTransaction transaction = await writer.BeginTransactionAsync(this.ct);
             Assert.Equal(3990, await writer.DeleteRowsAsync("T", RowCriteria.Where(ColumnPredicate.GreaterThanOrEqual("Id", 10)), this.ct));
             if (rollback)
@@ -196,10 +225,53 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
         stream.Position = 0;
         await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
         CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
-        Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
+        Assert.Equal(protectedPages, await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
+        if (format == DatabaseFormat.Jet3Mdb)
+        {
+            (UsageMapPointer pointer, byte[] row, List<long> mappedPages) = await this.ReadSingleInlineIndexMapAsync(harness, table.TDefPage);
+            Assert.Equal(protectedPointer, pointer);
+            Assert.Equal(protectedMapRow, row);
+            Assert.Equal(protectedPages, mappedPages);
+            foreach (long protectedPage in protectedPages)
+            {
+                Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(protectedPage, this.ct));
+                Assert.Equal(protectedLeaf, await harness.Database.Pages.ReadPageCopyAsync(protectedPage, this.ct));
+            }
+        }
+
+        var currentPages = new SortedSet<long>();
         foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct))
         {
             Assert.Equal(rollback ? 4000 : 10, (await IndexLeafChain.ReadEntriesAsync(harness.Database, table.TDefPage, root, this.ct)).Count);
+            currentPages.UnionWith(await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct));
         }
+
+        if (!rollback)
+        {
+            long[] detachedPages = replacedPages.Except(currentPages).Except(protectedPages).ToArray();
+            Assert.NotEmpty(detachedPages);
+            foreach (long detachedPage in detachedPages)
+            {
+                Assert.True(await harness.Services.PageAllocator.IsPageFreeAsync(detachedPage, this.ct));
+            }
+        }
+    }
+
+    private async ValueTask<(UsageMapPointer Pointer, byte[] RowBytes, List<long> Pages)> ReadSingleInlineIndexMapAsync(WriterHarness harness, long tdefPage)
+    {
+        DatabaseFile db = harness.Database;
+        byte[] definition = (await db.TableDefs.ReadTDefBytesAsync(tdefPage, this.ct))!;
+        TDefCounts counts = TDefCodec.ReadCounts(db.Format, definition);
+        Assert.Equal(1, counts.RealIndexCount);
+        int descriptorStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, definition, counts.ColumnCount, counts.RealIndexCount);
+        Assert.True(db.Format.Index.TryReadRealIdxSlot(definition, descriptorStart, 0, out RealIdxSlot slot));
+        Assert.True(UsageMap.TryReadPointer(definition, slot.FirstDpOffset - 4, out UsageMapPointer pointer));
+        Assert.True(pointer.PageNumber > 0);
+        byte[] map = await db.Pages.ReadPageCopyAsync(pointer.PageNumber, this.ct);
+        Assert.True(UsageMap.TryGetRowBound(map, db.Format.DataPage, db.Format.PageSize, pointer.RowIndex, out RowBound row));
+        Assert.Equal(133, row.RowSize);
+        var pages = new List<long>();
+        Assert.True(UsageMap.TryEnumerateInlinePages(map, row, db.Format.PageSize, db.Pages.PageCount, minimumPageNumber: 3, strict: true, pages));
+        return (pointer, map.AsSpan(row.RowStart, row.RowSize).ToArray(), pages);
     }
 }

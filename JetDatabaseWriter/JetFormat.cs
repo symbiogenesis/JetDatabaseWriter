@@ -224,8 +224,8 @@ internal sealed class JetFormat
 
     /// <summary>
     /// Gets a value indicating whether the writer stamps a TDEF page's free
-    /// space into page bytes 2..3: Jet4 and ACE. On Jet3 it leaves them zero,
-    /// where Access 97 keeps <c>VC</c>.
+    /// space into page bytes 2..3: Jet4 and ACE. Jet3 uses the native
+    /// <c>VC</c> signature there instead.
     /// </summary>
     internal bool WritesTDefFreeSpace { get; }
 

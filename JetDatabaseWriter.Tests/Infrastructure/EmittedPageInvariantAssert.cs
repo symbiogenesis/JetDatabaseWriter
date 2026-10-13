@@ -119,7 +119,7 @@ internal static class EmittedPageInvariantAssert
         bool isUsageMap = parentTdefPage == 0 && rowSlots.Count > 0;
         if (isUsageMap)
         {
-            AssertUsageMapPage(page, pageNumber, rowSlots);
+            AssertUsageMapPage(page, pageNumber, format, rowSlots);
         }
 
         int liveRows = 0;
@@ -226,12 +226,12 @@ internal static class EmittedPageInvariantAssert
         Assert.True(token != 0, Message(pageNumber, "LVAL token must be non-zero."));
     }
 
-    private static void AssertUsageMapPage(ReadOnlySpan<byte> page, int pageNumber, List<RowSlotInfo> rowSlots)
+    private static void AssertUsageMapPage(ReadOnlySpan<byte> page, int pageNumber, DatabaseFormat format, List<RowSlotInfo> rowSlots)
     {
         foreach (RowSlotInfo rowSlot in rowSlots)
         {
             Assert.True(rowSlot.IsLive, Message(pageNumber, $"Usage-map row {rowSlot.RowIndex} is marked deleted or overflow."));
-            Assert.Equal(69, rowSlot.Size);
+            Assert.Equal(format == DatabaseFormat.Jet3Mdb ? 133 : 69, rowSlot.Size);
 
             byte mapType = page[rowSlot.Start];
             Assert.True(mapType is 0x00 or 0x01, Message(pageNumber, $"Usage-map row {rowSlot.RowIndex} has unknown type 0x{mapType:X2}."));

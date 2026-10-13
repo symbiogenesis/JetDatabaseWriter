@@ -569,16 +569,20 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectDup");
 
-        await using WriterHarness writer = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
-        await InsertCatalogObjectAsync(writer, -500, "LowLevelDuplicate", ct);
+        await using (WriterHarness setup = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            await InsertCatalogObjectAsync(setup, -500, "LowLevelDuplicate", ct);
+        }
 
-        await CorruptMsysObjectsFirstIndexRootPageTypeAsync(writer, ct);
+        byte[] before = await File.ReadAllBytesAsync(frontEndPath, ct);
+        await using (WriterHarness writer = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            JetObjectExistsException ex = await Assert.ThrowsAsync<JetObjectExistsException>(() =>
+                InsertCatalogObjectAsync(writer, -501, "lowlevelduplicate", ct).AsTask());
+            Assert.Contains("already exists", ex.Message, StringComparison.Ordinal);
+        }
 
-        JetObjectExistsException ex = await Assert.ThrowsAsync<JetObjectExistsException>(() =>
-            InsertCatalogObjectAsync(writer, -501, "lowlevelduplicate", ct).AsTask());
-
-        Assert.Contains("already exists", ex.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(before, await File.ReadAllBytesAsync(frontEndPath, ct));
     }
 
     [Fact]
@@ -611,14 +615,18 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkedSpliceFail");
 
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(frontEndPath, ct);
+        byte[] before = await File.ReadAllBytesAsync(frontEndPath, ct);
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
         {
-            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            JetCorruptDataException ex = await Assert.ThrowsAsync<JetCorruptDataException>(() =>
                 writer.CreateLinkedTableAsync("LinkedData", @"C:\Data\source.accdb", "Data", ct).AsTask());
-            Assert.Contains("Could not maintain MSysObjects catalog indexes", ex.Message, StringComparison.Ordinal);
+            Assert.Equal(JetErrorCode.CorruptIndex, ex.ErrorCode);
+            Assert.Equal("MSysObjects", ex.ErrorInfo.TableName);
+            Assert.True(ex.ErrorInfo.PageNumber is > 2);
         }
 
+        Assert.Equal(before, await File.ReadAllBytesAsync(frontEndPath, ct));
         await using WriterHarness harness = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
         Assert.False(
             await CatalogObjectExistsAsync(harness, "LinkedData", ct),
@@ -640,11 +648,18 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
 
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(frontEndPath, ct);
+        byte[] before = await File.ReadAllBytesAsync(frontEndPath, ct);
 
-        await using AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct);
-        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            writer.DropTableAsync("Victim", ct).AsTask());
-        Assert.Contains("Could not maintain MSysObjects catalog indexes while dropping table 'Victim'", ex.Message, StringComparison.Ordinal);
+        await using (AccessWriter writer = await AccessWriter.OpenAsync(frontEndPath, cancellationToken: ct))
+        {
+            JetCorruptDataException ex = await Assert.ThrowsAsync<JetCorruptDataException>(() =>
+                writer.DropTableAsync("Victim", ct).AsTask());
+            Assert.Equal(JetErrorCode.CorruptIndex, ex.ErrorCode);
+            Assert.Equal("MSysObjects", ex.ErrorInfo.TableName);
+            Assert.True(ex.ErrorInfo.PageNumber is > 2);
+        }
+
+        Assert.Equal(before, await File.ReadAllBytesAsync(frontEndPath, ct));
     }
 
     public void Dispose()

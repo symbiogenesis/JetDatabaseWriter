@@ -172,9 +172,10 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         int statistics = 43 + (childEntry.IndexNum2 * 8);
         Assert.Equal(new byte[8], child.Td.AsSpan(statistics, 8).ToArray());
 
-        // tdef_len covers everything up to the end of the names (and, on the
-        // Access-authored parent, its trailing block); 'VC' stays in place.
-        Assert.Equal(child.NamesEnd - 8, Ri32(child.Td, 8));
+        // tdef_len includes the native trailer on both tables; 'VC' stays in place.
+        Assert.Equal(10, child.TrailingLength);
+        Assert.Equal(new byte[] { 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0 }, child.Td.AsSpan(child.NamesEnd, child.TrailingLength).ToArray());
+        Assert.Equal(child.NamesEnd + child.TrailingLength - 8, Ri32(child.Td, 8));
         Assert.Equal(parentBefore.TrailingLength, parent.TrailingLength);
         Assert.Equal(parent.NamesEnd + parent.TrailingLength - 8, Ri32(parent.Td, 8));
         Assert.Equal("VC"u8.ToArray(), parent.Td.AsSpan(2, 2).ToArray());
@@ -333,7 +334,9 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(parentBefore.EntryBytes, parent.EntryBytes);
         Assert.Equal(childBefore.EntryBytes, child.EntryBytes);
         Assert.Equal(parent.NamesEnd + parent.TrailingLength - 8, Ri32(parent.Td, 8));
-        Assert.Equal(child.NamesEnd - 8, Ri32(child.Td, 8));
+        Assert.Equal(10, child.TrailingLength);
+        Assert.Equal(new byte[] { 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0 }, child.Td.AsSpan(child.NamesEnd, child.TrailingLength).ToArray());
+        Assert.Equal(child.NamesEnd + child.TrailingLength - 8, Ri32(child.Td, 8));
         Assert.DoesNotContain(await this.ListIndexesAsync(stream, Child), i => i.Kind == IndexKind.ForeignKey);
     }
 
@@ -389,7 +392,9 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal([".rB", ".rC", "id", "PrimaryKey"], parent.Names);
         Assert.Equal(4, child.Td[child.NameStarts[1]]);
         Assert.Equal(0xE9, child.Td[child.NameStarts[1] + 4]);
-        Assert.Equal(child.NamesEnd - 8, Ri32(child.Td, 8));
+        Assert.Equal(10, child.TrailingLength);
+        Assert.Equal(new byte[] { 0xFF, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0 }, child.Td.AsSpan(child.NamesEnd, child.TrailingLength).ToArray());
+        Assert.Equal(child.NamesEnd + child.TrailingLength - 8, Ri32(child.Td, 8));
         Assert.Equal(parent.NamesEnd + parent.TrailingLength - 8, Ri32(parent.Td, 8));
 
         IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rB");

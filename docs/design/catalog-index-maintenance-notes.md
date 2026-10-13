@@ -46,6 +46,15 @@ writer reopening. Other Jet3 system/index/LVAL map behavior remains open.
 Native map pages can serve multiple tables and long values, so reclamation
 requires separate ownership evidence.
 
+Jet3 index-map rows emitted with a table remain frozen during index
+maintenance. An initial mapped leaf stays allocated after the live tree grows
+or merges; other unreachable replacement pages are reclaimed.
+`IndexTreeReclamationTests` checks the exact protected leaf and map bytes,
+refuses any additional unreachable pages, verifies detached unprotected pages
+are free after commit, and verifies whole-image rollback. Page parent zero
+cannot distinguish these rows from native shared maps. Safe index-map refresh
+remains part of I3.
+
 `NativeJet3SchemaRewriteTests` verifies native open, read, mutation and compact
 through x86 DAO3.6 for scalar/wide indexed tables and CP1252/CP932 fixed Text.
 Its frozen-fixture checks also retain exact catalog keys and security without
