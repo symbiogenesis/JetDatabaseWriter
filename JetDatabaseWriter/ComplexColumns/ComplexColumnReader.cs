@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.ComplexColumns;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Threading;
@@ -1117,7 +1116,7 @@ internal sealed class ComplexColumnReader(JetFormat format, TableDefReader table
     {
         if (diagnosticsEnabled)
         {
-            Trace.WriteLine($"[AccessReader] Best-effort fallback in ComplexColumnReader.{operation}: suppressed {exception.GetType().Name} while reading MSysComplexColumns.");
+            DiagnosticTrace.WriteLine($"[AccessReader] Best-effort fallback in ComplexColumnReader.{operation}: suppressed {exception.GetType().Name} while reading MSysComplexColumns.");
         }
     }
 

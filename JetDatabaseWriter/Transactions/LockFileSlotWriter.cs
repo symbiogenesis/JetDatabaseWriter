@@ -219,7 +219,7 @@ internal sealed class LockFileSlotWriter : IDisposable
                 throw;
             }
 
-            System.Diagnostics.Trace.WriteLine($"[{ownerTypeName}] Best-effort lock-file suppression in LockFileSlotWriter.Open: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
+            DiagnosticTrace.WriteLine($"[{ownerTypeName}] Best-effort lock-file suppression in LockFileSlotWriter.Open: {ex.GetType().Name}.");
             return null;
         }
         catch (UnauthorizedAccessException ex)
@@ -230,7 +230,7 @@ internal sealed class LockFileSlotWriter : IDisposable
                 throw;
             }
 
-            System.Diagnostics.Trace.WriteLine($"[{ownerTypeName}] Best-effort lock-file suppression in LockFileSlotWriter.Open: '{lockPath}' ({ex.GetType().Name}: {ex.Message})");
+            DiagnosticTrace.WriteLine($"[{ownerTypeName}] Best-effort lock-file suppression in LockFileSlotWriter.Open: {ex.GetType().Name}.");
             return null;
         }
     }
@@ -272,11 +272,11 @@ internal sealed class LockFileSlotWriter : IDisposable
             }
             catch (IOException ex)
             {
-                System.Diagnostics.Trace.WriteLine($"[{this.ownerType}] Best-effort lock-file slot zero suppression: '{this.LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+                DiagnosticTrace.WriteLine($"[{this.ownerType}] Best-effort lock-file slot zero suppression: {ex.GetType().Name}.");
             }
             catch (UnauthorizedAccessException ex)
             {
-                System.Diagnostics.Trace.WriteLine($"[{this.ownerType}] Best-effort lock-file slot zero suppression: '{this.LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+                DiagnosticTrace.WriteLine($"[{this.ownerType}] Best-effort lock-file slot zero suppression: {ex.GetType().Name}.");
             }
             catch (ObjectDisposedException)
             {
@@ -303,11 +303,11 @@ internal sealed class LockFileSlotWriter : IDisposable
         }
         catch (IOException ex)
         {
-            System.Diagnostics.Trace.WriteLine($"[{this.ownerType}] Best-effort lock-file delete suppression: '{this.LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+            DiagnosticTrace.WriteLine($"[{this.ownerType}] Best-effort lock-file delete suppression: {ex.GetType().Name}.");
         }
         catch (UnauthorizedAccessException ex)
         {
-            System.Diagnostics.Trace.WriteLine($"[{this.ownerType}] Best-effort lock-file delete suppression: '{this.LockFilePath}' ({ex.GetType().Name}: {ex.Message})");
+            DiagnosticTrace.WriteLine($"[{this.ownerType}] Best-effort lock-file delete suppression: {ex.GetType().Name}.");
         }
     }
 

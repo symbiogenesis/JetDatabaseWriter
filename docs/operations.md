@@ -159,6 +159,8 @@ Constraint, lookup, schema, lock, transaction-state and selected corruption exce
 
 Some corruption and encryption paths still use BCL exceptions. Also handle ordinary I/O and argument errors as appropriate for your application.
 
+Trace diagnostics report operation, schema or physical-page context and exception types. They omit cell values, passwords, lock-file paths and machine/user identities. Diagnostic listener failures are ignored; required file operations still propagate their original I/O failures.
+
 | Exception | Typical cause |
 |---|---|
 | `JetObjectNotFoundException` | A named table or other database object is missing; inspect `ErrorCode`. |

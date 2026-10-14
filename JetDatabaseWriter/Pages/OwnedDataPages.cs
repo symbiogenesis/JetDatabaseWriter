@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Pages;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
@@ -349,7 +348,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         {
             if (this.DiagnosticsEnabled)
             {
-                Trace.WriteLine($"[AccessReader] Skipped corrupt overflow row in table definition page {owner}, header slot {header.RowIndex} at offset {header.RowStart}: {reason}.");
+                DiagnosticTrace.WriteLine($"[AccessReader] Skipped corrupt overflow row in table definition page {owner}, header slot {header.RowIndex} at offset {header.RowStart}: {reason}.");
             }
 
             return null;
