@@ -23,7 +23,8 @@ using Xunit;
 /// reads can decrypt pages on two threads at once, and at the default cache
 /// size with a long value longer than the cache.
 /// </summary>
-public sealed class TableScanReadAheadTests : IDisposable
+/// <param name="seeds">Caches the generated database images before copying them into private files.</param>
+public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDisposable, IClassFixture<GeneratedDatabaseCache>
 {
     private const string PlainTable = "Plain";
     private const string LongValueTable = "LongValues";
@@ -502,22 +503,20 @@ public sealed class TableScanReadAheadTests : IDisposable
         return bytes;
     }
 
-    private async Task<string> CreateDatabaseAsync(DatabaseFormat format, bool withLongValues, bool encrypt)
+    private static async Task<byte[]> CreateDatabaseBytesAsync(DatabaseFormat format, bool withLongValues, bool encrypt)
     {
-        string extension = format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb";
-        string path = Path.Combine(Path.GetTempPath(), $"ReadAhead_{Guid.NewGuid():N}{extension}");
-        this.paths.Add(path);
-        this.paths.Add(Path.ChangeExtension(path, format == DatabaseFormat.AceAccdb ? ".laccdb" : ".ldb"));
-
+        await using var stream = new MemoryStream();
         var options = new AccessWriterOptions { UseLockFile = false, Password = encrypt ? Password.AsMemory() : default };
         if (encrypt)
         {
-            File.Copy(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), path);
+            byte[] fixture = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
+            await stream.WriteAsync(fixture, TestContext.Current.CancellationToken);
+            stream.Position = 0;
         }
 
         await using (AccessWriter writer = encrypt
-            ? await AccessWriter.OpenAsync(path, options, TestContext.Current.CancellationToken)
-            : await AccessWriter.CreateDatabaseAsync(path, format, options, TestContext.Current.CancellationToken))
+            ? await AccessWriter.OpenAsync(stream, options, leaveOpen: true, TestContext.Current.CancellationToken)
+            : await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 PlainTable,
@@ -547,6 +546,24 @@ public sealed class TableScanReadAheadTests : IDisposable
                     Enumerable.Range(1, LongValueRowCount).Select(id => new object?[] { id, Pad(id), Notes(id), Blob(id) }),
                     TestContext.Current.CancellationToken);
             }
+        }
+
+        return stream.ToArray();
+    }
+
+    private async Task<string> CreateDatabaseAsync(DatabaseFormat format, bool withLongValues, bool encrypt)
+    {
+        string extension = format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb";
+        string path = Path.Combine(Path.GetTempPath(), $"ReadAhead_{Guid.NewGuid():N}{extension}");
+        this.paths.Add(path);
+        this.paths.Add(Path.ChangeExtension(path, format == DatabaseFormat.AceAccdb ? ".laccdb" : ".ldb"));
+
+        await using MemoryStream seed = await seeds.CopyToStreamAsync(
+            $"{format}:{withLongValues}:{encrypt}",
+            () => CreateDatabaseBytesAsync(format, withLongValues, encrypt));
+        await using (FileStream file = File.Create(path))
+        {
+            await seed.CopyToAsync(file, TestContext.Current.CancellationToken);
         }
 
         return path;

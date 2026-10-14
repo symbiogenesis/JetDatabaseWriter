@@ -27,17 +27,22 @@ try {
     $project = Join-Path $repository 'scripts/AotSmoke/AotSmoke.csproj'
     $seed = Join-Path $OutputDirectory 'seed.accdb'
     $build = Join-Path $OutputDirectory 'build'
-    Invoke-DotNet @('run', '--project', $project, '-c', 'Release', '-p:SmokeMode=seed', '-p:RestoreLockedMode=true', '--artifacts-path', $build, '--', $seed)
+    # Dedicated CI lanes analyze the library and scaffold; keep generated consumer analysis strict.
+    Invoke-DotNet @('run', '--project', $project, '-c', 'Release', '-p:SmokeMode=seed', '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build, '--', $seed)
     foreach ($kind in @('classes', 'records')) {
         $models = Join-Path $OutputDirectory ($kind + '-models')
-        $scaffoldArguments = @('run', '--project', 'JetDatabaseWriter.Scaffold', '-c', 'Release', '-p:RestoreLockedMode=true', '--artifacts-path', $build, '--', $seed, '--output', $models)
+        $scaffoldArguments = @('run', '--project', 'JetDatabaseWriter.Scaffold', '-c', 'Release', '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build)
+        if ($kind -eq 'records') {
+            $scaffoldArguments += @('--no-build', '--no-restore')
+        }
+        $scaffoldArguments += @('--', $seed, '--output', $models)
         if ($kind -eq 'records') {
             $scaffoldArguments += '--records'
         }
         Invoke-DotNet $scaffoldArguments
         foreach ($mode in @('trimmed', 'native')) {
             $publish = Join-Path $OutputDirectory ($kind + '-' + $mode)
-            Invoke-DotNet @('publish', $project, '-c', 'Release', '-f', 'net10.0', ('-p:SmokeMode=' + $mode), ('-p:GeneratedModels=' + $models), '-p:RestoreLockedMode=true', '--artifacts-path', $build, '-o', $publish)
+            Invoke-DotNet @('publish', $project, '-c', 'Release', '-f', 'net10.0', ('-p:SmokeMode=' + $mode), ('-p:GeneratedModels=' + $models), '-p:RestoreLockedMode=true', '-p:AnalyzeOnly=AotSmoke', '--artifacts-path', $build, '-o', $publish)
             $database = Join-Path $OutputDirectory ($kind + '-' + $mode + '.accdb')
             Copy-Item -LiteralPath $seed -Destination $database
             & (Join-Path $publish 'AotSmoke.exe') $database

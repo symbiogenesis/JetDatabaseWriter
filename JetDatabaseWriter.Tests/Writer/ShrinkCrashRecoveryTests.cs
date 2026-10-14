@@ -1,10 +1,10 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -128,10 +128,17 @@ public sealed class ShrinkCrashRecoveryTests
 
     private static void AssertCrashChild(string path, string password, string boundary)
     {
-        static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
         string assembly = typeof(ShrinkCrashRecoveryTests).Assembly.Location;
-        string script = $"$env:{ChildPath}={Quote(path)}; $env:{ChildPassword}={Quote(password)}; $env:{ChildBoundary}={Quote(boundary)}; & dotnet {Quote(assembly)} -method {Quote(Method)}; exit $LASTEXITCODE";
-        PowerShellRunResult result = PowerShellProcessRunner.Run("pwsh", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script))], TimeSpan.FromSeconds(60));
+        PowerShellRunResult result = PowerShellProcessRunner.Run(
+            "dotnet",
+            [assembly, "-method", Method],
+            TimeSpan.FromSeconds(60),
+            environmentOverrides: new Dictionary<string, string>
+            {
+                [ChildPath] = path,
+                [ChildPassword] = password,
+                [ChildBoundary] = boundary,
+            });
         Assert.False(result.TimedOut, result.StandardError);
         Assert.True(result.OutputComplete, result.StandardError);
         Assert.NotEqual(0, result.ExitCode);

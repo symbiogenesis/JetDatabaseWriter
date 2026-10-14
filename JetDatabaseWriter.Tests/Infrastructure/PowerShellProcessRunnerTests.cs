@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Infrastructure;
 
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -72,6 +73,31 @@ public sealed partial class PowerShellProcessRunnerTests
         Assert.True(Path.IsPathFullyQualified(directory));
         Assert.StartsWith(Path.GetFullPath(Path.GetTempPath()), directory, StringComparison.OrdinalIgnoreCase);
         Assert.NotEqual(Path.GetFullPath(Environment.CurrentDirectory), directory);
+    }
+
+    [Fact]
+    public void Run_ChildEnvironmentOverrides_PreserveInheritedEnvironmentAndLeaveParentUnchanged()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+
+        string variable = $"JDW_RUNNER_{Guid.NewGuid():N}";
+        const string value = "child value with 'quotes' and $symbols";
+        string? inherited = Environment.GetEnvironmentVariable("SystemRoot");
+        Assert.NotNull(inherited);
+        Assert.Null(Environment.GetEnvironmentVariable(variable));
+
+        PowerShellRunResult result = PowerShellProcessRunner.Run(
+            PowerShellPath,
+            CommandArguments($"[Console]::WriteLine([Environment]::GetEnvironmentVariable('{variable}')); [Console]::WriteLine([Environment]::GetEnvironmentVariable('SystemRoot'))"),
+            TimeSpan.FromSeconds(60),
+            environmentOverrides: new Dictionary<string, string> { [variable] = value });
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(result.TimedOut);
+        Assert.True(result.OutputComplete);
+        Assert.Equal(value + Environment.NewLine + inherited + Environment.NewLine, result.StandardOutput);
+        Assert.Null(Environment.GetEnvironmentVariable(variable));
+        Assert.Equal(inherited, Environment.GetEnvironmentVariable("SystemRoot"));
     }
 
     [Fact]

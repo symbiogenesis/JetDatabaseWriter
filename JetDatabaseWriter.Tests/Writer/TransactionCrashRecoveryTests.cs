@@ -1,10 +1,10 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -205,10 +205,18 @@ public sealed class TransactionCrashRecoveryTests
 
     private static void AssertCrashChild(string path, string password, DatabaseFormat format, bool encrypted, int write, bool explicitTransaction)
     {
-        static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
         string assembly = typeof(TransactionCrashRecoveryTests).Assembly.Location;
-        string script = $"$env:{ChildPath}={Quote(path)}; $env:{ChildPassword}={Quote(password)}; $env:{ChildWrite}='{write.ToString(CultureInfo.InvariantCulture)}'; $env:{ChildExplicit}='{explicitTransaction}'; & dotnet {Quote(assembly)} -method {Quote(Method)}; exit $LASTEXITCODE";
-        PowerShellRunResult result = PowerShellProcessRunner.Run("pwsh", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script))], TimeSpan.FromSeconds(60));
+        PowerShellRunResult result = PowerShellProcessRunner.Run(
+            "dotnet",
+            [assembly, "-method", Method],
+            TimeSpan.FromSeconds(60),
+            environmentOverrides: new Dictionary<string, string>
+            {
+                [ChildPath] = path,
+                [ChildPassword] = password,
+                [ChildWrite] = write.ToString(CultureInfo.InvariantCulture),
+                [ChildExplicit] = explicitTransaction.ToString(),
+            });
         string scenario = $"format={format}, encrypted={encrypted}, write={write}, transaction={(explicitTransaction ? "explicit" : "implicit")}";
         string output = $"Standard output:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}Standard error:{Environment.NewLine}{result.StandardError}";
         output = output.Replace(path, "[database]", StringComparison.Ordinal);

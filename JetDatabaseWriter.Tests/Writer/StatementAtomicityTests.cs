@@ -14,7 +14,8 @@ using Xunit;
 
 /// <summary>Default statements restore physical bytes and writer state after one-shot I/O failures.</summary>
 /// <param name="db">Caches Access-authored fixtures with relationship catalogs.</param>
-public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<DatabaseCache>
+/// <param name="generated">Caches generated statement fault seeds.</param>
+public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseCache generated) : IClassFixture<DatabaseCache>, IClassFixture<GeneratedDatabaseCache>
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -175,7 +176,7 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
         Assert.True(stream.Faulted);
         if (failed)
         {
-            Assert.Equal(original, stream.ToArray());
+            Assert.Equal<byte>(original.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
 
             // Retry exercises restored catalog entries, allocation hints, index roots and constraints.
             await MutateAsync(writer, statement);
@@ -183,7 +184,7 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
 
         if (statement is not ("AddColumn" or "CreateTable"))
         {
-            Assert.Equal(completed, stream.ToArray());
+            Assert.Equal<byte>(completed.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
         }
 
         await AssertCompletedAsync(stream, statement, password);
@@ -258,6 +259,12 @@ public sealed class StatementAtomicityTests(DatabaseCache db) : IClassFixture<Da
     }
 
     private async Task<byte[]> CreateSourceAsync(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await generated.CopyToStreamAsync(format.ToString(), () => this.CreateSeedAsync(format));
+        return stream.ToArray();
+    }
+
+    private async Task<byte[]> CreateSeedAsync(DatabaseFormat format)
     {
         await using MemoryStream stream = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: Ct))

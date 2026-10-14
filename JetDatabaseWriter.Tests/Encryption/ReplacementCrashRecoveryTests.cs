@@ -1,9 +1,9 @@
 namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
@@ -93,10 +93,16 @@ public sealed class ReplacementCrashRecoveryTests
 
     private static void AssertCrashChild(string path, string boundary)
     {
-        static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
         string assembly = typeof(ReplacementCrashRecoveryTests).Assembly.Location;
-        string script = $"$env:{ChildPath}={Quote(path)}; $env:{ChildBoundary}={Quote(boundary)}; & dotnet {Quote(assembly)} -method {Quote(Method)}; exit $LASTEXITCODE";
-        PowerShellRunResult result = PowerShellProcessRunner.Run("pwsh", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script))], TimeSpan.FromSeconds(60));
+        PowerShellRunResult result = PowerShellProcessRunner.Run(
+            "dotnet",
+            [assembly, "-method", Method],
+            TimeSpan.FromSeconds(60),
+            environmentOverrides: new Dictionary<string, string>
+            {
+                [ChildPath] = path,
+                [ChildBoundary] = boundary,
+            });
         Assert.False(result.TimedOut, result.StandardError);
         Assert.True(result.OutputComplete, result.StandardError);
         Assert.NotEqual(0, result.ExitCode);

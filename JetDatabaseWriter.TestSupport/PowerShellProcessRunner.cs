@@ -37,6 +37,7 @@ internal static class PowerShellProcessRunner
     /// output captured so far with <see cref="PowerShellRunResult.OutputComplete"/> false. Defaults to 5 seconds.
     /// </param>
     /// <param name="workingDirectory">An absolute directory for the child process, or a new isolated temp directory.</param>
+    /// <param name="environmentOverrides">Child-only values applied over the inherited process environment.</param>
     /// <returns>The exit code (-1 after a timeout) and the captured output.</returns>
     /// <exception cref="ArgumentException">The child working directory is relative.</exception>
     /// <exception cref="Win32Exception">The program could not be started.</exception>
@@ -46,7 +47,8 @@ internal static class PowerShellProcessRunner
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
         TimeSpan? drainTimeout = null,
-        string? workingDirectory = null)
+        string? workingDirectory = null,
+        IReadOnlyDictionary<string, string>? environmentOverrides = null)
     {
         if (workingDirectory is not null && !Path.IsPathFullyQualified(workingDirectory))
         {
@@ -65,6 +67,14 @@ internal static class PowerShellProcessRunner
         foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        if (environmentOverrides is not null)
+        {
+            foreach ((string name, string value) in environmentOverrides)
+            {
+                startInfo.Environment[name] = value;
+            }
         }
 
         var output = new StreamCapture();
