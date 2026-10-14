@@ -233,9 +233,10 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
             specimenId,
             bytes,
             expectedSha256,
-            format == DatabaseFormat.Jet3Mdb ? 2048 : 4096,
+            JetFormat.ForNewDatabase(format).PageSize,
             baseline,
             Environment.GetEnvironmentVariable("JDW_GOLDEN_OUTPUT_DIRECTORY"));
+        Assert.True(File.Exists(baseline), $"Approved golden bytes are missing: {baseline}.{Environment.NewLine}{details}");
         Assert.True(
             baselineMatches && string.Equals(expectedSha256, actual, StringComparison.Ordinal),
             $"The {what} ({bytes.Length} bytes) changed: SHA-256 {actual}, golden {expectedSha256}. Update the approved bytes and hash only for a deliberate format change, and name the changed bytes in the commit.{Environment.NewLine}{details}");
