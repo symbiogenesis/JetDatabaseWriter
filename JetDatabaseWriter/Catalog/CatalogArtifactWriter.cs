@@ -50,6 +50,33 @@ internal sealed class CatalogArtifactWriter(
     internal ValueTask DeleteCatalogRowsByTdefPagesAsync(IReadOnlyCollection<long> tdefPages, CancellationToken cancellationToken)
         => catalogWriter.DeleteCatalogRowsByTdefPagesAsync(tdefPages, cancellationToken);
 
+    /// <summary>Validates and resolves a relationship's exclusive catalog identity before mutation.</summary>
+    /// <param name="relationshipName">The relationship name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The native catalog identity, if present.</returns>
+    internal ValueTask<RelationshipCatalogDeletionArtifact?> PlanRelationshipCatalogDeletionAsync(string relationshipName, CancellationToken cancellationToken)
+        => catalogWriter.PlanRelationshipCatalogDeletionAsync(relationshipName, cancellationToken);
+
+    /// <summary>Releases a prevalidated relationship identity and its security metadata.</summary>
+    /// <param name="identity">The identity resolved before mutation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask DeleteRelationshipCatalogObjectAsync(RelationshipCatalogDeletionArtifact? identity, CancellationToken cancellationToken)
+        => catalogWriter.DeleteRelationshipCatalogObjectAsync(identity, cancellationToken);
+
+    /// <summary>Plans a relationship identity rename before other relationship metadata changes.</summary>
+    /// <param name="oldName">The existing name.</param>
+    /// <param name="newName">The replacement name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The validated rename, if a catalog identity exists.</returns>
+    internal ValueTask<RelationshipCatalogRenameArtifact?> PlanRelationshipCatalogRenameAsync(string oldName, string newName, CancellationToken cancellationToken)
+        => catalogWriter.PlanRelationshipCatalogRenameAsync(oldName, newName, cancellationToken);
+
+    /// <summary>Applies a prevalidated relationship identity rename.</summary>
+    /// <param name="rename">The validated rename.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal ValueTask RenameRelationshipCatalogObjectAsync(RelationshipCatalogRenameArtifact? rename, CancellationToken cancellationToken)
+        => catalogWriter.RenameRelationshipCatalogObjectAsync(rename, cancellationToken);
+
     private static IReadOnlyList<ColumnDefinition> BuildFullCatalogColumnDefinitions()
         =>
         [

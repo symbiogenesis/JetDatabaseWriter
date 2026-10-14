@@ -146,8 +146,9 @@ and compact fixes listed above, but the practical preservation rules are:
 - Relationship creation needs canonical `MSysRelationships` rows, Type 8
 	relationship `MSysObjects` rows, relationship ACE rows, and DAO-shaped FK
 	logical cross-references.
-- Relationship rename/drop should rewrite `MSysRelationships` live-only and let
-	CompactDatabase normalize Type 8 relationship `MSysObjects` rows.
+- Relationship rename/drop rewrites `MSysRelationships` live-only and maintains
+	the bound Type 8 `MSysObjects` identity atomically. Rename preserves its Id
+	and permissions; drop deletes that object and its matching `MSysACEs` rows.
 - Access-native Agile `.accdb` output is a flat page-layout encryption format,
 	not a CFB Office Crypto wrapper. DAO encrypted-source compaction needs the
 	five-argument `CompactDatabase(src, dst, dstLocaleWithPwd, 0, srcPwd)` form.

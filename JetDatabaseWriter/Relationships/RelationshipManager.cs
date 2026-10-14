@@ -755,10 +755,9 @@ internal sealed class RelationshipManager(
     //     with szRelationship replaced on every match and updates the
     //     matching FK logical-idx name cookie on each side's TDEF through the
     //     logical-chain writer (on Jet3 the entry also moves to its new name's
-    //     sorted position). Relationship Type=8 MSysObjects rows are
-    //     deliberately not renamed or deleted here; DAO Compact & Repair
-    //     normalizes them from MSysRelationships, while manual mutation of
-    //     those rows has proven less compact-safe.
+    //     sorted position). Relationship Type=8 MSysObjects identities are
+    //     validated before mutation. Rename retains the object's identity and
+    //     permissions; drop releases only that object and its matching ACE rows.
 
     /// <summary>
     /// Asynchronously deletes a foreign-key relationship and its per-TDEF
@@ -805,6 +804,8 @@ internal sealed class RelationshipManager(
             throw new JetOperationException(JetErrorCode.RelationshipNotFound, $"No relationship named '{relationshipName}' was found.", errorInfo: new JetErrorInfo { RelationshipName = relationshipName });
         }
 
+        RelationshipCatalogDeletionArtifact? identity = await this.catalogArtifacts.PlanRelationshipCatalogDeletionAsync(relationshipName, cancellationToken).ConfigureAwait(false);
+
         await this.ForEachRelationshipFkPairAsync(
             matches,
             async (ctx, ct) =>
@@ -846,6 +847,7 @@ internal sealed class RelationshipManager(
         }
 
         await this.catalog.RewriteRowsAsync(msysRelTdefPage, msysRelDef, remainingRows, cancellationToken).ConfigureAwait(false);
+        await this.catalogArtifacts.DeleteRelationshipCatalogObjectAsync(identity, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -917,6 +919,8 @@ internal sealed class RelationshipManager(
             throw new JetOperationException(JetErrorCode.SystemTableMissing, "MSysRelationships does not expose a 'szRelationship' column.");
         }
 
+        RelationshipCatalogRenameArtifact? catalogRename = await this.catalogArtifacts.PlanRelationshipCatalogRenameAsync(oldName, newName, cancellationToken).ConfigureAwait(false);
+
         var replacementRows = new List<object[]>(allRows.Count);
         foreach (RelationshipRowSnapshot row in allRows)
         {
@@ -947,6 +951,8 @@ internal sealed class RelationshipManager(
                 _ = await this.metadata.TryRenameFkLogicalIdxNameAsync(ctx.FkEntry.TDefPage, ctx.FkColNums, ctx.PkEntry.TDefPage, newFkName, ct).ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
+
+        await this.catalogArtifacts.RenameRelationshipCatalogObjectAsync(catalogRename, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

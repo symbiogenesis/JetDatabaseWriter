@@ -185,6 +185,186 @@ internal sealed class CatalogWriter(
         return objectId;
     }
 
+    /// <summary>Resolves a relationship's exclusive catalog identity before any relationship pages change.</summary>
+    /// <param name="relationshipName">The case-insensitive relationship name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The native relationship object, or null when the file stores only relationship rows.</returns>
+    /// <exception cref="JetCorruptDataException">The relationship identity is ambiguous or shared with another object.</exception>
+    internal async ValueTask<CatalogRow?> FindRelationshipCatalogObjectAsync(string relationshipName, CancellationToken cancellationToken)
+    {
+        await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
+        TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(objects, cancellationToken).ConfigureAwait(false);
+        CatalogRow? match = null;
+        foreach (CatalogRow row in rows)
+        {
+            if (row.ParentId != Constants.SystemObjects.RelationshipsParentId
+                || !string.Equals(row.Name, relationshipName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (match is not null || row.ObjectType != Constants.SystemObjects.RelationshipType || row.Id == 0)
+            {
+                throw AmbiguousRelationshipIdentity(relationshipName);
+            }
+
+            match = row;
+        }
+
+        if (match is null)
+        {
+            return null;
+        }
+
+        foreach (CatalogRow row in rows)
+        {
+            if (row.Id == match.Id && (row.PageNumber != match.PageNumber || row.RowIndex != match.RowIndex))
+            {
+                throw AmbiguousRelationshipIdentity(relationshipName);
+            }
+        }
+
+        long acesPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        if (acesPage > 0)
+        {
+            TableDef aces = await tableDefs.ReadRequiredTableDefAsync(acesPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+            await indexes.ThrowIfIndexesUnmaintainableAsync(acesPage, aces, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        }
+
+        return match;
+    }
+
+    /// <summary>Prepares complete catalog and permissions rows before a relationship drop changes any page.</summary>
+    /// <param name="relationshipName">The relationship name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The prepared deletion, if a native identity exists.</returns>
+    /// <exception cref="JetCorruptDataException">The permissions table has a malformed object identifier.</exception>
+    internal async ValueTask<RelationshipCatalogDeletionArtifact?> PlanRelationshipCatalogDeletionAsync(string relationshipName, CancellationToken cancellationToken)
+    {
+        CatalogRow? identity = await this.FindRelationshipCatalogObjectAsync(relationshipName, cancellationToken).ConfigureAwait(false);
+        if (identity is null)
+        {
+            return null;
+        }
+
+        TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        LocatedRow original = await this.ReadCatalogObjectRowAsync(identity, cancellationToken).ConfigureAwait(false);
+        UnreadableLongValue.ThrowIfAny(original.Values, Constants.SystemTableNames.Objects);
+        long acesPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+        TableDef? aces = null;
+        var aceRows = new List<LocatedRow>();
+        if (acesPage > 0)
+        {
+            aces = await tableDefs.ReadRequiredTableDefAsync(acesPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
+            int objectIdIndex = aces.FindColumnIndex("ObjectId");
+            if (objectIdIndex < 0)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysACEs has no ObjectId column.", new JetErrorInfo { TableName = Constants.SystemTableNames.Aces, RelationshipName = relationshipName });
+            }
+
+            foreach (LocatedRow row in await snapshots.ReadRowsAsync(acesPage, cancellationToken).ConfigureAwait(false))
+            {
+                if (row.Values[objectIdIndex] is not int objectId)
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysACEs contains an invalid object identifier.", new JetErrorInfo { TableName = Constants.SystemTableNames.Aces, RelationshipName = relationshipName });
+                }
+
+                if (objectId == identity.Id)
+                {
+                    UnreadableLongValue.ThrowIfAny(row.Values, Constants.SystemTableNames.Aces);
+                    aceRows.Add(row);
+                }
+            }
+        }
+
+        return new RelationshipCatalogDeletionArtifact(identity, objects, original, acesPage, aces, aceRows);
+    }
+
+    /// <summary>Deletes a prevalidated relationship object and only its associated permissions.</summary>
+    /// <param name="deletion">The catalog/security rows resolved before mutation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask DeleteRelationshipCatalogObjectAsync(RelationshipCatalogDeletionArtifact? deletion, CancellationToken cancellationToken)
+    {
+        if (deletion is null)
+        {
+            return;
+        }
+
+        await tableRows.MarkRowDeletedAsync(deletion.Original.Location.PageNumber, deletion.Original.Location.RowIndex, deletion.Objects, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+        await tableRows.AdjustTDefRowCountAsync(2, -1, cancellationToken).ConfigureAwait(false);
+        await this.RequireMsysObjectsIndexMaintenanceAsync(
+            deletion.Objects,
+            insertedRows: null,
+            deletedRows: [(deletion.Original.Location, deletion.Original.Values)],
+            operation: $"dropping relationship '{deletion.Identity.Name}'",
+            cancellationToken).ConfigureAwait(false);
+        if (deletion.Aces is TableDef aces && deletion.AceRows.Count > 0)
+        {
+            var deletedRows = new List<(RowLocation Loc, object[] Row)>(deletion.AceRows.Count);
+            foreach (LocatedRow row in deletion.AceRows)
+            {
+                await tableRows.MarkRowDeletedAsync(row.Location.PageNumber, row.Location.RowIndex, aces, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+                deletedRows.Add((row.Location, row.Values));
+            }
+
+            await tableRows.AdjustTDefRowCountAsync(deletion.AcesPage, -deletedRows.Count, cancellationToken).ConfigureAwait(false);
+            await indexes.MaintainSystemTableIndexesIncrementallyAsync(deletion.AcesPage, aces, Constants.SystemTableNames.Aces, insertedRows: null, deletedRows: deletedRows, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        catalog.Invalidate();
+    }
+
+    /// <summary>Plans a relationship object rename without changing its identity, permissions or other values.</summary>
+    /// <param name="oldName">The existing relationship name.</param>
+    /// <param name="newName">The replacement relationship name.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The prevalidated rename, or null when no catalog identity exists.</returns>
+    /// <exception cref="JetCorruptDataException">The relationship identity cannot be located unambiguously.</exception>
+    internal async ValueTask<RelationshipCatalogRenameArtifact?> PlanRelationshipCatalogRenameAsync(string oldName, string newName, CancellationToken cancellationToken)
+    {
+        CatalogRow? identity = await this.FindRelationshipCatalogObjectAsync(oldName, cancellationToken).ConfigureAwait(false);
+        TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
+        await this.EnsureCatalogContainerNameAvailableAsync(objects, Constants.SystemObjects.RelationshipsParentId, newName, cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (identity is null)
+        {
+            return null;
+        }
+
+        LocatedRow original = await this.ReadCatalogObjectRowAsync(identity, cancellationToken).ConfigureAwait(false);
+        int nameIndex = objects.FindColumnIndex("Name");
+        object[] replacement = (object[])original.Values.Clone();
+        replacement[nameIndex] = newName;
+        UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
+        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [nameIndex]);
+        _ = tableRows.EncodeRow(objects, replacement, fixedTextBytes);
+        return new RelationshipCatalogRenameArtifact(objects, original, replacement, fixedTextBytes);
+    }
+
+    /// <summary>Applies a prevalidated catalog rename while preserving its security identity.</summary>
+    /// <param name="rename">The prepared rename.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask RenameRelationshipCatalogObjectAsync(RelationshipCatalogRenameArtifact? rename, CancellationToken cancellationToken)
+    {
+        if (rename is null)
+        {
+            return;
+        }
+
+        await tableRows.MarkRowDeletedAsync(rename.Original.Location.PageNumber, rename.Original.Location.RowIndex, rename.Definition, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
+        RowLocation inserted = await tableRows.InsertRowDataLocAsync(2, rename.Definition, rename.Replacement, updateTDefRowCount: false, fixedTextBytes: rename.FixedTextBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await this.RequireMsysObjectsIndexMaintenanceAsync(
+            rename.Definition,
+            [(inserted, rename.Replacement)],
+            [(rename.Original.Location, rename.Original.Values)],
+            "renaming relationship catalog identity",
+            cancellationToken).ConfigureAwait(false);
+        catalog.Invalidate();
+    }
+
+    private static JetCorruptDataException AmbiguousRelationshipIdentity(string relationshipName)
+        => new(JetErrorCode.CorruptCatalog, $"Relationship '{relationshipName}' has an ambiguous catalog identity.", new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, RelationshipName = relationshipName });
+
     internal ValueTask InsertAceRowsForTableAsync(long tdefPageNumber, CancellationToken cancellationToken)
         => this.InsertAceRowsForCatalogObjectAsync(checked((int)tdefPageNumber), useRestrictedOwnerAcm: false, useRelationshipGroupAcm: false, cancellationToken);
 
@@ -273,6 +453,23 @@ internal sealed class CatalogWriter(
 
         return bytes;
 #endif
+    }
+
+    /// <summary>Reads the full original values needed by every supported catalog index.</summary>
+    /// <param name="identity">The exclusive object identity.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The original object row.</returns>
+    /// <exception cref="JetCorruptDataException">The object row cannot be resolved unambiguously.</exception>
+    private async ValueTask<LocatedRow> ReadCatalogObjectRowAsync(CatalogRow identity, CancellationToken cancellationToken)
+    {
+        List<LocatedRow> matches = (await snapshots.ReadRowsAsync(2, cancellationToken).ConfigureAwait(false)).FindAll(
+            row => row.Location.PageNumber == identity.PageNumber && row.Location.RowIndex == identity.RowIndex);
+        if (matches.Count != 1)
+        {
+            throw AmbiguousRelationshipIdentity(identity.Name);
+        }
+
+        return matches[0];
     }
 
     private async ValueTask<object> EncodeLinkedMemoFieldAsync(string value, CancellationToken cancellationToken)

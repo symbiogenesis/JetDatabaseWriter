@@ -307,7 +307,7 @@ DataTable csvRows = await reader.ReadTableAsync("LinkedOrdersCsv", cancellationT
 
 Declare a relationship between two existing tables. The library appends one row per FK column to the `MSysRelationships` catalog (which Microsoft Access reads to populate the Relationships designer) and emits the matching per-TDEF foreign-key logical-index entries on both sides so the relationship is visible to readers immediately. On Jet3 (Access 97) files the entries take the layout Access 97 writes.
 
-`DropRelationshipAsync` and `RenameRelationshipAsync` rewrite `MSysRelationships` as live rows, update or remove the TDEF entries on every format, and leave Type=8 relationship rows in `MSysObjects` for Microsoft Access Compact & Repair to normalize from the canonical relationship rows.
+`DropRelationshipAsync` and `RenameRelationshipAsync` rewrite `MSysRelationships` as live rows, update or remove the TDEF entries on every format, and maintain the matching Type=8 relationship object in `MSysObjects` atomically. Rename retains its identity and permissions; drop removes that object and its matching `MSysACEs` rows, allowing immediate same-name recreation. Ambiguous or shared catalog identities refuse before mutation.
 
 A table in an enforced relationship with another table cannot be dropped: `DropTableAsync` refuses the operation with `JetOperationException` before mutation. Unenforced relationships and self relationships are removed atomically with the table, matching DAO. Drop enforced relationships first; `AccessReader.ListRelationshipsAsync` lists them:
 
