@@ -97,32 +97,6 @@ public class AccessReaderPlaylistBenchmarks
         }
     }
 
-    private static byte[] Payload(int id, int length)
-    {
-        byte[] bytes = new byte[length];
-        for (int index = 0; index < bytes.Length; index++)
-        {
-            bytes[index] = (byte)((id + (index * 17)) & 255);
-        }
-
-        return bytes;
-    }
-
-    private static SnapshotPlaylistRow Metadata(int id) => new()
-    {
-        PlaylistID = id,
-        CreationDate = id % 13 == 0 ? null : "2026-09-" + ((id % 28) + 1).ToString("D2", CultureInfo.InvariantCulture),
-        Favorite = id % 5 == 0,
-        ArtistSort = id % 11 == 0 ? null : "Artist " + (id % 347).ToString(CultureInfo.InvariantCulture),
-        Title = "Playlist " + id.ToString(CultureInfo.InvariantCulture),
-        Random = id % 3 == 0,
-        Max = id % 17 == 0 ? null : id % 500,
-        Shuffle = id % 4 == 0,
-        Reload = id % 6 == 0,
-        PlayingTime = id % 19 == 0 ? null : id * 123,
-        NumberOfTracks = id % 23 == 0 ? null : (short)(id % 1000),
-    };
-
     private static void VerifyOrder(List<SnapshotPlaylistRow> fallback, List<SnapshotPlaylistRow> candidate)
     {
         for (int position = 0; position < fallback.Count; position++)
@@ -134,76 +108,11 @@ public class AccessReaderPlaylistBenchmarks
         }
     }
 
-    private static bool Equal(byte[]? actual, byte[]? expected) => actual is null
-        ? expected is null
-        : expected is not null && actual.AsSpan().SequenceEqual(expected);
-
     private (byte[]? Filter, byte[]? SortOrder) Definitions(int id)
-    {
-        if (this.Shape == PlaylistDefinitionShape.LargeSortOnly)
-        {
-            return (id % 7 == 0 ? Payload(id, 37) : null, Payload(id, 4096));
-        }
-
-        byte[]? filter = id % 7 == 0 ? Payload(id, 37) : null;
-        byte[]? sort = id % 10 == 0 ? Payload(id + 1, 120) : null;
-        return (filter, sort);
-    }
+        => PlaylistFixture.Definitions(id, this.Shape == PlaylistDefinitionShape.LargeSortOnly);
 
     private void Verify(List<SnapshotPlaylistRow> rows)
-    {
-        if (rows.Count != RowCount)
-        {
-            throw new InvalidOperationException($"Expected {RowCount} playlists; got {rows.Count} ({this.Shape}).");
-        }
-
-        var seen = new HashSet<int>();
-        for (int position = 0; position < rows.Count; position++)
-        {
-            SnapshotPlaylistRow actual = rows[position];
-            int id = actual.PlaylistID;
-            if (id < 0 || id >= RowCount || !seen.Add(id))
-            {
-                throw new InvalidOperationException($"Invalid or duplicate PlaylistID {id} at stored position {position} ({this.Shape}).");
-            }
-
-            SnapshotPlaylistRow expected = Metadata(id);
-            (byte[]? filter, byte[]? sort) = this.Definitions(id);
-            var differences = new List<string>();
-            Check(nameof(actual.CreationDate), actual.CreationDate, expected.CreationDate);
-            Check(nameof(actual.Favorite), actual.Favorite, expected.Favorite);
-            Check(nameof(actual.ArtistSort), actual.ArtistSort, expected.ArtistSort);
-            Check(nameof(actual.Title), actual.Title, expected.Title);
-            Check(nameof(actual.Random), actual.Random, expected.Random);
-            Check(nameof(actual.Max), actual.Max, expected.Max);
-            Check(nameof(actual.Shuffle), actual.Shuffle, expected.Shuffle);
-            Check(nameof(actual.Reload), actual.Reload, expected.Reload);
-            Check(nameof(actual.PlayingTime), actual.PlayingTime, expected.PlayingTime);
-            Check(nameof(actual.NumberOfTracks), actual.NumberOfTracks, expected.NumberOfTracks);
-            CheckBytes(nameof(actual.Filter), actual.Filter, filter);
-            CheckBytes(nameof(actual.SortOrder), actual.SortOrder, sort);
-            if (differences.Count != 0)
-            {
-                throw new InvalidOperationException($"PlaylistID={id}, stored position={position}, shape={this.Shape}: {string.Join("; ", differences)}");
-            }
-
-            void Check<T>(string field, T value, T wanted)
-            {
-                if (!EqualityComparer<T>.Default.Equals(value, wanted))
-                {
-                    differences.Add($"{field}: actual={(object?)value ?? "<null>"}, expected={(object?)wanted ?? "<null>"}");
-                }
-            }
-
-            void CheckBytes(string field, byte[]? value, byte[]? wanted)
-            {
-                if (!Equal(value, wanted))
-                {
-                    differences.Add($"{field}: actualLength={value?.Length.ToString(CultureInfo.InvariantCulture) ?? "null"}, expectedLength={wanted?.Length.ToString(CultureInfo.InvariantCulture) ?? "null"}, exactBytes=false");
-                }
-            }
-        }
-    }
+        => PlaylistFixture.Verify(rows, this.Shape == PlaylistDefinitionShape.LargeSortOnly, Enumerable.Range(0, RowCount).ToArray());
 
     private async Task ReportIoAsync(bool hybrid)
     {
@@ -253,7 +162,7 @@ public class AccessReaderPlaylistBenchmarks
                 for (int id = 0; id < RowCount; id++)
                 {
                     (byte[]? filter, byte[]? sort) = this.Definitions(id);
-                    SnapshotPlaylistRow row = Metadata(id);
+                    SnapshotPlaylistRow row = PlaylistFixture.Metadata(id);
                     rows.Add([id, row.CreationDate!, row.Favorite!, row.ArtistSort!, row.Title!, filter!, sort!, row.Random!, row.Max!, row.Shuffle!, row.Reload!, row.PlayingTime!, row.NumberOfTracks!, notes]);
                 }
 
