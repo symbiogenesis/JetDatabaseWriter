@@ -85,6 +85,14 @@ try {
         $checkout.Contains('inputs.baseline') -or $checkout.Contains('rev-parse')) {
         throw 'Baseline checkout must use the already validated immutable SHA.'
     }
+    $sdk = [regex]::Match($workflow, '(?ms)^      - name: Setup baseline SDK\n(?<body>.*?)(?=^      - name:)').Groups['body'].Value
+    if (-not $sdk.Contains('global-json-file: ${{ runner.temp }}/baseline/global.json') -or
+        -not $sdk.Contains("if: needs.prerequisite.outputs.baseline != ''") -or
+        $workflow.IndexOf('name: Setup baseline SDK', [StringComparison]::Ordinal) -lt $workflow.IndexOf('name: Check out the baseline', [StringComparison]::Ordinal) -or
+        $workflow.IndexOf('name: Setup baseline SDK', [StringComparison]::Ordinal) -gt $workflow.IndexOf('name: Build the baseline', [StringComparison]::Ordinal)) {
+        throw 'Validated baselines must have their own pinned SDK installed before their build.'
+    }
+    if (-not $prerequisite.Contains("if: github.ref == 'refs/heads/main'")) { throw 'Benchmark dispatch must use main.' }
     'PASS: hosted baseline validation and immutable checkout contract'
 }
 finally { $env:GITHUB_TOKEN = $savedToken }

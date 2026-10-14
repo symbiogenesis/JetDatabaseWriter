@@ -49,6 +49,7 @@ env:
 
 jobs:
   prerequisite:
+    if: github.ref == 'refs/heads/main'
     name: Require successful CI
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -106,6 +107,12 @@ jobs:
           git worktree add --detach "$env:RUNNER_TEMP/baseline" "$env:BASELINE_SHA"
           if ($LASTEXITCODE -ne 0) { throw "Cannot check out the validated baseline '$env:BASELINE_SHA'." }
           git -C "$env:RUNNER_TEMP/baseline" log -1 --format='Baseline: %H %s'
+
+      - name: Setup baseline SDK
+        if: needs.prerequisite.outputs.baseline != ''
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: ${{ runner.temp }}/baseline/global.json
 
       - name: Build
         shell: pwsh
