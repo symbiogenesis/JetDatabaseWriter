@@ -1,0 +1,73 @@
+name: SDK lock refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk-version:
+        description: 'Exact .NET 10 SDK version to install and pin'
+        required: true
+        default: '10.0.402'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  refresh:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate exact SDK input
+        shell: pwsh
+        env:
+          SDK_VERSION: ${{ inputs.sdk-version }}
+        run: |
+          if ($env:SDK_VERSION -notmatch '^10\.0\.\d{3}$') {
+            throw 'Request an exact .NET 10 SDK version, for example 10.0.402.'
+          }
+      - name: Install requested SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ inputs.sdk-version }}
+          cache: true
+          cache-dependency-path: '**/packages*.lock.json'
+      - name: Refresh and verify locks without building
+        shell: pwsh
+        env:
+          SDK_VERSION: ${{ inputs.sdk-version }}
+        run: ./scripts/update-sdk.ps1 -Version $env:SDK_VERSION
+      - name: Create SDK and lock patch
+        shell: pwsh
+        env:
+          SDK_VERSION: ${{ inputs.sdk-version }}
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'sdk-lock-patch'
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'The refreshed files failed whitespace validation.' }
+          git diff --binary --output="$output/sdk-locks.patch" -- global.json ':(glob)**/packages*.lock.json'
+          if ($LASTEXITCODE -ne 0) { throw 'SDK patch generation failed.' }
+          $metadata = [ordered]@{
+            base_sha = $env:GITHUB_SHA
+            sdk_version = $env:SDK_VERSION
+            run_url = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            validation = 'All solution and smoke-mode restores passed in locked mode; ordinary main CI is still required.'
+          }
+          [IO.File]::WriteAllText((Join-Path $output 'metadata.json'), ($metadata | ConvertTo-Json) + "`r`n", [Text.UTF8Encoding]::new($false))
+      - name: Upload reviewable patch
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdk-lock-patch
+          path: ${{ runner.temp }}/sdk-lock-patch/
+          if-no-files-found: error
+          retention-days: 7
