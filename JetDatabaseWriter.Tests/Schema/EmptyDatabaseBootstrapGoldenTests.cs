@@ -3,7 +3,6 @@ namespace JetDatabaseWriter.Tests.Schema;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -59,7 +58,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     {
         byte[] image = TDefPageBuilder.BuildEmptyDatabase(format);
 
-        AssertGolden(expectedSha256, image, $"{format} bootstrap");
+        AssertGolden(expectedSha256, image, $"{format} bootstrap", $"{format}.bootstrap", format);
     }
 
     [Theory]
@@ -80,7 +79,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
             NormalizeComplexIndexNames(chain);
         }
 
-        AssertGolden(expectedSha256, chain, $"{format} Golden TDEF chain");
+        AssertGolden(expectedSha256, chain, $"{format} Golden TDEF chain", $"{format}.table", format);
     }
 
     [Theory]
@@ -96,7 +95,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
 
         byte[] chain = await ReadTDefChainPagesAsync(harness, CatalogValueReader.TdefPageFromId((long)info.FlatTableId));
 
-        AssertGolden(expectedSha256, chain, $"AceAccdb {column} flat-table TDEF chain");
+        AssertGolden(expectedSha256, chain, $"AceAccdb {column} flat-table TDEF chain", $"AceAccdb.{column}.flat", DatabaseFormat.AceAccdb);
     }
 
     /// <summary>
@@ -220,16 +219,25 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     /// <summary>
     /// Compares the SHA-256 hash of <paramref name="bytes"/> with
     /// <paramref name="expectedSha256"/>, naming the whole actual hash in the
-    /// failure message so a deliberate change can update it.
+    /// failure message and preserving normalized bytes and their approved-baseline differences.
     /// </summary>
     /// <param name="expectedSha256">The golden hash, upper-case hex.</param>
     /// <param name="bytes">The bytes the writer authored.</param>
     /// <param name="what">What the bytes are, for the message.</param>
-    private static void AssertGolden(string expectedSha256, byte[] bytes, string what)
+    /// <param name="specimenId">The stable binary fixture identity.</param>
+    /// <param name="format">The database format, which determines page size.</param>
+    private static void AssertGolden(string expectedSha256, byte[] bytes, string what, string specimenId, DatabaseFormat format)
     {
-        string actual = Convert.ToHexString(SHA256.HashData(bytes));
+        string baseline = Path.Combine(AppContext.BaseDirectory, "Databases", "Golden", specimenId + ".bin");
+        (string actual, bool baselineMatches, string details) = GoldenByteDiagnostics.Capture(
+            specimenId,
+            bytes,
+            expectedSha256,
+            format == DatabaseFormat.Jet3Mdb ? 2048 : 4096,
+            baseline,
+            Environment.GetEnvironmentVariable("JDW_GOLDEN_OUTPUT_DIRECTORY"));
         Assert.True(
-            string.Equals(expectedSha256, actual, StringComparison.Ordinal),
-            $"The {what} ({bytes.Length} bytes) changed: SHA-256 {actual}, golden {expectedSha256}. Update the golden hash only for a deliberate format change, and name the changed bytes in the commit.");
+            baselineMatches && string.Equals(expectedSha256, actual, StringComparison.Ordinal),
+            $"The {what} ({bytes.Length} bytes) changed: SHA-256 {actual}, golden {expectedSha256}. Update the approved bytes and hash only for a deliberate format change, and name the changed bytes in the commit.{Environment.NewLine}{details}");
     }
 }
