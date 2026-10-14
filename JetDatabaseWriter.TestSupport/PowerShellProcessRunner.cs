@@ -38,8 +38,13 @@ internal static class PowerShellProcessRunner
     /// </param>
     /// <param name="workingDirectory">An absolute directory for the child process, or a new isolated temp directory.</param>
     /// <param name="environmentOverrides">Child-only values applied over the inherited process environment.</param>
-    /// <returns>The exit code (-1 after a timeout) and the captured output.</returns>
-    /// <exception cref="ArgumentException">The child working directory is relative.</exception>
+    /// <param name="readinessFile">An optional absolute file the child creates when startup completes.</param>
+    /// <param name="readinessTimeout">
+    /// A separate bounded startup deadline when <paramref name="readinessFile"/> is supplied.
+    /// The operation <paramref name="timeout"/> starts after the file appears; defaults to the same timeout.
+    /// </param>
+    /// <returns>The exit code (-1 after a timeout), termination status and the captured output.</returns>
+    /// <exception cref="ArgumentException">The child working directory or readiness file is relative.</exception>
     /// <exception cref="Win32Exception">The program could not be started.</exception>
     /// <exception cref="InvalidOperationException">The process did not start.</exception>
     public static PowerShellRunResult Run(
@@ -48,11 +53,18 @@ internal static class PowerShellProcessRunner
         TimeSpan timeout,
         TimeSpan? drainTimeout = null,
         string? workingDirectory = null,
-        IReadOnlyDictionary<string, string>? environmentOverrides = null)
+        IReadOnlyDictionary<string, string>? environmentOverrides = null,
+        string? readinessFile = null,
+        TimeSpan? readinessTimeout = null)
     {
         if (workingDirectory is not null && !Path.IsPathFullyQualified(workingDirectory))
         {
             throw new ArgumentException("The child working directory must be absolute.", nameof(workingDirectory));
+        }
+
+        if (readinessFile is not null && !Path.IsPathFullyQualified(readinessFile))
+        {
+            throw new ArgumentException("The readiness file must be absolute.", nameof(readinessFile));
         }
 
         workingDirectory ??= Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"jet-powershell-{Guid.NewGuid():N}")).FullName;
@@ -88,7 +100,8 @@ internal static class PowerShellProcessRunner
         StartCapture(process.StandardOutput, output, "output");
         StartCapture(process.StandardError, error, "error");
 
-        bool timedOut = !process.WaitForExit(timeout);
+        bool ready = readinessFile is null || WaitForReadiness(process, readinessFile, readinessTimeout ?? timeout);
+        bool timedOut = ready ? !process.WaitForExit(timeout) : !process.HasExited;
         if (timedOut)
         {
             KillProcessTree(process);
@@ -101,7 +114,7 @@ internal static class PowerShellProcessRunner
         outputComplete &= error.WaitForEnd(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
 
         int exitCode = timedOut ? -1 : process.ExitCode;
-        return new PowerShellRunResult(exitCode, output.GetText(), error.GetText(), timedOut, outputComplete);
+        return new PowerShellRunResult(exitCode, output.GetText(), error.GetText(), timedOut, outputComplete, process.HasExited);
     }
 
     /// <summary>
@@ -140,6 +153,27 @@ internal static class PowerShellProcessRunner
             Name = $"PowerShellProcessRunner {name}",
         };
         thread.Start();
+    }
+
+    private static bool WaitForReadiness(Process process, string path, TimeSpan timeout)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!File.Exists(path))
+        {
+            TimeSpan remaining = timeout - clock.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+            {
+                return false;
+            }
+
+            TimeSpan poll = remaining < TimeSpan.FromMilliseconds(100) ? remaining : TimeSpan.FromMilliseconds(100);
+            if (process.WaitForExit(poll))
+            {
+                return File.Exists(path);
+            }
+        }
+
+        return true;
     }
 
     private static void KillProcessTree(Process process)

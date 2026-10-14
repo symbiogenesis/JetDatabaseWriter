@@ -9,9 +9,11 @@ namespace JetDatabaseWriter.TestSupport;
 /// <see langword="false"/> when a stream was still open after the drain timeout, for example because a
 /// child process the script started still holds it; the captured text may then be incomplete.
 /// </param>
+/// <param name="ProcessExited"><see langword="true"/> when the host exited before the run returned.</param>
 internal sealed record PowerShellRunResult(
     int ExitCode,
     string StandardOutput,
     string StandardError,
     bool TimedOut,
-    bool OutputComplete);
+    bool OutputComplete,
+    bool ProcessExited);

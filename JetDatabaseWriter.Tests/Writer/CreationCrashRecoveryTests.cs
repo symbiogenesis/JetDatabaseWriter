@@ -3,14 +3,13 @@ namespace JetDatabaseWriter.Tests.Writer;
 using System;
 using System.Collections.Generic;
 using System.Data;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
-using JetDatabaseWriter.TestSupport;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Checks creation publication after termination without cleanup unwinding.</summary>
@@ -26,6 +25,7 @@ public sealed class CreationCrashRecoveryTests
     {
         if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
         {
+            CrashRecoveryProcess.MarkReady(childPath);
             string target = Environment.GetEnvironmentVariable(ChildBoundary)!;
             void Observe(string boundary)
             {
@@ -34,10 +34,7 @@ public sealed class CreationCrashRecoveryTests
                     return;
                 }
 
-                File.WriteAllText(childPath + ".crashed", boundary);
-                using var process = Process.GetCurrentProcess();
-                process.Kill();
-                process.WaitForExit(); // Kill is asynchronous; never resume publication or cleanup.
+                CrashRecoveryProcess.Terminate(childPath, boundary);
             }
 
             byte[] image = await File.ReadAllBytesAsync(childPath + ".image", TestContext.Current.CancellationToken);
@@ -146,22 +143,16 @@ public sealed class CreationCrashRecoveryTests
         }
     }
 
-    private static void AssertCrashChild(string path, string boundary)
-    {
-        string assembly = typeof(CreationCrashRecoveryTests).Assembly.Location;
-        PowerShellRunResult result = PowerShellProcessRunner.Run(
-            "dotnet",
-            [assembly, "-method", Method],
-            TimeSpan.FromSeconds(60),
-            environmentOverrides: new Dictionary<string, string>
+    private static void AssertCrashChild(string path, string boundary) =>
+        CrashRecoveryProcess.AssertChild(
+            Method,
+            path,
+            boundary,
+            $"creation={Path.GetFileNameWithoutExtension(path)}, boundary={boundary}",
+            new Dictionary<string, string>
             {
                 [ChildPath] = path,
                 [ChildBoundary] = boundary,
-            });
-        Assert.False(result.TimedOut, result.StandardError);
-        Assert.True(result.OutputComplete, result.StandardError);
-        Assert.NotEqual(0, result.ExitCode);
-        Assert.True(File.Exists(path + ".crashed"), $"Child did not reach creation boundary: {result.StandardOutput} {result.StandardError}");
-        Assert.Equal(boundary, File.ReadAllText(path + ".crashed"));
-    }
+            },
+            password: "Native123");
 }

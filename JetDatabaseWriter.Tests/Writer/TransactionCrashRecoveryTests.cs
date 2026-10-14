@@ -2,14 +2,12 @@ namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>Checks crash recovery after a process dies without running disposal or rollback.</summary>
@@ -26,6 +24,7 @@ public sealed class TransactionCrashRecoveryTests
     {
         if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
         {
+            CrashRecoveryProcess.MarkReady(childPath);
             await CrashAsync(childPath);
             Assert.Fail("The requested physical write was never reached.");
             return;
@@ -184,10 +183,7 @@ public sealed class TransactionCrashRecoveryTests
 
         if (write == 0)
         {
-            await File.WriteAllTextAsync(path + ".crashed", "commit completed", TestContext.Current.CancellationToken);
-            using var process = Process.GetCurrentProcess();
-            process.Kill();
-            await process.WaitForExitAsync(CancellationToken.None); // Do not unwind before the process is terminated.
+            CrashRecoveryProcess.Terminate(path, "commit completed");
         }
     }
 
@@ -205,33 +201,26 @@ public sealed class TransactionCrashRecoveryTests
 
     private static void AssertCrashChild(string path, string password, DatabaseFormat format, bool encrypted, int write, bool explicitTransaction)
     {
-        string assembly = typeof(TransactionCrashRecoveryTests).Assembly.Location;
-        PowerShellRunResult result = PowerShellProcessRunner.Run(
-            "dotnet",
-            [assembly, "-method", Method],
-            TimeSpan.FromSeconds(60),
-            environmentOverrides: new Dictionary<string, string>
+        string scenario = $"format={format}, encrypted={encrypted}, write={write}, transaction={(explicitTransaction ? "explicit" : "implicit")}";
+        string expectedPhase = explicitTransaction ? "commit" : "insert";
+        if (write == 0)
+        {
+            expectedPhase = "commit completed";
+        }
+
+        CrashRecoveryProcess.AssertChild(
+            Method,
+            path,
+            expectedPhase,
+            scenario,
+            new Dictionary<string, string>
             {
                 [ChildPath] = path,
                 [ChildPassword] = password,
                 [ChildWrite] = write.ToString(CultureInfo.InvariantCulture),
                 [ChildExplicit] = explicitTransaction.ToString(),
-            });
-        string scenario = $"format={format}, encrypted={encrypted}, write={write}, transaction={(explicitTransaction ? "explicit" : "implicit")}";
-        string output = $"Standard output:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}Standard error:{Environment.NewLine}{result.StandardError}";
-        output = output.Replace(path, "[database]", StringComparison.Ordinal);
-        if (password.Length > 0)
-        {
-            output = output.Replace(password, "[password]", StringComparison.Ordinal);
-        }
-
-        string diagnostic = $"Crash child ({scenario}).{Environment.NewLine}{output}";
-        Assert.False(result.TimedOut, diagnostic);
-        Assert.True(result.OutputComplete, diagnostic);
-        Assert.NotEqual(0, result.ExitCode);
-        Assert.True(File.Exists(path + ".crashed"), $"Child did not reach crash injection. {diagnostic}");
-        string expectedPhase = explicitTransaction ? "commit" : "insert";
-        Assert.Equal(write == 0 ? "commit completed" : expectedPhase, File.ReadAllText(path + ".crashed"));
+            },
+            password);
     }
 
     private sealed class CrashFileStream(string path, int targetWrite)
@@ -249,10 +238,7 @@ public sealed class TransactionCrashRecoveryTests
 #pragma warning restore CA1849
             if (++this.writes == targetWrite)
             {
-                await File.WriteAllTextAsync(this.Name + ".crashed", this.Phase, cancellationToken);
-                using var process = Process.GetCurrentProcess();
-                process.Kill();
-                await process.WaitForExitAsync(CancellationToken.None); // Do not unwind before the process is terminated.
+                CrashRecoveryProcess.Terminate(this.Name, this.Phase);
             }
         }
     }

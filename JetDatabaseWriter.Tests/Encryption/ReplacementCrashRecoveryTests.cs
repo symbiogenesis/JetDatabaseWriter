@@ -2,12 +2,11 @@ namespace JetDatabaseWriter.Tests.Encryption;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.TestSupport;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>Checks replacement boundaries after process termination without unwinding cleanup.</summary>
@@ -23,15 +22,13 @@ public sealed class ReplacementCrashRecoveryTests
     {
         if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
         {
+            CrashRecoveryProcess.MarkReady(childPath);
             string target = Environment.GetEnvironmentVariable(ChildBoundary)!;
             EncryptionReplacementCommit.Commit(childPath + ".reenc-owned.tmp", childPath, boundary =>
             {
                 if (boundary == target)
                 {
-                    File.WriteAllText(childPath + ".crashed", boundary);
-                    using var process = Process.GetCurrentProcess();
-                    process.Kill();
-                    process.WaitForExit(); // Kill is asynchronous; do not run cleanup while termination is pending.
+                    CrashRecoveryProcess.Terminate(childPath, boundary);
                 }
             });
             Assert.Fail("The requested replacement boundary was never interrupted.");
@@ -91,22 +88,15 @@ public sealed class ReplacementCrashRecoveryTests
         await writer.InsertRowAsync(table, [1], TestContext.Current.CancellationToken);
     }
 
-    private static void AssertCrashChild(string path, string boundary)
-    {
-        string assembly = typeof(ReplacementCrashRecoveryTests).Assembly.Location;
-        PowerShellRunResult result = PowerShellProcessRunner.Run(
-            "dotnet",
-            [assembly, "-method", Method],
-            TimeSpan.FromSeconds(60),
-            environmentOverrides: new Dictionary<string, string>
+    private static void AssertCrashChild(string path, string boundary) =>
+        CrashRecoveryProcess.AssertChild(
+            Method,
+            path,
+            boundary,
+            $"replacement, boundary={boundary}",
+            new Dictionary<string, string>
             {
                 [ChildPath] = path,
                 [ChildBoundary] = boundary,
             });
-        Assert.False(result.TimedOut, result.StandardError);
-        Assert.True(result.OutputComplete, result.StandardError);
-        Assert.NotEqual(0, result.ExitCode);
-        Assert.True(File.Exists(path + ".crashed"), $"Child did not reach replacement boundary: {result.StandardOutput} {result.StandardError}");
-        Assert.Equal(boundary, File.ReadAllText(path + ".crashed"));
-    }
 }

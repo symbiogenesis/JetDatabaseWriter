@@ -2,14 +2,12 @@ namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>Checks shrink recovery after process termination without disposal.</summary>
@@ -26,6 +24,7 @@ public sealed class ShrinkCrashRecoveryTests
     {
         if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
         {
+            CrashRecoveryProcess.MarkReady(childPath);
             await CrashAsync(childPath);
             Assert.Fail("The requested shrink interruption was never reached.");
             return;
@@ -126,25 +125,19 @@ public sealed class ShrinkCrashRecoveryTests
         }
     }
 
-    private static void AssertCrashChild(string path, string password, string boundary)
-    {
-        string assembly = typeof(ShrinkCrashRecoveryTests).Assembly.Location;
-        PowerShellRunResult result = PowerShellProcessRunner.Run(
-            "dotnet",
-            [assembly, "-method", Method],
-            TimeSpan.FromSeconds(60),
-            environmentOverrides: new Dictionary<string, string>
+    private static void AssertCrashChild(string path, string password, string boundary) =>
+        CrashRecoveryProcess.AssertChild(
+            Method,
+            path,
+            boundary,
+            $"shrink, encrypted={password.Length > 0}, boundary={boundary}",
+            new Dictionary<string, string>
             {
                 [ChildPath] = path,
                 [ChildPassword] = password,
                 [ChildBoundary] = boundary,
-            });
-        Assert.False(result.TimedOut, result.StandardError);
-        Assert.True(result.OutputComplete, result.StandardError);
-        Assert.NotEqual(0, result.ExitCode);
-        Assert.True(File.Exists(path + ".crashed"), $"Child did not reach shrink boundary: {result.StandardOutput} {result.StandardError}");
-        Assert.Equal(boundary, File.ReadAllText(path + ".crashed"));
-    }
+            },
+            password);
 
     private sealed class CrashFileStream(string path, string boundary)
         : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
@@ -172,10 +165,7 @@ public sealed class ShrinkCrashRecoveryTests
         public void Crash()
         {
             this.Flush(flushToDisk: true);
-            File.WriteAllText(this.Name + ".crashed", boundary);
-            using var process = Process.GetCurrentProcess();
-            process.Kill();
-            process.WaitForExit(); // Kill is asynchronous; do not run cleanup while termination is pending.
+            CrashRecoveryProcess.Terminate(this.Name, boundary);
         }
     }
 }
