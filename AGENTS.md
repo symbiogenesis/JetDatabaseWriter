@@ -33,6 +33,7 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 - Full test suites run only on CI, including a full run of just one target framework. Do not run the whole suite locally in batches of filtered tests.
 - All benchmarks run only on CI, including a single benchmark, short/medium/dry jobs, smoke checks, and debugging runs. Building the benchmark project locally is allowed; executing benchmarks is not.
 - Local builds and targeted tests provide development feedback. Required acceptance gates still run on CI against the settled `main` revision.
+- For compiler and analyzer feedback without a local build, stage new files and run `pwsh -NoProfile -File scripts/submit-candidate.ps1 -Base origin/main`. The main-only candidate workflow applies the unpublished patch, installs its SDK, compiles all solution targets, formats changed source and retains a reviewable patch plus strict build diagnostics. Review and apply formatter fixes before integrating; candidate success does not replace the ordinary main CI gate. Oversized workflow inputs are refused before dispatch.
 - Windows test analyzer lanes execute their exact Release binaries with `dotnet test --test-modules` immediately after their own build, without restoring or building again. Both framework legs and every analyzer gate remain required. The lanes upload the analyzed runner for focused DAO checks and xUnit results with individual test durations.
 - Specialized benchmark, fuzz and portability workflows require a completed, successful `ci.yml` run for the exact main revision before their build jobs start. Finish that gate before dispatching them; no additional local build is required.
 
@@ -43,6 +44,7 @@ When a design decision is left to you, choose what Microsoft Access does, then t
 - `JetDatabaseWriter.Tests` turns off `RunAnalyzersDuringBuild`, `EnforceCodeStyleInBuild` and `GenerateDocumentationFile` in non-Release builds, for speed; keep Release strict. Its `NoWarn` holds only `CA1707` and `SA1615`, and nothing else may be added. Fix any other finding in test code. Where a rule works against what a test checks, suppress it at the site with `#pragma warning disable <id> // <reason>`, for example CA1812 on a POCO that only reflection, `Rows<T>` or an expression tree creates.
 - `JetDatabaseWriter.FormatProbe` does not turn off its analyzers.
 - CI restores with `--locked-mode`. After changing a package reference or a target framework, restore once without it and commit the updated `packages.lock.json` files.
+- Update the SDK with `pwsh -NoProfile -File scripts/update-sdk.ps1 -Version <exact version>` after installing it, or dispatch `sdk-lock-refresh.yml` on `main` for a restore-only patch artifact. Commit `global.json` and every changed solution/smoke lock together. The updater rolls back file changes on restore failure; `scripts/restore-dependencies.ps1` verifies the solution and all seed, trimmed and native locks without compiling. AOT CI verifies all smoke locks before any consumer build.
 
 ## Gating a commit on CI
 
@@ -99,6 +101,7 @@ xUnit v3 on Microsoft Testing Platform:
   - `xunit.runner.json` uses `parallelMode: all` with conservative scheduling and at most twice the CPU count, including tests within one class. Keep tests independent: give each its own database stream or uniquely named file. Diagnostic assertions capture through `TestTraceScope` rather than changing global trace listeners per test. Process-wide heap measurements and tests that cannot share the machine take `[Fact(DisableParallelization = true)]` (or the theory equivalent); a class whose tests share state takes `[TestClass(DisableParallelization = true)]`.
   - `[InlineData]` is type-checked strictly; `TheoryData<T>`, `MemberData` and `ClassData` still work.
 - Write the test first, and for a bug write a failing test first.
+- Golden byte tests retain normalized specimens and complete byte/page differences in CI's `golden-bytes-<framework>` artifacts. Approved `Databases/Golden/*.bin` fixtures must match the pinned hashes. For a deliberate format correction, review the byte differences and independent native evidence before updating both bytes and hash; never accept generated output automatically.
 
 ## Benchmarks
 
@@ -110,6 +113,7 @@ gh workflow run benchmarks.yml --ref main -f filter="<filter patterns>" -f basel
 
 - The `filter` input takes BenchmarkDotNet `--filter` patterns separated by spaces, for example `"*AccessWriterBenchmarks* *AccessReaderRowDecodeBenchmarks*"`. Verify the dispatched run tests the settled `main` SHA.
 - With `baseline`, the runner benchmarks the baseline commit and then the commit under test back to back on the same machine. Use a baseline already published in main history; never publish a work branch or tag to make it available. The comparison table (mean, error, allocations and head/baseline ratios) goes to the run summary.
+- A baseline also requires completed, successful `ci.yml` for its exact SHA. The helper and direct workflow refuse invalid or pending baselines before dispatch/build and pass only the resolved immutable SHA to the runner. The runner installs the baseline's SDK before building it. Shared fixture correctness checks belong in ordinary tests as well as benchmark setup.
 - The `job` input accepts `short`, `medium` or `dry` in place of BenchmarkDotNet's default adaptive job.
 - Dispatch returns immediately. A run can take an hour or more; inspect its status and require a completed verdict before claiming benchmark acceptance. The helper's `-RunId` reporting mode can summarize the completed run.
 - The full results are in the run's `benchmark-results` artifact.

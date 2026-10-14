@@ -196,6 +196,26 @@ dotnet test --project JetDatabaseWriter.Tests -c Release -f net10.0 --no-build -
 
 Full test suites run only on CI, including a full run of one target framework. All benchmarks also run only on CI, even single-case, short, or dry runs. Local builds and selected tests do not replace the required CI gate. See [AGENTS.md](AGENTS.md#local-execution-and-ci) for the execution policy and hosted workflow commands.
 
+For hosted compiler and analyzer feedback on an unpublished local change, stage newly created files, then run:
+
+```powershell
+pwsh -NoProfile -File scripts/submit-candidate.ps1 -Base origin/main
+```
+
+The [candidate workflow](.github/workflows/candidate.yml) runs from `main`, applies the patch against its published base, installs the candidate SDK and checks every solution target. Its `candidate-results` artifact contains logs, formatter reports, `format-fixes.patch` and the complete tested `candidate.patch`. Review formatter fixes before applying them. Workflow input limits restrict patch size; the helper refuses oversized or incomplete submissions. The final integrated `main` revision still requires ordinary CI.
+
+SDK changes update the exact pin and all dependency locks together, including the separate seed, trimmed and NativeAOT consumer configurations:
+
+```powershell
+pwsh -NoProfile -File scripts/update-sdk.ps1 -Version 10.0.402
+# Or receive a hosted patch without installing or building locally:
+gh workflow run sdk-lock-refresh.yml --ref main -f sdk-version=10.0.402
+```
+
+The local updater performs restores only and rolls back file changes if verification fails. The hosted workflow returns `sdk-lock-patch`, with the patch's base revision and restore verdict. Review and commit the SDK pin and changed locks, then run the ordinary `main` gate.
+
+CI retains normalized golden specimens in `golden-bytes-net10.0` and `golden-bytes-net8.0`. Failure reports identify every changed byte's offset and page, including added or removed bytes. The approved binaries and pinned hashes are reviewed together for deliberate format changes; Microsoft-authored fixtures and DAO checks provide separate compatibility evidence. Benchmark comparisons require successful exact CI for both head and published baseline, and shared fixture correctness also runs in ordinary tests.
+
 Releases are published from version tags; [PUBLISH.md](PUBLISH.md) describes the steps.
 
 ## License
