@@ -5,6 +5,7 @@ using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -35,6 +36,82 @@ public sealed class DaoRelationshipCatalogIdentityTests
         SkipUnless = nameof(Jet3RoundTripEnvironment.IsAvailable),
         SkipType = typeof(Jet3RoundTripEnvironment))]
     public Task Dao36RelationshipDrop_RecreateRollbackAndCompact() => VerifyAsync(DatabaseFormat.Jet3Mdb);
+
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
+        SkipType = typeof(AccessRoundTripEnvironment))]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public Task Dao120_RenameAcrossNativeSortBoundaries_IsImmediatelyVisible(DatabaseFormat format) => VerifyImmediateRenamesAsync(format);
+
+    [Fact(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(Jet3RoundTripEnvironment.IsAvailable),
+        SkipType = typeof(Jet3RoundTripEnvironment))]
+    public Task Dao36_RenameAcrossNativeSortBoundaries_IsImmediatelyVisible() => VerifyImmediateRenamesAsync(DatabaseFormat.Jet3Mdb);
+
+    private static async Task VerifyImmediateRenamesAsync(DatabaseFormat format)
+    {
+        await using var session = AccessRoundTripSession.CreateEmpty(databaseExtension: format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
+        string source = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath);
+        int version = format switch { DatabaseFormat.Jet3Mdb => 32, DatabaseFormat.Jet4Mdb => 64, DatabaseFormat.AceAccdb => 128, _ => throw new ArgumentOutOfRangeException(nameof(format), format, null) };
+        string script = $$"""
+            $db = $engine.CreateDatabase({{source}}, ';LANGID=0x0409;CP=1252;COUNTRY=0', {{version}})
+            try {
+                $db.Execute('CREATE TABLE P (Id LONG, [Note] LONG)',128)
+                $db.Execute('CREATE INDEX A_P_Id ON P (Id)',128)
+                $db.Execute('CREATE UNIQUE INDEX PK_P ON P (Id) WITH PRIMARY',128)
+                $db.Execute('CREATE TABLE C (Id LONG CONSTRAINT PK_C PRIMARY KEY, ParentId LONG, [Note] LONG)',128)
+                $db.Execute('CREATE INDEX A_C_Note ON C ([Note])',128)
+                $db.Execute('CREATE INDEX Z_C_Note ON C ([Note],Id)',128)
+                foreach($row in @('1,10','2,20','3,30')) { $db.Execute(('INSERT INTO P VALUES ('+$row+')'),128) }
+                foreach($row in @('10,1,100','11,1,101','12,2,102','13,3,103')) { $db.Execute(('INSERT INTO C VALUES ('+$row+')'),128) }
+                # Keep native relationship storage mapped without adding enforced FK descriptors.
+                $rel = $db.CreateRelation('StorageSeed', 'P', 'C', 2)
+                $field = $rel.CreateField('Id'); $field.ForeignName = 'ParentId'; $rel.Fields.Append($field)
+                $db.Relations.Append($rel)
+            } finally { $db.Close() }
+            """;
+        RunNative(session, format, script);
+        await using (AccessWriter writer = await session.OpenWriterAsync(Ct))
+        {
+            await writer.CreateRelationshipAsync(new("Rel", "P", "Id", "C", "ParentId"), Ct);
+        }
+
+        string previous = "Rel";
+        foreach (string name in new[] { "Rel", "ZZ_Rel", "AA_Rel", "A-Note", "A Note", "Aé" })
+        {
+            if (name != "Rel")
+            {
+                await using AccessWriter writer = await session.OpenWriterAsync(Ct);
+                await writer.RenameRelationshipAsync(previous, name, Ct);
+            }
+
+            DataTable objects = await ReadSystemAsync(session.SourcePath, "MSysObjects", Ct);
+            _ = Assert.Single(objects.AsEnumerable(), row => (string)row["Name"] == name && Convert.ToInt32(row["Type"], CultureInfo.InvariantCulture) == 8);
+            string encodedName = Convert.ToBase64String(Encoding.Unicode.GetBytes(name));
+            script = $$"""
+                $name = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{{encodedName}}'))
+                $db = $engine.OpenDatabase({{source}})
+                try {
+                    if ($db.Relations.Item($name).Name -ne $name) { throw 'Renamed relation is missing' }
+                    if ($db.TableDefs('C').Indexes.Item($name).Name -ne $name) { throw 'Renamed child index is missing' }
+                } finally { $db.Close() }
+                """;
+            RunNative(session, format, script);
+            previous = name;
+        }
+
+        string lastEncodedName = Convert.ToBase64String(Encoding.Unicode.GetBytes(previous));
+        script = $$"""
+            $name = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{{lastEncodedName}}'))
+            $engine.CompactDatabase({{source}}, {{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.CompactedPath)}})
+            $db = $engine.OpenDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.CompactedPath)}})
+            try { $null = $db.Relations.Item($name); $null = $db.TableDefs('C').Indexes.Item($name) } finally { $db.Close() }
+            """;
+        RunNative(session, format, script);
+    }
 
     private static async Task VerifyAsync(DatabaseFormat format)
     {

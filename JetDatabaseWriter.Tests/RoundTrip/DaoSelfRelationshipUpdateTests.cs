@@ -11,6 +11,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
+using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>Compares simultaneous self-referencing key assignments with native DAO updates.</summary>
@@ -54,12 +55,35 @@ public sealed class DaoSelfRelationshipUpdateTests
         SkipUnless = nameof(AccessRoundTripEnvironment.IsAvailable),
         SkipType = typeof(AccessRoundTripEnvironment))]
     [MemberData(nameof(SelfAssignments))]
-    public async Task DaoAndWriter_SimultaneousSelfKeyUpdate_HaveMatchingOutcomes(DatabaseFormat format, bool cascade, bool dependent, string assignment)
+    public Task DaoAndWriter_SimultaneousSelfKeyUpdate_HaveMatchingOutcomes(DatabaseFormat format, bool cascade, bool dependent, string assignment) =>
+        CompareScalarAsync(format, cascade, dependent, assignment);
+
+    /// <summary>DAO3.6 verifies simultaneous Access97 self-key assignments with both cascade policies.</summary>
+    /// <param name="cascade">Whether the self-relationship cascades updates.</param>
+    /// <param name="dependent">Whether another row references the moving primary key.</param>
+    /// <returns>The asynchronous comparisons of each explicit foreign-key assignment.</returns>
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(Jet3RoundTripEnvironment.IsAvailable),
+        SkipType = typeof(Jet3RoundTripEnvironment))]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Dao36AndWriter_SimultaneousSelfKeyUpdate_HaveMatchingOutcomes(bool cascade, bool dependent)
+    {
+        foreach (string assignment in new[] { "unchanged", "1", "3", "5", "9", "NULL" })
+        {
+            await CompareScalarAsync(DatabaseFormat.Jet3Mdb, cascade, dependent, assignment);
+        }
+    }
+
+    private static async Task CompareScalarAsync(DatabaseFormat format, bool cascade, bool dependent, string assignment)
     {
         ArgumentNullException.ThrowIfNull(assignment);
-        await using var session = AccessRoundTripSession.CreateEmpty(databaseExtension: format == DatabaseFormat.Jet4Mdb ? ".mdb" : ".accdb");
+        await using var session = AccessRoundTripSession.CreateEmpty(databaseExtension: format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
         string setup = $$"""
-            $db = $engine.CreateDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath)}}, ';LANGID=0x0409;CP=1252;COUNTRY=0'{{(format == DatabaseFormat.Jet4Mdb ? ", 64" : string.Empty)}})
+            $db = $engine.CreateDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath)}}, ';LANGID=0x0409;CP=1252;COUNTRY=0', {{NativeVersion(format)}})
             try {
                 $db.Execute('CREATE TABLE [Tree] ([Id] LONG CONSTRAINT [PK_Tree] PRIMARY KEY, [ParentId] LONG)', 128)
                 $db.Execute('INSERT INTO [Tree] VALUES (1,1)', 128)
@@ -72,7 +96,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 $db.Relations.Append($rel)
             } finally { $db.Close() }
             """;
-        AssertDaoSucceeded(session.RunDaoEngineScript(setup, DaoTimeout));
+        AssertDaoSucceeded(RunEngineScript(session, format, setup));
         string writerPath = session.CreateDatabasePath("writer");
         File.Copy(session.SourcePath, writerPath);
         string assignedSql = assignment == "unchanged" ? string.Empty : ", [ParentId]=" + assignment;
@@ -85,7 +109,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 Write-Output ('UPDATE=REFUSED:' + $codes[0])
             }
             """;
-        AccessRoundTripEnvironment.CompactResult native = session.RunDaoDatabaseScript(session.SourcePath, updateScript, DaoTimeout);
+        AccessRoundTripEnvironment.CompactResult native = RunDatabaseScript(session, format, session.SourcePath, updateScript);
         AssertDaoSucceeded(native);
         bool accepted = (cascade || !dependent) && assignment is not "1" and not "9" && (cascade || assignment != "unchanged");
         int refusalCode = !cascade && (dependent || assignment == "unchanged") ? 3200 : 3201;
@@ -132,11 +156,11 @@ public sealed class DaoSelfRelationshipUpdateTests
         }
 
         Assert.Equal(expected, await ReadRowsAsync(writerPath));
-        AssertDaoRows(session, writerPath, expected);
+        AssertDaoRows(session, format, writerPath, expected);
         string compacted = session.CreateDatabasePath("writer_compacted");
-        AssertDaoSucceeded(AccessRoundTripEnvironment.RunDaoCompact(writerPath, compacted, DaoTimeout));
+        AssertDaoSucceeded(RunEngineScript(session, format, $"$engine.CompactDatabase({AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(writerPath)}, {AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compacted)})"));
         Assert.Equal(expected, await ReadRowsAsync(compacted));
-        AssertDaoRows(session, compacted, expected);
+        AssertDaoRows(session, format, compacted, expected);
     }
 
     /// <summary>Composite self-updates preserve explicit caller keys, including references to another moved row.</summary>
@@ -157,12 +181,30 @@ public sealed class DaoSelfRelationshipUpdateTests
     [InlineData(DatabaseFormat.Jet4Mdb, "ParentId=1")]
     [InlineData(DatabaseFormat.Jet4Mdb, "ParentId=5")]
     [InlineData(DatabaseFormat.Jet4Mdb, "ParentId=3")]
-    public async Task DaoAndWriter_CompositeSelfKeyBatchUpdate_HaveMatchingOutcomes(DatabaseFormat format, string assignment)
+    public Task DaoAndWriter_CompositeSelfKeyBatchUpdate_HaveMatchingOutcomes(DatabaseFormat format, string assignment) =>
+        CompareCompositeAsync(format, assignment);
+
+    /// <summary>DAO3.6 verifies explicit composite self-key assignments in an Access97 batch update.</summary>
+    /// <param name="assignment">The caller's foreign-key assignment.</param>
+    /// <returns>The asynchronous native comparison.</returns>
+    [Theory(
+        Skip = AccessRoundTripEnvironment.RequiresMicrosoftAccessSkipReason,
+        SkipUnless = nameof(Jet3RoundTripEnvironment.IsAvailable),
+        SkipType = typeof(Jet3RoundTripEnvironment))]
+    [InlineData("unchanged")]
+    [InlineData("ParentPart=1")]
+    [InlineData("ParentId=1")]
+    [InlineData("ParentId=5")]
+    [InlineData("ParentId=3")]
+    public Task Dao36AndWriter_CompositeSelfKeyBatchUpdate_HaveMatchingOutcomes(string assignment) =>
+        CompareCompositeAsync(DatabaseFormat.Jet3Mdb, assignment);
+
+    private static async Task CompareCompositeAsync(DatabaseFormat format, string assignment)
     {
         ArgumentNullException.ThrowIfNull(assignment);
-        await using var session = AccessRoundTripSession.CreateEmpty(databaseExtension: format == DatabaseFormat.Jet4Mdb ? ".mdb" : ".accdb");
+        await using var session = AccessRoundTripSession.CreateEmpty(databaseExtension: format == DatabaseFormat.AceAccdb ? ".accdb" : ".mdb");
         string setup = $$"""
-            $db = $engine.CreateDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath)}}, ';LANGID=0x0409;CP=1252;COUNTRY=0'{{(format == DatabaseFormat.Jet4Mdb ? ", 64" : string.Empty)}})
+            $db = $engine.CreateDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath)}}, ';LANGID=0x0409;CP=1252;COUNTRY=0', {{NativeVersion(format)}})
             try {
                 $db.Execute('CREATE TABLE [Tree] ([Id] LONG, [Part] LONG, [ParentId] LONG, [ParentPart] LONG, CONSTRAINT [PK_Tree] PRIMARY KEY ([Id], [Part]))', 128)
                 foreach ($row in @('1,1,1,1', '1,2,1,1', '2,1,1,1', '3,1,NULL,NULL')) {
@@ -177,7 +219,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 $db.Relations.Append($rel)
             } finally { $db.Close() }
             """;
-        AssertDaoSucceeded(session.RunDaoEngineScript(setup, DaoTimeout));
+        AssertDaoSucceeded(RunEngineScript(session, format, setup));
         string writerPath = session.CreateDatabasePath("writer");
         File.Copy(session.SourcePath, writerPath);
         string assignedSql = assignment == "unchanged" ? string.Empty : ", " + assignment;
@@ -190,7 +232,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 Write-Output 'UPDATE=REFUSED:3201'
             }
             """;
-        AccessRoundTripEnvironment.CompactResult native = session.RunDaoDatabaseScript(session.SourcePath, updateScript, DaoTimeout);
+        AccessRoundTripEnvironment.CompactResult native = RunDatabaseScript(session, format, session.SourcePath, updateScript);
         AssertDaoSucceeded(native);
         bool accepted = assignment is not "ParentPart=1" and not "ParentId=1";
         Assert.Contains(accepted ? "UPDATE=ACCEPTED" : "UPDATE=REFUSED:3201", native.StdOut, StringComparison.Ordinal);
@@ -227,17 +269,48 @@ public sealed class DaoSelfRelationshipUpdateTests
         }
 
         Assert.Equal(expected, await ReadRowsAsync(writerPath));
-        AssertDaoRows(session, writerPath, expected);
+        AssertDaoRows(session, format, writerPath, expected);
         string compacted = session.CreateDatabasePath("writer_compacted");
-        AssertDaoSucceeded(AccessRoundTripEnvironment.RunDaoCompact(writerPath, compacted, DaoTimeout));
+        AssertDaoSucceeded(RunEngineScript(session, format, $"$engine.CompactDatabase({AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(writerPath)}, {AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compacted)})"));
         Assert.Equal(expected, await ReadRowsAsync(compacted));
-        AssertDaoRows(session, compacted, expected);
+        AssertDaoRows(session, format, compacted, expected);
     }
+
+    private static AccessRoundTripEnvironment.CompactResult RunEngineScript(AccessRoundTripSession session, DatabaseFormat format, string script)
+    {
+        if (format != DatabaseFormat.Jet3Mdb)
+        {
+            return session.RunDaoEngineScript(script, DaoTimeout);
+        }
+
+        PowerShellRunResult result = Jet3RoundTripEnvironment.RunEngineScript(script, session.WorkDir, DaoTimeout);
+        Assert.True(!result.TimedOut && result.OutputComplete, result.StandardOutput + result.StandardError);
+        return new AccessRoundTripEnvironment.CompactResult(result.ExitCode, result.StandardOutput, result.StandardError);
+    }
+
+    private static AccessRoundTripEnvironment.CompactResult RunDatabaseScript(AccessRoundTripSession session, DatabaseFormat format, string path, string script)
+    {
+        string body = $$"""
+            $db = $engine.OpenDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(path)}})
+            try {
+                {{script}}
+            } finally { $db.Close() }
+            """;
+        return RunEngineScript(session, format, body);
+    }
+
+    private static int NativeVersion(DatabaseFormat format) => format switch
+    {
+        DatabaseFormat.Jet3Mdb => 32,
+        DatabaseFormat.Jet4Mdb => 64,
+        DatabaseFormat.AceAccdb => 128,
+        _ => throw new ArgumentOutOfRangeException(nameof(format)),
+    };
 
     private static void AssertDaoSucceeded(AccessRoundTripEnvironment.CompactResult result) =>
         Assert.True(result.ExitCode == 0, result.StdOut + result.StdErr);
 
-    private static void AssertDaoRows(AccessRoundTripSession session, string path, List<string> expected)
+    private static void AssertDaoRows(AccessRoundTripSession session, DatabaseFormat format, string path, List<string> expected)
     {
         const string readScript = """
             $rs = $db.OpenRecordset('SELECT * FROM [Tree] ORDER BY [Id]', 4)
@@ -249,7 +322,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 }
             } finally { $rs.Close() }
             """;
-        AccessRoundTripEnvironment.CompactResult result = session.RunDaoDatabaseScript(path, readScript, DaoTimeout);
+        AccessRoundTripEnvironment.CompactResult result = RunDatabaseScript(session, format, path, readScript);
         AssertDaoSucceeded(result);
         Assert.Equal(expected.Count, result.StdOut.Split('\n').Count(line => line.StartsWith("ROW=", StringComparison.Ordinal)));
         foreach (string row in expected)

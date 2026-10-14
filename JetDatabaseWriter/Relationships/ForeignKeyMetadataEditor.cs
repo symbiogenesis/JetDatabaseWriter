@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -36,6 +37,7 @@ internal sealed class ForeignKeyMetadataEditor(
     PageAllocator pageAllocator)
 {
     private readonly JetFormat format = format;
+    private readonly JetTextCollation indexNameCollation = new(format.DefaultTextSortOrder);
     private readonly TableDefReader tableDefs = tableDefs;
     private readonly Pager pager = pager;
     private readonly PageAllocator pageAllocator = pageAllocator;
@@ -44,14 +46,11 @@ internal sealed class ForeignKeyMetadataEditor(
     // Per-TDEF FK logical-idx entries
     // ════════════════════════════════════════════════════════════════
     //
-    // Jet4 / ACE follow the DAO baseline (§3.4): the FK entry is prepended,
-    // the parent shares the first covering real index, its cascade bytes
-    // stay 0, and a new real index carries the 0x80 flag. Jet3 follows the
-    // only Access 97 evidence, indexTestV1997.mdb: entries and names stay in
-    // case-insensitive name order, the parent shares a unique (primary-key)
-    // covering real index, both sides carry the cascade bytes, and a new real
-    // index has flags 0x00. used_pages stays 0 on Jet3, where the writer keeps
-    // no index usage maps.
+    // DAO3.6 and DAO120 keep entries and names in case-insensitive name order,
+    // share a unique covering real index on the parent, and carry cascade
+    // bytes on both sides. A new real index has flags 0x00 on Jet3 and 0x80
+    // on Jet4 / ACE. The rebuild initializes usage maps for newly emitted
+    // indexes; existing native Jet3 map rows remain unchanged.
 
     /// <summary>
     /// Pre-computed real-idx slot information for one side of a relationship.
@@ -108,9 +107,8 @@ internal sealed class ForeignKeyMetadataEditor(
 
         // Read both TDEF pages and decide each side's real-idx slot and new
         // logical-idx number. rel_idx_num cross-references the partner
-        // logical-idx number, not the partner physical real-idx slot. On Jet3
-        // the parent shares a unique covering real index, as Access 97 does.
-        bool jet3 = this.format.IsJet3;
+        // logical-idx number, not the partner physical real-idx slot. The
+        // parent shares a unique covering real index, as native engines do.
         FkSidePlan pkPlan;
         FkSidePlan fkPlan;
         List<string> pkExistingNames;
@@ -126,7 +124,7 @@ internal sealed class ForeignKeyMetadataEditor(
         }
         else
         {
-            (pkPlan, pkExistingNames) = await this.PrepareFkSideAsync(primaryTdefPage, pkColNums, preferUnique: jet3, cancellationToken).ConfigureAwait(false);
+            (pkPlan, pkExistingNames) = await this.PrepareFkSideAsync(primaryTdefPage, pkColNums, preferUnique: true, cancellationToken).ConfigureAwait(false);
             (fkPlan, fkExistingNames) = await this.PrepareFkSideAsync(foreignTdefPage, fkColNums, preferUnique: false, cancellationToken).ConfigureAwait(false);
         }
 
@@ -155,13 +153,12 @@ internal sealed class ForeignKeyMetadataEditor(
             // Choose unique-within-tdef logical-idx names. DAO uses a hidden .rB/.rC
             // style logical name on the parent side and the public relationship name
             // on the child side.
-            string pkName = MakeUniqueParentRelationshipLogicalName(pkExistingNames);
+            string pkName = MakeUniqueParentRelationshipLogicalName(pkExistingNames, pkPlan.LogicalIdxNum);
             string fkName = IndexHelpers.MakeUniqueLogicalIdxName(
                 primaryTdefPage == foreignTdefPage ? relationship.Name + "_FK" : relationship.Name,
                 fkExistingNames);
 
-            // Emit both sides. On Jet4 / ACE the PK side carries no cascade
-            // flags, matching the DAO baseline; Access 97 sets them on both.
+            // Native engines carry the cascade flags on both linked entries.
             await this.EmitFkLogicalIdxAsync(
                 primaryTdefPage,
                 pkColNums,
@@ -170,8 +167,8 @@ internal sealed class ForeignKeyMetadataEditor(
                 relTblTypeThisSide: Constants.TableDefinition.ParentRelationshipTableType,
                 relIdxNumOtherSide: fkPlan.LogicalIdxNum,
                 relTblPageOther: foreignTdefPage,
-                cascadeUps: jet3 ? cascadeUpsByte : (byte)0,
-                cascadeDels: jet3 ? cascadeDelsByte : (byte)0,
+                cascadeUps: cascadeUpsByte,
+                cascadeDels: cascadeDelsByte,
                 pkRuns,
                 cancellationToken).ConfigureAwait(false);
 
@@ -279,7 +276,7 @@ internal sealed class ForeignKeyMetadataEditor(
                 $"TDEF at page {tdefPage} cannot be mutated in place (malformed counts or not a TDEF).");
         }
 
-        int pkSharedSlot = FindCoveringRealIdx(this.format.Index, page, pkColumnNumbers, in layout, preferUnique: this.format.IsJet3);
+        int pkSharedSlot = FindCoveringRealIdx(this.format.Index, page, pkColumnNumbers, in layout, preferUnique: true);
         int fkSharedSlot = FindCoveringRealIdx(this.format.Index, page, fkColumnNumbers, in layout, preferUnique: false);
         int nextRealIdxNum = layout.NumRealIdx;
 
@@ -422,7 +419,7 @@ internal sealed class ForeignKeyMetadataEditor(
         // carries the 0x80 bit Access sets on every Jet4 index; Access 97
         // writes 0x00 for an FK index. used_pages starts at 0;
         // MaintainIndexesAsync patches the DAO-shaped index usage-map pointer
-        // after rebuilding on Jet4/ACE. Its statistics slot in the skip block
+        // after rebuilding. Its statistics slot in the skip block
         // stays zero.
         if (sidePlan.AllocatesNewRealIdx)
         {
@@ -434,12 +431,9 @@ internal sealed class ForeignKeyMetadataEditor(
                 sidePlan.NewLeafPageNumber);
         }
 
-        // Logical-idx entries, with the new FK entry at `insertAt`. DAO
-        // prepends relationship logical entries before the existing
-        // PrimaryKey entry on Jet4/ACE; CompactDatabase preserves FK tables
-        // only when the entry/name ordering follows that shape. On Jet4/ACE
-        // the entry starts with the 0x00000659 cookie DAO checks during
-        // CompactDatabase.
+        // Logical-idx entries and names stay in the native case-insensitive
+        // name order. On Jet4/ACE the entry starts with the 0x00000659 cookie
+        // DAO checks during CompactDatabase.
         int newLogIdxStart = newRealIdxDescStart + oldRealIdxPhysLen + deltaRealIdxPhys;
         int oldLogIdxLen = numIdx * entrySize;
         int entriesBeforeLen = insertAt * entrySize;
@@ -523,27 +517,18 @@ internal sealed class ForeignKeyMetadataEditor(
 
     /// <summary>
     /// Returns the logical position at which a new FK entry named
-    /// <paramref name="indexName"/> goes. On Jet4 / ACE it is 0: DAO prepends
-    /// relationship entries before the existing <c>PrimaryKey</c> entry, and
-    /// CompactDatabase preserves FK tables only when the entry and name order
-    /// follows that shape. On Jet3 it is before the first existing entry whose
-    /// name sorts after <paramref name="indexName"/>, ignoring case, as in the
-    /// TDEFs Access 97 wrote (<c>.rC</c>, <c>id</c>, <c>PrimaryKey</c>,
-    /// <c>Table2Table1</c>); the existing entries are not re-sorted.
+    /// <paramref name="indexName"/> goes: before the first existing entry whose
+    /// name sorts after it in the database's Access collation, as DAO3.6 and DAO120 emit. Existing
+    /// entries are not re-sorted.
     /// </summary>
     /// <param name="existingNames">The TDEF's logical-index names, in entry order.</param>
     /// <param name="indexName">The new entry's name.</param>
     /// <returns>The position, from 0 to <c>existingNames.Count</c>.</returns>
     private int FkEntryInsertPosition(List<string> existingNames, string indexName)
     {
-        if (!this.format.IsJet3)
-        {
-            return 0;
-        }
-
         for (int i = 0; i < existingNames.Count; i++)
         {
-            if (StringComparer.OrdinalIgnoreCase.Compare(existingNames[i], indexName) > 0)
+            if (this.indexNameCollation.Compare(existingNames[i], indexName) > 0)
             {
                 return i;
             }
@@ -552,9 +537,18 @@ internal sealed class ForeignKeyMetadataEditor(
         return existingNames.Count;
     }
 
-    private static string MakeUniqueParentRelationshipLogicalName(IReadOnlyList<string> existing)
+    private static string MakeUniqueParentRelationshipLogicalName(IReadOnlyList<string> existing, int logicalIndexNumber)
     {
         var taken = new HashSet<string>(existing, StringComparer.OrdinalIgnoreCase);
+        if (logicalIndexNumber is > 0 and < 26)
+        {
+            string preferred = ".r" + (char)('A' + logicalIndexNumber);
+            if (!taken.Contains(preferred))
+            {
+                return preferred;
+            }
+        }
+
         for (char suffix = 'B'; suffix <= 'Z'; suffix++)
         {
             string candidate = ".r" + suffix;
@@ -723,11 +717,9 @@ internal sealed class ForeignKeyMetadataEditor(
             }
         }
 
-        // On Jet4/ACE each emitted entry is prepended to the logical-idx list,
-        // so emitting last-to-first keeps the original entry order; on Jet3
-        // each goes in at its name's sorted position. Each one also takes the
-        // next free logical-idx number, which lets a self-referencing pair
-        // learn its partner's number before either side is written.
+        // Assign logical-index numbers in reverse entry order before writing,
+        // so self-referencing pairs know their partners' stable numbers.
+        // Insertion places each entry at its name's sorted position on every format.
         LogicalTDefChain chain = await this.ReadRequiredLogicalTDefChainAsync(targetTdefPage, cancellationToken).ConfigureAwait(false);
         if (!this.TryParseFkTDefLayout(chain.Bytes, out FkTDefLayout layout))
         {
@@ -749,10 +741,9 @@ internal sealed class ForeignKeyMetadataEditor(
                 ? partnerNumber
                 : entry.RelIdxNum;
 
-            // A parent-side entry on Jet3 shares a unique covering real index,
+            // A parent-side entry shares a unique covering real index,
             // as in CreateRelationshipAsync.
-            bool preferUnique = this.format.IsJet3
-                && entry.RelTblType == Constants.TableDefinition.ParentRelationshipTableType;
+            bool preferUnique = entry.RelTblType == Constants.TableDefinition.ParentRelationshipTableType;
             (FkSidePlan plan, List<string> existingNames) = await this.PrepareFkSideAsync(targetTdefPage, columnNumbers[i], preferUnique, cancellationToken).ConfigureAwait(false);
             plan = plan with { LogicalIdxNum = newIndexNumbers[entry.IndexNumber] };
             var runs = new ReservedPageRuns(this.pageAllocator);
@@ -1359,10 +1350,9 @@ internal sealed class ForeignKeyMetadataEditor(
         // Write the new length-prefixed name into the freed slot.
         Buffer.BlockCopy(newNameRecord, 0, td, oldNameStart, newNameRecord.Length);
 
-        // Jet3 keeps entries and names in name order, so the renamed entry
+        // Native engines keep entries and names in name order, so the renamed entry
         // moves to its new name's position.
-        if (this.format.IsJet3
-            && !this.TryMoveLogicalIdxEntryToNameOrder(td, in layout, matchEntryIdx))
+        if (!this.TryMoveLogicalIdxEntryToNameOrder(td, in layout, matchEntryIdx))
         {
             return false;
         }

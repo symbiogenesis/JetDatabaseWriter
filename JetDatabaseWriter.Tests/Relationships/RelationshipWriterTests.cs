@@ -324,7 +324,7 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
     }
 
     [Fact]
-    public async Task CreateRelationshipAsync_CascadeFlags_OnFkSideOnly()
+    public async Task CreateRelationshipAsync_CascadeFlags_OnBothSides()
     {
         MemoryStream temp = await db.CopyToStreamAsync(TestDatabases.NorthwindTraders, TestContext.Current.CancellationToken);
 
@@ -355,11 +355,11 @@ public sealed class RelationshipWriterTests(DatabaseCache db) : IClassFixture<Da
             await reader.ListIndexesAsync(child, TestContext.Current.CancellationToken),
             ix => ix.Kind == IndexKind.ForeignKey);
 
-        // Cascade flags are emitted only on the FK (child) side.
+        // Both linked entries carry the native cascade flags.
         Assert.True(childFk.CascadeUpdates);
         Assert.True(childFk.CascadeDeletes);
-        Assert.False(parentFk.CascadeUpdates);
-        Assert.False(parentFk.CascadeDeletes);
+        Assert.True(parentFk.CascadeUpdates);
+        Assert.True(parentFk.CascadeDeletes);
     }
 
     [Fact]

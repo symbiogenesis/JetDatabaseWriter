@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
@@ -245,6 +246,91 @@ public sealed class RelationshipCatalogIdentityTests(DatabaseCache db) : IClassF
         }
 
         await AssertSystemIndexesAsync(stream);
+    }
+
+    [Theory]
+    [InlineData(WriteMode.Direct, "create")]
+    [InlineData(WriteMode.Direct, "rename")]
+    [InlineData(WriteMode.Direct, "rewrite")]
+    [InlineData(WriteMode.AutoCommit, "create")]
+    [InlineData(WriteMode.AutoCommit, "rename")]
+    [InlineData(WriteMode.AutoCommit, "rewrite")]
+    [InlineData(WriteMode.ExplicitCommit, "create")]
+    [InlineData(WriteMode.ExplicitCommit, "rename")]
+    [InlineData(WriteMode.ExplicitCommit, "rewrite")]
+    public async Task UnsupportedDatabaseNameSortOrder_RefusesBeforeMutation(WriteMode mode, string operation)
+    {
+        await using MemoryStream stream = await this.CreateAsync(DatabaseFormat.AceAccdb);
+        byte[] image = stream.ToArray();
+        EncryptionManager.TransformHeaderMask(image, DatabaseFormat.AceAccdb);
+        BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(0x6E, 2), 0x0411);
+        EncryptionManager.TransformHeaderMask(image, DatabaseFormat.AceAccdb);
+        stream.Position = 0;
+        await stream.WriteAsync(image, Ct);
+        byte[] before = stream.ToArray();
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(stream, mode))
+        {
+            await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
+            {
+                Func<Task> mutation = operation switch
+                {
+                    "create" => async () => await writer.CreateRelationshipAsync(new("FK_New", "P", "Id", "C", "ParentId"), Ct),
+                    "rename" => async () => await writer.RenameRelationshipAsync(Relationship, "FK_Renamed", Ct),
+                    _ => async () => await writer.AddColumnAsync("P", new("Extra", typeof(int)), Ct),
+                };
+                JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(mutation);
+                Assert.Equal(JetErrorCode.UnsupportedTextCollation, error.ErrorCode);
+                Assert.Equal(before, stream.ToArray());
+            });
+        }
+
+        Assert.Equal(before, stream.ToArray());
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task RenameAcrossNativeNameSortBoundaries_KeepsNativeOrder(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await ForeignKeyTestDatabase.CreateEmptyAsync(db, format);
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(stream, WriteMode.Direct))
+        {
+            await writer.CreateTableAsync("NameSortParent", [new("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+            await writer.CreateTableAsync("NameSortChild", [new("Id", typeof(int)), new("ParentId", typeof(int)), new("Note", typeof(int))], [new("A_C_Note", "Note"), new("PK_C", "Id") { IsPrimaryKey = true }, new("Z_C_Note", ["Note", "Id"])], Ct);
+            await writer.CreateRelationshipAsync(new("Rel", "NameSortParent", "Id", "NameSortChild", "ParentId"), Ct);
+        }
+
+        string previous = "Rel";
+        foreach (string name in new[] { "ZZ_Rel", "AA_Rel", "A-Note", "A Note", "Aé" })
+        {
+            await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(stream, WriteMode.Direct))
+            {
+                await writer.RenameRelationshipAsync(previous, name, Ct);
+            }
+
+            string[] expected = name switch
+            {
+                "ZZ_Rel" => ["A_C_Note", "PK_C", "Z_C_Note", name],
+                "A Note" => [name, "A_C_Note", "PK_C", "Z_C_Note"],
+                "A-Note" when format == DatabaseFormat.Jet3Mdb => [name, "A_C_Note", "PK_C", "Z_C_Note"],
+                _ => ["A_C_Note", name, "PK_C", "Z_C_Note"],
+            };
+            stream.Position = 0;
+            await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
+            Assert.Equal(expected, (await reader.ListIndexesAsync("NameSortChild", Ct)).Select(index => index.Name));
+            previous = name;
+        }
+
+        await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(stream, WriteMode.Direct))
+        {
+            await writer.DropRelationshipAsync(previous, Ct);
+            await writer.CreateRelationshipAsync(new("AA_Rel", "NameSortParent", "Id", "NameSortChild", "ParentId"), Ct);
+        }
+
+        stream.Position = 0;
+        await using AccessReader finalReader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, Ct);
+        Assert.Equal(["A_C_Note", "AA_Rel", "PK_C", "Z_C_Note"], (await finalReader.ListIndexesAsync("NameSortChild", Ct)).Select(index => index.Name));
     }
 
     private static async Task AssertSystemIndexesAsync(MemoryStream stream)

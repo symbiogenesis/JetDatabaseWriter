@@ -742,13 +742,29 @@ internal sealed class IndexMaintainer(
             throw;
         }
 
-        if (!jet3 && HasAnyIndexPageGroup(rebuiltIndexPageGroups))
+        long[][] mapPageGroups = rebuiltIndexPageGroups;
+        if (jet3)
+        {
+            // Imported Jet3 map rows can be shared and remain unchanged. A new
+            // descriptor with an all-zero pointer needs its own initialized row;
+            // DAO otherwise refuses even reads of the rebuilt table's indexes.
+            mapPageGroups = CreateEmptyPageGroups(numRealIdx);
+            for (int realIdxNum = 0; realIdxNum < numRealIdx; realIdxNum++)
+            {
+                if (indexPointers[realIdxNum] == default)
+                {
+                    mapPageGroups[realIdxNum] = rebuiltIndexPageGroups[realIdxNum];
+                }
+            }
+        }
+
+        if (HasAnyIndexPageGroup(mapPageGroups))
         {
             long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
-            indexPointers = await dataPages.UpdateTableIndexUsageMapRowsAsync(usageMapPage, indexPointers, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
-            for (int realIdxNum = 0; realIdxNum < rebuiltIndexPageGroups.Length; realIdxNum++)
+            indexPointers = await dataPages.UpdateTableIndexUsageMapRowsAsync(usageMapPage, indexPointers, mapPageGroups, cancellationToken).ConfigureAwait(false);
+            for (int realIdxNum = 0; realIdxNum < mapPageGroups.Length; realIdxNum++)
             {
-                if (rebuiltIndexPageGroups[realIdxNum].Length == 0)
+                if (mapPageGroups[realIdxNum].Length == 0)
                 {
                     continue;
                 }

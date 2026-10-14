@@ -99,6 +99,7 @@ internal sealed class RelationshipManager(
         Guard.ThrowIfDisposed(this.pager.IsDisposed, this);
         cancellationToken.ThrowIfCancellationRequested();
 
+        this.ThrowIfRelationshipNameCollationUnsupported();
         await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
 
         // Validate referenced user tables exist and load their definitions.
@@ -291,6 +292,16 @@ internal sealed class RelationshipManager(
         return string.Join("|", components);
     }
 
+    /// <summary>Refuses unverified index-name ordering before relationship DDL writes any page.</summary>
+    /// <exception cref="JetLimitationException">The database sort order has no supported Access comparison keys.</exception>
+    private void ThrowIfRelationshipNameCollationUnsupported()
+    {
+        if (!this.format.DefaultTextSortOrder.IsSupported)
+        {
+            throw new JetLimitationException(JetErrorCode.UnsupportedTextCollation, "Relationship index names cannot be ordered with the database's unsupported text sort order.", errorInfo: new JetErrorInfo { ObjectName = "Relationship index names" });
+        }
+    }
+
     /// <summary>
     /// Refuses, before anything is read, a relationship that names something a
     /// Jet3 database's code page cannot store. <c>MSysRelationships</c> stores
@@ -379,6 +390,11 @@ internal sealed class RelationshipManager(
             {
                 keyColumns.Add(new RelationshipKeyColumn(row.SzRelationship, row.SzReferencedColumn));
             }
+        }
+
+        if (fkEntries.Count > 0)
+        {
+            this.ThrowIfRelationshipNameCollationUnsupported();
         }
 
         return new RelationshipRewriteState(tableName, tdefPage, fkEntries, keyColumns);
@@ -754,7 +770,7 @@ internal sealed class RelationshipManager(
     //   • RenameRelationshipAsync rewrites MSysRelationships as live rows
     //     with szRelationship replaced on every match and updates the
     //     matching FK logical-idx name cookie on each side's TDEF through the
-    //     logical-chain writer (on Jet3 the entry also moves to its new name's
+    //     logical-chain writer (the entry also moves to its new name's
     //     sorted position). Relationship Type=8 MSysObjects identities are
     //     validated before mutation. Rename retains the object's identity and
     //     permissions; drop releases only that object and its matching ACE rows.
@@ -876,6 +892,7 @@ internal sealed class RelationshipManager(
             return; // No-op; matches Microsoft Access' designer behaviour.
         }
 
+        this.ThrowIfRelationshipNameCollationUnsupported();
         await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
 
         long msysRelTdefPage = await this.catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, cancellationToken).ConfigureAwait(false);

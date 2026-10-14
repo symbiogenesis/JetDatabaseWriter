@@ -12,6 +12,8 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -21,7 +23,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// Foreign-key logical-index entries on Jet3 (Access 97) databases. The
 /// writer emits them in the shape Access 97 wrote in indexTestV1997.mdb: a
 /// 20-byte entry with no cookie, a 39-byte real index with <c>flags</c> 0x00
-/// and <c>used_pages</c> 0, names in a 1-byte-length ANSI record inserted in
+/// and an initialized <c>used_pages</c> map, names in a 1-byte-length ANSI record inserted in
 /// case-insensitive name order, the parent side sharing its primary-key real
 /// index, and the cascade flags on both sides. Each test starts from a copy
 /// of that fixture, whose <c>Table2</c> (keyed on <c>id</c>) is already the
@@ -59,7 +61,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         IndexMetadata parentFk = Assert.Single(parentIndexes, i => i.Kind == IndexKind.ForeignKey && i.RelatedTablePage == childPage);
         IndexMetadata childFk = Assert.Single(childIndexes, i => i.Kind == IndexKind.ForeignKey);
-        Assert.Equal(".rB", parentFk.Name);
+        Assert.Equal(".rD", parentFk.Name);
         Assert.Equal(Relationship, childFk.Name);
         Assert.Equal(ParentKey, Assert.Single(parentFk.Columns).Name);
         Assert.Equal("ParentId", Assert.Single(childFk.Columns).Name);
@@ -110,6 +112,8 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         TDefIndexSection parentBefore = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection childBefore = await this.ReadIndexSectionAsync(stream, Child);
+        Dictionary<UsageMapPointer, byte[]> childMapsBefore = await this.ReadIndexMapRowsAsync(stream, Child);
+        Assert.NotEmpty(childMapsBefore);
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId") { CascadeUpdates = true }, this.ct);
@@ -117,10 +121,16 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         TDefIndexSection parent = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection child = await this.ReadIndexSectionAsync(stream, Child);
+        Dictionary<UsageMapPointer, byte[]> childMapsAfter = await this.ReadIndexMapRowsAsync(stream, Child);
+        foreach ((UsageMapPointer mapPointer, byte[] rowBytes) in childMapsBefore)
+        {
+            Assert.Equal(rowBytes, childMapsAfter[mapPointer]);
+        }
+
         IndexLayout layout = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).Index;
 
         // Names in case-insensitive order, each a 1-byte length and ANSI.
-        Assert.Equal([".rB", ".rC", "id", "PrimaryKey"], parent.Names);
+        Assert.Equal([".rC", ".rD", "id", "PrimaryKey"], parent.Names);
         Assert.Equal(["AIdx", "PrimaryKey", Relationship, "ZIdx"], child.Names);
         Assert.Equal((byte)Relationship.Length, child.Td[child.NameStarts[2]]);
         Assert.Equal("Rel"u8.ToArray(), child.Td.AsSpan(child.NameStarts[2] + 1, 3).ToArray());
@@ -129,7 +139,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(childBefore.NumRealIdx + 1, child.NumRealIdx);
         Assert.Equal(parentBefore.NumRealIdx, parent.NumRealIdx);
         Assert.True(layout.TryReadLogicalEntry(child.Td, child.LogIdxStart, 2, out LogicalIdxEntry childEntry));
-        Assert.True(layout.TryReadLogicalEntry(parent.Td, parent.LogIdxStart, 0, out LogicalIdxEntry parentEntry));
+        Assert.True(layout.TryReadLogicalEntry(parent.Td, parent.LogIdxStart, 1, out LogicalIdxEntry parentEntry));
         Assert.Equal(child.LogIdxStart + (2 * 20), childEntry.FieldsOffset);
         Assert.Equal(3, childEntry.IndexNum);
         Assert.Equal(childBefore.NumRealIdx, childEntry.IndexNum2);
@@ -150,23 +160,39 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(0, parentEntry.CascadeDels);
 
         // The existing entries keep their bytes, in their old order.
-        Assert.Equal(parentBefore.EntryBytes, parent.EntryBytes.Skip(1));
+        Assert.Equal(parentBefore.EntryBytes, [parent.EntryBytes[0], .. parent.EntryBytes.Skip(2)]);
         Assert.Equal(childBefore.EntryBytes, [.. child.EntryBytes.Take(2), .. child.EntryBytes.Skip(3)]);
 
-        // The new real index: 39 bytes, col_map first, used_pages 0, flags 0x00,
+        // The new real index: 39 bytes, col_map first, a live usage map, flags 0x00,
         // and first_dp naming a leaf of the child; its statistics slot is zero.
         int phys = layout.RealIdxPhysOffset(child.RealIdxDescStart, childEntry.IndexNum2);
         Assert.True(layout.TryReadRealIdxSlotWithKeyColumns(child.Td, child.RealIdxDescStart, childEntry.IndexNum2, out RealIdxSlot slot, out List<KeyColumn> keyColumns));
         Assert.Equal(phys + 34, slot.FirstDpOffset);
         Assert.Equal(phys + 38, layout.FlagsAbsoluteOffset(phys));
         Assert.Equal([new KeyColumn(1, true)], keyColumns);
-        Assert.Equal(0, Ri32(child.Td, phys + 30));
+        Assert.True(UsageMap.TryReadPointer(child.Td, phys + 30, out UsageMapPointer pointer));
+        Assert.True(pointer.PageNumber > 0);
         Assert.Equal(0x00, slot.Flags);
         await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct))
         {
             byte[] leaf = await harness.ReadPageCopyAsync((uint)Ri32(child.Td, slot.FirstDpOffset), this.ct);
             Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, leaf[0]);
             Assert.Equal(child.Page, Ri32(leaf, 4));
+            byte[] map = await harness.ReadPageCopyAsync(pointer.PageNumber, this.ct);
+            Assert.True(UsageMap.TryGetRowBound(map, harness.Database.Format.DataPage, harness.Database.Format.PageSize, pointer.RowIndex, out RowBound bound));
+            var mappedPages = new List<long>();
+            Assert.True(await UsageMap.TryEnumeratePagesAsync(
+                map,
+                bound,
+                harness.Database.Format.PageSize,
+                harness.Database.Pages.PageCount,
+                minimumPageNumber: 1,
+                strict: true,
+                harness.Database.Pages.ReadPageAsync,
+                PageBuffers.Return,
+                mappedPages,
+                this.ct));
+            Assert.Equal([Ri32(child.Td, slot.FirstDpOffset)], mappedPages);
         }
 
         int statistics = 43 + (childEntry.IndexNum2 * 8);
@@ -225,11 +251,10 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     /// <summary>
     /// A table with a foreign-key entry takes the full index rebuild on every
     /// insert, update and delete (bail C1c), and each rebuild places its
-    /// multi-page trees on new pages. The trees it replaces must go back to
-    /// the global usage map. Jet4 and ACCDB find them through the index usage
-    /// maps; Jet3 keeps none, so before, every mutation of a Jet3 table in a
-    /// writer-created relationship left both of its old trees allocated and
-    /// unreachable, and the file grew with each one.
+    /// multi-page trees on new pages. Replaced pages must return to the global
+    /// usage map, except pages named by preserved Jet3 index maps. Those map
+    /// rows and their pages must remain intact; later rebuilds must not leave
+    /// any additional unreachable pages allocated.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
@@ -260,6 +285,15 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         }
 
         long childPage = await this.GetTDefPageAsync(stream, Child);
+        var preservedMapPages = new HashSet<long>();
+        Dictionary<UsageMapPointer, byte[]> preservedMapRows = jet3
+            ? await this.ReadIndexMapRowsAsync(stream, Child, preservedMapPages)
+            : [];
+        if (jet3)
+        {
+            Assert.NotEmpty(preservedMapPages);
+        }
+
         SortedSet<long> unreachableBefore;
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
         {
@@ -293,11 +327,29 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             }
         }
 
+        if (jet3)
+        {
+            var mappedPagesAfter = new HashSet<long>();
+            Dictionary<UsageMapPointer, byte[]> mapRowsAfter = await this.ReadIndexMapRowsAsync(stream, Child, mappedPagesAfter);
+            Assert.Equal(preservedMapRows.Count, mapRowsAfter.Count);
+            foreach ((UsageMapPointer pointer, byte[] row) in preservedMapRows)
+            {
+                Assert.Equal(row, mapRowsAfter[pointer]);
+            }
+
+            Assert.True(preservedMapPages.SetEquals(mappedPagesAfter));
+        }
+
         await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
         {
             SortedSet<long> unreachableAfter = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
-            long[] leaked = [.. unreachableAfter.Except(unreachableBefore)];
+            long[] leaked = [.. unreachableAfter.Except(unreachableBefore).Except(preservedMapPages)];
             Assert.True(leaked.Length == 0, $"{leaked.Length} replaced index pages of the child stayed allocated: {string.Join(", ", leaked)}.");
+            foreach (long mappedPage in preservedMapPages)
+            {
+                Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(mappedPage, this.ct));
+            }
+
             foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, childPage, this.ct))
             {
                 await IndexLeafChain.AssertCoversLiveRowsAsync(harness.Database, childPage, root, this.ct);
@@ -389,7 +441,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         TDefIndexSection parent = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection child = await this.ReadIndexSectionAsync(stream, Child);
         Assert.Equal(["PrimaryKey", "Zedé"], child.Names);
-        Assert.Equal([".rB", ".rC", "id", "PrimaryKey"], parent.Names);
+        Assert.Equal([".rC", ".rD", "id", "PrimaryKey"], parent.Names);
         Assert.Equal(4, child.Td[child.NameStarts[1]]);
         Assert.Equal(0xE9, child.Td[child.NameStarts[1] + 4]);
         Assert.Equal(10, child.TrailingLength);
@@ -397,7 +449,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(child.NamesEnd + child.TrailingLength - 8, Ri32(child.Td, 8));
         Assert.Equal(parent.NamesEnd + parent.TrailingLength - 8, Ri32(parent.Td, 8));
 
-        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rB");
+        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rD");
         IndexMetadata childFk = Assert.Single(await this.ListIndexesAsync(stream, Child), i => i.Kind == IndexKind.ForeignKey);
         Assert.Equal("Zedé", childFk.Name);
         Assert.Equal(childFk.IndexNumber, parentFk.RelatedIndexNumber);
@@ -498,7 +550,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         Assert.Equal(2, await this.CountTDefPagesAsync(stream, Child));
         IndexMetadata childFk = Assert.Single(await this.ListIndexesAsync(stream, Child), i => i.Kind == IndexKind.ForeignKey);
-        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rB");
+        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rD");
         Assert.Equal(childFk.IndexNumber, parentFk.RelatedIndexNumber);
         Assert.Equal(parentFk.IndexNumber, childFk.RelatedIndexNumber);
 
@@ -518,6 +570,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         TDefIndexSection parentBefore = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection childBefore = await this.ReadIndexSectionAsync(stream, Child);
+        byte[] bytesBefore = stream.ToArray();
         await using (WriterHarness writer = await OpenHarnessAsync(stream))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
@@ -532,8 +585,60 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
         Assert.Equal(parentBefore.Td, (await this.ReadIndexSectionAsync(stream, Parent)).Td);
         Assert.Equal(childBefore.Td, (await this.ReadIndexSectionAsync(stream, Child)).Td);
+        Assert.Equal(bytesBefore, stream.ToArray());
         await using AccessReader reader = await AccessReader.OpenAsync(stream, ReaderOptions, leaveOpen: true, this.ct);
         Assert.DoesNotContain(await reader.ListRelationshipsAsync(this.ct), r => r.Name == Relationship);
+    }
+
+    [Theory]
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
+    public async Task CreateRelationship_Jet3_FullMapPage_RefusesWithoutChangingBytes(WriteMode mode)
+    {
+        await using MemoryStream stream = await this.CopyFixtureAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await CreateChildAsync(writer, this.ct);
+        }
+
+        TDefIndexSection child = await this.ReadIndexSectionAsync(stream, Child);
+        int mapPage = UsageMap.ReadUInt24(child.Td, 36);
+        byte[] map;
+        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct))
+        {
+            map = await harness.ReadPageCopyAsync(mapPage, this.ct);
+        }
+
+        int rows = Ru16(map, 8);
+        int firstRow = Constants.PageSizes.Jet3;
+        for (int row = 0; row < rows; row++)
+        {
+            firstRow = Math.Min(firstRow, Ru16(map, 10 + (row * 2)) & Constants.DataPage.RowOffsetMask);
+        }
+
+        int fillerStart = 10 + ((rows + 1) * 2) + 8;
+        Assert.True(fillerStart < firstRow);
+        Array.Clear(map, fillerStart, firstRow - fillerStart);
+        Wu16(map, 10 + (rows * 2), fillerStart);
+        Wu16(map, 8, rows + 1);
+        Wu16(map, 2, 8);
+        stream.Position = (long)mapPage * Constants.PageSizes.Jet3;
+        await stream.WriteAsync(map, this.ct);
+        byte[] before = stream.ToArray();
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
+        {
+            await using JetTransaction? transaction = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
+            _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+                await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct));
+            if (transaction is not null)
+            {
+                Assert.Equal(0, transaction.JournaledPageCount);
+                await transaction.CommitAsync(this.ct);
+            }
+        }
+
+        Assert.Equal(before, stream.ToArray());
     }
 
     [Theory]
@@ -554,7 +659,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             }
         }
 
-        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rB");
+        IndexMetadata parentFk = Assert.Single(await this.ListIndexesAsync(stream, Parent), i => i.Name == ".rD");
         IndexMetadata childFk = Assert.Single(await this.ListIndexesAsync(stream, Child), i => i.Kind == IndexKind.ForeignKey);
         Assert.Equal(childFk.IndexNumber, parentFk.RelatedIndexNumber);
         Assert.Equal(parentFk.IndexNumber, childFk.RelatedIndexNumber);
@@ -753,6 +858,44 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
                 await IndexLeafChain.AssertCoversLiveRowsAsync(db, entry.TDefPage, index.FirstDp, this.ct);
             }
         }
+    }
+
+    private async Task<Dictionary<UsageMapPointer, byte[]>> ReadIndexMapRowsAsync(MemoryStream stream, string table, HashSet<long>? mappedPages = null)
+    {
+        TDefIndexSection section = await this.ReadIndexSectionAsync(stream, table);
+        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        var rows = new Dictionary<UsageMapPointer, byte[]>();
+        for (int index = 0; index < section.NumRealIdx; index++)
+        {
+            int physical = harness.Database.Format.Index.RealIdxPhysOffset(section.RealIdxDescStart, index);
+            Assert.True(UsageMap.TryReadPointer(section.Td, physical + 30, out UsageMapPointer pointer));
+            if (pointer.PageNumber == 0)
+            {
+                continue;
+            }
+
+            byte[] map = await harness.ReadPageCopyAsync(pointer.PageNumber, this.ct);
+            Assert.True(UsageMap.TryGetRowBound(map, harness.Database.Format.DataPage, harness.Database.Format.PageSize, pointer.RowIndex, out RowBound bound));
+            rows[pointer] = map.AsSpan(bound.RowStart, bound.RowSize).ToArray();
+            if (mappedPages is not null)
+            {
+                var pages = new List<long>();
+                Assert.True(await UsageMap.TryEnumeratePagesAsync(
+                    map,
+                    bound,
+                    harness.Database.Format.PageSize,
+                    harness.Database.Pages.PageCount,
+                    minimumPageNumber: 1,
+                    strict: true,
+                    harness.Database.Pages.ReadPageAsync,
+                    PageBuffers.Return,
+                    pages,
+                    this.ct));
+                mappedPages.UnionWith(pages);
+            }
+        }
+
+        return rows;
     }
 
     private async Task<TDefIndexSection> ReadIndexSectionAsync(MemoryStream stream, string table)
