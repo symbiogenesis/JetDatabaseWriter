@@ -31,6 +31,9 @@ $gh = if ($ghCommand) { $ghCommand.Name } elseif ($env:ProgramFiles) { Join-Path
 if (-not $gh -or (-not $ghCommand -and -not (Test-Path -LiteralPath $gh))) { throw 'GitHub CLI is required to submit a candidate.' }
 $arguments = @('workflow', 'run', 'candidate.yml', '--ref', 'main', '--json')
 if ($Repo) { $arguments += @('--repo', $Repo) }
-$inputs | & $gh @arguments
-if ($LASTEXITCODE -ne 0) { throw "Candidate dispatch failed. Patch retained at $patchPath." }
+Push-Location $repoRoot
+try {
+    $inputs | & $gh @arguments
+    if ($LASTEXITCODE -ne 0) { throw "Candidate dispatch failed. Patch retained at $patchPath." }
+} finally { Pop-Location }
 Write-Host "Candidate dispatched on main with base $baseSha. Local patch: $patchPath"

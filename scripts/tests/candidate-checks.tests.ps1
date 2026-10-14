@@ -20,7 +20,11 @@ function git {
     $candidateContext.Calls.Add([pscustomobject]@{ Tool = 'git'; Arguments = $arguments })
     $global:LASTEXITCODE = 0
     if ($arguments -contains 'merge-base') { $global:LASTEXITCODE = if ($candidateContext.Ancestor) { 0 } else { 1 } }
-    elseif ($arguments -contains '--name-only') { 'JetDatabaseWriter/Changed.cs' }
+    elseif ($arguments -contains '--name-only') {
+        Assert-Check ($arguments -contains '-z') 'Changed paths must bypass Git quoting for Unicode and spaces.'
+        $path = @($arguments | Where-Object { $_.StartsWith('--output=', [StringComparison]::Ordinal) })[0].Substring(9)
+        [IO.File]::WriteAllText($path, "JetDatabaseWriter/Changed.cs$([char]0)JetDatabaseWriter/Café File.cs$([char]0)", [Text.UTF8Encoding]::new($false))
+    }
     elseif ($arguments -contains 'diff') {
         $output = @($arguments | Where-Object { $_.StartsWith('--output=', [StringComparison]::Ordinal) })
         if ($output.Count) { [IO.File]::WriteAllText($output[0].Substring(9), 'Reviewable patch') }
@@ -65,6 +69,7 @@ foreach ($command in $commands | Select-Object -Skip 1) {
         Assert-Check ($command.Arguments -contains '--no-restore' -and $command.Arguments -contains 'Release') 'Both compiler passes must cover the Release solution without restoring again.'
     } else {
         Assert-Check ($command.Arguments -contains '--no-restore' -and $command.Arguments -contains '--include' -and $command.Arguments -contains 'JetDatabaseWriter/Changed.cs') 'Format only changed source files without restoring.'
+        Assert-Check ($command.Arguments -contains 'JetDatabaseWriter/Café File.cs') 'Unicode and spaced file names must remain single formatter arguments.'
         Assert-Check ($command.Configuration -eq 'Release') 'Formatter workspace must use Release configuration.'
     }
 }
@@ -82,4 +87,12 @@ Assert-Check (@($candidateContext.Calls | Where-Object Tool -eq 'dotnet').Count 
 $errorText = Invoke-Scenario 'invalid-patch' -EncodedPatch 'invalid!'
 Assert-Check ([bool]$errorText) 'Malformed base64 must be refused.'
 Assert-Check (@($candidateContext.Calls | Where-Object Tool -eq 'dotnet').Count -eq 0) 'Malformed input must be refused before any build.'
+$candidateContext.Calls.Clear()
+$candidateContext.Ancestor = $true
+& $subject -BaseSha ('a' * 40) -EncodedPatch ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("diff --git a/test b/test`n"))) -OutputDirectory (Join-Path $testRoot 'prepare') -PrepareOnly
+Assert-Check (@($candidateContext.Calls | Where-Object Tool -eq 'dotnet').Count -eq 0) 'Preparing a candidate must allow SDK installation before any dotnet command.'
+$candidateContext.Calls.Clear()
+$candidateContext.Failure = ''
+& $subject -BaseSha ('a' * 40) -OutputDirectory (Join-Path $testRoot 'check') -CheckOnly
+Assert-Check (@($candidateContext.Calls | Where-Object { $_.Tool -eq 'git' -and $_.Arguments -contains 'apply' }).Count -eq 0) 'The prepared candidate must not be applied again.'
 Write-Host "All candidate checks passed. Artifacts: $testRoot"

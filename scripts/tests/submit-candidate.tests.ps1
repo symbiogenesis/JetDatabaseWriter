@@ -25,14 +25,20 @@ function git {
 function gh {
     $arguments = [string[]]$args
     $body = @($input) -join "`n"
-    $dispatchContext.Calls.Add([pscustomobject]@{ Arguments = $arguments; Body = $body })
+    $dispatchContext.Calls.Add([pscustomobject]@{ Arguments = $arguments; Body = $body; Directory = (Get-Location).Path })
     $global:LASTEXITCODE = 0
 }
 
-& $subject -Repo 'owner/repo'
+Push-Location ([IO.Path]::GetTempPath())
+try {
+    $callerDirectory = (Get-Location).Path
+    & $subject -Repo 'owner/repo'
+    Assert-Check ((Get-Location).Path -eq $callerDirectory) 'Candidate submission must restore the caller directory.'
+} finally { Pop-Location }
 Assert-Check ($dispatchContext.Calls.Count -eq 1) 'One candidate must produce exactly one dispatch.'
 $call = $dispatchContext.Calls[0]
 Assert-Check (($call.Arguments -join ' ') -eq 'workflow run candidate.yml --ref main --json --repo owner/repo') 'Candidates must dispatch only the main workflow.'
+Assert-Check ($call.Directory -eq (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent)) 'GitHub CLI must resolve the intended repository even when called from outside it.'
 $body = $call.Body | ConvertFrom-Json
 Assert-Check ($body.base_sha -eq ('a' * 40)) 'Dispatch must include an immutable base SHA.'
 Assert-Check ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($body.patch_base64)) -eq $dispatchContext.Patch) 'Patch bytes must survive JSON and base64 encoding.'
@@ -52,4 +58,6 @@ Assert-Check ($workflow.Contains("github.ref == 'refs/heads/main'")) 'Candidate 
 Assert-Check ($workflow.Contains('contents: read') -and $workflow.Contains('persist-credentials: false')) 'Candidate checks must not retain repository write credentials.'
 Assert-Check ($workflow.Contains('CANDIDATE_PATCH: ${{ inputs.patch_base64 }}') -and -not $workflow.Contains('-EncodedPatch ${{')) 'Patch input must pass as data through an environment variable.'
 Assert-Check ($workflow.Contains('name: candidate-results') -and $workflow.Contains('if: ${{ !cancelled() }}')) 'Failed candidates must retain diagnostic artifacts.'
+Assert-Check ($workflow.IndexOf('name: Prepare candidate', [StringComparison]::Ordinal) -lt $workflow.IndexOf('name: Setup candidate SDK', [StringComparison]::Ordinal)) 'The exact candidate SDK must be selected after applying the patch.'
+Assert-Check ($workflow.Contains('Copy-Item -LiteralPath ./scripts/run-candidate-checks.ps1') -and $workflow.Contains('-CheckOnly -RepositoryRoot $env:GITHUB_WORKSPACE')) 'The coordinator must remain from trusted main when the patch changes it or checks out older main.'
 Write-Host 'All candidate dispatch checks passed.'

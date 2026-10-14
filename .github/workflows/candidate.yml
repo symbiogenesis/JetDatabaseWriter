@@ -30,7 +30,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Setup .NET
+      - name: Prepare candidate with trusted coordinator
+        shell: pwsh
+        env:
+          CANDIDATE_BASE: ${{ inputs.base_sha }}
+          CANDIDATE_PATCH: ${{ inputs.patch_base64 }}
+        run: |
+          $coordinator = "$env:RUNNER_TEMP/run-candidate-checks.ps1"
+          Copy-Item -LiteralPath ./scripts/run-candidate-checks.ps1 -Destination $coordinator
+          & $coordinator -BaseSha $env:CANDIDATE_BASE -EncodedPatch $env:CANDIDATE_PATCH -PrepareOnly -RepositoryRoot $env:GITHUB_WORKSPACE -OutputDirectory "$env:RUNNER_TEMP/candidate-results"
+      - name: Setup candidate SDK
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
@@ -39,10 +48,9 @@ jobs:
         shell: pwsh
         env:
           CANDIDATE_BASE: ${{ inputs.base_sha }}
-          CANDIDATE_PATCH: ${{ inputs.patch_base64 }}
         run: >-
-          ./scripts/run-candidate-checks.ps1 -BaseSha $env:CANDIDATE_BASE
-          -EncodedPatch $env:CANDIDATE_PATCH
+          & "$env:RUNNER_TEMP/run-candidate-checks.ps1" -BaseSha $env:CANDIDATE_BASE
+          -CheckOnly -RepositoryRoot $env:GITHUB_WORKSPACE
           -OutputDirectory "$env:RUNNER_TEMP/candidate-results"
       - name: Upload diagnostics and reviewable patches
         if: ${{ !cancelled() }}
