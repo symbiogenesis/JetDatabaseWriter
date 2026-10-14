@@ -594,6 +594,81 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     [InlineData(WriteMode.Direct)]
     [InlineData(WriteMode.AutoCommit)]
     [InlineData(WriteMode.ExplicitCommit)]
+    public async Task CreateRelationship_Jet3_FullFirstMapPage_UsesAvailableExistingPage(WriteMode mode)
+    {
+        await using MemoryStream stream = await this.CopyFixtureAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            var columns = new List<ColumnDefinition> { new("Id", typeof(int)), new("ParentId", typeof(int)) };
+            var indexes = new List<IndexDefinition> { new("PK", "Id") { IsPrimaryKey = true } };
+            for (int column = 2; column < 50; column++)
+            {
+                string name = "C" + column.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                columns.Add(new ColumnDefinition(name, typeof(int)));
+                if (column < 31)
+                {
+                    indexes.Add(new IndexDefinition("IX_" + name, name));
+                }
+            }
+
+            await writer.CreateTableAsync(Child, columns, indexes, this.ct);
+        }
+
+        TDefIndexSection childBefore = await this.ReadIndexSectionAsync(stream, Child);
+        Assert.Equal(30, childBefore.NumRealIdx);
+        Dictionary<UsageMapPointer, byte[]> mapsBefore = await this.ReadIndexMapRowsAsync(stream, Child);
+        int[] mapPages = [.. mapsBefore.Keys.Select(pointer => pointer.PageNumber).Distinct()];
+        Assert.Equal(3, mapPages.Length);
+        Assert.Equal(UsageMap.ReadUInt24(childBefore.Td, 36), mapPages[0]);
+        var unchangedPages = new Dictionary<int, byte[]>();
+        int availableRow;
+        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct))
+        {
+            foreach (int pageNumber in mapPages.Take(2))
+            {
+                byte[] page = await harness.ReadPageCopyAsync(pageNumber, this.ct);
+                Assert.Equal(15, Ru16(page, 8));
+                unchangedPages.Add(pageNumber, page);
+            }
+
+            availableRow = Ru16(await harness.ReadPageCopyAsync(mapPages[2], this.ct), 8);
+            Assert.Equal(2, availableRow);
+        }
+
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
+        {
+            await using JetTransaction? transaction = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
+            await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(this.ct);
+            }
+        }
+
+        TDefIndexSection childAfter = await this.ReadIndexSectionAsync(stream, Child);
+        Assert.Equal(childBefore.NumRealIdx + 1, childAfter.NumRealIdx);
+        IndexLayout layout = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).Index;
+        int physical = layout.RealIdxPhysOffset(childAfter.RealIdxDescStart, childBefore.NumRealIdx);
+        Assert.True(UsageMap.TryReadPointer(childAfter.Td, physical + 30, out UsageMapPointer newPointer));
+        Assert.Equal(new UsageMapPointer(availableRow, mapPages[2]), newPointer);
+        Dictionary<UsageMapPointer, byte[]> mapsAfter = await this.ReadIndexMapRowsAsync(stream, Child);
+        Assert.Equal(mapsBefore.Count + 1, mapsAfter.Count);
+        foreach ((UsageMapPointer pointer, byte[] row) in mapsBefore)
+        {
+            Assert.Equal(row, mapsAfter[pointer]);
+        }
+
+        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        foreach ((int pageNumber, byte[] page) in unchangedPages)
+        {
+            Assert.Equal(page, await reader.ReadPageCopyAsync(pageNumber, this.ct));
+        }
+    }
+
+    [Theory]
+    [InlineData(WriteMode.Direct)]
+    [InlineData(WriteMode.AutoCommit)]
+    [InlineData(WriteMode.ExplicitCommit)]
     public async Task CreateRelationship_Jet3_FullMapPage_RefusesWithoutChangingBytes(WriteMode mode)
     {
         await using MemoryStream stream = await this.CopyFixtureAsync();

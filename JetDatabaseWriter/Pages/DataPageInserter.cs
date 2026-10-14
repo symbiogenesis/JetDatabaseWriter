@@ -389,15 +389,29 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
     {
         var result = new UsageMapPointer[indexPointers.Count];
         var groupsByPage = new Dictionary<long, List<int>>();
+        var candidatePages = new List<long> { fallbackUsageMapPageNumber };
+        var seenPages = new HashSet<long> { fallbackUsageMapPageNumber };
+        var missingGroups = new List<int>();
         for (int index = 0; index < indexPointers.Count; index++)
         {
             result[index] = indexPointers[index];
+            long pageNumber = indexPointers[index].PageNumber;
+            if (pageNumber > 0 && seenPages.Add(pageNumber))
+            {
+                candidatePages.Add(pageNumber);
+            }
+
             if (indexPageGroups[index].Length == 0)
             {
                 continue;
             }
 
-            long pageNumber = indexPointers[index].PageNumber > 0 ? indexPointers[index].PageNumber : fallbackUsageMapPageNumber;
+            if (pageNumber == 0)
+            {
+                missingGroups.Add(index);
+                continue;
+            }
+
             if (!groupsByPage.TryGetValue(pageNumber, out List<int>? groups))
             {
                 groups = [];
@@ -405,6 +419,11 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
             }
 
             groups.Add(index);
+        }
+
+        if (missingGroups.Count > 0)
+        {
+            await this.AssignMissingIndexMapGroupsAsync(candidatePages, missingGroups, groupsByPage, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((long pageNumber, List<int> groups) in groupsByPage)
@@ -471,5 +490,63 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         }
 
         return result;
+    }
+
+    private async ValueTask AssignMissingIndexMapGroupsAsync(
+        List<long> candidatePages,
+        List<int> missingGroups,
+        Dictionary<long, List<int>> groupsByPage,
+        CancellationToken cancellationToken)
+    {
+        // The table map page can be full while another existing index-map page
+        // has room. Plan every append before writing any maps, in stable order:
+        // the table fallback first, then pages named by the original descriptors.
+        int nextGroup = 0;
+        foreach (long pageNumber in candidatePages)
+        {
+            byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                int rowCount = Ru16(page, format.DataPage.NumRows);
+                int slotTableEnd = format.DataPage.RowsStart + (rowCount * 2);
+                if (page[0] != Constants.PageTypes.Data || rowCount > byte.MaxValue + 1 || slotTableEnd > format.PageSize)
+                {
+                    throw new InvalidDataException("The index usage-map page has an invalid row directory.");
+                }
+
+                int rowStart = this.GetFirstRowStart(page, rowCount);
+                if (rowStart < slotTableEnd)
+                {
+                    throw new InvalidDataException("The index usage-map page has invalid row bounds.");
+                }
+
+                int capacity = Math.Min(byte.MaxValue + 1 - rowCount, (rowStart - slotTableEnd) / (format.UsageMapRowSize + 2));
+                if (capacity > 0)
+                {
+                    if (!groupsByPage.TryGetValue(pageNumber, out List<int>? groups))
+                    {
+                        groups = [];
+                        groupsByPage.Add(pageNumber, groups);
+                    }
+
+                    while (capacity > 0 && nextGroup < missingGroups.Count)
+                    {
+                        groups.Add(missingGroups[nextGroup++]);
+                        capacity--;
+                    }
+                }
+
+                if (nextGroup == missingGroups.Count)
+                {
+                    return;
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        throw new InvalidDataException("The usage-map pages have no room for the index rows.");
     }
 }
