@@ -12,7 +12,7 @@ param([string] $Base = 'origin/main', [string] $Repo)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$baseSha = git -C $repoRoot rev-parse --verify ($Base + '^{commit}')
+$baseSha = git -C $repoRoot rev-parse --verify --end-of-options ($Base + '^{commit}')
 if ($LASTEXITCODE -ne 0 -or $baseSha -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve the candidate base.' }
 $untracked = @(git -C $repoRoot ls-files --others --exclude-standard)
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect untracked files.' }

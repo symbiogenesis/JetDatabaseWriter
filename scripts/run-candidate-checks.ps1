@@ -78,7 +78,10 @@ try {
     Write-Host 'Candidate compilation and analysis passed. Review format-fixes.patch before integrating; main still requires CI.'
 } finally {
     $env:Configuration = $configuration
-    git -C $repoRoot diff --binary ('--output=' + (Join-Path $output 'format-fixes.patch')) --
-    git -C $repoRoot diff --binary $BaseSha ('--output=' + (Join-Path $output 'candidate.patch')) --
-    Pop-Location
+    try {
+        git -C $repoRoot diff --binary ('--output=' + (Join-Path $output 'format-fixes.patch')) --
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot export the formatter review patch.' }
+        git -C $repoRoot diff --binary $BaseSha ('--output=' + (Join-Path $output 'candidate.patch')) --
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot export the complete candidate review patch.' }
+    } finally { Pop-Location }
 }

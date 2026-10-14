@@ -9,7 +9,7 @@ $scripts = Join-Path $testRoot 'fixture/scripts'
 [IO.Directory]::CreateDirectory($scripts) | Out-Null
 $subject = Join-Path $scripts 'run-candidate-checks.ps1'
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../run-candidate-checks.ps1') -Destination $subject
-$candidateContext = [pscustomobject]@{ Calls = [Collections.Generic.List[object]]::new(); Failure = ''; Ancestor = $true }
+$candidateContext = [pscustomobject]@{ Calls = [Collections.Generic.List[object]]::new(); Failure = ''; Ancestor = $true; ExportFails = $false }
 
 function Assert-Check([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -28,6 +28,7 @@ function git {
     elseif ($arguments -contains 'diff') {
         $output = @($arguments | Where-Object { $_.StartsWith('--output=', [StringComparison]::Ordinal) })
         if ($output.Count) { [IO.File]::WriteAllText($output[0].Substring(9), 'Reviewable patch') }
+        if ($candidateContext.ExportFails) { $global:LASTEXITCODE = 7 }
     }
     elseif ($arguments -contains 'apply') {
         Assert-Check ([IO.File]::ReadAllText($arguments[-1]) -eq "diff --git a/test b/test`n") 'The patch was not decoded exactly.'
@@ -44,10 +45,11 @@ function dotnet {
     $global:LASTEXITCODE = if ($candidateContext.Failure -eq $stage) { 7 } else { 0 }
 }
 
-function Invoke-Scenario([string] $Name, [string] $Failure = '', [bool] $Ancestor = $true, [string] $EncodedPatch = '') {
+function Invoke-Scenario([string] $Name, [string] $Failure = '', [bool] $Ancestor = $true, [string] $EncodedPatch = '', [bool] $ExportFails = $false) {
     $candidateContext.Calls.Clear()
     $candidateContext.Failure = $Failure
     $candidateContext.Ancestor = $Ancestor
+    $candidateContext.ExportFails = $ExportFails
     if (-not $EncodedPatch) { $EncodedPatch = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("diff --git a/test b/test`n")) }
     $caught = $null
     $configuration = $env:Configuration
@@ -87,6 +89,9 @@ Assert-Check (@($candidateContext.Calls | Where-Object Tool -eq 'dotnet').Count 
 $errorText = Invoke-Scenario 'invalid-patch' -EncodedPatch 'invalid!'
 Assert-Check ([bool]$errorText) 'Malformed base64 must be refused.'
 Assert-Check (@($candidateContext.Calls | Where-Object Tool -eq 'dotnet').Count -eq 0) 'Malformed input must be refused before any build.'
+$errorText = Invoke-Scenario 'failed-export' -ExportFails $true
+Assert-Check ($errorText.Contains('Cannot export')) 'Successful compiler checks must not conceal lost review patches.'
+$candidateContext.ExportFails = $false
 $candidateContext.Calls.Clear()
 $candidateContext.Ancestor = $true
 & $subject -BaseSha ('a' * 40) -EncodedPatch ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("diff --git a/test b/test`n"))) -OutputDirectory (Join-Path $testRoot 'prepare') -PrepareOnly
