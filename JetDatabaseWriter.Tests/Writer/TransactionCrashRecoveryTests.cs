@@ -21,7 +21,7 @@ public sealed class TransactionCrashRecoveryTests
     private const string ChildExplicit = "JDW_CRASH_TEST_EXPLICIT";
     private const string Method = "JetDatabaseWriter.Tests.Writer.TransactionCrashRecoveryTests.InterruptedWrites_RecoverExactOriginalBytes";
 
-    [Fact]
+    [Fact(DisableParallelization = true)]
     public async Task InterruptedWrites_RecoverExactOriginalBytes()
     {
         if (Environment.GetEnvironmentVariable(ChildPath) is { } childPath)
@@ -120,14 +120,14 @@ public sealed class TransactionCrashRecoveryTests
                 byte[] committed = await File.ReadAllBytesAsync(expectedPath, TestContext.Current.CancellationToken);
                 string committedPath = Path.Combine(directory, $"committed-{explicitTransaction}.accdb");
                 File.Copy(baselinePath, committedPath);
-                AssertCrashChild(committedPath, password, write: 0, explicitTransaction);
+                AssertCrashChild(committedPath, password, format, encrypted, write: 0, explicitTransaction);
                 Assert.False(File.Exists(committedPath + ".jdw-journal"));
                 Assert.Equal(committed, await File.ReadAllBytesAsync(committedPath, TestContext.Current.CancellationToken));
                 foreach (int write in new[] { 1, 3 })
                 {
                     string path = Path.Combine(directory, $"crash-{explicitTransaction}-{write}.accdb");
                     File.Copy(baselinePath, path);
-                    AssertCrashChild(path, password, write, explicitTransaction);
+                    AssertCrashChild(path, password, format, encrypted, write, explicitTransaction);
                     Assert.True(File.Exists(path + ".jdw-journal"), "The interrupted write must leave durable recovery evidence.");
                     await Assert.ThrowsAnyAsync<IOException>(async () =>
                     {
@@ -203,16 +203,25 @@ public sealed class TransactionCrashRecoveryTests
         await writer.InsertRowsAsync("CrashRows", rows, TestContext.Current.CancellationToken);
     }
 
-    private static void AssertCrashChild(string path, string password, int write, bool explicitTransaction)
+    private static void AssertCrashChild(string path, string password, DatabaseFormat format, bool encrypted, int write, bool explicitTransaction)
     {
         static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
         string assembly = typeof(TransactionCrashRecoveryTests).Assembly.Location;
         string script = $"$env:{ChildPath}={Quote(path)}; $env:{ChildPassword}={Quote(password)}; $env:{ChildWrite}='{write.ToString(CultureInfo.InvariantCulture)}'; $env:{ChildExplicit}='{explicitTransaction}'; & dotnet {Quote(assembly)} -method {Quote(Method)}; exit $LASTEXITCODE";
         PowerShellRunResult result = PowerShellProcessRunner.Run("pwsh", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script))], TimeSpan.FromSeconds(60));
-        Assert.False(result.TimedOut, result.StandardError);
-        Assert.True(result.OutputComplete, result.StandardError);
+        string scenario = $"format={format}, encrypted={encrypted}, write={write}, transaction={(explicitTransaction ? "explicit" : "implicit")}";
+        string output = $"Standard output:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}Standard error:{Environment.NewLine}{result.StandardError}";
+        output = output.Replace(path, "[database]", StringComparison.Ordinal);
+        if (password.Length > 0)
+        {
+            output = output.Replace(password, "[password]", StringComparison.Ordinal);
+        }
+
+        string diagnostic = $"Crash child ({scenario}).{Environment.NewLine}{output}";
+        Assert.False(result.TimedOut, diagnostic);
+        Assert.True(result.OutputComplete, diagnostic);
         Assert.NotEqual(0, result.ExitCode);
-        Assert.True(File.Exists(path + ".crashed"), $"Child did not reach crash injection: {result.StandardOutput} {result.StandardError}");
+        Assert.True(File.Exists(path + ".crashed"), $"Child did not reach crash injection. {diagnostic}");
         string expectedPhase = explicitTransaction ? "commit" : "insert";
         Assert.Equal(write == 0 ? "commit completed" : expectedPhase, File.ReadAllText(path + ".crashed"));
     }
