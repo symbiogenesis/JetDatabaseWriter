@@ -15,6 +15,7 @@
 *.editorconfig text
 
 # Binary files — never normalize
+*.bin binary
 *.mdb binary
 *.accdb binary
 *.gz binary

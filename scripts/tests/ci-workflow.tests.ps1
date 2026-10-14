@@ -97,6 +97,9 @@ function Assert-CiContract([string] $Workflow, [xml] $Solution, [xml] $BuildProp
     }
     Assert-Contract ($testCommand.Contains('--test-modules JetDatabaseWriter.Tests.dll') -and $testCommand.Contains('--root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}') -and $testCommand -match '(?:^| )--minimum-expected-tests 1(?: |$)') 'Ordinary tests must launch the validated module and reject empty discovery.'
     Assert-Contract ($testCommand -notmatch '(?:^| )--(?:filter|list-tests|explicit|project|solution)\b') 'Ordinary test jobs must run the full ordinary suite from the downloaded module.'
+    Assert-Contract ($testStep.Contains('JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}')) 'Ordinary tests must retain normalized golden specimens in their framework lane.'
+    $golden = [regex]::Match($analyze, '(?ms)^      - name: Upload golden diagnostics\n(?<step>.*?)(?=^      - |\z)').Groups['step'].Value
+    Assert-Contract ($golden.Contains('if: ${{ !cancelled() && matrix.runner }}') -and $golden.Contains('name: golden-bytes-${{ matrix.tf }}') -and $golden.Contains('path: artifacts/golden/${{ matrix.tf }}/')) 'Golden diagnostics must be uploaded after failing tests as well as successful tests.'
 }
 
 function Assert-Scenario([string] $Name, [string] $Workflow, [string] $ExpectedError, [xml] $Props = $buildProps, [xml] $Tests = $testProject) {
@@ -131,6 +134,8 @@ Assert-Scenario 'redundant ordinary test build' ($workflow.Replace($testStep, " 
 Assert-Scenario 'redundant multiline test build' ($workflow.Replace($testStep, "      - name: Rebuild`n        run: >-`n          dotnet build JetDatabaseWriter.Tests -c Release`n" + $testStep)) 'Ordinary tests must execute the validated binaries without rebuilding'
 Assert-Scenario 'empty test discovery accepted' ($workflow.Replace('--minimum-expected-tests 1', '--minimum-expected-tests 0')) 'Ordinary tests must launch the validated module and reject empty discovery'
 Assert-Scenario 'partial ordinary test selection' ($workflow.Replace('--minimum-expected-tests 1', '--minimum-expected-tests 1 --filter-class Example')) 'Ordinary test jobs must run the full ordinary suite'
+Assert-Scenario 'golden evidence disabled' ($workflow.Replace('JDW_GOLDEN_OUTPUT_DIRECTORY:', 'REMOVED_GOLDEN_OUTPUT_DIRECTORY:')) 'Ordinary tests must retain normalized golden specimens'
+Assert-Scenario 'golden evidence only on success' ($workflow.Replace('if: ${{ !cancelled() && matrix.runner }}', 'if: matrix.runner')) 'Golden diagnostics must be uploaded after failing tests'
 
 $weakenedProps = [xml]$buildProps.OuterXml
 $weakenedProps.SelectSingleNode('/Project/PropertyGroup/TreatWarningsAsErrors').InnerText = 'false'

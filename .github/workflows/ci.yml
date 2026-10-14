@@ -106,6 +106,8 @@ jobs:
       # without waiting for other lanes or rebuilding on a second runner.
       - name: Test
         if: matrix.runner
+        env:
+          JDW_GOLDEN_OUTPUT_DIRECTORY: ${{ github.workspace }}/artifacts/golden/${{ matrix.tf }}
         run: >-
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
           --root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
@@ -119,6 +121,15 @@ jobs:
         with:
           name: test-results-${{ matrix.tf }}
           path: artifacts/test-results/${{ matrix.tf }}/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload golden diagnostics
+        if: ${{ !cancelled() && matrix.runner }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: golden-bytes-${{ matrix.tf }}
+          path: artifacts/golden/${{ matrix.tf }}/
           if-no-files-found: warn
           retention-days: 7
 
