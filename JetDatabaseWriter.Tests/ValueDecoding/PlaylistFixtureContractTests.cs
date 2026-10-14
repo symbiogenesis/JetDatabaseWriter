@@ -19,7 +19,7 @@ public sealed class PlaylistFixtureContractTests
     [InlineData(true)]
     public void Verification_UsesRowIdentityAndAcceptsStoredOrder(bool largeSortOnly)
     {
-        SnapshotPlaylistRow[] rows = Ids.Reverse().Select(id => Expected(id, largeSortOnly)).ToArray();
+        SnapshotPlaylistRow[] rows = Ids.AsEnumerable().Reverse().Select(id => Expected(id, largeSortOnly)).ToArray();
 
         PlaylistFixture.Verify(rows, largeSortOnly, Ids);
 
