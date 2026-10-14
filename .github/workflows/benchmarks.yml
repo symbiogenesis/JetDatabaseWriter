@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       baseline:
-        description: Commit, branch or tag to compare against on the same runner; leave empty to run only the dispatched commit
+        description: Published main ancestor with successful CI to compare on the same runner; leave empty to run only the dispatched commit
         required: false
         default: ''
         type: string
@@ -52,14 +52,28 @@ jobs:
     name: Require successful CI
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      baseline: ${{ steps.baseline.outputs.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Verify the exact main revision passed CI
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/assert-ci-success.ps1
+      - name: Verify the baseline revision passed CI
+        id: baseline
+        if: inputs.baseline != ''
+        shell: pwsh
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $baselineSha = ./scripts/assert-benchmark-baseline.ps1 -Baseline $env:BASELINE
+          "sha=${baselineSha}" | Add-Content -Encoding utf8NoBOM $env:GITHUB_OUTPUT
 
   benchmarks:
     needs: prerequisite
@@ -84,15 +98,13 @@ jobs:
       # The inputs reach the scripts only through environment variables, never through
       # expression interpolation inside a script.
       - name: Check out the baseline
-        if: inputs.baseline != ''
+        if: needs.prerequisite.outputs.baseline != ''
         shell: pwsh
         env:
-          BASELINE: ${{ inputs.baseline }}
+          BASELINE_SHA: ${{ needs.prerequisite.outputs.baseline }}
         run: |
-          $baselineSha = git rev-parse --verify --end-of-options "$env:BASELINE^{commit}"
-          if ($LASTEXITCODE -ne 0) { throw "Cannot resolve the baseline '$env:BASELINE'." }
-          git worktree add --detach "$env:RUNNER_TEMP/baseline" "$baselineSha"
-          if ($LASTEXITCODE -ne 0) { throw "Cannot check out the baseline '$env:BASELINE'." }
+          git worktree add --detach "$env:RUNNER_TEMP/baseline" "$env:BASELINE_SHA"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot check out the validated baseline '$env:BASELINE_SHA'." }
           git -C "$env:RUNNER_TEMP/baseline" log -1 --format='Baseline: %H %s'
 
       - name: Build
@@ -102,7 +114,7 @@ jobs:
           dotnet build JetDatabaseWriter.Benchmarks -c Release --no-restore
 
       - name: Build the baseline
-        if: inputs.baseline != ''
+        if: needs.prerequisite.outputs.baseline != ''
         shell: pwsh
         working-directory: ${{ runner.temp }}/baseline
         run: |
@@ -115,7 +127,7 @@ jobs:
           FILTER: ${{ inputs.filter }}
           JOB: ${{ inputs.job }}
           MODE: ${{ inputs.mode }}
-          HAS_BASELINE: ${{ inputs.baseline != '' }}
+          HAS_BASELINE: ${{ needs.prerequisite.outputs.baseline != '' }}
         run: |
           $baseline = if ($env:HAS_BASELINE -eq 'true') { "$env:RUNNER_TEMP/baseline" } else { '' }
           ./scripts/run-benchmark-comparison.ps1 -Head $env:GITHUB_WORKSPACE -Baseline $baseline -Results "$env:RUNNER_TEMP/results" -Filter $env:FILTER -Job $env:JOB -Mode $env:MODE

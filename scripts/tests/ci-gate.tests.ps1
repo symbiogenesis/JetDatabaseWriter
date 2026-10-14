@@ -24,6 +24,10 @@ function New-Fixture([string] $name, [string] $status = 'completed', [string] $c
             id = 41; head_sha = $sha; head_branch = 'main'; event = 'push'; path = '.github/workflows/ci.yml'
             html_url = 'https://github.com/example/repo/actions/runs/41'; status = 'completed'; conclusion = 'success'
         }
+        baselineCiRun = [pscustomobject]@{
+            id = 40; head_sha = $otherSha; head_branch = 'main'; event = 'push'; path = '.github/workflows/ci.yml'
+            html_url = 'https://github.com/example/repo/actions/runs/40'; status = 'completed'; conclusion = 'success'
+        }
         remoteSha = $sha
         runs = $true
         baselineStatus = 'ahead'
@@ -77,7 +81,8 @@ function Invoke-RestMethod {
         '/runs/42/artifacts\??' { return [pscustomobject]@{ total_count = 0; artifacts = @() } }
         '/workflows/ci\.yml/runs\?.*&page=' {
             if ($Headers.Authorization -ne 'Bearer mock-token') { throw 'The prerequisite did not reuse authentication.' }
-            return [pscustomobject]@{ total_count = $(if ($fixture.ciRun) { 1 } else { 0 }); workflow_runs = @($fixture.ciRun | Where-Object { $_ }) }
+            $ciRun = if ($Uri.Contains("head_sha=$otherSha")) { $fixture.baselineCiRun } else { $fixture.ciRun }
+            return [pscustomobject]@{ total_count = $(if ($ciRun) { 1 } else { 0 }); workflow_runs = @($ciRun | Where-Object { $_ }) }
         }
         '/workflows/.+/runs\?' { return [pscustomobject]@{ workflow_runs = $(if ($fixture.runs) { @($fixture.run) } else { @() }) } }
         '/runs/42$' { return $fixture.run }
@@ -153,6 +158,23 @@ $fixture.run.path = '.github/workflows/benchmarks.yml'
 Invoke-Helper @{ Sha = $sha; Benchmarks = '*Example*'; Baseline = $otherSha; WaitSeconds = 0 }
 Assert ($exitCode -eq 2) 'Benchmark dispatch should return pending for its exact run ID.'
 Assert (-not ($fixture.calls -match '/workflows/benchmarks\.yml/runs\?')) 'Benchmark runs must not be inferred from timestamps or unrelated concurrent dispatches.'
+Assert (@($fixture.calls -match "/workflows/ci\.yml/runs\?.*head_sha=$otherSha").Count -eq 1) 'A benchmark baseline must have its own exact successful CI run.'
+
+foreach ($verdict in 'missing', 'pending', 'failed', 'wrong-sha', 'wrong-branch') {
+    New-Fixture "benchmark-baseline-refuses-$verdict" 'queued' ''
+    $fixture.run.path = '.github/workflows/benchmarks.yml'
+    switch ($verdict) {
+        'missing' { $fixture.baselineCiRun = $null }
+        'pending' { $fixture.baselineCiRun.status = 'in_progress'; $fixture.baselineCiRun.conclusion = '' }
+        'failed' { $fixture.baselineCiRun.conclusion = 'failure' }
+        'wrong-sha' { $fixture.baselineCiRun.head_sha = $sha }
+        'wrong-branch' { $fixture.baselineCiRun.head_branch = 'work' }
+    }
+    Invoke-Helper @{ Sha = $sha; Benchmarks = '*Example*'; Baseline = $otherSha; WaitSeconds = 0 }
+    Assert ($exitCode -eq 3) "$verdict baseline CI must refuse a new benchmark request."
+    Assert (-not ($fixture.calls -match 'dispatches')) "$verdict baseline CI must not dispatch benchmarks."
+    Assert (@(Get-ChildItem -LiteralPath $fixture.root -Recurse -File | Where-Object Extension -eq '.json').Count -eq 0) "$verdict baseline CI must not save dispatch intent."
+}
 
 $savedToken = $env:GITHUB_TOKEN
 try {
