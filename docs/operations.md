@@ -76,11 +76,11 @@ await writer.UpdateRowsAsync("Contacts", "ContactID", 2, new Dictionary<string, 
 await tx.CommitAsync(); // Replays all buffered pages and flushes the stream
 ```
 
-If the transaction is disposed without a `CommitAsync` call (for example, because an exception unwound the scope), all buffered changes are discarded automatically. Rolling back also returns the writer's cached table list and column constraints to their state when the transaction began, so tables, columns and AutoNumber values from the rolled-back work are gone. Only one transaction may be active per `AccessWriter` instance.
+Disposing an uncommitted transaction rolls back its scope, including cached table metadata, constraints and AutoNumber counters. Repeated `BeginTransactionAsync` calls nest up to seven explicit levels, matching DAO. Resolve the innermost level first: its commit merges changes into its parent, while its rollback or disposal restores only that level. An outer rollback also undoes committed inner work. Only the outermost commit writes and flushes the database. Disposing the writer rolls back every open level.
 
-Each mutation inside an explicit transaction has an internal savepoint. If the call fails, including cancellation or exceeding `MaxTransactionPageBudget`, its page changes, allocated pages, table metadata and AutoNumber counters are restored to their state before the call. Earlier successful calls stay in the transaction, which remains usable. Savepoints are internal; nested transactions are not supported. Mutations, commit, rollback and disposal serialize on each writer. A callback that tries to mutate the same writer throws with `ReentrantWriterCall`.
+Each mutation inside an explicit transaction has an internal savepoint. If the call fails, including cancellation or exceeding `MaxTransactionPageBudget`, its page changes, allocated pages, table metadata and AutoNumber counters are restored to their state before the call. Earlier successful calls stay in the transaction, which remains usable. As in DAO, mutations are permitted with at most five explicit levels open. At level six or seven they fail before changing state with `TransactionNestingLimit`; resolve inner levels before writing. All levels share the outer transaction's distinct-page budget; savepoint before-images and cached-state snapshots consume additional memory at each level. Mutations, commit, rollback and disposal serialize on each writer. A callback that tries to mutate the same writer throws with `ReentrantWriterCall`.
 
-`CommitAsync` captures the original bytes of pages it will overwrite, then writes the new pages in page-number order and flushes the stream. The transaction ends whether or not `CommitAsync` succeeds:
+The outermost `CommitAsync` captures the original bytes of pages it will overwrite, then writes the new pages in page-number order and flushes the stream. That transaction ends whether or not its physical commit succeeds:
 
 - If it fails before the first page write starts, the file is unchanged and `IsRolledBack` is `true`, unless preparing the persistent journal faults the writer.
 - Once the first page write starts, cancellation is ignored through replay and recovery.
@@ -210,7 +210,7 @@ A shared `AccessReader` supports concurrent scans while the database remains unc
 
 Readers cache the table list, table definitions, owned data pages and up to `PageCacheSize` recently read pages. They do not refresh those caches. Path-based readers restrict sharing to read access for their lifetime, and refuse a pending recovery journal. A caller-supplied `FileStream` reader acquires an additional read-only lease; a writable or exclusively shared supplied handle can conflict with that lease and is refused. Prefer the path overload for file databases. Custom streams require caller-managed isolation.
 
-Use one writer per file and keep external writers away for its entire lifetime. `AccessWriter` serializes its own mutation and lifecycle calls, and supports one active explicit transaction. It caches table metadata, AutoNumber counters and enforced relationships; competing writers can corrupt the database.
+Use one writer per file and keep external writers away for its entire lifetime. `AccessWriter` serializes its own mutation and lifecycle calls, and supports up to seven nested explicit transaction levels. It caches table metadata, AutoNumber counters and enforced relationships; competing writers can corrupt the database.
 
 Path-based writers request exclusive file sharing, which Windows enforces. Unix sharing and locks depend on cooperating processes. With a caller-supplied stream, excluding other readers and writers is the caller's responsibility. Path aliases and non-cooperating processes must not bypass that coordination.
 

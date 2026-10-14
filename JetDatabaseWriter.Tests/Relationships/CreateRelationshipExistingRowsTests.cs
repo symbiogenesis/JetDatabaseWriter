@@ -70,7 +70,7 @@ public sealed class CreateRelationshipExistingRowsTests(DatabaseCache db) : ICla
             await writer.CreateTableAsync("P", [new ColumnDefinition("First", typeof(string), 40), new ColumnDefinition("Second", typeof(string), 40)], Ct);
             await writer.CreateTableAsync("C", [new ColumnDefinition("First", typeof(string), 40), new ColumnDefinition("Second", typeof(string), 40)], Ct);
             await writer.InsertRowAsync("P", ["ABC", "a|S:b"], Ct);
-            await writer.InsertRowsAsync("C", [["abc   ", "A|s:B"], [null, "absent"]], Ct);
+            await writer.InsertRowsAsync("C", [["abc   ", "A|s:B"], [null, null]], Ct);
         }
 
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))

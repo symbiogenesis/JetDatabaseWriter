@@ -2,6 +2,25 @@
 
 File-backed statement transactions, explicit transactions and physical shrinking use `PersistentRollbackJournal` in addition to the pager's in-process undo log. The persistent journal stores raw bytes, so encrypted database pages remain encrypted. Non-file streams retain in-process rollback only.
 
+## Nested explicit transactions
+
+Up to seven explicit levels share one page journal and page budget, matching
+DAO3.6 on Jet3 and DAO120 on Jet4/ACE. Each inner level captures a journal savepoint and the
+writer's allocation and constraint state; rollback invalidates catalog caches.
+Inner commit merges its prior images into its parent without writing or flushing the database;
+inner rollback restores that level. An outer rollback also discards committed
+inner work. Lifecycle operations resolve the innermost level first, and writer
+disposal rolls back the complete stack. Native Execute (with flags 0 or 128)
+and Recordset writes succeed through level five and refuse levels six and
+seven with DAO error 3003 on all three formats. Writer mutations enforce that
+same boundary before changing journal or cached state; the sixth and seventh
+explicit scopes may open but must end before further mutation.
+
+Only the outermost commit enters the persistent journal and physical replay
+protocol below. Nesting adds no persistent identity or recovery protocol to
+caller streams: they still require caller-enforced exclusive access and retain
+in-process undo only.
+
 ## Write ordering
 
 1. Before the first physical statement spill or final commit write, create `<database>.jdw-journal.preparing` under exclusive database coordination. Copy the complete original database with bounded buffers, record its length and SHA-256, and flush the completed header and snapshot to disk. Close it, promote it by a non-overwriting adjacent rename to `.jdw-journal`, then reopen the published journal before permitting writes. An existing final journal is never overwritten. An abandoned preparation file authorizes no writes: recovery and readers ignore it, and the next preparation replaces it.

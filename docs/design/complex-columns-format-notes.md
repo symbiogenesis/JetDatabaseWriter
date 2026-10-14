@@ -173,6 +173,22 @@ If the flat table on disk has columns whose names don't match these exactly, Jac
 
 The shipped declaration surface is the `ColumnDefinition.IsMultiValue` init-only property (see §4.2 C2 row); the inner value column inherits the `ColumnDefinition`'s declared type and length, and, for `decimal` items, its `NumericPrecision` and `NumericScale` (Access's Decimal(18,0) when none is declared).
 
+The DAO-created `ComplexDescriptorVariants.accdb` fixture pins all eight native
+primitive multi-value kinds. Ordinary parent references use flags/extra flags
+`07/00`; append-only history references use `07/20`. Flat foreign keys use
+`02/08`, and scalar AutoNumbers use `06/04`. Multi-value `Value` descriptors
+have extra flags zero. Default Decimal uses a variable descriptor (`flags=02`),
+precision 18, scale 0 and declared length 9, with 17-byte stored values. Explicit
+Decimal(10,2) output retains declared length 17 and passes native read, insert
+and compact checks; that acceptance does not assert byte-identical declaration.
+
+All surviving columns, including a late-added Text multi-value column, share
+references 1 and 2 in the two live parent rows. The persisted counter remains 3
+after deleting the highest parent. Library Add/Rename/Drop preserves these
+references, counter and append-only properties. Native mutation/compact may
+advance the counter beyond live references. Calculated descriptor preservation
+is checked separately against `calcFieldTestV2010` storage/result type variants.
+
 #### 2.4.3 Version history (`MSysComplexColumns.Type = 2`, on-disk `col_type = 0x12`)
 
 Verified against `complexDataTest*.accdb` `Table1.VersionHistory_F5F8918F-0A3F-4DA9-AE71-184EE5012880`, whose flat table holds five versions of the append-only Memo column, all modified on 2011-09-12:
@@ -262,7 +278,7 @@ Generated flat-table and column names are truncated to 64 characters without spl
 The flat-child schema emitted by `BuildFlatTableSchema` (called from `EmitComplexColumnArtifactsAsync` during `CreateTableAsync`):
 
 - **Attachment flat table** (8 columns, in Access-authored Northwind order): `_<userColumnName>` (LONG, FK back-reference), `FileData` (OLE), `FileFlags` (LONG), `FileName` (TEXT 255), `FileTimeStamp` (DATETIME), `FileType` (TEXT 255), `FileURL` (MEMO), `<parentTable>_<userColumnName>` (LONG, autoincrement scalar PK). Three indexes ship: `MSysComplexPKIndex` (PK on the scalar), `_<userColumnName>` (normal index on the FK), and `IdxFKPrimaryScalar` (composite normal index on `(_<userColumnName>, FileName)`). The Access-specific descriptor flags/extra flags/misc values for these hidden flat-table columns are emitted through writer-owned `ColumnDefinition` descriptor overrides.
-- **Multi-value flat table** (3 columns): `_<userColumnName>` (LONG, FK back-reference), `Value` (CLR type from the user `ColumnDefinition`; a `decimal` value column takes its declared `NumericPrecision` and `NumericScale`, which `TDefPageBuilder.ValidateColumnForFormat` checks before the parent table is written), `<parentTable>_<userColumnName>` (LONG, autoincrement scalar PK). Two indexes: PK on the scalar plus a normal index on the FK back-reference. The composite secondary index is omitted because the format-probe corpus contains no multi-value flat-table fixture and the `Value` column may be a non-indexable type (MEMO, OLE, GUID).
+- **Multi-value flat table** (3 columns): `_<userColumnName>` (LONG, FK back-reference), `Value` (CLR type from the user `ColumnDefinition`; a `decimal` value column takes its declared `NumericPrecision` and `NumericScale`, which `TDefPageBuilder.ValidateColumnForFormat` checks before the parent table is written), `<parentTable>_<userColumnName>` (LONG, autoincrement scalar PK). Three indexes: PK on the scalar, a normal index on the FK back-reference, and unique `IdxFKPrimaryScalar` on `(FK, Value)`. The composite index prevents duplicate values within one parent while allowing the same value under different parents. Complex-item insertion checks every flat-table unique index before writing, including native indexes on reopened files.
 
 String multi-value items use Text with `MaxLength` 1-255; 0 selects Text(255). Negative lengths and lengths above 255 are refused during schema preflight. Inserting text longer than the stored column limit is refused before allocating a parent reference or inserting a flat row.
 
@@ -374,7 +390,7 @@ Helpers now live on `ComplexColumnManager` and are called from `AccessWriter`:
 C10 caveats:
 
 - **Required type templates.** Complex-column creation requires a readable native `MSysComplexType_*` definition. Missing, out-of-file, unreadable or malformed templates produce a contextual corruption error before any parent or child mutation. Genuine filesystem errors propagate.
-- **Decimal template `col_len`.** The format-probe appendix shows `col_len = 9` (precision 9 / scale 0); the C10 implementation emits whatever the writer's default `decimal` mapping produces. The template table is never populated with rows, so the precise `col_len` value carries no observable semantic.
+- **Decimal descriptors.** The native Decimal template and default multi-value `Value` column use type `0x10`, flags `0x02`, extra flags `0`, misc bytes `12 00 00 00` (precision 18, scale 0), and `col_len = 9`. Each stored Decimal value still occupies 17 bytes. Descriptor width and row storage width are separate; schema rewrites preserve the original descriptor.
 - **Validation status.** Round-trip through this library's reader is covered in `ComplexColumnsWriterTests` (template scaffolding, hidden-from-`ListTablesAsync`, attachment template column list, Jet4 skip, attachment + multi-value `ComplexTypeObjectID` non-zero). Writer-authored complex payloads on the `ComplexFields` fixture have representative DAO CompactDatabase coverage in `ComplexFixture_WriterAttachmentRowsSurviveCompactAndRepair`, with `ComplexFixtureCatalog_SurvivesCompactAndRepair` covering the compacted complex catalog; the Northwind-hosted compact test remains the Access-authored-base coverage for schema evolution and chained-LVAL attachment payloads. See [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 
 ## 5. Validation strategy

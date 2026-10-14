@@ -1,5 +1,6 @@
 namespace JetDatabaseWriter.Tests.Indexes;
 
+using System;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
@@ -18,6 +19,33 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// </summary>
 public sealed class IndexSeekKeyEncodingTests
 {
+    [Fact]
+    public void AllNullChildSeek_RequiresScanBecauseCoveringIndexMayIgnoreNulls()
+    {
+        var index = new ChildSeekIndex(456, [new ChildSeekKeyColumn(LongIntegerType, true, 0, false), new ChildSeekKeyColumn(LongIntegerType, true, 0, false)]);
+        Assert.Null(IndexHelpers.TryEncodeChildSeekKey(index, [null, DBNull.Value]));
+    }
+
+    /// <summary>Parent and child seeks retain Null markers in mixed-direction composite keys.</summary>
+    /// <param name="ascending">The first column's direction.</param>
+    /// <param name="nullFirst">Whether the first key component is Null.</param>
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void PartialNullComposite_ParentAndChildSeeksMatchPersistedKey(bool ascending, bool nullFirst)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb);
+        var column = new ColumnInfo { Type = LongIntegerType };
+        object[] values = nullFirst ? [DBNull.Value, 7] : [7, DBNull.Value];
+        byte[] expected = [.. IndexKeyEncoder.EncodeColumnEntry(format, column, values[0], ascending), .. IndexKeyEncoder.EncodeColumnEntry(format, column, values[1], !ascending)];
+        var parent = new ParentSeekIndex(123, [new ParentSeekKeyColumn(LongIntegerType, ascending, 0, 0, false), new ParentSeekKeyColumn(LongIntegerType, !ascending, 1, 0, false)]);
+        var child = new ChildSeekIndex(456, [new ChildSeekKeyColumn(LongIntegerType, ascending, 0, false), new ChildSeekKeyColumn(LongIntegerType, !ascending, 0, false)]);
+        Assert.Equal(expected, IndexHelpers.TryEncodeSeekKey(parent, values));
+        Assert.Equal(expected, IndexHelpers.TryEncodeChildSeekKey(child, values));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

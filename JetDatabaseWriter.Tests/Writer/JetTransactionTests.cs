@@ -53,7 +53,7 @@ public sealed class JetTransactionTests
     }
 
     [Fact]
-    public async Task BeginTransaction_TwiceWithoutCommit_Throws()
+    public async Task BeginTransaction_TwiceWithoutCommit_StartsChild()
     {
         await using var ms = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -65,8 +65,11 @@ public sealed class JetTransactionTests
         await using JetTransaction first = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         Assert.NotNull(first);
 
-        await Assert.ThrowsAsync<JetOperationException>(async () =>
-            await writer.BeginTransactionAsync(TestContext.Current.CancellationToken));
+        await using JetTransaction child = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        Assert.NotSame(first, child);
+        await child.CommitAsync(TestContext.Current.CancellationToken);
+        Assert.True(child.IsCommitted);
+        Assert.False(first.IsCommitted);
     }
 
     [Fact]

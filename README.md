@@ -37,7 +37,7 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 | Partial | **Complex&nbsp;columns** | Read and add attachments and multi-value items (ACCDB); individual replacement/removal and append-only history writes remain incomplete |
 | Partial | **Calculated&nbsp;columns** | ACCDB metadata, cached values, and a bounded row-local evaluator for a supported subset of Access expressions |
 | ✅ | **Concurrency** | `.ldb` / `.laccdb` lockfile + BCL page-level byte-range locks where supported |
-| ✅ | **Transactions** | Group changes with `CommitAsync` / `RollbackAsync`; file transactions recover after process crashes (see [guarantees](docs/operations.md#transactions)) |
+| ✅ | **Transactions** | Group or nest changes with `CommitAsync` / `RollbackAsync`; file transactions recover after process crashes (see [guarantees](docs/operations.md#transactions)) |
 | ✅ | **Storage&nbsp;maintenance** | Access-style free-page reuse, free-page scrubbing, opt-in secure erase, and tail shrinking |
 | ✅ | **Performance** | Configurable LRU page cache, default parallel read-ahead for eligible page scans, streams millions of rows without loading the file |
 

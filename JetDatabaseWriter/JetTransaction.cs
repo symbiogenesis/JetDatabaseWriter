@@ -28,14 +28,21 @@ using JetDatabaseWriter.Transactions;
 /// caller-supplied streams cannot recover after a process crash.
 /// </para>
 /// <para>
-/// Only one transaction may be active at a time per <see cref="AccessWriter"/>;
-/// a second concurrent <see cref="AccessWriter.BeginTransactionAsync"/> call
-/// throws <see cref="InvalidOperationException"/>.
+/// Repeated <see cref="AccessWriter.BeginTransactionAsync"/> calls nest up to seven
+/// levels. Database mutations are permitted only at levels one through five, matching
+/// native DAO writes; end deeper scopes before writing. Resolve the innermost first.
+/// A child commit merges its changes
+/// into its parent without writing or flushing the database; a parent rollback also
+/// undoes committed children. Child rollback or disposal restores only that child.
+/// Only the outermost commit persists changes. Scopes belong to the writer, so calls
+/// from other tasks participate in its current innermost scope.
 /// </para>
 /// <para>
-/// The journal grows in process memory at <c>PageSize</c> bytes per dirty page.
-/// <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> caps the journal;
-/// exceeding the cap throws <see cref="JetLimitationException"/> from the next
+/// The shared journal holds <c>PageSize</c> bytes per distinct dirty page.
+/// <see cref="AccessWriterOptions.MaxTransactionPageBudget"/> caps that page count;
+/// nested savepoint prior images and writer-state snapshots consume additional memory.
+/// All scopes share this budget, and opening a child does not reset it.
+/// Exceeding the cap throws <see cref="JetLimitationException"/> from the next
 /// page write. The transaction stays active, but the operation that hit the
 /// cap is rolled back to its internal savepoint. The transaction remains usable.
 /// Private statement transactions are automatic regardless of
@@ -50,13 +57,15 @@ public sealed class JetTransaction : IAsyncDisposable
 
     private readonly TransactionLifecycle lifecycle;
 
-    internal JetTransaction(TransactionLifecycle lifecycle, PagerTransaction journal)
+    internal JetTransaction(TransactionLifecycle lifecycle, PagerTransaction journal, JetTransaction? parent = null)
     {
         this.lifecycle = lifecycle;
         this.Journal = journal;
+        this.Parent = parent;
+        this.NestingLevel = (parent?.NestingLevel ?? 0) + 1;
     }
 
-    /// <summary>Gets a value indicating whether the transaction has been committed.</summary>
+    /// <summary>Gets a value indicating whether this scope committed. A child commit remains subject to parent rollback.</summary>
     public bool IsCommitted { get; private set; }
 
     /// <summary>
@@ -72,10 +81,14 @@ public sealed class JetTransaction : IAsyncDisposable
     /// </summary>
     public bool IsRolledBack { get; private set; }
 
-    /// <summary>Gets the number of distinct pages currently buffered in the journal.</summary>
+    /// <summary>Gets the number of distinct pages currently buffered in the journal shared by all scopes.</summary>
     public int JournaledPageCount => this.Journal.Count;
 
     internal PagerTransaction Journal { get; }
+
+    internal JetTransaction? Parent { get; }
+
+    internal int NestingLevel { get; }
 
     /// <summary>Gets a value indicating whether a commit failed after it had started writing pages.</summary>
     internal bool IsCommitFailed { get; private set; }
@@ -83,11 +96,11 @@ public sealed class JetTransaction : IAsyncDisposable
     internal bool IsTerminated => this.IsCommitted || this.IsRolledBack || this.IsCommitFailed;
 
     /// <summary>
-    /// Writes every buffered page over the database file in ascending page
-    /// order, applying per-page encryption and acquiring cooperative
+    /// Merges a child scope into its parent, or writes every buffered page over the database
+    /// file in ascending page order, applying per-page encryption and acquiring cooperative
     /// byte-range locks (when enabled) just like a non-transactional write
     /// would, then flushes the stream. The transaction ends whether or not
-    /// the commit succeeds.
+    /// the commit succeeds. An ancestor cannot commit while a child is active.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -119,7 +132,7 @@ public sealed class JetTransaction : IAsyncDisposable
         => this.lifecycle.CommitTransactionAsync(this, cancellationToken);
 
     /// <summary>
-    /// Discards the journal without touching the database file, and returns
+    /// Discards this scope's changes without touching the database file, and returns
     /// the writer's cached catalog and constraint state to how it was when the
     /// transaction began. Subsequent <see cref="CommitAsync"/> or
     /// <see cref="RollbackAsync"/> calls throw
@@ -132,10 +145,11 @@ public sealed class JetTransaction : IAsyncDisposable
         => this.lifecycle.RollbackTransactionAsync(this, cancellationToken);
 
     /// <summary>
-    /// Rolls back the transaction if it has not ended. Equivalent to calling
-    /// <see cref="RollbackAsync"/> and discarding an "already ended" error.
+    /// Rolls back the transaction if it is the current scope and has not ended.
+    /// Disposing an ancestor while a child is active throws and leaves both scopes active.
     /// </summary>
     /// <returns>A task representing the asynchronous dispose.</returns>
+    /// <exception cref="InvalidOperationException">A child transaction is still active on this writer.</exception>
     public async ValueTask DisposeAsync()
     {
         if (this.IsTerminated)
@@ -147,7 +161,7 @@ public sealed class JetTransaction : IAsyncDisposable
         {
             await this.RollbackAsync().ConfigureAwait(false);
         }
-        catch (JetOperationException ex) when (ex.ErrorCode is JetErrorCode.TransactionEnded or JetErrorCode.TransactionNotActive)
+        catch (JetOperationException ex) when (ex.ErrorCode == JetErrorCode.TransactionEnded)
         {
             // Already terminated by another caller — DisposeAsync is best-effort.
         }

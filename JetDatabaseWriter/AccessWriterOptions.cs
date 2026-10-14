@@ -44,7 +44,8 @@ public sealed class AccessWriterOptions : AccessOptions
     /// <see cref="Exceptions.JetLimitationException"/>. The transaction stays active,
     /// with the failed operation rolled back to its internal savepoint. Private
     /// statement transactions are exempt. Each journaled page costs
-    /// <see cref="AccessBase.PageSize"/> bytes of process memory.
+    /// <see cref="AccessBase.PageSize"/> bytes of process memory. Nested scopes share
+    /// this page budget; savepoint prior images and writer-state snapshots use additional memory.
     /// Must be at least <c>1</c>: <c>OpenAsync</c> and <c>CreateDatabaseAsync</c>
     /// throw <see cref="System.ArgumentOutOfRangeException"/> (parameter
     /// <c>options</c>) for zero or less, before they open, create or write the

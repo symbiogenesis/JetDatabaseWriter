@@ -105,9 +105,6 @@ public enum JetErrorCode
     /// <summary>Identifies LockTimeout.</summary>
     LockTimeout = 503,
 
-    /// <summary>Identifies TransactionAlreadyActive.</summary>
-    TransactionAlreadyActive = 504,
-
     /// <summary>Identifies TransactionEnded.</summary>
     TransactionEnded = 505,
 
@@ -125,6 +122,9 @@ public enum JetErrorCode
 
     /// <summary>Identifies ReentrantWriterCall.</summary>
     ReentrantWriterCall = 510,
+
+    /// <summary>Identifies TransactionNestingLimit.</summary>
+    TransactionNestingLimit = 511,
 
     /// <summary>Identifies PasswordRequired.</summary>
     PasswordRequired = 601,

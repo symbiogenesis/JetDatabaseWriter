@@ -36,9 +36,21 @@ key. `DaoSelfRelationshipUpdateTests` compares scalar and non-Null composite
 cases on DAO-authored Jet4/ACE databases, opens the writer output natively and
 verifies compact/readback. Ordinary regressions cover all write modes,
 byte-identical refusal and continued caller-transaction use followed by rollback.
-Native partial-Null composite self-references differ from the writer's blanket
-any-Null exemption; their precise reproduction and remaining policy work are
-tracked as R10. Jet3 native self-update/cycle evidence remains open under R6.
+
+Only an entirely Null foreign key is exempt from parent matching. A partial-Null
+composite key must match every component of an existing nullable unique parent,
+including the Null components. Parent dependency matching also includes entirely
+Null keys: changing or deleting such a nullable unique parent affects every
+entirely Null child key, even when another identical Null parent remains.
+Cascade copies the new parent key or deletes the child; restricted changes
+are refused. Entirely Null dependency seeks fall back to a row scan so a
+covering IgnoreNulls index cannot hide those children. Relationship creation
+validates existing partial keys by
+the same rule. DAO3.6 on Jet3/Jet4 and DAO120 on Jet4/ACE establish these semantics;
+clearing only one component of a self-reference is refused when no matching
+parent exists, while clearing the entire key succeeds. Unrelated updates still
+leave an already orphaned unchanged key alone. Broader Jet3 native self-update
+and cycle evidence remains open under R6.
 
 Unenforced relationships persist catalog metadata without physical foreign-key
 indexes. Native DAO emits only the existing primary indexes for a relationship

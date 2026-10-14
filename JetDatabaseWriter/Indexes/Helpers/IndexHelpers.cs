@@ -502,9 +502,8 @@ internal static class IndexHelpers
 
                 if (v == null)
                 {
-                    // Callers already rejected partial-null tuples, but be
-                    // defensive: encoding a null key entry still produces a
-                    // well-formed flag-only block.
+                    // Partial-Null composite relationships match the same
+                    // Null component in a nullable unique parent index.
                     pieces[i] = EncodeSeekKeyColumn(
                         col.ColumnType,
                         null,
@@ -548,15 +547,17 @@ internal static class IndexHelpers
     /// <summary>
     /// Encodes a composite seek key for the child (FK-side) index using the
     /// supplied parent-PK column values (in relationship-PK declaration
-    /// order). Returns <see langword="null"/> when any value is null
-    /// (cascade callers already short-circuit on partial-null parent keys)
-    /// or when the encoder rejects any value.
+    /// order), including Null components of a partial-Null key. Entirely
+    /// Null keys return <see langword="null"/> so callers scan: a covering
+    /// IgnoreNulls index can omit those dependents. Encoding failures also
+    /// return <see langword="null"/>.
     /// </summary>
     /// <param name="idx">The index.</param>
     /// <param name="parentPkValues">The parent primary key values.</param>
     public static byte[]? TryEncodeChildSeekKey(ChildSeekIndex idx, object?[] parentPkValues)
     {
-        if (parentPkValues.Length != idx.KeyColumns.Count)
+        if (parentPkValues.Length != idx.KeyColumns.Count
+            || Array.TrueForAll(parentPkValues, value => value is null or DBNull))
         {
             return null;
         }
@@ -572,11 +573,6 @@ internal static class IndexHelpers
                 if (v is DBNull)
                 {
                     v = null;
-                }
-
-                if (v == null)
-                {
-                    return null;
                 }
 
                 pieces[i] = EncodeSeekKeyColumn(

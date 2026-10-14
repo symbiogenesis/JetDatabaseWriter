@@ -11,7 +11,7 @@ using JetDatabaseWriter.Schema.Models;
 
 internal static class RelationshipKeyBuilder
 {
-    public static string? Build(object?[] row, int[] columnIndexes, int[]? fixedBinaryLengths = null)
+    public static string? BuildKey(object?[] row, int[] columnIndexes, int[]? fixedBinaryLengths = null)
     {
         var sb = new StringBuilder();
         for (int i = 0; i < columnIndexes.Length; i++)
@@ -25,7 +25,8 @@ internal static class RelationshipKeyBuilder
             object? v = row[idx];
             if (v is null or DBNull)
             {
-                return null;
+                sb.Append('|').Append('Z');
+                continue;
             }
 
             sb.Append('|');
@@ -39,8 +40,20 @@ internal static class RelationshipKeyBuilder
         return sb.ToString();
     }
 
-    public static string? Build(object?[] row, int[] columnIndexes, TableDef definition)
-        => Build(row, columnIndexes, GetFixedBinaryLengths(definition, columnIndexes));
+    public static string? BuildKey(object?[] row, int[] columnIndexes, TableDef definition)
+        => BuildKey(row, columnIndexes, GetFixedBinaryLengths(definition, columnIndexes));
+
+    public static string? BuildForeignKey(object?[] row, int[] columnIndexes, TableDef definition)
+    {
+        // Entirely Null foreign keys need no parent on insert/update, but
+        // nullable parent keys still match Null children during cascades.
+        if (Array.TrueForAll(columnIndexes, index => index >= 0 && index < row.Length && row[index] is null or DBNull))
+        {
+            return null;
+        }
+
+        return BuildKey(row, columnIndexes, definition);
+    }
 
     public static int[] GetFixedBinaryLengths(TableDef definition, int[] columnIndexes)
     {
@@ -54,19 +67,19 @@ internal static class RelationshipKeyBuilder
         return lengths;
     }
 
-    public static List<object?[]> ProjectNonNullKeys(IReadOnlyList<object?[]> rows, int[] columnIndexes)
+    public static List<object?[]> ProjectKeys(IReadOnlyList<object?[]> rows, int[] columnIndexes)
     {
         var projectedRows = new List<object?[]>(rows.Count);
         foreach (object?[] row in rows)
         {
             object?[] projected = new object?[columnIndexes.Length];
-            bool hasNullComponent = false;
+            bool valid = true;
             for (int columnIndex = 0; columnIndex < columnIndexes.Length; columnIndex++)
             {
                 int sourceIndex = columnIndexes[columnIndex];
                 if (sourceIndex < 0 || sourceIndex >= row.Length)
                 {
-                    hasNullComponent = true;
+                    valid = false;
                     break;
                 }
 
@@ -76,16 +89,10 @@ internal static class RelationshipKeyBuilder
                     value = null;
                 }
 
-                if (value == null)
-                {
-                    hasNullComponent = true;
-                    break;
-                }
-
                 projected[columnIndex] = value;
             }
 
-            if (!hasNullComponent)
+            if (valid)
             {
                 projectedRows.Add(projected);
             }
@@ -105,7 +112,7 @@ internal static class RelationshipKeyBuilder
                 identity = CreateIdentityOrdinals(keyRow.Length);
             }
 
-            string? key = Build(keyRow, identity, fixedBinaryLengths);
+            string? key = BuildKey(keyRow, identity, fixedBinaryLengths);
             if (key != null)
             {
                 _ = set.Add(key);

@@ -16,9 +16,8 @@ using Xunit;
 /// layout is verified against
 /// <see href="format-probe-appendix-complex.md" />
 /// (the <c>f_A3DF50CFC033433899AF0AC1A4CF4171_Attachments</c> probe of
-/// <c>ComplexFields.accdb</c>); the multi-value layout mirrors that pattern
-/// minus the composite secondary index because no real-Access fixture
-/// exercises a multi-value flat table in the format-probe corpus.
+/// <c>ComplexFields.accdb</c>). DAO-authored <c>ComplexDescriptorVariants.accdb</c>
+/// verifies the multi-value PK, FK and unique composite (FK, Value) index.
 /// </summary>
 public sealed class ComplexColumnsFlatIndexesTests
 {
@@ -110,7 +109,7 @@ public sealed class ComplexColumnsFlatIndexesTests
     }
 
     [Fact]
-    public async Task MultiValue_FlatTable_EmitsTwoIndexes()
+    public async Task MultiValue_FlatTable_EmitsThreeIndexes()
     {
         await using var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken))
@@ -135,7 +134,7 @@ public sealed class ComplexColumnsFlatIndexesTests
         Assert.Equal(typeof(int), scalar.ClrType);
 
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(mv.FlatTableName, TestContext.Current.CancellationToken);
-        Assert.Equal(2, indexes.Count);
+        Assert.Equal(3, indexes.Count);
 
         IndexMetadata pk = indexes.Single(i => i.Kind == IndexKind.PrimaryKey);
         Assert.Equal("MSysComplexPKIndex", pk.Name);
@@ -143,6 +142,10 @@ public sealed class ComplexColumnsFlatIndexesTests
 
         IndexMetadata fk = indexes.Single(i => string.Equals(i.Name, "_Items", StringComparison.Ordinal));
         Assert.Equal(IndexKind.Normal, fk.Kind);
+
+        IndexMetadata values = indexes.Single(i => i.Name == "IdxFKPrimaryScalar");
+        Assert.True(values.HasUniqueFlag);
+        ColumnReferenceCheck(values.Columns, "_Items", "Value");
     }
 
     [Fact]

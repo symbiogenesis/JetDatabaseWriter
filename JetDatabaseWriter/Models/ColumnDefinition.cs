@@ -396,6 +396,9 @@ public sealed record ColumnDefinition
 
     internal bool ForceVariableLengthStorage { get; init; }
 
+    /// <summary>Gets a native descriptor length override without changing the value codec width.</summary>
+    internal int? DescriptorSizeOverride { get; init; }
+
     internal byte? DescriptorFlagsOverride { get; init; }
 
     internal ColumnType? ColumnTypeOverride { get; init; }

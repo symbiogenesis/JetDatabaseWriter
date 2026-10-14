@@ -74,7 +74,7 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
         }
 
         Assert.Equal(["2||8"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
-        Assert.Equal(["1||8", "3||7"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        Assert.Equal(["1||8", "3||"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
     }
 
@@ -146,13 +146,13 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
         Assert.Equal(["2|two|two|7"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
     }
 
-    /// <summary>A key with a null component has no dependents to move when populated again.</summary>
+    /// <summary>A key with a Null component retains its matching dependents when populated again.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
     /// <returns>The asynchronous test.</returns>
     [Theory]
     [MemberData(nameof(FormatsAndModes))]
-    public async Task Update_PartialNullReferencedKeyToNonNull_LeavesNullChildKeysAlone(DatabaseFormat format, WriteMode mode)
+    public async Task Update_PartialNullReferencedKeyToNonNull_CascadesMatchingChildren(DatabaseFormat format, WriteMode mode)
     {
         await using MemoryStream ms = await this.CreateAsync(format, cascade: true, requiredChild: false, composite: true, self: false);
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(ms, mode))
@@ -165,7 +165,7 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
         }
 
         Assert.Equal(["2|three|8"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "P"));
-        Assert.Equal(["1||7", "3||7"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
+        Assert.Equal(["1|three|8", "3||"], await ForeignKeyTestDatabase.ReadRowsAsync(ms, "C"));
         await ForeignKeyTestDatabase.AssertIndexesCoverRowsAsync(ms, "P", "C");
     }
 
@@ -239,7 +239,7 @@ public sealed class ForeignKeyNullReferenceUpdateTests(DatabaseCache db) : IClas
                 await writer.InsertRowAsync("C", [1, "two", 7], Ct);
                 if (!requiredChild)
                 {
-                    await writer.InsertRowAsync("C", [3, null, 7], Ct);
+                    await writer.InsertRowAsync("C", [3, null, composite ? null : 7], Ct);
                 }
 
                 RelationshipDefinition relationship = composite

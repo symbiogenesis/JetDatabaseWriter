@@ -5,7 +5,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
@@ -199,22 +198,17 @@ public sealed class PagerTests
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task BeginTransaction_WhileActive_KeepsExistingMessage(DatabaseFormat format)
+    public async Task BeginTransaction_WhileActive_SharesOneAttachedJournal(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateDatabaseAsync(format);
         await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
-
-        JetTransaction tx = await harness.Services.Transactions.BeginTransactionAsync(Ct);
-        JetOperationException ex = await Assert.ThrowsAsync<JetOperationException>(
-            async () => await harness.Services.Transactions.BeginTransactionAsync(Ct));
-
-        Assert.Equal(
-            "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.",
-            ex.Message);
-        Assert.Equal(JetErrorCode.TransactionAlreadyActive, ex.ErrorCode);
+        await using JetTransaction outer = await harness.Services.Transactions.BeginTransactionAsync(Ct);
+        await using JetTransaction inner = await harness.Services.Transactions.BeginTransactionAsync(Ct);
+        Assert.Same(outer.Journal, inner.Journal);
         Assert.True(harness.Pager.IsJournalActive);
-
-        await tx.RollbackAsync(Ct);
+        await inner.RollbackAsync(Ct);
+        Assert.True(harness.Pager.IsJournalActive);
+        await outer.RollbackAsync(Ct);
         Assert.False(harness.Pager.IsJournalActive);
     }
 

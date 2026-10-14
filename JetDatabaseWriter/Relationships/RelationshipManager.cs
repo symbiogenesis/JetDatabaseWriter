@@ -271,15 +271,12 @@ internal sealed class RelationshipManager(
     /// <param name="primaryColumns">The referenced column ordinals.</param>
     /// <param name="values">The row values.</param>
     /// <param name="valueColumns">The row ordinals supplying the key.</param>
-    /// <returns>A key with unambiguous component boundaries, or null for a partial-null tuple.</returns>
+    /// <returns>A key with unambiguous component boundaries, or null for an entirely Null tuple.</returns>
     private string? EncodeRelationshipKey(TableDef primaryDef, int[] primaryColumns, object[] values, int[] valueColumns)
     {
-        foreach (int ordinal in valueColumns)
+        if (Array.TrueForAll(valueColumns, ordinal => values[ordinal] is null or DBNull))
         {
-            if (values[ordinal] is null or DBNull)
-            {
-                return null;
-            }
+            return null;
         }
 
         string[] components = new string[valueColumns.Length];

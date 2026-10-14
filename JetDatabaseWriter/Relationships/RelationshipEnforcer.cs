@@ -74,7 +74,7 @@ internal sealed class RelationshipEnforcer(
                 continue;
             }
 
-            string? key = RelationshipKeyBuilder.Build(insertedValues, primaryColumnIndexes, tableDef);
+            string? key = RelationshipKeyBuilder.BuildKey(insertedValues, primaryColumnIndexes, tableDef);
             if (key == null)
             {
                 continue;
@@ -122,7 +122,7 @@ internal sealed class RelationshipEnforcer(
             }
 
             int[] foreignColumnIndexes = RequireColumns(rel, foreignTable, rel.ForeignColumns, foreignDef);
-            string? key = RelationshipKeyBuilder.Build(values, foreignColumnIndexes, foreignDef);
+            string? key = RelationshipKeyBuilder.BuildForeignKey(values, foreignColumnIndexes, foreignDef);
             if (key == null)
             {
                 continue;
@@ -174,9 +174,9 @@ internal sealed class RelationshipEnforcer(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                string? newKey = RelationshipKeyBuilder.Build(newRow, foreignColumnIndexes, foreignDef);
+                string? newKey = RelationshipKeyBuilder.BuildForeignKey(newRow, foreignColumnIndexes, foreignDef);
                 if (newKey == null
-                    || (string.Equals(newKey, RelationshipKeyBuilder.Build(oldRow, foreignColumnIndexes, foreignDef), StringComparison.Ordinal)
+                    || (string.Equals(newKey, RelationshipKeyBuilder.BuildForeignKey(oldRow, foreignColumnIndexes, foreignDef), StringComparison.Ordinal)
                         && (!ctx.RemovedParentKeys.TryGetValue(rel.Name, out HashSet<string>? removed) || !removed.Contains(newKey))))
                 {
                     continue;
@@ -250,14 +250,14 @@ internal sealed class RelationshipEnforcer(
                 if (tableReplacements.TryGetValue((stored.Location.PageNumber, stored.Location.RowIndex), out object[]? replacement))
                 {
                     finalRow = replacement;
-                    string? originalKey = RelationshipKeyBuilder.Build(stored.Values, columns, parent.Definition);
+                    string? originalKey = RelationshipKeyBuilder.BuildKey(stored.Values, columns, parent.Definition);
                     if (originalKey != null)
                     {
                         _ = removedKeys.Add(originalKey);
                     }
                 }
 
-                string? key = RelationshipKeyBuilder.Build(finalRow, columns, parent.Definition);
+                string? key = RelationshipKeyBuilder.BuildKey(finalRow, columns, parent.Definition);
                 if (key != null)
                 {
                     _ = keys.Add(key);
@@ -488,7 +488,7 @@ internal sealed class RelationshipEnforcer(
                 {
                     foreach ((_, _, object[] newRow) in rows)
                     {
-                        string? newKey = RelationshipKeyBuilder.Build(newRow, fkIdx, change.ChildTable.Definition);
+                        string? newKey = RelationshipKeyBuilder.BuildKey(newRow, fkIdx, change.ChildTable.Definition);
                         if (newKey != null && change.Changes.TryGetValue(newKey, out (object?[] OldPkSubset, object[] NewPkSubset) moved))
                         {
                             ownDependents.Add((newRow, moved.NewPkSubset));
@@ -697,8 +697,8 @@ internal sealed class RelationshipEnforcer(
         {
             int[] fixedBinaryLengths = RelationshipKeyBuilder.GetFixedBinaryLengths(definition, [column]);
             return string.Equals(
-                RelationshipKeyBuilder.Build([first], [0], fixedBinaryLengths),
-                RelationshipKeyBuilder.Build([second], [0], fixedBinaryLengths),
+                RelationshipKeyBuilder.BuildKey([first], [0], fixedBinaryLengths),
+                RelationshipKeyBuilder.BuildKey([second], [0], fixedBinaryLengths),
                 StringComparison.Ordinal);
         }
 
@@ -952,7 +952,7 @@ internal sealed class RelationshipEnforcer(
         var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (LocatedRow row in await snapshots.ReadRowsAsync(parent.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
         {
-            string? key = RelationshipKeyBuilder.Build(row.Values, primaryColumnIndexes, parent.Definition);
+            string? key = RelationshipKeyBuilder.BuildKey(row.Values, primaryColumnIndexes, parent.Definition);
             if (key != null)
             {
                 _ = set.Add(key);
@@ -1032,7 +1032,7 @@ internal sealed class RelationshipEnforcer(
             }
 
             int[] primaryPkIdx = RequireColumns(rel, primaryTable, rel.PrimaryColumns, primaryDef);
-            List<object?[]> parentPkRows = RelationshipKeyBuilder.ProjectNonNullKeys(deletedRows, primaryPkIdx);
+            List<object?[]> parentPkRows = RelationshipKeyBuilder.ProjectKeys(deletedRows, primaryPkIdx);
             if (parentPkRows.Count == 0)
             {
                 continue;
@@ -1046,7 +1046,7 @@ internal sealed class RelationshipEnforcer(
                 var deletedKeys = new Dictionary<string, (object?[] OldPkSubset, object[] NewPkSubset)>(StringComparer.Ordinal);
                 foreach (object?[] key in parentPkRows)
                 {
-                    string? encoded = RelationshipKeyBuilder.Build(key, CreateOrdinals(key.Length), RelationshipKeyBuilder.GetFixedBinaryLengths(primaryDef, primaryPkIdx));
+                    string? encoded = RelationshipKeyBuilder.BuildKey(key, CreateOrdinals(key.Length), RelationshipKeyBuilder.GetFixedBinaryLengths(primaryDef, primaryPkIdx));
                     if (encoded != null)
                     {
                         deletedKeys[encoded] = (key, []);
@@ -1159,7 +1159,7 @@ internal sealed class RelationshipEnforcer(
         foreach (LocatedRow childRow in await snapshots.ReadRowsAsync(childTable.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string? childKey = RelationshipKeyBuilder.Build(childRow.Values, fkIdx, childTable.Definition);
+            string? childKey = RelationshipKeyBuilder.BuildKey(childRow.Values, fkIdx, childTable.Definition);
             if (childKey != null && keySet.Contains(childKey))
             {
                 dependents.Add(childRow);
@@ -1249,8 +1249,8 @@ internal sealed class RelationshipEnforcer(
             var movingChanges = new Dictionary<string, (object?[] OldPkSubset, object[] NewPkSubset)>(StringComparer.Ordinal);
             foreach ((_, object[] oldRow, object[] newRow) in rows)
             {
-                string? oldKey = RelationshipKeyBuilder.Build(oldRow, primaryPkIdx, primaryDef);
-                string? newKey = RelationshipKeyBuilder.Build(newRow, primaryPkIdx, primaryDef);
+                string? oldKey = RelationshipKeyBuilder.BuildKey(oldRow, primaryPkIdx, primaryDef);
+                string? newKey = RelationshipKeyBuilder.BuildKey(newRow, primaryPkIdx, primaryDef);
                 if (oldKey == null || string.Equals(newKey, oldKey, StringComparison.Ordinal))
                 {
                     continue;
@@ -1421,7 +1421,7 @@ internal sealed class RelationshipEnforcer(
         foreach (LocatedRow childRow in await snapshots.ReadRowsAsync(change.ChildTable.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string? childKey = RelationshipKeyBuilder.Build(childRow.Values, change.ForeignColumnIndexes, change.ChildTable.Definition);
+            string? childKey = RelationshipKeyBuilder.BuildKey(childRow.Values, change.ForeignColumnIndexes, change.ChildTable.Definition);
             if (childKey != null && change.Changes.TryGetValue(childKey, out (object?[] OldPkSubset, object[] NewPkSubset) moved))
             {
                 dependents.Add((childRow, moved.NewPkSubset));

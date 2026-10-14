@@ -47,6 +47,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="catalogArtifacts">Creates the hidden flat child tables and system-table templates.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="constraints">Applies flat-table column constraints on row-level inserts.</param>
+/// <param name="uniqueIndexes">Validates flat-table unique keys before an item is written.</param>
 /// <param name="autoNumbers">Advances a flat table's persisted AutoNumber high-water value after a row-level insert, a parent table's complex AutoNumber after a reference is allocated, and <c>MSysComplexColumns</c>' ComplexID counter.</param>
 /// <param name="seeds">Resolves flat tables and reads the per-row complex references a parent table already uses.</param>
 /// <param name="snapshots">Streams strict typed projected parent rows.</param>
@@ -61,6 +62,7 @@ internal sealed class ComplexColumnManager(
     CatalogArtifactWriter catalogArtifacts,
     CatalogRowReader catalogRows,
     ConstraintRegistry constraints,
+    UniqueIndexChecker uniqueIndexes,
     AutoNumberMaintainer autoNumbers,
     ComplexReferenceSeedReader seeds,
     TableSnapshotReader snapshots)
@@ -111,7 +113,17 @@ internal sealed class ComplexColumnManager(
         string name,
         Type valueType,
         int maxLength = 0)
-        => (name, [Column("Value", valueType, maxLength)]);
+        =>
+        (
+            name,
+            [
+                new ColumnDefinition("Value", valueType, maxLength)
+                {
+                    ForceVariableLengthStorage = valueType == typeof(decimal),
+                    DescriptorSizeOverride = valueType == typeof(decimal) ? 9 : null,
+                    DescriptorNonTextMiscOverride = 0x00000409,
+                },
+            ]);
 
     private static (string Name, ColumnDefinition[] Columns) AttachmentTemplate(string name)
         =>
@@ -659,7 +671,9 @@ internal sealed class ComplexColumnManager(
             ?? throw new InvalidOperationException("MultiValueElementType must be set on a multi-value column.");
         var valueCol = new ColumnDefinition("Value", elementType, maxLength: elementType == typeof(string) && parentColumn.MaxLength == 0 ? ComplexTypeTemplateTextLength : parentColumn.MaxLength)
         {
-            DescriptorExtraFlagsOverride = 0x10,
+            ForceVariableLengthStorage = elementType == typeof(decimal),
+            DescriptorSizeOverride = elementType == typeof(decimal) && parentColumn.NumericPrecision is 0 or 18 && parentColumn.NumericScale == 0 ? 9 : null,
+            DescriptorExtraFlagsOverride = 0,
             DescriptorNonTextMiscOverride = 0x00000409,
             NumericPrecision = parentColumn.NumericPrecision,
             NumericScale = parentColumn.NumericScale,
@@ -669,6 +683,7 @@ internal sealed class ComplexColumnManager(
         [
             new IndexDefinition("MSysComplexPKIndex", scalarName) { IsPrimaryKey = true },
             new IndexDefinition(fkName, fkName),
+            new IndexDefinition("IdxFKPrimaryScalar", [fkName, "Value"]) { IsUnique = true },
         ];
         return (mvCols, mvIndexes);
     }
@@ -852,6 +867,7 @@ internal sealed class ComplexColumnManager(
         // single-call surface. The counter is raised after the insert below.
         string flatTableName = await this.ResolveFlatTableNameAsync(flatTdefPage, cancellationToken).ConfigureAwait(false);
         await constraints.ApplyAsync(flatTableName, flatDef, flatValues, cancellationToken).ConfigureAwait(false);
+        await uniqueIndexes.CheckUniqueIndexesPreInsertAsync(flatTdefPage, flatDef, flatTableName, [flatValues], cancellationToken).ConfigureAwait(false);
 
         await tableRows.InsertRowDataAsync(flatTdefPage, flatDef, flatValues, cancellationToken: cancellationToken).ConfigureAwait(false);
         await indexes.MaintainIndexesAsync(flatTdefPage, flatDef, flatTableName, cancellationToken).ConfigureAwait(false);

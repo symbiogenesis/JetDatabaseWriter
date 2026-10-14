@@ -485,7 +485,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     }
 
     /// <summary>
-    /// Begins an explicit transaction whose changed pages remain buffered in memory
+    /// Begins an explicit transaction, nested within the current scope when one exists.
+    /// Up to seven levels may be open; database mutations require no more than five.
+    /// Resolve the innermost first. Child commit merges
+    /// into its parent and child rollback restores only the child. Only the outermost
+    /// commit writes or flushes the database. Changed pages remain buffered in memory
     /// until commit, subject to <see cref="AccessWriterOptions.MaxTransactionPageBudget"/>.
     /// <see cref="JetTransaction.CommitAsync"/> writes the buffered pages in place and
     /// retains raw before-images for recovery. File-backed transactions also persist
@@ -501,8 +505,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The newly-started transaction.</returns>
     /// <exception cref="InvalidOperationException">
-    /// Thrown when a transaction is already active on this writer (only one
-    /// concurrent transaction is supported per <see cref="AccessWriter"/>).
+    /// Thrown when seven transaction levels are already active on this writer.
     /// </exception>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     public ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)

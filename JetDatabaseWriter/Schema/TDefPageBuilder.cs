@@ -159,7 +159,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             }
 
             int declaredSize = GetDeclaredSize(type, definition.MaxLength, format);
-            int size = isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize;
+            int size = definition.DescriptorSizeOverride ?? (isCalculated ? GetCalculatedDeclaredSize(type, declaredSize) : declaredSize);
 
             byte flags;
             bool isComplex = type is ComplexType;

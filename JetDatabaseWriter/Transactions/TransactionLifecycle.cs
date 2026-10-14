@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Transactions;
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Threading;
@@ -48,11 +49,12 @@ internal sealed class TransactionLifecycle(
     IOwnedMapPolicy ownedMaps,
     ConstraintRegistry constraints)
 {
+    private readonly Stack<WriterState> nestedStates = [];
     private readonly SemaphoreSlim mutationGate = new(1, 1);
     private readonly AsyncLocal<MutationContext?> mutationActive = new();
 
     /// <summary>
-    /// The writer's in-memory state when <see cref="ActiveTransaction"/> began,
+    /// The writer's in-memory state when the outermost transaction began,
     /// put back if it rolls back. Set and cleared together with it.
     /// </summary>
     private WriterState? stateAtBegin;
@@ -94,6 +96,7 @@ internal sealed class TransactionLifecycle(
             () =>
             {
                 pager.ThrowIfFaulted();
+                this.ThrowIfMutationDepthExceeded();
                 return work();
             },
             cancellationToken);
@@ -140,7 +143,10 @@ internal sealed class TransactionLifecycle(
 
         try
         {
-            await this.RollbackTransactionCoreAsync(this.ActiveTransaction, CancellationToken.None).ConfigureAwait(false);
+            while (this.ActiveTransaction is { } active)
+            {
+                await this.RollbackTransactionCoreAsync(active, CancellationToken.None).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -149,6 +155,7 @@ internal sealed class TransactionLifecycle(
             pager.ForceDetachJournal();
             this.ActiveTransaction = null;
             this.stateAtBegin = null;
+            this.nestedStates.Clear();
         }
     }
 
@@ -158,7 +165,7 @@ internal sealed class TransactionLifecycle(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="statement">Whether this private statement is exempt from the explicit transaction budget.</param>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
-    /// <exception cref="JetOperationException">Another transaction is already active on the writer.</exception>
+    /// <exception cref="JetOperationException">The writer already has seven transaction levels.</exception>
     private async ValueTask<JetTransaction> BeginTransactionCoreAsync(CancellationToken cancellationToken, bool statement = false)
     {
         pager.ThrowIfDisposed();
@@ -167,16 +174,24 @@ internal sealed class TransactionLifecycle(
         cancellationToken.ThrowIfCancellationRequested();
 
         using Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false);
-        if (this.ActiveTransaction is not null)
+        if (this.ActiveTransaction is { } parent)
         {
-            throw JetErrors.Operation(
-                JetErrorCode.TransactionAlreadyActive,
-                "A transaction is already active on this writer. Only one concurrent transaction per AccessWriter is supported.");
+            if (parent.NestingLevel == 7)
+            {
+                throw JetErrors.Operation(JetErrorCode.TransactionNestingLimit, "At most seven transaction levels may be active on this writer.");
+            }
+
+            WriterState state = this.CaptureWriterState();
+            var child = new JetTransaction(this, parent.Journal, parent);
+            parent.Journal.BeginSavepoint();
+            this.nestedStates.Push(state);
+            this.ActiveTransaction = child;
+            return child;
         }
 
         var journal = new PagerTransaction(gate.PhysicalLengthBytes, format.PageSize, statement ? int.MaxValue : options.MaxTransactionPageBudget, statement) { CommitLockAddress = format.CommitLockOffset };
         var tx = new JetTransaction(this, journal);
-        this.stateAtBegin = new WriterState(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
+        this.stateAtBegin = this.CaptureWriterState();
         gate.Attach(journal, preserveFrames: statement);
         this.ActiveTransaction = tx;
         return tx;
@@ -192,6 +207,7 @@ internal sealed class TransactionLifecycle(
     private async ValueTask RunAutoCommitCoreAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
     {
         pager.ThrowIfFaulted();
+        this.ThrowIfMutationDepthExceeded();
         if (this.ActiveTransaction is { } active)
         {
             await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
@@ -235,6 +251,7 @@ internal sealed class TransactionLifecycle(
     private async ValueTask<TResult> RunAutoCommitCoreAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
         pager.ThrowIfFaulted();
+        this.ThrowIfMutationDepthExceeded();
         if (this.ActiveTransaction is { } active)
         {
             return await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
@@ -329,6 +346,18 @@ internal sealed class TransactionLifecycle(
                 throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
             }
 
+            if (transaction.Parent is not null)
+            {
+                bool cancellationRequested = cancellationToken.IsCancellationRequested;
+                this.EndNestedTransaction(transaction, commit: !cancellationRequested);
+                if (cancellationRequested)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                return;
+            }
+
             journal = transaction.Journal;
             state = this.stateAtBegin;
 
@@ -421,6 +450,12 @@ internal sealed class TransactionLifecycle(
                 throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
             }
 
+            if (transaction.Parent is not null)
+            {
+                this.EndNestedTransaction(transaction, commit: false);
+                return;
+            }
+
             state = this.stateAtBegin;
             gate.Detach();
             this.ActiveTransaction = null;
@@ -443,6 +478,35 @@ internal sealed class TransactionLifecycle(
         {
             byteRangeLock.ReleaseCommitLock(transaction.Journal.SpillCommitLockOffset);
         }
+    }
+
+    private void ThrowIfMutationDepthExceeded()
+    {
+        if (this.ActiveTransaction is { NestingLevel: > 5 })
+        {
+            throw JetErrors.Operation(JetErrorCode.TransactionNestingLimit, "Database mutations require at most five active transaction levels. End the innermost scopes before writing.");
+        }
+    }
+
+    private WriterState CaptureWriterState() => new(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
+
+    private void EndNestedTransaction(JetTransaction transaction, bool commit)
+    {
+        WriterState state = this.nestedStates.Pop();
+        if (commit)
+        {
+            transaction.Journal.ReleaseSavepoint();
+            transaction.MarkCommitted();
+        }
+        else
+        {
+            transaction.Journal.RollbackSavepoint();
+            pager.InvalidateAll();
+            this.RestoreWriterState(state);
+            transaction.MarkRolledBack();
+        }
+
+        this.ActiveTransaction = transaction.Parent;
     }
 
     /// <summary>Serializes a mutation and detects active callback re-entry.</summary>
@@ -493,7 +557,7 @@ internal sealed class TransactionLifecycle(
 
     private async ValueTask<TResult> RunInSavepointAsync<TResult>(JetTransaction transaction, Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
-        WriterState state = new(dataPages.CaptureState(), ownedMaps.Capture(), constraints.CaptureSnapshot());
+        WriterState state = this.CaptureWriterState();
         using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(cancellationToken).ConfigureAwait(false))
         {
             transaction.Journal.BeginSavepoint();

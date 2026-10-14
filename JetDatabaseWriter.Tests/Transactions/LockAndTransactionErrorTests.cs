@@ -13,16 +13,18 @@ using JetDatabaseWriter.Transactions;using Xunit;
 /// <summary>Checks deliberate locking, file and transaction refusals expose stable codes.</summary>
 public sealed class LockAndTransactionErrorTests
 {
-    /// <summary>A second begin and operations on an ended transaction keep their BCL base and code.</summary>
+    /// <summary>Out-of-order resolution and operations on an ended transaction expose stable state codes.</summary>
     [Fact]
     public async Task TransactionState_ReportsCodes()
     {
         await using var stream = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.AceAccdb, leaveOpen: true, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        JetOperationException active = await Assert.ThrowsAsync<JetOperationException>(() => writer.BeginTransactionAsync(TestContext.Current.CancellationToken).AsTask());
+        await using JetTransaction child = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        JetOperationException active = await Assert.ThrowsAsync<JetOperationException>(() => transaction.CommitAsync(TestContext.Current.CancellationToken).AsTask());
         Assert.IsType<InvalidOperationException>(active, exactMatch: false);
-        Assert.Equal(JetErrorCode.TransactionAlreadyActive, active.ErrorCode);
+        Assert.Equal(JetErrorCode.TransactionNotActive, active.ErrorCode);
+        await child.RollbackAsync(TestContext.Current.CancellationToken);
         await transaction.RollbackAsync(TestContext.Current.CancellationToken);
         JetOperationException ended = await Assert.ThrowsAsync<JetOperationException>(() => transaction.CommitAsync(TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(JetErrorCode.TransactionEnded, ended.ErrorCode);
@@ -46,6 +48,7 @@ public sealed class LockAndTransactionErrorTests
         Assert.False(active.IsCommitted);
         Assert.False(active.IsRolledBack);
         await active.RollbackAsync(TestContext.Current.CancellationToken);
+        foreign.MarkRolledBack();
     }
 
     /// <summary>An existing destination reports the typed file refusal.</summary>
