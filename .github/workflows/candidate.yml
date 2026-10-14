@@ -1,0 +1,54 @@
+name: Candidate checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Published main ancestor the patch applies to
+        required: true
+        type: string
+      patch_base64:
+        description: Base64 encoded git diff (submit with scripts/submit-candidate.ps1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout trusted coordinator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: 8.0.x
+      - name: Check candidate
+        shell: pwsh
+        env:
+          CANDIDATE_BASE: ${{ inputs.base_sha }}
+          CANDIDATE_PATCH: ${{ inputs.patch_base64 }}
+        run: >-
+          ./scripts/run-candidate-checks.ps1 -BaseSha $env:CANDIDATE_BASE
+          -EncodedPatch $env:CANDIDATE_PATCH
+          -OutputDirectory "$env:RUNNER_TEMP/candidate-results"
+      - name: Upload diagnostics and reviewable patches
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-results
+          path: ${{ runner.temp }}/candidate-results/
+          if-no-files-found: error
+          retention-days: 7
