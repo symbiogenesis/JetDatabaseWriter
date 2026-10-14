@@ -35,7 +35,9 @@ foreach ($mode in 'seed', 'trimmed', 'native') {
 }
 $originals = @{}
 foreach ($file in $files | Select-Object -Unique) {
-    $originals[$file] = if ([IO.File]::Exists($file)) { [IO.File]::ReadAllBytes($file) } else { $null }
+    if ([IO.File]::Exists($file)) {
+        $originals[$file] = [IO.File]::ReadAllBytes($file)
+    } else { $originals[$file] = $null }
 }
 
 Push-Location $repository

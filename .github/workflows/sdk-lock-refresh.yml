@@ -53,9 +53,28 @@ jobs:
         run: |
           $output = Join-Path $env:RUNNER_TEMP 'sdk-lock-patch'
           New-Item -ItemType Directory -Force -Path $output | Out-Null
-          git diff --check
+          $repository = (Get-Location).Path
+          $solution = [xml][IO.File]::ReadAllText((Join-Path $repository 'JetDatabaseWriter.slnx'))
+          $files = [Collections.Generic.List[string]]::new()
+          $files.Add('global.json')
+          foreach ($project in $solution.SelectNodes('//Project[@Path]')) {
+            $projectPath = [IO.Path]::GetFullPath((Join-Path $repository $project.Path))
+            if (-not $projectPath.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "Solution project must stay inside the repository: $($project.Path)"
+            }
+            $lock = Join-Path (Split-Path -Parent $projectPath) 'packages.lock.json'
+            $files.Add([IO.Path]::GetRelativePath($repository, $lock).Replace('\', '/'))
+          }
+          foreach ($mode in 'seed', 'trimmed', 'native') {
+            $files.Add("scripts/AotSmoke/packages.$mode.lock.json")
+          }
+          [string[]] $paths = @($files | Sort-Object -Unique)
+          # Include newly generated locks while keeping other source changes outside the patch.
+          git add --intent-to-add -- @paths
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot mark the generated SDK files for patch export.' }
+          git diff --check -- @paths
           if ($LASTEXITCODE -ne 0) { throw 'The refreshed files failed whitespace validation.' }
-          git diff --binary --output="$output/sdk-locks.patch" -- global.json ':(glob)**/packages*.lock.json'
+          git diff --binary --output="$output/sdk-locks.patch" -- @paths
           if ($LASTEXITCODE -ne 0) { throw 'SDK patch generation failed.' }
           $metadata = [ordered]@{
             base_sha = $env:GITHUB_SHA

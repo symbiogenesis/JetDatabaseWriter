@@ -14,7 +14,7 @@ $scripts = Join-Path $fixture 'scripts'
 foreach ($name in 'restore-dependencies.ps1', 'update-sdk.ps1') {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('../' + $name)) -Destination (Join-Path $scripts $name)
 }
-$context = @{ Calls = [Collections.Generic.List[object]]::new(); FailAt = 0; Version = '10.0.402'; MissingNative = $false }
+$context = @{ Calls = [Collections.Generic.List[object]]::new(); FailAt = 0; Version = '10.0.402'; MissingNative = $false; EmptyLibrary = $false }
 
 function Assert-Check([bool] $Condition, [string] $Message) {
     if (-not $Condition) { throw $Message }
@@ -25,6 +25,7 @@ function New-Fixture {
     $context.FailAt = 0
     $context.Version = '10.0.402'
     $context.MissingNative = $false
+    $context.EmptyLibrary = $false
     [IO.Directory]::CreateDirectory((Join-Path $fixture 'Library')) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $scripts 'AotSmoke')) | Out-Null
     [IO.File]::WriteAllText((Join-Path $fixture 'global.json'), "{`r`n  `"sdk`": { `"version`": `"10.0.401`", `"rollForward`": `"disable`" }`r`n}`r`n")
@@ -61,7 +62,10 @@ function Invoke-Scenario([string] $Name, [string] $ExpectedError = '') {
     if ($ExpectedError) {
         Assert-Check ($caught.Contains($ExpectedError)) "$Name expected '$ExpectedError', got '$caught'."
         Assert-Check (([IO.File]::ReadAllText((Join-Path $fixture 'global.json')) | ConvertFrom-Json).sdk.version -eq '10.0.401') "$Name kept a partial SDK update."
-        Assert-Check ([IO.File]::ReadAllText((Join-Path $fixture 'Library/packages.lock.json')) -eq "original library`r`n") "$Name did not restore the original library lock bytes."
+        $libraryLock = Join-Path $fixture 'Library/packages.lock.json'
+        Assert-Check ([IO.File]::Exists($libraryLock)) "$Name deleted an existing library lock."
+        $expectedLibrary = if ($context.EmptyLibrary) { '' } else { "original library`r`n" }
+        Assert-Check ([IO.File]::ReadAllText($libraryLock) -eq $expectedLibrary) "$Name did not restore the original library lock bytes."
         foreach ($mode in 'seed', 'trimmed', 'native') {
             $path = Join-Path $scripts ("AotSmoke/packages.$mode.lock.json")
             if ($mode -eq 'native' -and $context.MissingNative) {
@@ -115,6 +119,11 @@ foreach ($stage in 1, 2, 3, 4, 5, 8) {
     Invoke-Scenario "restore failure $stage rolls back" 'failed with exit code 7'
     Assert-Check ($context.Calls.Count -eq $stage) 'The updater continued restoring after a failure.'
 }
+New-Fixture
+$context.EmptyLibrary = $true
+[IO.File]::WriteAllBytes((Join-Path $fixture 'Library/packages.lock.json'), [byte[]]@())
+$context.FailAt = 2
+Invoke-Scenario 'existing empty locks survive rollback' 'failed with exit code 7'
 New-Fixture
 $context.MissingNative = $true
 [IO.File]::Delete((Join-Path $scripts 'AotSmoke/packages.native.lock.json'))
