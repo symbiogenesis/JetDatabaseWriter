@@ -24,6 +24,8 @@ function Invoke-DotNet {
 
 Push-Location $repository
 try {
+    # Verify SDK-dependent locks before compiling or generating any consumer input.
+    & (Join-Path $PSScriptRoot 'restore-dependencies.ps1') -AotOnly
     $project = Join-Path $repository 'scripts/AotSmoke/AotSmoke.csproj'
     $seed = Join-Path $OutputDirectory 'seed.accdb'
     $build = Join-Path $OutputDirectory 'build'

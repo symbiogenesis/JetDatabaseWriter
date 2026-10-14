@@ -12,6 +12,7 @@ $fixtureScripts = Join-Path $testRoot 'fixture/scripts'
 [IO.Directory]::CreateDirectory($fixtureScripts) | Out-Null
 $subject = Join-Path $fixtureScripts 'test-aot.ps1'
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../test-aot.ps1') -Destination $subject
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot '../restore-dependencies.ps1') -Destination $fixtureScripts
 $aotTestContext = [pscustomobject]@{
     Calls = [Collections.Generic.List[object]]::new()
     Executions = [Collections.Generic.List[object]]::new()
@@ -31,7 +32,9 @@ function Get-Option([string[]] $Arguments, [string] $Name) {
 
 function dotnet {
     $arguments = [string[]]$args
-    $stage = if ($arguments -contains '-p:SmokeMode=seed') {
+    $stage = if ($arguments[0] -eq 'restore') {
+        'restore-' + (@($arguments | Where-Object { $_ -like '-p:SmokeMode=*' })[0].Split('=')[1])
+    } elseif ($arguments -contains '-p:SmokeMode=seed') {
         'seed'
     } elseif ($arguments[0] -eq 'run') {
         $(if ($arguments -contains '--records') { 'records-scaffold' } else { 'classes-scaffold' })
@@ -43,7 +46,9 @@ function dotnet {
     $aotTestContext.Calls.Add([pscustomobject]@{ Stage = $stage; Arguments = $arguments })
     $global:LASTEXITCODE = if ($aotTestContext.Failure -eq $stage) { 7 } else { 0 }
     if ($LASTEXITCODE -ne 0) { return }
-    if ($stage -eq 'seed') {
+    if ($stage.StartsWith('restore-', [StringComparison]::Ordinal)) {
+        return
+    } elseif ($stage -eq 'seed') {
         [IO.File]::WriteAllText($arguments[-1], 'Seed database')
     } elseif ($stage.EndsWith('-scaffold', [StringComparison]::Ordinal)) {
         $models = Get-Option $arguments '--output'
@@ -88,11 +93,15 @@ function Invoke-Scenario([string] $Name, [string] $Failure = '') {
 
 $pass = Invoke-Scenario 'pass'
 Assert-Check (-not $pass.Error) "Passing AOT commands failed: $($pass.Error)"
-Assert-Check ($aotTestContext.Calls.Count -eq 7) 'The seed, two scaffolds and four publishes must all run.'
-$expectedStages = 'seed,classes-scaffold,classes-trimmed-publish,classes-native-publish,records-scaffold,records-trimmed-publish,records-native-publish'
+Assert-Check ($aotTestContext.Calls.Count -eq 10) 'Every lock must be verified before the seed, two scaffolds and four publishes run.'
+$expectedStages = 'restore-seed,restore-trimmed,restore-native,seed,classes-scaffold,classes-trimmed-publish,classes-native-publish,records-scaffold,records-trimmed-publish,records-native-publish'
 Assert-Check (($aotTestContext.Calls.Stage -join ',') -eq $expectedStages) 'The full classes/records and trimmed/native matrix changed.'
 $artifacts = Join-Path $pass.Output 'build'
 foreach ($call in $aotTestContext.Calls) {
+    if ($call.Stage.StartsWith('restore-', [StringComparison]::Ordinal)) {
+        Assert-Check ($call.Arguments -contains '--locked-mode') "$($call.Stage) did not verify the lockfile."
+        continue
+    }
     Assert-Check ($call.Arguments -contains '-p:AnalyzeOnly=AotSmoke') "$($call.Stage) repeated library/tool analysis or disabled consumer analysis."
     Assert-Check ($call.Arguments -contains '-p:RestoreLockedMode=true') "$($call.Stage) did not preserve locked restoration."
     Assert-Check ((Get-Option $call.Arguments '--artifacts-path') -eq $artifacts) "$($call.Stage) did not reuse the established build artifacts."
@@ -117,7 +126,7 @@ $project = [xml][IO.File]::ReadAllText((Join-Path $PSScriptRoot '../AotSmoke/Aot
 Assert-Check ($project.SelectSingleNode('/Project/PropertyGroup/PublishTrimmed').InnerText -eq 'true') 'The trimmed consumer project must enable trimming.'
 Assert-Check ($project.SelectSingleNode('/Project/PropertyGroup/PublishAot').InnerText -eq 'true') 'The native consumer project must enable NativeAOT.'
 
-foreach ($failure in @('seed', 'classes-scaffold', 'records-scaffold', 'classes-trimmed-publish', 'records-native-publish', 'classes-native-consumer', 'records-native-consumer')) {
+foreach ($failure in @('restore-seed', 'restore-native', 'seed', 'classes-scaffold', 'records-scaffold', 'classes-trimmed-publish', 'records-native-publish', 'classes-native-consumer', 'records-native-consumer')) {
     $scenario = Invoke-Scenario $failure $failure
     Assert-Check ([bool]$scenario.Error) "$failure falsely passed."
     $expectedExit = if ($failure.EndsWith('-consumer', [StringComparison]::Ordinal)) { '9' } else { '7' }
