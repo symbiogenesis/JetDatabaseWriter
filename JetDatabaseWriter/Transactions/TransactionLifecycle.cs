@@ -205,42 +205,13 @@ internal sealed class TransactionLifecycle(
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask RunAutoCommitCoreAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
-    {
-        pager.ThrowIfFaulted();
-        this.ThrowIfMutationDepthExceeded();
-        if (this.ActiveTransaction is { } active)
-        {
-            await this.RunInSavepointAsync(active, work, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        JetTransaction tx = await this.BeginTransactionCoreAsync(cancellationToken, statement: true).ConfigureAwait(false);
-        try
-        {
-            await work(cancellationToken).ConfigureAwait(false);
-            await this.CommitTransactionCoreAsync(tx, cancellationToken, durable: options.UseTransactionalWrites).ConfigureAwait(false);
-        }
-        catch
-        {
-            try
+        => await this.RunAutoCommitCoreAsync<object?>(
+            async token =>
             {
-                if (!tx.IsTerminated)
-                {
-                    await this.RollbackTransactionCoreAsync(tx, CancellationToken.None).ConfigureAwait(false);
-                }
-            }
-            catch (JetOperationException ex) when (ex.ErrorCode is JetErrorCode.TransactionEnded or JetErrorCode.TransactionNotActive)
-            {
-                // Already terminated by a concurrent commit/rollback path.
-            }
-            catch (IOException)
-            {
-                // Best-effort rollback; surface the original failure.
-            }
-
-            throw;
-        }
-    }
+                await work(token).ConfigureAwait(false);
+                return null;
+            },
+            cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// Generic-result variant of <see cref="RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>.
@@ -544,16 +515,6 @@ internal sealed class TransactionLifecycle(
         await this.RunSerializedAsync(InvokeAsync, cancellationToken).ConfigureAwait(false);
         return result;
     }
-
-    private async ValueTask RunInSavepointAsync(JetTransaction transaction, Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
-        => await this.RunInSavepointAsync<object?>(
-            transaction,
-            async token =>
-            {
-                await work(token).ConfigureAwait(false);
-                return null;
-            },
-            cancellationToken).ConfigureAwait(false);
 
     private async ValueTask<TResult> RunInSavepointAsync<TResult>(JetTransaction transaction, Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
     {
