@@ -281,6 +281,8 @@ Delivered:
   row-local evaluator's expression tree. Field nodes carry their original
   names and qualifiers; bare names such as `A1` are ordinary field names.
   Parsing never generates or reparses an intermediate formula.
+  Column validation rules reuse bounded ranges of the same token stream and
+  implicit field nodes, with separate short-circuit, three-valued Boolean logic.
 - `ConstraintRegistry` evaluates calculated columns during inserts when the row
   omits the cached value or supplies `NULL`, `DBNull` or `DbDefault.Value`, and
   recomputes calculated columns during updates after source values are applied.

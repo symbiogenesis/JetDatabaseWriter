@@ -101,6 +101,11 @@ public sealed class ConstraintRegistryTests
     [InlineData("<=&HFF", 256, false)]
     [InlineData("In (&H10, &O20)", 16, true)]
     [InlineData("In (&H10, &O20)", 20, false)]
+    [InlineData("=0 Or 1 / [Score] > 0", 0, true)]
+    [InlineData("<0 And 1 / [Score] > 0", 0, false)]
+    [InlineData("<0 Imp 1 / [Score] > 0", 0, true)]
+    [InlineData("Between &H1 And &O10 Or &H10", 16, true)]
+    [InlineData("Between &H1 And &O10 Or &H10", 17, false)]
     public async Task ApplyAsync_HydratedValidationRule_NumberColumn_SuppliesTheImplicitOperand(string rule, int? value, bool accepted)
         => await AssertRuleAsync(rule, ColumnType.LongIntegerType, value, accepted);
 

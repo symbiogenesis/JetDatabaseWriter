@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
+using static JetDatabaseWriter.Schema.Expressions.AccessExpressionText;
+
 /// <summary>
 /// Finds and renames the references to one field of one table in the text of
 /// an Access expression: a calculated column's <c>Expression</c>, or a
@@ -114,7 +116,7 @@ internal static class ExpressionFieldReferences
             }
             else if (current is '"' or '\'')
             {
-                index = SkipQuoted(text, index, current);
+                index = SkipQuoted(text, index);
                 if (index < 0)
                 {
                     break;
@@ -278,32 +280,6 @@ internal static class ExpressionFieldReferences
                         && !CalculatedExpressionCoercion.TryGetBuiltinConstant(candidate.Name, out _))));
     }
 
-    /// <summary>Returns the index after the string literal opening at <paramref name="index"/>, or -1 when it is not closed.</summary>
-    /// <param name="text">The expression text.</param>
-    /// <param name="index">The index of the opening quote.</param>
-    /// <param name="quote">The quote character.</param>
-    /// <returns>The index after the closing quote, or -1.</returns>
-    private static int SkipQuoted(string text, int index, char quote)
-    {
-        for (int i = index + 1; i < text.Length; i++)
-        {
-            if (text[i] != quote)
-            {
-                continue;
-            }
-
-            if (i + 1 < text.Length && text[i + 1] == quote)
-            {
-                i++;
-                continue;
-            }
-
-            return i + 1;
-        }
-
-        return -1;
-    }
-
     /// <summary>Returns the index after the brace group opening at <paramref name="index"/>, or -1 when it is not closed.</summary>
     /// <param name="text">The expression text.</param>
     /// <param name="index">The index of the opening brace.</param>
@@ -412,16 +388,6 @@ internal static class ExpressionFieldReferences
     {
         index = SkipWhiteSpace(text, index);
         return index < text.Length ? text[index] : '\0';
-    }
-
-    private static int SkipWhiteSpace(string text, int index)
-    {
-        while (index < text.Length && char.IsWhiteSpace(text[index]))
-        {
-            index++;
-        }
-
-        return index;
     }
 
     private static bool IsNameStart(char c) => char.IsLetter(c) || c == '_';

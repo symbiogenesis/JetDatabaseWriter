@@ -27,7 +27,8 @@ internal static class CalculatedExpressionLimits
             char current = expression[charIndex];
             if (current is '"' or '\'')
             {
-                charIndex = SkipQuotedString(expression, charIndex, current);
+                int end = AccessExpressionText.SkipQuoted(expression, charIndex);
+                charIndex = end < 0 ? expression.Length - 1 : end - 1;
                 continue;
             }
 
@@ -81,26 +82,5 @@ internal static class CalculatedExpressionLimits
             throw new ArgumentException(
                 $"Calculated-column generated text length {length} exceeds the safety limit of {MaxGeneratedTextLength} characters.");
         }
-    }
-
-    private static int SkipQuotedString(string expression, int quoteIndex, char quote)
-    {
-        for (int charIndex = quoteIndex + 1; charIndex < expression.Length; charIndex++)
-        {
-            if (expression[charIndex] != quote)
-            {
-                continue;
-            }
-
-            if (charIndex + 1 < expression.Length && expression[charIndex + 1] == quote)
-            {
-                charIndex++;
-                continue;
-            }
-
-            return charIndex;
-        }
-
-        return expression.Length - 1;
     }
 }

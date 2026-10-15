@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
+using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionParser;
 
 /// <summary>
 /// An Access column <c>ValidationRule</c> compiled for evaluation against a row.
@@ -38,16 +39,6 @@ internal sealed class ColumnValidationRule
 
     private ColumnValidationRule(RuleNode? root) => this.root = root;
 
-    private enum TokenKind
-    {
-        Word = 0,
-        Comparison = 1,
-        OpenParen = 2,
-        CloseParen = 3,
-        Literal = 4,
-        Other = 5,
-    }
-
     private enum LogicalOperator
     {
         And = 0,
@@ -72,8 +63,8 @@ internal sealed class ColumnValidationRule
         try
         {
             CalculatedExpressionLimits.ValidateExpressionShape(rule, CalculatedExpressionLimits.MaxExpressionLength, "Validation rule");
-            List<Token> tokens = Tokenize(rule);
-            var parser = new Parser(rule, tokens, "[" + columnName + "]");
+            List<Token> tokens = Tokenize(rule, isCalculatedColumn: false);
+            var parser = new Parser(rule, tokens, new CalculatedExpressionFieldNode(columnName));
             return new ColumnValidationRule(parser.ParseRule(0, tokens.Count));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or FormatException)
@@ -111,120 +102,6 @@ internal sealed class ColumnValidationRule
             ? throw new NotSupportedException("The validation rule cannot be evaluated.")
             : this.root.Evaluate(context) != false;
 
-    private static List<Token> Tokenize(string rule)
-    {
-        var tokens = new List<Token>();
-        int index = 0;
-        while (index < rule.Length)
-        {
-            char current = rule[index];
-            if (char.IsWhiteSpace(current))
-            {
-                index++;
-                continue;
-            }
-
-            int start = index;
-            TokenKind kind;
-            switch (current)
-            {
-                case '"':
-                case '\'':
-                    index = SkipQuoted(rule, index, current);
-                    kind = TokenKind.Literal;
-                    break;
-                case '[':
-                    index = SkipPast(rule, index, ']');
-                    kind = TokenKind.Literal;
-                    break;
-                case '#':
-                    index = SkipPast(rule, index, '#');
-                    kind = TokenKind.Literal;
-                    break;
-                case '(':
-                    index++;
-                    kind = TokenKind.OpenParen;
-                    break;
-                case ')':
-                    index++;
-                    kind = TokenKind.CloseParen;
-                    break;
-                case '<':
-                case '>':
-                case '=':
-                    index++;
-                    if (current != '=' && index < rule.Length && (rule[index] == '=' || (current == '<' && rule[index] == '>')))
-                    {
-                        index++;
-                    }
-
-                    kind = TokenKind.Comparison;
-                    break;
-                default:
-                    if (char.IsLetter(current) || current == '_')
-                    {
-                        index++;
-                        while (index < rule.Length && (char.IsLetterOrDigit(rule[index]) || rule[index] == '_' || rule[index] == '$'))
-                        {
-                            index++;
-                        }
-
-                        kind = TokenKind.Word;
-                    }
-                    else if (char.IsDigit(current) || current == '.')
-                    {
-                        index++;
-                        while (index < rule.Length && (char.IsLetterOrDigit(rule[index]) || rule[index] == '.'))
-                        {
-                            index++;
-                        }
-
-                        kind = TokenKind.Literal;
-                    }
-                    else
-                    {
-                        index++;
-                        kind = TokenKind.Other;
-                    }
-
-                    break;
-            }
-
-            tokens.Add(new Token(kind, start, index, rule[start..index]));
-        }
-
-        return tokens;
-    }
-
-    private static int SkipQuoted(string text, int quoteIndex, char quote)
-    {
-        for (int index = quoteIndex + 1; index < text.Length; index++)
-        {
-            if (text[index] != quote)
-            {
-                continue;
-            }
-
-            if (index + 1 < text.Length && text[index + 1] == quote)
-            {
-                index++;
-                continue;
-            }
-
-            return index + 1;
-        }
-
-        throw new ArgumentException("Validation rule has an unterminated string literal.");
-    }
-
-    private static int SkipPast(string text, int openIndex, char close)
-    {
-        int end = text.IndexOf(close, openIndex + 1);
-        return end < 0
-            ? throw new ArgumentException($"Validation rule is missing a closing '{close}'.")
-            : end + 1;
-    }
-
     private static bool? ToTriState(object value)
     {
         if (IsNull(value))
@@ -242,14 +119,7 @@ internal sealed class ColumnValidationRule
             : throw new NotSupportedException("Validation rule term did not evaluate to a Boolean.");
     }
 
-    private readonly record struct Token(TokenKind Kind, int Start, int End, string Text)
-    {
-        public bool IsWord(string word) => this.Kind == TokenKind.Word && this.Text.Equals(word, StringComparison.OrdinalIgnoreCase);
-
-        public bool IsComparisonKeyword() => this.IsWord("LIKE") || this.IsWord("BETWEEN") || this.IsWord("IN") || this.IsWord("IS");
-    }
-
-    private sealed class Parser(string source, List<Token> tokens, string operand)
+    private sealed class Parser(string source, List<Token> tokens, CalculatedExpressionNode operand)
     {
         /// <summary>
         /// The logical operators from lowest precedence to highest. <c>Not</c> binds
@@ -370,22 +240,20 @@ internal sealed class ColumnValidationRule
                     : this.ParseRule(start + 1, end - 1);
             }
 
-            string text = source[tokens[start].Start..tokens[end - 1].End];
-            string expression;
-            if (this.StartsWithImplicitOperand(start, end))
+            bool implicitOperand = this.StartsWithImplicitOperand(start, end);
+            CalculatedExpressionNode node = CalculatedExpressionParser.Parse(
+                source,
+                tokens,
+                start,
+                end,
+                isCalculatedColumn: false,
+                left: implicitOperand ? operand : null);
+            if (!implicitOperand && !this.HasTopLevelComparison(start, end))
             {
-                expression = operand + " " + text;
-            }
-            else if (this.HasTopLevelComparison(start, end))
-            {
-                expression = text;
-            }
-            else
-            {
-                expression = operand + " = (" + text + ")";
+                node = new CalculatedExpressionBinaryNode("=", operand, node);
             }
 
-            return new TermNode(CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false));
+            return new TermNode(node);
         }
 
         private int FindClose(int open)
@@ -409,7 +277,7 @@ internal sealed class ColumnValidationRule
         private bool StartsWithImplicitOperand(int start, int end)
         {
             Token first = tokens[start];
-            if (first.Kind == TokenKind.Comparison || first.IsComparisonKeyword())
+            if (first.IsComparison || first.IsComparisonKeyword())
             {
                 return true;
             }
@@ -433,7 +301,7 @@ internal sealed class ColumnValidationRule
                 {
                     depth--;
                 }
-                else if (depth == 0 && (token.Kind == TokenKind.Comparison || token.IsComparisonKeyword()))
+                else if (depth == 0 && (token.IsComparison || token.IsComparisonKeyword()))
                 {
                     return true;
                 }
@@ -448,10 +316,10 @@ internal sealed class ColumnValidationRule
         public abstract bool? Evaluate(CalculatedExpressionEvaluationContext context);
     }
 
-    private sealed class TermNode(CalculatedExpressionPlan plan) : RuleNode
+    private sealed class TermNode(CalculatedExpressionNode expression) : RuleNode
     {
         public override bool? Evaluate(CalculatedExpressionEvaluationContext context)
-            => ToTriState(plan.Root.Evaluate(context));
+            => ToTriState(expression.Evaluate(context));
     }
 
     private sealed class NotNode(RuleNode operand) : RuleNode

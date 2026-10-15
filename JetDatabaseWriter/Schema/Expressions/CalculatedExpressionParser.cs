@@ -16,22 +16,31 @@ internal sealed class CalculatedExpressionParser
     private readonly string expression;
     private readonly bool isCalculatedColumn;
     private readonly List<Token> tokens;
+    private readonly int end;
     private int position;
     private int depth;
     private bool stopAtBetweenAnd;
 
-    private CalculatedExpressionParser(string expression, bool isCalculatedColumn)
+    private CalculatedExpressionParser(string expression, bool isCalculatedColumn, List<Token> tokens, int start, int end)
     {
         this.expression = expression;
         this.isCalculatedColumn = isCalculatedColumn;
-        this.tokens = this.Tokenize();
+        this.tokens = tokens;
+        this.position = start;
+        this.end = end;
     }
 
     public static CalculatedExpressionNode Parse(string expression, bool isCalculatedColumn)
     {
         ValidateExpressionShape(expression, MaxExpressionLength, "Calculated-column expression");
-        var parser = new CalculatedExpressionParser(expression, isCalculatedColumn);
-        CalculatedExpressionNode root = parser.ParseExpression(0);
+        List<Token> tokens = Tokenize(expression, isCalculatedColumn, skipLeadingEquals: true);
+        return Parse(expression, tokens, 0, tokens.Count, isCalculatedColumn);
+    }
+
+    internal static CalculatedExpressionNode Parse(string expression, List<Token> tokens, int start, int end, bool isCalculatedColumn, CalculatedExpressionNode? left = null)
+    {
+        var parser = new CalculatedExpressionParser(expression, isCalculatedColumn, tokens, start, end);
+        CalculatedExpressionNode root = parser.ParseExpression(0, left);
         if (parser.Peek().Kind != TokenKind.End)
         {
             throw parser.SyntaxError($"unexpected '{parser.Peek().Text}' after a complete expression");
@@ -100,266 +109,13 @@ internal sealed class CalculatedExpressionParser
         return new CalculatedExpressionFunctionNode(name, args);
     }
 
-    private List<Token> Tokenize()
-    {
-        var result = new List<Token>();
-        int index = 0;
-        this.SkipWhiteSpace(ref index);
-        if (index < this.expression.Length && this.expression[index] == '=')
-        {
-            index++;
-        }
+    internal static List<Token> Tokenize(string expression, bool isCalculatedColumn, bool skipLeadingEquals = false)
+        => new Lexer(expression, isCalculatedColumn).Tokenize(skipLeadingEquals);
 
-        while (index < this.expression.Length)
-        {
-            char current = this.expression[index];
-            if (char.IsWhiteSpace(current))
-            {
-                index++;
-                continue;
-            }
+    private static ArgumentException InvalidSyntax(string expression, string detail)
+        => new($"Calculated-column expression '{expression}' is not valid Access expression syntax: {detail}.");
 
-            int start = index;
-            if (current is '\'' or '"')
-            {
-                string value = this.ReadQuotedText(ref index);
-                result.Add(new Token(TokenKind.Value, this.expression[start..index], new CalculatedExpressionValueNode(value)));
-            }
-            else if (current == '#')
-            {
-                int end = this.expression.IndexOf('#', index + 1);
-                if (end < 0)
-                {
-                    throw this.SyntaxError("unterminated date literal");
-                }
-
-                string value = this.expression[(index + 1)..end];
-                index = end + 1;
-
-                // A date literal is permitted where an explicit CDate call is not.
-                result.Add(new Token(TokenKind.Value, this.expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(value))));
-            }
-            else if (current == '[' || char.IsLetter(current) || current == '_')
-            {
-                result.Add(this.ReadName(ref index));
-            }
-            else if (char.IsDigit(current) || current == '.')
-            {
-                result.Add(this.ReadNumber(ref index));
-            }
-            else if (current == '&' && IsOperandPosition(result) && this.TryReadRadixLiteral(ref index, out object? value))
-            {
-                result.Add(new Token(TokenKind.Value, this.expression[start..index], new CalculatedExpressionValueNode(value)));
-            }
-            else
-            {
-                index++;
-                TokenKind kind = current switch
-                {
-                    '(' => TokenKind.OpenParen,
-                    ')' => TokenKind.CloseParen,
-                    ',' => TokenKind.Comma,
-                    '%' => throw this.SyntaxError("'%' is not an Access operator. Divide by 100 instead"),
-                    _ => TokenKind.Operator,
-                };
-                if (index < this.expression.Length && (this.expression[start..(index + 1)] is "<>" or "<=" or ">="))
-                {
-                    index++;
-                }
-
-                result.Add(new Token(kind, this.expression[start..index]));
-            }
-        }
-
-        result.Add(new Token(TokenKind.End, string.Empty));
-        return result;
-    }
-
-    private Token ReadName(ref int index)
-    {
-        int start = index;
-        string first = this.ReadReferenceSegment(ref index, out bool bracketed);
-        if (index < this.expression.Length && (this.expression[index] is '.' or '!'))
-        {
-            index++;
-            string column = this.ReadReferenceSegment(ref index, out _);
-            if (index < this.expression.Length && (this.expression[index] is '.' or '!'))
-            {
-                throw this.SyntaxError("object references with more than two segments cannot be evaluated in a row context");
-            }
-
-            if (!this.isCalculatedColumn)
-            {
-                throw new NotSupportedException("Access table and field rules and defaults do not accept table-qualified field references.");
-            }
-
-            return new Token(TokenKind.Value, this.expression[start..index], new CalculatedExpressionFieldNode(column, first, rowLocalQualifier: !bracketed));
-        }
-
-        if (bracketed)
-        {
-            return new Token(TokenKind.Value, this.expression[start..index], new CalculatedExpressionFieldNode(first));
-        }
-
-        if (index < this.expression.Length && this.expression[index] == '$')
-        {
-            index++;
-        }
-
-        string name = this.expression[start..index];
-        return new Token(AccessExpressionKeywords.IsKeyword(name) ? TokenKind.Word : TokenKind.Identifier, name);
-    }
-
-    private string ReadReferenceSegment(ref int index, out bool bracketed)
-    {
-        bracketed = index < this.expression.Length && this.expression[index] == '[';
-        if (bracketed)
-        {
-            int start = ++index;
-            int end = this.expression.IndexOf(']', start);
-            if (end < 0 || end == start)
-            {
-                throw this.SyntaxError("empty or unterminated field reference");
-            }
-
-            index = end + 1;
-            return this.expression[start..end];
-        }
-
-        if (index >= this.expression.Length || !(char.IsLetter(this.expression[index]) || this.expression[index] == '_'))
-        {
-            throw this.SyntaxError("a qualified reference has no valid name after its separator");
-        }
-
-        int nameStart = index++;
-        while (index < this.expression.Length && (char.IsLetterOrDigit(this.expression[index]) || this.expression[index] == '_'))
-        {
-            index++;
-        }
-
-        return this.expression[nameStart..index];
-    }
-
-    private string ReadQuotedText(ref int index)
-    {
-        char quote = this.expression[index++];
-        int start = index;
-        while (index < this.expression.Length)
-        {
-            if (this.expression[index++] != quote)
-            {
-                continue;
-            }
-
-            if (index < this.expression.Length && this.expression[index] == quote)
-            {
-                index++;
-                continue;
-            }
-
-            return this.expression[start..(index - 1)].Replace(new string(quote, 2), quote.ToString(), StringComparison.Ordinal);
-        }
-
-        throw this.SyntaxError("unterminated text literal");
-    }
-
-    private Token ReadNumber(ref int index)
-    {
-        int start = index;
-        while (index < this.expression.Length && char.IsDigit(this.expression[index]))
-        {
-            index++;
-        }
-
-        if (index < this.expression.Length && this.expression[index] == '.')
-        {
-            index++;
-            while (index < this.expression.Length && char.IsDigit(this.expression[index]))
-            {
-                index++;
-            }
-        }
-
-        if (index < this.expression.Length && (this.expression[index] is 'E' or 'e'))
-        {
-            index++;
-            if (index < this.expression.Length && (this.expression[index] is '+' or '-'))
-            {
-                index++;
-            }
-
-            while (index < this.expression.Length && char.IsDigit(this.expression[index]))
-            {
-                index++;
-            }
-        }
-
-        string text = this.expression[start..index];
-        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || double.IsInfinity(value))
-        {
-            throw this.SyntaxError($"invalid numeric literal '{text}'");
-        }
-
-        return new Token(TokenKind.Value, text, new CalculatedExpressionValueNode(value));
-    }
-
-    private bool TryReadRadixLiteral(ref int index, out object? literal)
-    {
-        literal = null;
-        int cursor = index + 1;
-        if (cursor >= this.expression.Length)
-        {
-            return false;
-        }
-
-        char marker = this.expression[cursor];
-        int radix;
-        if (marker is 'H' or 'h' or 'O' or 'o')
-        {
-            radix = marker is 'H' or 'h' ? 16 : 8;
-            cursor++;
-        }
-        else if (marker is >= '0' and <= '7')
-        {
-            radix = 8;
-        }
-        else
-        {
-            return false;
-        }
-
-        int digitsStart = cursor;
-        ulong value = 0;
-        while (cursor < this.expression.Length && TryGetDigit(this.expression[cursor], radix, out int digit))
-        {
-            value = (value * (ulong)radix) + (ulong)digit;
-            cursor++;
-            if (value > uint.MaxValue)
-            {
-                throw this.SyntaxError("a radix literal is too large for a Long");
-            }
-        }
-
-        if (cursor == digitsStart)
-        {
-            throw this.SyntaxError($"'{this.expression[index..cursor]}' must be followed by {(radix == 16 ? "hexadecimal" : "octal")} digits");
-        }
-
-        bool longSuffix = cursor < this.expression.Length && this.expression[cursor] == '&';
-        if (longSuffix)
-        {
-            cursor++;
-        }
-
-        // Box separately so the conditional expression cannot promote Integer to Long.
-        literal = longSuffix || value > ushort.MaxValue
-            ? (object)unchecked((int)(uint)value)
-            : unchecked((short)(ushort)value);
-        index = cursor;
-        return true;
-    }
-
-    private CalculatedExpressionNode ParseExpression(int minimumPrecedence)
+    private CalculatedExpressionNode ParseExpression(int minimumPrecedence, CalculatedExpressionNode? left = null)
     {
         // Count recursive grammar edges, not a flat left-associative operator chain.
         if (this.depth > MaxExpressionNesting)
@@ -370,7 +126,7 @@ internal sealed class CalculatedExpressionParser
         this.depth++;
         try
         {
-            CalculatedExpressionNode left = this.ParsePrefix();
+            left ??= this.ParsePrefix();
             while (true)
             {
                 Token token = this.Peek();
@@ -559,18 +315,10 @@ internal sealed class CalculatedExpressionParser
         return true;
     }
 
-    private void SkipWhiteSpace(ref int index)
-    {
-        while (index < this.expression.Length && char.IsWhiteSpace(this.expression[index]))
-        {
-            index++;
-        }
-    }
-
     private ArgumentException SyntaxError(string detail)
-        => new($"Calculated-column expression '{this.expression}' is not valid Access expression syntax: {detail}.");
+        => InvalidSyntax(this.expression, detail);
 
-    private Token Peek() => this.tokens[this.position];
+    private Token Peek() => this.position < this.end ? this.tokens[this.position] : new Token(TokenKind.End, string.Empty);
 
     private Token Read()
     {
@@ -592,14 +340,267 @@ internal sealed class CalculatedExpressionParser
         }
     }
 
-    private readonly record struct BinaryOperatorInfo(string Name, int Precedence);
-
-    private readonly record struct Token(TokenKind Kind, string Text, CalculatedExpressionNode? Node = null)
+    private sealed class Lexer(string expression, bool isCalculatedColumn)
     {
-        public bool IsWord(string text) => this.Kind == TokenKind.Word && this.Text.Equals(text, StringComparison.OrdinalIgnoreCase);
+        public List<Token> Tokenize(bool skipLeadingEquals)
+        {
+            var result = new List<Token>();
+            int index = AccessExpressionText.SkipWhiteSpace(expression, 0);
+            if (skipLeadingEquals && index < expression.Length && expression[index] == '=')
+            {
+                index++;
+            }
+
+            while (index < expression.Length)
+            {
+                char current = expression[index];
+                if (char.IsWhiteSpace(current))
+                {
+                    index++;
+                    continue;
+                }
+
+                int start = index;
+                if (current is '\'' or '"')
+                {
+                    string value = this.ReadQuotedText(ref index);
+                    result.Add(new Token(TokenKind.Value, expression[start..index], new CalculatedExpressionValueNode(value)));
+                }
+                else if (current == '#')
+                {
+                    int end = expression.IndexOf('#', index + 1);
+                    if (end < 0)
+                    {
+                        throw this.SyntaxError("unterminated date literal");
+                    }
+
+                    string value = expression[(index + 1)..end];
+                    index = end + 1;
+
+                    // A date literal is permitted where an explicit CDate call is not.
+                    result.Add(new Token(TokenKind.Value, expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(value))));
+                }
+                else if (current == '[' || char.IsLetter(current) || current == '_')
+                {
+                    result.Add(this.ReadName(ref index));
+                }
+                else if (char.IsDigit(current) || current == '.')
+                {
+                    result.Add(this.ReadNumber(ref index));
+                }
+                else if (current == '&' && IsOperandPosition(result) && this.TryReadRadixLiteral(ref index, out object? value))
+                {
+                    result.Add(new Token(TokenKind.Value, expression[start..index], new CalculatedExpressionValueNode(value)));
+                }
+                else
+                {
+                    index++;
+                    TokenKind kind = current switch
+                    {
+                        '(' => TokenKind.OpenParen,
+                        ')' => TokenKind.CloseParen,
+                        ',' => TokenKind.Comma,
+                        '%' => throw this.SyntaxError("'%' is not an Access operator. Divide by 100 instead"),
+                        _ => TokenKind.Operator,
+                    };
+                    if (index < expression.Length && (expression[start..(index + 1)] is "<>" or "<=" or ">="))
+                    {
+                        index++;
+                    }
+
+                    result.Add(new Token(kind, expression[start..index]));
+                }
+            }
+
+            return result;
+        }
+
+        private Token ReadName(ref int index)
+        {
+            int start = index;
+            string first = this.ReadReferenceSegment(ref index, out bool bracketed);
+            if (index < expression.Length && (expression[index] is '.' or '!'))
+            {
+                index++;
+                string column = this.ReadReferenceSegment(ref index, out _);
+                if (index < expression.Length && (expression[index] is '.' or '!'))
+                {
+                    throw this.SyntaxError("object references with more than two segments cannot be evaluated in a row context");
+                }
+
+                if (!isCalculatedColumn)
+                {
+                    throw new NotSupportedException("Access table and field rules and defaults do not accept table-qualified field references.");
+                }
+
+                return new Token(TokenKind.Value, expression[start..index], new CalculatedExpressionFieldNode(column, first, rowLocalQualifier: !bracketed));
+            }
+
+            if (bracketed)
+            {
+                return new Token(TokenKind.Value, expression[start..index], new CalculatedExpressionFieldNode(first));
+            }
+
+            if (index < expression.Length && expression[index] == '$')
+            {
+                index++;
+            }
+
+            string name = expression[start..index];
+            return new Token(AccessExpressionKeywords.IsKeyword(name) ? TokenKind.Word : TokenKind.Identifier, name);
+        }
+
+        private string ReadReferenceSegment(ref int index, out bool bracketed)
+        {
+            bracketed = index < expression.Length && expression[index] == '[';
+            if (bracketed)
+            {
+                int start = ++index;
+                int end = expression.IndexOf(']', start);
+                if (end < 0 || end == start)
+                {
+                    throw this.SyntaxError("empty or unterminated field reference");
+                }
+
+                index = end + 1;
+                return expression[start..end];
+            }
+
+            if (index >= expression.Length || !(char.IsLetter(expression[index]) || expression[index] == '_'))
+            {
+                throw this.SyntaxError("a qualified reference has no valid name after its separator");
+            }
+
+            int nameStart = index++;
+            while (index < expression.Length && (char.IsLetterOrDigit(expression[index]) || expression[index] == '_'))
+            {
+                index++;
+            }
+
+            return expression[nameStart..index];
+        }
+
+        private string ReadQuotedText(ref int index)
+        {
+            char quote = expression[index];
+            int start = index + 1;
+            index = AccessExpressionText.SkipQuoted(expression, index);
+            return index < 0
+                ? throw this.SyntaxError("unterminated text literal")
+                : expression[start..(index - 1)].Replace(new string(quote, 2), quote.ToString(), StringComparison.Ordinal);
+        }
+
+        private Token ReadNumber(ref int index)
+        {
+            int start = index;
+            while (index < expression.Length && char.IsDigit(expression[index]))
+            {
+                index++;
+            }
+
+            if (index < expression.Length && expression[index] == '.')
+            {
+                index++;
+                while (index < expression.Length && char.IsDigit(expression[index]))
+                {
+                    index++;
+                }
+            }
+
+            if (index < expression.Length && (expression[index] is 'E' or 'e'))
+            {
+                index++;
+                if (index < expression.Length && (expression[index] is '+' or '-'))
+                {
+                    index++;
+                }
+
+                while (index < expression.Length && char.IsDigit(expression[index]))
+                {
+                    index++;
+                }
+            }
+
+            string text = expression[start..index];
+            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || double.IsInfinity(value))
+            {
+                throw this.SyntaxError($"invalid numeric literal '{text}'");
+            }
+
+            return new Token(TokenKind.Value, text, new CalculatedExpressionValueNode(value));
+        }
+
+        private bool TryReadRadixLiteral(ref int index, out object? literal)
+        {
+            literal = null;
+            int cursor = index + 1;
+            if (cursor >= expression.Length)
+            {
+                return false;
+            }
+
+            char marker = expression[cursor];
+            int radix;
+            if (marker is 'H' or 'h' or 'O' or 'o')
+            {
+                radix = marker is 'H' or 'h' ? 16 : 8;
+                cursor++;
+            }
+            else if (marker is >= '0' and <= '7')
+            {
+                radix = 8;
+            }
+            else
+            {
+                return false;
+            }
+
+            int digitsStart = cursor;
+            ulong value = 0;
+            while (cursor < expression.Length && TryGetDigit(expression[cursor], radix, out int digit))
+            {
+                value = (value * (ulong)radix) + (ulong)digit;
+                cursor++;
+                if (value > uint.MaxValue)
+                {
+                    throw this.SyntaxError("a radix literal is too large for a Long");
+                }
+            }
+
+            if (cursor == digitsStart)
+            {
+                throw this.SyntaxError($"'{expression[index..cursor]}' must be followed by {(radix == 16 ? "hexadecimal" : "octal")} digits");
+            }
+
+            bool longSuffix = cursor < expression.Length && expression[cursor] == '&';
+            if (longSuffix)
+            {
+                cursor++;
+            }
+
+            // Box separately so the conditional expression cannot promote Integer to Long.
+            literal = longSuffix || value > ushort.MaxValue
+                ? (object)unchecked((int)(uint)value)
+                : unchecked((short)(ushort)value);
+            index = cursor;
+            return true;
+        }
+
+        private ArgumentException SyntaxError(string detail) => InvalidSyntax(expression, detail);
     }
 
-    private enum TokenKind
+    private readonly record struct BinaryOperatorInfo(string Name, int Precedence);
+
+    internal readonly record struct Token(TokenKind Kind, string Text, CalculatedExpressionNode? Node = null)
+    {
+        public bool IsWord(string text) => this.Kind == TokenKind.Word && this.Text.Equals(text, StringComparison.OrdinalIgnoreCase);
+
+        public bool IsComparison => this.Kind == TokenKind.Operator && this.Text is "=" or "<>" or "<" or "<=" or ">" or ">=";
+
+        public bool IsComparisonKeyword() => this.IsWord("LIKE") || this.IsWord("BETWEEN") || this.IsWord("IN") || this.IsWord("IS");
+    }
+
+    internal enum TokenKind
     {
         End = 0,
         Identifier = 1,
