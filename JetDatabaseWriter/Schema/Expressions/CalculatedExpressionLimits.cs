@@ -4,9 +4,7 @@ using System;
 
 internal static class CalculatedExpressionLimits
 {
-    internal const string PlaceholderPrefix = "__JdwCalcCol";
     internal const int MaxExpressionLength = 4096;
-    internal const int MaxNormalizedExpressionLength = 8192;
     internal const int MaxExpressionNesting = 128;
     internal const int MaxColumnReferences = 1024;
     internal const int MaxFunctionArguments = 256;

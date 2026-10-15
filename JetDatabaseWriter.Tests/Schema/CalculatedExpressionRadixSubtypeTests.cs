@@ -1,7 +1,6 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
-using System.Collections.Generic;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Schema.Expressions;
 using JetDatabaseWriter.Schema.Models;
@@ -13,11 +12,14 @@ public sealed class CalculatedExpressionRadixSubtypeTests
     [Fact]
     public void RadixTextInBracketedFieldName_IsPreserved()
     {
-        string normalized = CalculatedExpressionNormalizer.Normalize("[&H10] & \"&O17\"", out Dictionary<string, string> columns, out _);
+        var plan = CalculatedExpressionPlan.Parse("[&H10] & \"&O17\"");
+        var context = new CalculatedExpressionEvaluationContext(
+            new TableDef { Columns = [new ColumnInfo { Name = "&H10" }] },
+            [new ColumnConstraint { Name = "&H10", ClrType = typeof(string) }],
+            ["field"],
+            force: false);
 
-        Assert.Contains("&H10", columns.Values);
-        Assert.Contains("&O17", normalized, StringComparison.Ordinal);
-        Assert.DoesNotContain("CINT", normalized, StringComparison.Ordinal);
+        Assert.Equal("field&O17", Assert.IsType<string>(plan.Root.Evaluate(context)));
     }
 
     [Theory]

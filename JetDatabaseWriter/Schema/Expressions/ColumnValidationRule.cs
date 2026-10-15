@@ -451,7 +451,7 @@ internal sealed class ColumnValidationRule
     private sealed class TermNode(CalculatedExpressionPlan plan) : RuleNode
     {
         public override bool? Evaluate(CalculatedExpressionEvaluationContext context)
-            => ToTriState(plan.Root.Evaluate(context, plan));
+            => ToTriState(plan.Root.Evaluate(context));
     }
 
     private sealed class NotNode(RuleNode operand) : RuleNode

@@ -260,12 +260,12 @@ JetDatabaseWriter/
 │   ├── TDefWriter.cs                      (the writer's in-place TDEF write-backs: patched chains and 32-bit fields, through the Pager)
 │   ├── Expressions/
 │   │   ├── AccessExpressionKeywords.cs             (Access word operators and literal words, shared by the parser and ExpressionFieldReferences)
-│   │   ├── CalculatedExpressionAstFactory.cs       (ClosedXML.Parser adapter for calculated-expression AST nodes)
 │   │   ├── CalculatedExpressionBinaryNode.cs       (binary operator AST node)
 │   │   ├── CalculatedExpressionCoercion.cs         (central Access null/date/number/text coercion semantics)
 │   │   ├── CalculatedExpressionDateTimeFunctions.cs (date/time function catalog)
 │   │   ├── CalculatedExpressionEvaluationContext.cs
 │   │   ├── CalculatedExpressionEvaluator.cs        (entry point: applies calculated-expression plans to row values)
+│   │   ├── CalculatedExpressionFieldNode.cs        (field name and optional table qualifier)
 │   │   ├── CalculatedExpressionFinancialFunctions.cs (financial function catalog)
 │   │   ├── CalculatedExpressionFormattingFunctions.cs (formatting function catalog)
 │   │   ├── CalculatedExpressionFunctionNode.cs     (function-call AST node)
@@ -275,12 +275,11 @@ JetDatabaseWriter/
 │   │   ├── CalculatedExpressionMetadataFunctions.cs (metadata function catalog)
 │   │   ├── CalculatedExpressionNameNode.cs         (column/name AST node)
 │   │   ├── CalculatedExpressionNode.cs             (base calculated-expression AST node)
-│   │   ├── CalculatedExpressionNormalizer.cs       (Access-precedence parse of every expression: column brackets, date literals, word operators)
+│   │   ├── CalculatedExpressionParser.cs           (direct Access-precedence AST parsing: fields, literals and operators)
 │   │   ├── CalculatedExpressionNumericFunctions.cs (numeric function catalog)
 │   │   ├── CalculatedExpressionPlan.cs
 │   │   ├── CalculatedExpressionTextFunctions.cs    (text function catalog)
 │   │   ├── CalculatedExpressionUnaryNode.cs        (unary operator AST node)
-│   │   ├── CalculatedExpressionUnsupportedNode.cs  (unsupported syntax AST sentinel)
 │   │   ├── CalculatedExpressionValueNode.cs        (literal value AST node)
 │   │   ├── CalculatedFunctionDescriptor.cs         (function alias, domain, and argument metadata)
 │   │   ├── CalculatedFunctionDomain.cs             (calculated-function domain enum)
@@ -786,7 +785,7 @@ Linked-table public APIs live on `IAccessSchema`; linked-table catalog scanning,
 
 ### 11. Calculated expressions use explicit helper ownership
 
-`CalculatedExpressionEvaluator` remains the row-local entry point for applying calculated-column expressions, but parsing, normalization, AST nodes, coercion, safety limits, and function dispatch are split into focused internal helpers. Supported Access/VBA functions are registered through `CalculatedExpressionFunctionRegistry` using descriptors for aliases, argument counts, domains, and evaluator delegates; the implementation lives in domain catalogs such as `CalculatedExpressionTextFunctions` and `CalculatedExpressionDateTimeFunctions`. Spreadsheet-only constructs, external references, and domain aggregates stay rejected at the parser/evaluator boundary instead of leaking into row evaluation.
+`CalculatedExpressionEvaluator` remains the row-local entry point for applying calculated-column expressions, but direct AST parsing, nodes, coercion, safety limits, and function dispatch are split into focused internal helpers. Supported Access/VBA functions are registered through `CalculatedExpressionFunctionRegistry` using descriptors for aliases, argument counts, domains, and evaluator delegates; the implementation lives in domain catalogs such as `CalculatedExpressionTextFunctions` and `CalculatedExpressionDateTimeFunctions`. Spreadsheet-only constructs, external references, and domain aggregates stay rejected at the parser/evaluator boundary instead of leaking into row evaluation.
 
 ### 12. The LINQ query layer is read-only and async-only
 

@@ -11,8 +11,7 @@ using Xunit;
 
 /// <summary>
 /// Pins the calculated-column evaluator to Access (VBA) operator precedence
-/// and value semantics rather than the Excel grammar of the underlying
-/// formula parser: <c>^</c> binds tighter than unary minus and associates
+/// and value semantics: <c>^</c> binds tighter than unary minus and associates
 /// left to right, <c>*</c> and <c>/</c> bind tighter than <c>\</c>, which
 /// binds tighter than <c>Mod</c>, and Excel's postfix <c>%</c> is rejected.
 /// </summary>

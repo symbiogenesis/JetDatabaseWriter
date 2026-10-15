@@ -15,7 +15,7 @@ internal static class CalculatedExpressionLogicalFunctions
     {
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IIF", 3, 3, EvaluateIIf, "IF"));
 
-        // The word operators And, Or, Not, Xor, Eqv and Imp, which the normalizer
+        // The word operators And, Or, Not, Xor, Eqv and Imp, which the parser
         // lowers to these calls: logical on Booleans, bitwise on numbers, and
         // three-valued with Null, as in VBA (AccessVariantOperators).
         AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "AND", 2, 2, static function => AccessVariantOperators.And(function.Arg(0), function.Arg(1))));

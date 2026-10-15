@@ -7,8 +7,7 @@ internal readonly struct CalculatedFunctionInvocation(
     string name,
     string normalizedName,
     IReadOnlyList<CalculatedExpressionNode> args,
-    CalculatedExpressionEvaluationContext context,
-    CalculatedExpressionPlan plan)
+    CalculatedExpressionEvaluationContext context)
 {
     public string Name { get; } = name;
 
@@ -18,5 +17,5 @@ internal readonly struct CalculatedFunctionInvocation(
 
     public CalculatedExpressionEvaluationContext Context => context;
 
-    public object Arg(int index) => index < args.Count ? args[index].Evaluate(context, plan) : DBNull.Value;
+    public object Arg(int index) => index < args.Count ? args[index].Evaluate(context) : DBNull.Value;
 }

@@ -68,6 +68,6 @@ public sealed class CalculatedExpressionPartitionTests
         object[] values = [DBNull.Value];
         var context = new CalculatedExpressionEvaluationContext(table, constraints, values, force: false);
         var plan = CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false);
-        return plan.Root.Evaluate(context, plan);
+        return plan.Root.Evaluate(context);
     }
 }

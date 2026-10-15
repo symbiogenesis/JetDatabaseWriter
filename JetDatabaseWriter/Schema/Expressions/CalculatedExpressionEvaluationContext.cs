@@ -73,7 +73,7 @@ internal sealed class CalculatedExpressionEvaluationContext
         try
         {
             constraint.CalculatedExpressionPlan ??= CalculatedExpressionPlan.Parse(constraint.CalculationExpression);
-            raw = constraint.CalculatedExpressionPlan.Root.Evaluate(this, constraint.CalculatedExpressionPlan);
+            raw = constraint.CalculatedExpressionPlan.Root.Evaluate(this);
             storing = true;
             object coerced = CoerceResult(raw, constraint.ClrType, isCalculatedColumn: true);
             this.values[index] = coerced;
@@ -97,20 +97,15 @@ internal sealed class CalculatedExpressionEvaluationContext
         }
     }
 
-    public object GetNameValue(string name, CalculatedExpressionPlan plan)
+    public object GetFieldValue(string name, string? qualifier = null, bool rowLocalQualifier = false)
     {
         // DAO binds a bare qualifier (even another existing table name) to this
         // row. A bracketed qualifier still requires the matching table context.
-        if (plan.PlaceholderToTable.TryGetValue(name, out string? qualifier)
+        if (qualifier is not null
             && (this.tableName is null
-                || (!plan.RowLocalQualifiedNames.Contains(name) && !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase))))
+                || (!rowLocalQualifier && !string.Equals(qualifier, this.tableName, StringComparison.OrdinalIgnoreCase))))
         {
             throw new NotSupportedException($"Expression reference to table '{qualifier}' cannot be evaluated in the current row context.");
-        }
-
-        if (plan.PlaceholderToColumn.TryGetValue(name, out string? columnName))
-        {
-            name = columnName;
         }
 
         if (!this.columnIndexes.TryGetValue(name, out int index))

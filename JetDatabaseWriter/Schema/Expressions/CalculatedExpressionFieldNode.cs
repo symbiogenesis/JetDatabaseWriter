@@ -1,0 +1,11 @@
+namespace JetDatabaseWriter.Schema.Expressions;
+
+/// <summary>A field reference whose spelling cannot be mistaken for a constant.</summary>
+/// <param name="name">The field name.</param>
+/// <param name="qualifier">The optional table qualifier.</param>
+/// <param name="rowLocalQualifier">Whether a bare qualifier binds to the current row regardless of its spelling.</param>
+internal sealed class CalculatedExpressionFieldNode(string name, string? qualifier = null, bool rowLocalQualifier = false) : CalculatedExpressionNode
+{
+    public override object Evaluate(CalculatedExpressionEvaluationContext context)
+        => context.GetFieldValue(name, qualifier, rowLocalQualifier);
+}

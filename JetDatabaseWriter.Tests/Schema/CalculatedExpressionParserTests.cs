@@ -1,0 +1,157 @@
+namespace JetDatabaseWriter.Tests.Schema;
+
+using System;
+using System.Linq;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Schema.Expressions;
+using JetDatabaseWriter.Schema.Models;
+using Xunit;
+
+/// <summary>Checks the Access parser's literal, name and resource-boundary behavior.</summary>
+public sealed class CalculatedExpressionParserTests
+{
+    [Theory]
+    [InlineData("1", 1d)]
+    [InlineData(".5", 0.5d)]
+    [InlineData("1e-3", 0.001d)]
+    [InlineData("1E+3", 1000d)]
+    public void DecimalLiteral_RetainsDoubleSubtype(string expression, double expected)
+        => Assert.Equal(expected, Assert.IsType<double>(Evaluate(expression)));
+
+    [Theory]
+    [InlineData("'it''s [A1] #today# 5% &H10'", "it's [A1] #today# 5% &H10")]
+    [InlineData("\"say \"\"hi\"\" [Null]\"", "say \"hi\" [Null]")]
+    [InlineData("'a\"b' & \"c'd\"", "a\"bc'd")]
+    [InlineData("  =  mId$ ('ABCD', 2, 2)  ", "BC")]
+    public void TextLiteralsAndFunctionSuffixes_EvaluateAsAccessSyntax(string expression, string expected)
+        => Assert.Equal(expected, Assert.IsType<string>(Evaluate(expression)));
+
+    [Theory]
+    [InlineData("A1")]
+    [InlineData("True")]
+    [InlineData("Null")]
+    [InlineData("vbTrue")]
+    [InlineData("And")]
+    [InlineData("__JdwCalcCol0")]
+    [InlineData("#Date# % &H10")]
+    public void BracketedName_ResolvesFieldInsteadOfLiteralOrCell(string columnName)
+        => Assert.Equal(7, Assert.IsType<int>(Evaluate("[" + columnName + "]", columnName)));
+
+    [Theory]
+    [InlineData("A1")]
+    [InlineData("XFD1048576")]
+    public void BareNameResemblingCellReference_ResolvesField(string expression)
+        => Assert.Equal(7, Assert.IsType<int>(Evaluate(expression, expression)));
+
+    [Theory]
+    [InlineData("'unterminated")]
+    [InlineData("\"unterminated")]
+    [InlineData(".")]
+    [InlineData("1.2.3")]
+    [InlineData("1e+")]
+    [InlineData("Abs(,1)")]
+    [InlineData("Abs(1,)")]
+    [InlineData("Abs(1;2)")]
+    [InlineData("1 In (1,,2)")]
+    [InlineData("1 Is 1")]
+    [InlineData("[Missing")]
+    [InlineData("[T].")]
+    [InlineData("[T].[A].[B]")]
+    public void MalformedExpression_ThrowsArgumentException(string expression)
+        => Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+
+    [Fact]
+    public void UnknownFunction_IsRejectedWhenEvaluated()
+    {
+        var plan = CalculatedExpressionPlan.Parse("UnknownAccessFunction(1)");
+
+        Assert.Throws<NotSupportedException>(() => plan.Root.Evaluate(Context()));
+    }
+
+    [Fact]
+    public void Evaluation_PreservesOriginalExpressionText()
+    {
+        const string expression = "  = IIf(Null Is Null, 'it''s [A1] #literal#', 'unused')  ";
+        var table = new TableDef { Columns = [new ColumnInfo { Name = "Calc" }] };
+        ColumnConstraint[] constraints =
+        [
+            new()
+            {
+                Name = "Calc",
+                ClrType = typeof(string),
+                IsCalculated = true,
+                CalculationExpression = expression,
+            },
+        ];
+        object[] values = [DBNull.Value];
+
+        CalculatedExpressionEvaluator.Apply(table, constraints, values, force: false);
+
+        Assert.Equal("it's [A1] #literal#", Assert.IsType<string>(values[0]));
+        Assert.Equal(expression, constraints[0].CalculationExpression);
+    }
+
+    [Fact]
+    public void ExpressionLengthLimit_AppliesToSourceText()
+    {
+        string literal = new('a', CalculatedExpressionLimits.MaxExpressionLength - 2);
+        Assert.Equal(literal, Assert.IsType<string>(Evaluate("\"" + literal + "\"")));
+
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("\"" + literal + "a\""));
+    }
+
+    [Fact]
+    public void ParenthesisLimit_IgnoresQuotedTextAndBracketedNames()
+    {
+        string parentheses = new('(', CalculatedExpressionLimits.MaxExpressionNesting + 1);
+        Assert.Equal(parentheses, Assert.IsType<string>(Evaluate("'" + parentheses + "'")));
+        Assert.Equal(7, Assert.IsType<int>(Evaluate("[" + parentheses + "]", parentheses)));
+    }
+
+    [Fact]
+    public void ParenthesisLimit_AcceptsBoundaryAndRejectsNextLevel()
+    {
+        string expression = new string('(', CalculatedExpressionLimits.MaxExpressionNesting) + "1" + new string(')', CalculatedExpressionLimits.MaxExpressionNesting);
+        Assert.Equal(1d, Assert.IsType<double>(Evaluate(expression)));
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("(" + expression + ")"));
+    }
+
+    [Fact]
+    public void FunctionArgumentLimit_IsCheckedWhileParsing()
+    {
+        string arguments = string.Join(",", Enumerable.Repeat("1", CalculatedExpressionLimits.MaxFunctionArguments));
+        Assert.NotNull(CalculatedExpressionPlan.Parse("Choose(" + arguments + ")"));
+
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("Choose(" + arguments + ",1)"));
+    }
+
+    [Fact]
+    public void InListLimit_IncludesComparedOperand()
+    {
+        string arguments = string.Join(",", Enumerable.Repeat("1", CalculatedExpressionLimits.MaxFunctionArguments - 1));
+        Assert.True(Assert.IsType<bool>(Evaluate("1 In (" + arguments + ")")));
+
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("1 In (" + arguments + ",1)"));
+    }
+
+    [Fact]
+    public void ExcessiveUnaryNesting_IsRejectedBeforeEvaluation()
+    {
+        string expression = new string('-', CalculatedExpressionLimits.MaxExpressionNesting + 1) + "1";
+
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+    }
+
+    private static object Evaluate(string expression, string columnName = "Value")
+    {
+        var plan = CalculatedExpressionPlan.Parse(expression);
+        return plan.Root.Evaluate(Context(columnName));
+    }
+
+    private static CalculatedExpressionEvaluationContext Context(string columnName = "Value")
+        => new(
+            new TableDef { Columns = [new ColumnInfo { Name = columnName }] },
+            [new ColumnConstraint { Name = columnName, ClrType = typeof(int) }],
+            [7],
+            force: false);
+}

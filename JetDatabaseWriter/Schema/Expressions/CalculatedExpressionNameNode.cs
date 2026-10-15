@@ -1,28 +1,16 @@
 namespace JetDatabaseWriter.Schema.Expressions;
 
-using System;
-
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionCoercion;
 
 internal sealed class CalculatedExpressionNameNode(string name) : CalculatedExpressionNode
 {
-    public override object Evaluate(CalculatedExpressionEvaluationContext context, CalculatedExpressionPlan plan)
+    public override object Evaluate(CalculatedExpressionEvaluationContext context)
     {
         if (TryGetBuiltinConstant(name, out object constantValue))
         {
             return constantValue;
         }
 
-        return name.ToUpperInvariant() switch
-        {
-            "TRUE" => true,
-            "FALSE" => false,
-            "YES" => true,
-            "NO" => false,
-            "ON" => true,
-            "OFF" => false,
-            "NULL" => DBNull.Value,
-            _ => context.GetNameValue(name, plan),
-        };
+        return context.GetFieldValue(name);
     }
 }

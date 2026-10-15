@@ -277,27 +277,25 @@ value the same way Access does.
 
 Delivered:
 
-- Added [ClosedXML.Parser](https://github.com/ClosedXML/ClosedXML.Parser) for
-  formula parsing and an internal AST factory that maps parser nodes into the
-  row-local calculated-column evaluator. ClosedXML.Parser handles expression
-  parsing only; all Access/ACE storage and type coercion remains in this
-  library.
+- `CalculatedExpressionParser` parses Access syntax directly into the
+  row-local evaluator's expression tree. Field nodes carry their original
+  names and qualifiers; bare names such as `A1` are ordinary field names.
+  Parsing never generates or reparses an intermediate formula.
 - `ConstraintRegistry` evaluates calculated columns during inserts when the row
   omits the cached value or supplies `NULL`, `DBNull` or `DbDefault.Value`, and
   recomputes calculated columns during updates after source values are applied.
 - Caller-supplied cached values still work on insert. This preserves Phase 1B
   behavior and lets unsupported expressions be persisted when the caller has
   already computed the value.
-- Expressions are normalized for common Access syntax: leading `=` is ignored,
+- The parser accepts common Access syntax: leading `=` is ignored,
   bracketed column references such as `[Column Name]` resolve against the
-  in-flight row, `#date literal#` becomes `CDATE("date literal")` to preserve its time,
+  in-flight row, and `#date literal#` uses the CDate evaluator to preserve its time,
   while DateValue removes the time. DateSerial rounds each argument half to even
   to a VBA Integer; Now and Time use whole seconds, while Timer retains fractional seconds.
-  Single-quoted text (`'it''s'`, where `''` is a quote) becomes the
-  double-quoted literal, `&H`/`&O` radix literals become typed `CINT`/`CLNG` calls, and
-  Access word operators are lowered into evaluator functions before the
-  ClosedXML.Parser pass. The expression text persisted in the file is never
-  rewritten.
+  Single- and double-quoted text becomes literal nodes, doubled quotes are
+  unescaped, and `&H`/`&O` radix literals become typed Integer/Long values.
+  Access word operators produce evaluator function nodes. The expression
+  text persisted in the file is never rewritten.
 - Radix literals follow VBA: `&H` takes hex digits, `&O` (or a bare `&`
   before an octal digit, which OLE Automation also accepts) octal digits, up
   to 32 bits. A value up to `&HFFFF` is a signed Integer, so `&HFFFF` is -1
@@ -306,7 +304,7 @@ Delivered:
   literal only where an operand is expected; after an operand it joins text,
   so `[A]&10` is concatenation. A literal wider than 32 bits, or `&H`/`&O`
   without digits, throws `ArgumentException` naming the expression.
-  The typed normalization preserves `TypeName`/`VarType` and bitwise operand
+  The typed literal nodes preserve `TypeName`/`VarType` and bitwise operand
   subtypes. Unary plus keeps Integer/Long; negating the minimum Integer promotes
   to Long, and negating the minimum Long promotes to Double, as measured with
   native `oleaut32!VarNeg`. Literal typing follows Microsoft's
@@ -315,14 +313,16 @@ Delivered:
   acceptance of these literals remains unverified. Binary arithmetic and
   subtype-sensitive functions still have separate Variant subtype gaps.
 - Every expression is parsed with Access (VBA) operator precedence by
-  `CalculatedExpressionNormalizer` before ClosedXML.Parser sees it; the
-  normalizer emits a formula parenthesized wherever Excel's grammar would
-  group differently, so Excel precedence never decides the result. From
+  `CalculatedExpressionParser`. From
   tightest to loosest: `^` (left-associative, and tighter than unary minus,
   so `-2^2` is -4), unary `-`/`+`, `*` `/`, `\`, `Mod`, `+` `-`, `&`,
   comparisons and `Like`/`Is`/`Between`/`In`, `Not`, `And`, `Or`, `Xor`,
   `Eqv`, `Imp`. Syntax the Access grammar rejects throws `ArgumentException`
-  naming the expression instead of falling back to the spreadsheet grammar.
+  naming the expression. The 4,096-character source limit, 128-level nesting
+  limit and 256-argument limit apply before evaluation; recursive unary
+  expressions are also bounded, while flat left-associative chains do not
+  consume parser nesting depth. An `In` list counts its compared operand
+  toward the argument limit.
 - Excel's postfix `%` is not an Access operator. `CreateTableAsync` and
   `AddColumnAsync` reject a calculated column whose expression uses it
   (outside string literals and `[field]` names), or whose expression the
@@ -473,7 +473,7 @@ The list above describes the shared row-local interpreter for defaults and
 validation rules. Native table calculated columns additionally refuse
 `CBool`, `CByte`, `CInt`, `CLng`, `CSng`, `CCur`, `CDec`, `CStr`, `CDate`,
 `TimeValue` and `DateValue`, including nested calls and normalized `$` aliases.
-`CalculatedExpressionPlan` applies this restriction only in calculated-column
+`CalculatedExpressionParser` applies this restriction only in calculated-column
 context, before create/add/recalculation changes bytes. Existing cached values
 remain readable. `CalculatedConversionContextTests` separates those refusals
 from supported defaults/rules and literal text. `CalculatedConversionDaoTests`
@@ -486,7 +486,10 @@ Still intentionally out of scope: domain aggregate functions (`DLookup`,
 table calculated columns with "cannot be used in a calculated column" even
 though they are valid in other Access expression contexts; SQL/query evaluation,
 cross-record or cross-table lookups; and spreadsheet-only parser constructs such
-as cell, sheet, external workbook, array, range, and structured references.
+as sheet, external workbook, array, range, and structured references. Names
+that resemble spreadsheet cells resolve as Access field names;
+`CalculatedExpressionParserDaoTests` covers native authoring, writer
+recalculation and DAO compact for the bare `A1` field name.
 
 Tests: focused insert/update/POCO coverage in
 `JetDatabaseWriter.Tests/Writer/CalculatedColumnWriteTests.cs`, precedence and

@@ -195,10 +195,7 @@
         }
       },
       "jetdatabasewriter": {
-        "type": "Project",
-        "dependencies": {
-          "ClosedXML.Parser": "[2.0.0, )"
-        }
+        "type": "Project"
       },
       "jetdatabasewriter.scaffold": {
         "type": "Project",
@@ -210,12 +207,6 @@
       },
       "jetdatabasewriter.testsupport": {
         "type": "Project"
-      },
-      "ClosedXML.Parser": {
-        "type": "CentralTransitive",
-        "requested": "[2.0.0, )",
-        "resolved": "2.0.0",
-        "contentHash": "ngTqjYreDYNytG1W5d3ewHsw0ukmmrgV7EKnS4/40rXoYZGt07jrBvo+N+GxT49rcageUMUiprV0jYT4nwVBHQ=="
       },
       "Microsoft.CodeAnalysis.CSharp": {
         "type": "CentralTransitive",
@@ -430,19 +421,12 @@
       "jetdatabasewriter": {
         "type": "Project",
         "dependencies": {
-          "ClosedXML.Parser": "[2.0.0, )",
           "System.Linq.Async": "[7.0.1, )",
           "System.Text.Encoding.CodePages": "[10.0.12, )"
         }
       },
       "jetdatabasewriter.testsupport": {
         "type": "Project"
-      },
-      "ClosedXML.Parser": {
-        "type": "CentralTransitive",
-        "requested": "[2.0.0, )",
-        "resolved": "2.0.0",
-        "contentHash": "ngTqjYreDYNytG1W5d3ewHsw0ukmmrgV7EKnS4/40rXoYZGt07jrBvo+N+GxT49rcageUMUiprV0jYT4nwVBHQ=="
       },
       "System.Linq.Async": {
         "type": "CentralTransitive",

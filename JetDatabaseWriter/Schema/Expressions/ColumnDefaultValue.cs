@@ -155,7 +155,7 @@ internal sealed class ColumnDefaultValue
 
         try
         {
-            object raw = this.number?.ForOtherTypes ?? this.literal ?? this.plan!.Root.Evaluate(createContext(), this.plan);
+            object raw = this.number?.ForOtherTypes ?? this.literal ?? this.plan!.Root.Evaluate(createContext());
             if (IsNull(raw))
             {
                 return true;

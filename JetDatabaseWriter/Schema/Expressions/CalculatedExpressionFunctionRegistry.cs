@@ -20,8 +20,7 @@ internal static class CalculatedExpressionFunctionRegistry
     public static object Evaluate(
         string name,
         IReadOnlyList<CalculatedExpressionNode> args,
-        CalculatedExpressionEvaluationContext context,
-        CalculatedExpressionPlan plan)
+        CalculatedExpressionEvaluationContext context)
     {
         string normalizedName = NormalizeFunctionName(name);
         ValidateFunctionArgumentCount(normalizedName, args.Count);
@@ -31,7 +30,7 @@ internal static class CalculatedExpressionFunctionRegistry
         }
 
         descriptor.ValidateArgumentCount(normalizedName, args.Count);
-        return descriptor.Evaluator(new CalculatedFunctionInvocation(name, normalizedName, args, context, plan));
+        return descriptor.Evaluator(new CalculatedFunctionInvocation(name, normalizedName, args, context));
     }
 
     internal static void AddFunction(Dictionary<string, CalculatedFunctionDescriptor> descriptors, CalculatedFunctionDescriptor descriptor)

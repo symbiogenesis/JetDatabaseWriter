@@ -675,7 +675,6 @@ public sealed class CalculatedColumnWriteTests
 
     [Theory]
     [InlineData("SUM(1, 2)")]
-    [InlineData("A1 + 1")]
     public async Task InsertRow_SpreadsheetOnlyCalculatedExpression_ThrowsNotSupportedException(string expression)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
