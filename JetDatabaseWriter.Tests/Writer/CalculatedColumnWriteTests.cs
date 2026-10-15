@@ -13,6 +13,7 @@ using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
@@ -1385,11 +1386,11 @@ public sealed class CalculatedColumnWriteTests
     /// releases all of them. Access lists the LVAL pages it wrote in AllNames's
     /// column usage maps, and the drop frees those pages. A row the writer adds
     /// gets an LVAL page that no usage map lists, so only the row's header leads
-    /// to it. The drop deletes the catalog row that holds the <c>ResultType</c>
-    /// before it reclaims the table's pages. So it used to read AllNames as Text,
+    /// to it. The definition must retain the catalog's calculated <c>ResultType</c>
+    /// while reclaiming the original storage. It used to read AllNames as Text,
     /// skip that header and leave the writer's LVAL row allocated and unreachable.
     /// </summary>
-    /// <param name="operation">"drop" (DropTableAsync) or "addColumn" (a schema rewrite that drops the original).</param>
+    /// <param name="operation">"drop" (DropTableAsync) or "addColumn" (an identity-preserving schema rebuild).</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous test.</returns>
     [Theory]
     [InlineData("drop")]
@@ -1408,23 +1409,41 @@ public sealed class CalculatedColumnWriteTests
         // Access's three single-page values, and the writer's.
         List<uint> lvalRows = await ReadLongValueRowPointersAsync(stream, "Table1", "AllNames");
         Assert.Equal(4, lvalRows.Count);
+        var originalPayloads = new Dictionary<uint, byte[]>();
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
-            if (operation == "drop")
+            foreach (uint pointer in lvalRows)
             {
-                await writer.DropTableAsync("Table1", TestContext.Current.CancellationToken);
+                byte[] page = await writer.Database.Pages.ReadPageCopyAsync(LongValueStore.PageNumber(pointer), TestContext.Current.CancellationToken);
+                RowBound row = DataPageRows.EnumerateLiveRowBounds(writer.Database.Format, page).Single(bound => bound.RowIndex == LongValueStore.RowIndex(pointer));
+                originalPayloads.Add(pointer, page.AsSpan(row.RowStart, row.RowSize).ToArray());
             }
-            else
+
+            var observer = new LongValueReclamationObserver(writer.Database.Format.DataPage, originalPayloads);
+            writer.Pager.AddWriteObserver(observer);
+            try
             {
-                await writer.AddColumnAsync("Table1", new("Note", typeof(string), maxLength: 20), TestContext.Current.CancellationToken);
+                if (operation == "drop")
+                {
+                    await writer.DropTableAsync("Table1", TestContext.Current.CancellationToken);
+                }
+                else
+                {
+                    await writer.AddColumnAsync("Table1", new("Note", typeof(string), maxLength: 20), TestContext.Current.CancellationToken);
+                }
             }
+            finally
+            {
+                writer.Pager.RemoveWriteObserver(observer);
+            }
+
+            Assert.Equal(lvalRows.Order(), observer.Released.Order());
         }
 
         stream.Position = 0;
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         DatabaseFile db = harness.Database;
-        var live = new List<string>();
         foreach (uint pointer in lvalRows)
         {
             int pageNumber = LongValueStore.PageNumber(pointer);
@@ -1435,14 +1454,28 @@ public sealed class CalculatedColumnWriteTests
             }
 
             byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, TestContext.Current.CancellationToken);
-            int slot = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(db.Format.DataPage.RowsStart + (rowIndex * 2)));
-            if (LongValueStore.IsLvalPage(page) && (slot & Constants.DataPage.DeletedRowFlag) == 0)
+            if (LongValueStore.IsLvalPage(page))
             {
-                live.Add($"page {pageNumber} row {rowIndex}");
+                // Reclaimed pages can hold new catalog properties. Only valid
+                // live slots count, and their payload must not be the old value.
+                foreach (RowBound row in DataPageRows.EnumerateLiveRowBounds(db.Format, page).Where(bound => bound.RowIndex == rowIndex))
+                {
+                    Assert.False(page.AsSpan(row.RowStart, row.RowSize).SequenceEqual(originalPayloads[pointer]), $"Original AllNames payload remains at page {pageNumber}, row {rowIndex} after {operation}.");
+                }
             }
         }
 
-        Assert.True(live.Count == 0, $"AllNames's LVAL rows are still live after {operation}: {string.Join(", ", live)}.");
+        if (operation == "addColumn")
+        {
+            await using AccessReader reader = await OpenReaderAsync(stream);
+            using DataTable rows = await reader.ReadTableAsync("Table1", cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(5, rows.Rows.Count);
+            foreach (DataRow row in rows.Rows)
+            {
+                string lastFirst = $"{row["LastName"]}, {row["FirstName"]}";
+                Assert.Equal($"{lastFirst}={lastFirst}", row["AllNames"]);
+            }
+        }
     }
 
     /// <summary>
@@ -1749,6 +1782,43 @@ public sealed class CalculatedColumnWriteTests
 
         Assert.True(mismatches.Count == 0, string.Join(Environment.NewLine, mismatches));
         return table;
+    }
+
+    private sealed class LongValueReclamationObserver(DataPageLayout layout, Dictionary<uint, byte[]> originalPayloads) : IPageWriteObserver
+    {
+        internal HashSet<uint> Released { get; } = [];
+
+        public void OnPageWritten(long pageNumber, ReadOnlySpan<byte> before, ReadOnlySpan<byte> after)
+        {
+            if (!LongValueStore.IsLvalPage(before))
+            {
+                return;
+            }
+
+            foreach ((uint pointer, byte[] payload) in originalPayloads)
+            {
+                int rowIndex = LongValueStore.RowIndex(pointer);
+                if (LongValueStore.PageNumber(pointer) != pageNumber || this.Released.Contains(pointer)
+                    || !UsageMap.TryGetRowBound(before, layout, before.Length, rowIndex, out RowBound original)
+                    || !before.Slice(original.RowStart, original.RowSize).SequenceEqual(payload))
+                {
+                    continue;
+                }
+
+                bool pageFreed = after[0] == Constants.PageTypes.Freed;
+                bool rowDeleted = LongValueStore.IsLvalPage(after)
+                    && rowIndex < JetTypeInfo.Ru16(after, layout.NumRows)
+                    && (JetTypeInfo.Ru16(after, layout.RowsStart + (rowIndex * 2)) & Constants.DataPage.DeletedRowFlag) != 0;
+                if (pageFreed || rowDeleted)
+                {
+                    this.Released.Add(pointer);
+                }
+            }
+        }
+
+        public void OnInvalidateAll()
+        {
+        }
     }
 
     /// <summary>
