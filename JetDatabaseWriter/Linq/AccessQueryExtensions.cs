@@ -164,16 +164,8 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The first entity.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
-    public static async ValueTask<T> FirstAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            return item;
-        }
-
-        throw NoElements();
-    }
+    public static ValueTask<T> FirstAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+        => AsAsyncEnumerable(source).FirstAsync(cancellationToken);
 
     /// <summary>Returns the first entity matching <paramref name="predicate"/>, or throws when none match.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -208,23 +200,8 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The single entity.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows or more than one row.</exception>
-    public static async ValueTask<T> SingleAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        await using IAsyncEnumerator<T> enumerator = AsAsyncEnumerable(source).GetAsyncEnumerator(cancellationToken);
-        if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
-        {
-            throw NoElements();
-        }
-
-        T single = enumerator.Current;
-        if (await enumerator.MoveNextAsync().ConfigureAwait(false))
-        {
-            throw new InvalidOperationException("The sequence contains more than one element.");
-        }
-
-        return single;
-    }
+    public static ValueTask<T> SingleAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+        => AsAsyncEnumerable(source).SingleAsync(cancellationToken);
 
     /// <summary>Returns the single entity matching <paramref name="predicate"/>, or throws when none or more than one match.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -276,7 +253,7 @@ public static class AccessQueryExtensions
         Guard.NotNull(source, nameof(source));
         return source.Provider is IAccessQueryEngine engine
             ? engine.CountAsync(source.Expression, cancellationToken)
-            : CountStreamingAsync(source, cancellationToken);
+            : AsAsyncEnumerable(source).LongCountAsync(cancellationToken);
     }
 
     /// <summary>Counts the rows matching <paramref name="predicate"/> as a 64-bit value.</summary>
@@ -311,18 +288,8 @@ public static class AccessQueryExtensions
     /// <param name="predicate">The condition each row must meet; it runs on each row as the read returns it.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns><see langword="true"/> when every row satisfies <paramref name="predicate"/> or the query produces no rows.</returns>
-    public static async ValueTask<bool> AllAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
-    {
-        await foreach (bool satisfied in Project(source, predicate).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (!satisfied)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    public static ValueTask<bool> AllAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
+        => Project(source, predicate).AllAsync(static satisfied => satisfied, cancellationToken);
 
     /// <summary>Returns the last entity the query produces, or throws when it produces no rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -330,19 +297,8 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The last entity.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
-    public static async ValueTask<T> LastAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        bool any = false;
-        T last = default!;
-        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            any = true;
-            last = item;
-        }
-
-        return any ? last : throw NoElements();
-    }
+    public static ValueTask<T> LastAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+        => AsAsyncEnumerable(source).LastAsync(cancellationToken);
 
     /// <summary>Returns the last entity matching <paramref name="predicate"/>, or throws when none match.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -364,16 +320,7 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The last entity or <see langword="default"/>.</returns>
     public static async ValueTask<T?> LastOrDefaultAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        T? last = default;
-        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            last = item;
-        }
-
-        return last;
-    }
+        => await AsAsyncEnumerable(source).LastOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Returns the last entity matching <paramref name="predicate"/>, or <see langword="default"/> when none match.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -410,32 +357,16 @@ public static class AccessQueryExtensions
     /// <param name="comparer">The equality comparer, or <see langword="null"/> for <see cref="EqualityComparer{T}.Default"/>.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns><see langword="true"/> when a row equals <paramref name="item"/>.</returns>
-    public static async ValueTask<bool> ContainsAsync<T>(this IQueryable<T> source, T item, IEqualityComparer<T>? comparer, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        comparer ??= EqualityComparer<T>.Default;
-        await foreach (T candidate in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (comparer.Equals(candidate, item))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    public static ValueTask<bool> ContainsAsync<T>(this IQueryable<T> source, T item, IEqualityComparer<T>? comparer, CancellationToken cancellationToken = default)
+        => AsAsyncEnumerable(source).ContainsAsync(item, comparer, cancellationToken);
 
     /// <summary>Materializes the query into an array, applying every operator and include.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
     /// <param name="source">The query to materialize.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The matching entities.</returns>
-    public static async ValueTask<T[]> ToArrayAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
-    {
-        Guard.NotNull(source, nameof(source));
-        List<T> list = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
-        return [.. list];
-    }
+    public static ValueTask<T[]> ToArrayAsync<T>(this IQueryable<T> source, CancellationToken cancellationToken = default)
+        => AsAsyncEnumerable(source).ToArrayAsync(cancellationToken);
 
     /// <summary>Materializes the query into a dictionary keyed by <paramref name="keySelector"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -459,7 +390,7 @@ public static class AccessQueryExtensions
     /// <param name="comparer">The key comparer, or <see langword="null"/> for the default.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The entities keyed by <paramref name="keySelector"/>.</returns>
-    public static async ValueTask<Dictionary<TKey, T>> ToDictionaryAsync<T, TKey>(
+    public static ValueTask<Dictionary<TKey, T>> ToDictionaryAsync<T, TKey>(
         this IQueryable<T> source,
         Func<T, TKey> keySelector,
         IEqualityComparer<TKey>? comparer,
@@ -468,13 +399,7 @@ public static class AccessQueryExtensions
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(keySelector, nameof(keySelector));
-        var result = new Dictionary<TKey, T>(comparer);
-        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            result.Add(keySelector(item), item);
-        }
-
-        return result;
+        return AsAsyncEnumerable(source).ToDictionaryAsync(keySelector, comparer, cancellationToken);
     }
 
     /// <summary>Materializes the query into a dictionary using <paramref name="keySelector"/> and <paramref name="elementSelector"/>.</summary>
@@ -504,7 +429,7 @@ public static class AccessQueryExtensions
     /// <param name="comparer">The key comparer, or <see langword="null"/> for the default.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The projected values keyed by <paramref name="keySelector"/>.</returns>
-    public static async ValueTask<Dictionary<TKey, TElement>> ToDictionaryAsync<T, TKey, TElement>(
+    public static ValueTask<Dictionary<TKey, TElement>> ToDictionaryAsync<T, TKey, TElement>(
         this IQueryable<T> source,
         Func<T, TKey> keySelector,
         Func<T, TElement> elementSelector,
@@ -515,13 +440,7 @@ public static class AccessQueryExtensions
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(keySelector, nameof(keySelector));
         Guard.NotNull(elementSelector, nameof(elementSelector));
-        var result = new Dictionary<TKey, TElement>(comparer);
-        await foreach (T item in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            result.Add(keySelector(item), elementSelector(item));
-        }
-
-        return result;
+        return AsAsyncEnumerable(source).ToDictionaryAsync(keySelector, elementSelector, comparer, cancellationToken);
     }
 
     /// <summary>
@@ -843,17 +762,6 @@ public static class AccessQueryExtensions
 
     private static async ValueTask<int> ToInt32CountAsync(ValueTask<long> count) =>
         checked((int)await count.ConfigureAwait(false));
-
-    private static async ValueTask<long> CountStreamingAsync<T>(IQueryable<T> source, CancellationToken cancellationToken)
-    {
-        long count = 0;
-        await foreach (T unused in AsAsyncEnumerable(source).WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            count++;
-        }
-
-        return count;
-    }
 
     private static InvalidOperationException NoElements() => new("The sequence contains no elements.");
 
