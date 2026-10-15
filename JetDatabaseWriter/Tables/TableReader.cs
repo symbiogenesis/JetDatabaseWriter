@@ -365,6 +365,14 @@ internal sealed class TableReader(
             yield break;
         }
 
+        await foreach (string[] row in this.EnumerateStringRowsAsync(tableName, resolved, maxRows: null, progress, cancellationToken).ConfigureAwait(false))
+        {
+            yield return row;
+        }
+    }
+
+    private async IAsyncEnumerable<string[]> EnumerateStringRowsAsync(string tableName, ResolvedTable resolved, uint? maxRows, IProgress<long>? progress, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
         long rowCount = 0;
@@ -387,6 +395,11 @@ internal sealed class TableReader(
 
                 yield return row;
                 rowCount++;
+                if (IsRowLimitReached(rowCount, maxRows))
+                {
+                    progress?.Report(rowCount);
+                    yield break;
+                }
             }
 
             progress?.Report(rowCount);
@@ -469,7 +482,6 @@ internal sealed class TableReader(
 #pragma warning restore CA2000 // CA2000: ownership is transferred to the caller through the returned DataTable.
         }
 
-        CatalogEntry entry = resolved.Entry;
         TableDef td = resolved.Definition;
         DataTable? dt = null;
         try
@@ -487,34 +499,9 @@ internal sealed class TableReader(
                 return empty;
             }
 
-            Dictionary<int, Dictionary<int, byte[]>>? complexData = td.HasComplexColumns
-                ? await complexColumns.BuildColumnDataAsync(tableName, td.Columns, wantedColumns: null, cancellationToken).ConfigureAwait(false)
-                : null;
-            IReadOnlyList<long> pageNumbers = await ownedPages.GetOwnedDataPagesAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
-            var decodePlan = RowDecodePlan.CreateStrings(td, rows.StrictParsing);
-
-            await foreach (TableScanPage scanPage in this.EnumerateTableScanPagesAsync(td, pageNumbers, cancellationToken).ConfigureAwait(false))
+            await foreach (string[] row in this.EnumerateStringRowsAsync(tableName, resolved, maxRows, progress, cancellationToken).ConfigureAwait(false))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                await foreach (string[] row in rows.EnumerateRowsAsync(scanPage.PageNumber, scanPage.Page, decodePlan, cancellationToken).ConfigureAwait(false))
-                {
-                    if (td.HasComplexColumns)
-                    {
-                        ComplexColumnReader.ResolveStringColumns(row, td.Columns, complexData);
-                    }
-
-                    _ = dt.Rows.Add(row);
-                    if (IsRowLimitReached(dt.Rows.Count, maxRows))
-                    {
-                        progress?.Report(dt.Rows.Count);
-                        DataTable result = dt;
-                        dt = null;
-                        return result;
-                    }
-                }
-
-                progress?.Report(dt.Rows.Count);
+                _ = dt.Rows.Add(row);
             }
 
             DataTable final = dt;
