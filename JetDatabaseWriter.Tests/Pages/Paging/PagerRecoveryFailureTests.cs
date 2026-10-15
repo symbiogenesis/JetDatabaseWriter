@@ -86,6 +86,39 @@ public sealed class PagerRecoveryFailureTests
         }
     }
 
+    /// <summary>Cancellation during snapshot preparation still precedes the first physical shrink.</summary>
+    [Fact]
+    public async Task Shrink_CancellationDuringSnapshot_PreservesOriginalImage()
+    {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
+        byte[] original = new byte[PageSize * 2];
+        Array.Fill(original, (byte)7);
+        await File.WriteAllBytesAsync(path, original, TestContext.Current.CancellationToken);
+        try
+        {
+            using var source = new CancellationTokenSource();
+            await using (var stream = new RecoveryFaultStream(path) { CancelSnapshot = source })
+            {
+#pragma warning disable CA2000 // The awaited pager owns and disposes the codec.
+                await using var pager = new Pager(stream, PageSize, new NoPageCodec(), true, typeof(AccessWriter));
+#pragma warning restore CA2000
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pager.ShrinkTailAsync(PageSize, secure: true, source.Token).AsTask());
+                Assert.True(source.IsCancellationRequested);
+                Assert.False(pager.IsFaulted);
+                Assert.Equal(0, stream.PhysicalWrites);
+                Assert.Equal(original.Length, stream.Length);
+                Assert.False(File.Exists(path + ".jdw-journal"));
+            }
+
+            Assert.Equal(original, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".jdw-journal");
+        }
+    }
+
     private sealed class RecoveryFaultStream(string path) : FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
     {
         private int durableFlushes;
@@ -94,11 +127,20 @@ public sealed class PagerRecoveryFailureTests
 
         internal bool FailFirstWrite { get; init; }
 
+        internal CancellationTokenSource? CancelSnapshot { get; init; }
+
         internal int PhysicalWrites { get; private set; }
 
         internal long FailedWriteJournalLength { get; private set; }
 
         internal long RestorationJournalLength { get; private set; }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int read = base.Read(buffer, offset, count);
+            this.CancelSnapshot?.Cancel();
+            return read;
+        }
 
         public override void Flush(bool flushToDisk)
         {

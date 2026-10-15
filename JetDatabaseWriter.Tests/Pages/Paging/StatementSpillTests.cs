@@ -12,12 +12,11 @@ using Xunit;
 /// <summary>Checks bounded private statement frames and restoration after spill.</summary>
 public sealed class StatementSpillTests
 {
-    /// <summary>A file-backed log crosses its threshold using only raw ciphertext images.</summary>
+    /// <summary>Custom-stream rollback crosses its spill threshold and restores raw ciphertext.</summary>
     [Fact]
-    public async Task FileUndoLog_RetainsCiphertextAcrossSpill()
+    public async Task CustomStreamRollback_RetainsCiphertextAcrossSpill()
     {
-        string path = Path.Combine(Path.GetTempPath(), "jdw-spill-test-" + Guid.NewGuid().ToString("N") + ".tmp");
-        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+        await using var stream = new MemoryStream();
         byte[] ciphertext = new byte[16 * 80];
         Array.Fill(ciphertext, (byte)0xA5);
         using var codec = new Jet4Rc4PageCodec(0x12345678);
@@ -28,23 +27,19 @@ public sealed class StatementSpillTests
 
         await stream.WriteAsync(ciphertext, TestContext.Current.CancellationToken);
         await using var store = new StreamPageStore(stream, true);
-        await using var log = new StatementUndoLog(ciphertext.Length, true, 64);
+        await using var rollback = new PhysicalRollback(store, ciphertext.Length, 16, 64, spill: true);
         for (int page = 0; page < 80; page++)
         {
-            await log.CaptureAsync(store, page * 16, 16, TestContext.Current.CancellationToken);
+            await rollback.CaptureAsync(page * 16, TestContext.Current.CancellationToken);
         }
 
-        Assert.True(log.IsFileSpilled);
-        byte[] plaintext = new byte[16];
-        Array.Fill(plaintext, (byte)0xA5);
-        Assert.NotEqual(plaintext, await log.ReadRawImageAsync(16));
+        rollback.BeginWrite();
         for (int page = 0; page < 80; page++)
         {
-            Assert.Equal(ciphertext.AsSpan(page * 16, 16).ToArray(), await log.ReadRawImageAsync(page * 16));
+            await store.WriteAsync(page * 16, new byte[16], CancellationToken.None);
         }
 
-        await store.WriteAsync(0, new byte[16], CancellationToken.None);
-        await log.RestoreAsync(store, false);
+        await rollback.RestoreAsync(false);
         stream.Position = 0;
         byte[] restored = new byte[ciphertext.Length];
         await stream.ReadExactlyAsync(restored, TestContext.Current.CancellationToken);

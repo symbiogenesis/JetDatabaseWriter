@@ -1,6 +1,6 @@
 # Transaction crash recovery
 
-File-backed statement transactions, explicit transactions and physical shrinking use one `PersistentRollbackJournal` snapshot for both live rollback and process-crash recovery. The pager tracks overwritten offsets and removed tail ranges without keeping duplicate original page bodies. The snapshot stores raw bytes, so encrypted database pages remain encrypted. Non-file streams retain the separate in-process undo log, with temporary-file spill for large shrink tails.
+`PhysicalRollback` owns preparation, commit decisions, restoration and cleanup for statement transactions, explicit transactions and physical shrinking. File-backed operations use one `PersistentRollbackJournal` snapshot for both live rollback and process-crash recovery, tracking overwritten offsets and removed tail ranges without duplicate original page bodies. Non-file operations use raw before-images through the same owner, with temporary-file spill for large shrink tails. Stored encrypted bytes remain encrypted in either backend.
 
 ## Nested explicit transactions
 

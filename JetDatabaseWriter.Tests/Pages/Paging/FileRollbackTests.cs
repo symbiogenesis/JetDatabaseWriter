@@ -82,7 +82,6 @@ public sealed class FileRollbackTests
                     gate.Attach(transaction);
                 }
 
-                bool duplicateUndo;
                 try
                 {
                     byte[] after = new byte[PageSize];
@@ -100,8 +99,8 @@ public sealed class FileRollbackTests
                     }
 
                     Assert.True(stream.Length > original.Length);
-                    Assert.NotNull(transaction.RecoveryJournal);
-                    duplicateUndo = transaction.UndoLog is not null;
+                    Assert.NotNull(transaction.Rollback);
+                    Assert.True(File.Exists(path + ".jdw-journal"));
                 }
                 finally
                 {
@@ -113,7 +112,6 @@ public sealed class FileRollbackTests
                     await pager.RollbackStatementAsync(transaction);
                 }
 
-                Assert.False(duplicateUndo);
                 Assert.False(pager.IsFaulted);
                 Assert.False(File.Exists(path + ".jdw-journal"));
             }
@@ -156,7 +154,8 @@ public sealed class FileRollbackTests
                         await pager.WritePageAsync(page, after, TestContext.Current.CancellationToken);
                     }
 
-                    Assert.NotNull(transaction.RecoveryJournal);
+                    Assert.NotNull(transaction.Rollback);
+                    Assert.True(File.Exists(path + ".jdw-journal"));
                     await pager.TruncateAsync(40, TestContext.Current.CancellationToken);
                 }
                 finally

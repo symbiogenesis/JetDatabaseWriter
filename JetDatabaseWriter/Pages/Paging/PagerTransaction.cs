@@ -60,11 +60,8 @@ internal sealed class PagerTransaction
     /// <summary>Gets a value indicating whether dirty frames may spill during a private statement.</summary>
     internal bool IsStatement { get; }
 
-    /// <summary>Gets or sets first raw images retained for non-file stores across statement spills.</summary>
-    internal StatementUndoLog? UndoLog { get; set; }
-
-    /// <summary>Gets or sets the file snapshot used for live rollback and crash recovery.</summary>
-    internal PersistentRollbackJournal? RecoveryJournal { get; set; }
+    /// <summary>Gets or sets the physical rollback owner retained across statement spills.</summary>
+    internal PhysicalRollback? Rollback { get; set; }
 
     /// <summary>Gets or sets the commit lock address for early statement writes.</summary>
     internal long CommitLockAddress { get; set; }

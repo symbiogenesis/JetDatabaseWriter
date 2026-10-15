@@ -28,9 +28,6 @@ internal sealed class PersistentRollbackJournal : IDisposable
     private bool completed;
     private bool cleanupAttempted;
 
-    /// <summary>Gets a value indicating whether the commit decision is durably recorded.</summary>
-    internal bool IsCommitted { get; private set; }
-
     private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize, long originalLength)
     {
         this.database = database;
@@ -501,7 +498,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         await store.SetLengthAsync(this.originalLength, CancellationToken.None).ConfigureAwait(false);
         await store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
-        this.CompleteRollback();
+        this.Complete();
     }
 
     private async ValueTask RestorePageAsync(IPageStore store, long offset, byte[] page)
@@ -511,18 +508,8 @@ internal sealed class PersistentRollbackJournal : IDisposable
         await store.WriteAsync(offset, page.AsMemory(0, count), CancellationToken.None).ConfigureAwait(false);
     }
 
-    /// <summary>Durably records a commit decision after the database has been durably flushed.</summary>
-    internal void MarkCommitted()
-    {
-        this.database.Flush(true);
-        this.AppendRecord(-1, DatabaseHash(this.database));
-        this.IsCommitted = true;
-        this.completed = true;
-        this.CleanupCompleted();
-    }
-
-    /// <summary>Removes a journal after successful durable rollback.</summary>
-    internal void CompleteRollback()
+    /// <summary>Durably records the final database hash and removes the completed journal.</summary>
+    internal void Complete()
     {
         this.database.Flush(true);
         this.AppendRecord(-1, DatabaseHash(this.database));

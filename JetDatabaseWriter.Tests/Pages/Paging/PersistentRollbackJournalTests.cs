@@ -605,44 +605,34 @@ public sealed class PersistentRollbackJournalTests
     }
 
     /// <summary>Disposing an old completed transaction preserves a later transaction's recovery evidence.</summary>
-    /// <param name="commit">Whether the old transaction committed rather than rolled back.</param>
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void Dispose_CompletedJournal_PreservesSuccessorJournal(bool commit)
+    [Fact]
+    public async System.Threading.Tasks.Task Dispose_CompletedJournal_PreservesSuccessorJournal()
     {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".mdb");
         byte[] original = new byte[8192];
-        File.WriteAllBytes(path, original);
+        await File.WriteAllBytesAsync(path, original, TestContext.Current.CancellationToken);
         try
         {
-            using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            using var completed = PersistentRollbackJournal.Create(database, 2048);
-            if (commit)
+            await using var database = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            await using var store = new StreamPageStore(database, leaveOpen: true);
+            await using var completed = new PhysicalRollback(store, original.Length, 2048, 64);
+            completed.BeginWrite();
+            await completed.CommitAsync(durable: true);
+            await using (var successor = new PhysicalRollback(store, original.Length, 2048, 64))
             {
-                completed.MarkCommitted();
-            }
-            else
-            {
-                completed.CompleteRollback();
-            }
-
-            using (var successor = PersistentRollbackJournal.Create(database, 2048))
-            {
+                successor.BeginWrite();
+                await completed.DisposeAsync();
                 byte[] changed = new byte[2048];
                 Array.Fill(changed, (byte)7);
-                successor.RecordBeforeWrite(0, changed);
-                database.Position = 0;
-                database.Write(changed, 0, changed.Length);
-                database.Flush(true);
+                await store.WriteAsync(0, changed, TestContext.Current.CancellationToken);
+                await store.FlushAsync(true, TestContext.Current.CancellationToken);
             }
 
-            completed.Dispose();
             Assert.True(File.Exists(path + ".jdw-journal"));
             PersistentRollbackJournal.Recover(database);
             database.Position = 0;
             byte[] restored = new byte[original.Length];
-            Assert.Equal(restored.Length, database.Read(restored, 0, restored.Length));
+            Assert.Equal(restored.Length, await database.ReadAsync(restored.AsMemory(), TestContext.Current.CancellationToken));
             Assert.Equal(original, restored);
         }
         finally
