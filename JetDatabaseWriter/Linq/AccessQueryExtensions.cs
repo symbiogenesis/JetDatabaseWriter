@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Infrastructure;
@@ -314,7 +313,7 @@ public static class AccessQueryExtensions
     /// <returns><see langword="true"/> when every row satisfies <paramref name="predicate"/> or the query produces no rows.</returns>
     public static async ValueTask<bool> AllAsync<T>(this IQueryable<T> source, Expression<Func<T, bool>> predicate, CancellationToken cancellationToken = default)
     {
-        await foreach (bool satisfied in Project(source, predicate, cancellationToken).ConfigureAwait(false))
+        await foreach (bool satisfied in Project(source, predicate).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (!satisfied)
             {
@@ -563,15 +562,7 @@ public static class AccessQueryExtensions
     /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
     /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="int"/>.</exception>
     public static async ValueTask<int> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, int>> selector, CancellationToken cancellationToken = default)
-    {
-        int sum = 0;
-        await foreach (int value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum = checked(sum + value);
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="int"/> values that are not null as the read returns the rows, in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -581,15 +572,7 @@ public static class AccessQueryExtensions
     /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
     /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="int"/>.</exception>
     public static async ValueTask<int?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, int?>> selector, CancellationToken cancellationToken = default)
-    {
-        int sum = 0;
-        await foreach (int? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum = checked(sum + value.GetValueOrDefault());
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="long"/> values as the read returns the rows, in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -599,15 +582,7 @@ public static class AccessQueryExtensions
     /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
     /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="long"/>.</exception>
     public static async ValueTask<long> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, long>> selector, CancellationToken cancellationToken = default)
-    {
-        long sum = 0;
-        await foreach (long value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum = checked(sum + value);
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="long"/> values that are not null as the read returns the rows, in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -617,15 +592,7 @@ public static class AccessQueryExtensions
     /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
     /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="long"/>.</exception>
     public static async ValueTask<long?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, long?>> selector, CancellationToken cancellationToken = default)
-    {
-        long sum = 0;
-        await foreach (long? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum = checked(sum + value.GetValueOrDefault());
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="float"/> values as the read returns the rows, accumulating in <see cref="double"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -634,15 +601,7 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
     public static async ValueTask<float> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, float>> selector, CancellationToken cancellationToken = default)
-    {
-        double sum = 0;
-        await foreach (float value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum += value;
-        }
-
-        return (float)sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="float"/> values that are not null as the read returns the rows, accumulating in <see cref="double"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -651,15 +610,7 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
     public static async ValueTask<float?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, float?>> selector, CancellationToken cancellationToken = default)
-    {
-        double sum = 0;
-        await foreach (float? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum += value.GetValueOrDefault();
-        }
-
-        return (float)sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="double"/> values as the read returns the rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -668,15 +619,7 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
     public static async ValueTask<double> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, double>> selector, CancellationToken cancellationToken = default)
-    {
-        double sum = 0;
-        await foreach (double value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum += value;
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="double"/> values that are not null as the read returns the rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -685,15 +628,7 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
     public static async ValueTask<double?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, double?>> selector, CancellationToken cancellationToken = default)
-    {
-        double sum = 0;
-        await foreach (double? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum += value.GetValueOrDefault();
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="decimal"/> values as the read returns the rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -703,15 +638,7 @@ public static class AccessQueryExtensions
     /// <returns>The sum of the projected values; 0 when the query produces no rows.</returns>
     /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="decimal"/>.</exception>
     public static async ValueTask<decimal> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal>> selector, CancellationToken cancellationToken = default)
-    {
-        decimal sum = 0;
-        await foreach (decimal value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum += value;
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Sums the projected <see cref="decimal"/> values that are not null as the read returns the rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -721,15 +648,7 @@ public static class AccessQueryExtensions
     /// <returns>The sum of the values that are not null; 0 when there are none.</returns>
     /// <exception cref="OverflowException">Thrown when the sum is outside the range of <see cref="decimal"/>.</exception>
     public static async ValueTask<decimal?> SumAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal?>> selector, CancellationToken cancellationToken = default)
-    {
-        decimal sum = 0;
-        await foreach (decimal? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum += value.GetValueOrDefault();
-        }
-
-        return sum;
-    }
+        => await Project(source, selector).SumAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Averages the projected <see cref="int"/> values as the read returns the rows, summing them as a <see cref="long"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -739,17 +658,7 @@ public static class AccessQueryExtensions
     /// <returns>The mean of the projected values.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
     public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, int>> selector, CancellationToken cancellationToken = default)
-    {
-        long sum = 0;
-        long count = 0;
-        await foreach (int value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum = checked(sum + value);
-            count++;
-        }
-
-        return count == 0 ? throw NoElements() : (double)sum / count;
-    }
+        => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Averages the projected <see cref="int"/> values that are not null as the read returns the rows, summing them as a <see cref="long"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -758,20 +667,7 @@ public static class AccessQueryExtensions
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
     public static async ValueTask<double?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, int?>> selector, CancellationToken cancellationToken = default)
-    {
-        long sum = 0;
-        long count = 0;
-        await foreach (int? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            if (value is int present)
-            {
-                sum = checked(sum + present);
-                count++;
-            }
-        }
-
-        return count == 0 ? null : (double)sum / count;
-    }
+        => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Averages the projected <see cref="long"/> values as the read returns the rows, summing them in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -782,17 +678,7 @@ public static class AccessQueryExtensions
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
     /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="long"/>.</exception>
     public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, long>> selector, CancellationToken cancellationToken = default)
-    {
-        long sum = 0;
-        long count = 0;
-        await foreach (long value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum = checked(sum + value);
-            count++;
-        }
-
-        return count == 0 ? throw NoElements() : (double)sum / count;
-    }
+        => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Averages the projected <see cref="long"/> values that are not null as the read returns the rows, summing them in checked arithmetic.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -802,20 +688,7 @@ public static class AccessQueryExtensions
     /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
     /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="long"/>.</exception>
     public static async ValueTask<double?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, long?>> selector, CancellationToken cancellationToken = default)
-    {
-        long sum = 0;
-        long count = 0;
-        await foreach (long? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            if (value is long present)
-            {
-                sum = checked(sum + present);
-                count++;
-            }
-        }
-
-        return count == 0 ? null : (double)sum / count;
-    }
+        => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Averages the projected <see cref="float"/> values as the read returns the rows, accumulating in <see cref="double"/>.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -826,15 +699,15 @@ public static class AccessQueryExtensions
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
     public static async ValueTask<float> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, float>> selector, CancellationToken cancellationToken = default)
     {
-        double sum = 0;
-        long count = 0;
-        await foreach (float value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        // Async LINQ seeds the sum with +0; preserve the sign when every present value is -0.
+        bool allNegativeZero = true;
+        float average = await Project(source, selector).Select(value =>
         {
-            sum = count == 0 ? value : sum + value;
-            count++;
-        }
+            allNegativeZero &= BitConverter.SingleToInt32Bits(value) == int.MinValue;
+            return value;
+        }).AverageAsync(cancellationToken).ConfigureAwait(false);
 
-        return count == 0 ? throw NoElements() : (float)(sum / count);
+        return allNegativeZero && average == 0 ? -0.0f : average;
     }
 
     /// <summary>Averages the projected <see cref="float"/> values that are not null as the read returns the rows, accumulating in <see cref="double"/>.</summary>
@@ -845,18 +718,15 @@ public static class AccessQueryExtensions
     /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
     public static async ValueTask<float?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, float?>> selector, CancellationToken cancellationToken = default)
     {
-        double sum = 0;
-        long count = 0;
-        await foreach (float? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        // Async LINQ seeds the sum with +0; preserve the sign when every present value is -0.
+        bool allNegativeZero = true;
+        float? average = await Project(source, selector).Select(value =>
         {
-            if (value is float present)
-            {
-                sum = count == 0 ? present : sum + present;
-                count++;
-            }
-        }
+            allNegativeZero &= value is null || BitConverter.SingleToInt32Bits(value.GetValueOrDefault()) == int.MinValue;
+            return value;
+        }).AverageAsync(cancellationToken).ConfigureAwait(false);
 
-        return count == 0 ? null : (float)(sum / count);
+        return allNegativeZero && average == 0 ? -0.0f : average;
     }
 
     /// <summary>Averages the projected <see cref="double"/> values as the read returns the rows.</summary>
@@ -868,15 +738,15 @@ public static class AccessQueryExtensions
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
     public static async ValueTask<double> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, double>> selector, CancellationToken cancellationToken = default)
     {
-        double sum = 0;
-        long count = 0;
-        await foreach (double value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        // Async LINQ seeds the sum with +0; preserve the sign when every present value is -0.
+        bool allNegativeZero = true;
+        double average = await Project(source, selector).Select(value =>
         {
-            sum = count == 0 ? value : sum + value;
-            count++;
-        }
+            allNegativeZero &= BitConverter.DoubleToInt64Bits(value) == long.MinValue;
+            return value;
+        }).AverageAsync(cancellationToken).ConfigureAwait(false);
 
-        return count == 0 ? throw NoElements() : sum / count;
+        return allNegativeZero && average == 0 ? -0.0 : average;
     }
 
     /// <summary>Averages the projected <see cref="double"/> values that are not null as the read returns the rows.</summary>
@@ -887,18 +757,15 @@ public static class AccessQueryExtensions
     /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
     public static async ValueTask<double?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, double?>> selector, CancellationToken cancellationToken = default)
     {
-        double sum = 0;
-        long count = 0;
-        await foreach (double? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        // Async LINQ seeds the sum with +0; preserve the sign when every present value is -0.
+        bool allNegativeZero = true;
+        double? average = await Project(source, selector).Select(value =>
         {
-            if (value is double present)
-            {
-                sum = count == 0 ? present : sum + present;
-                count++;
-            }
-        }
+            allNegativeZero &= value is null || BitConverter.DoubleToInt64Bits(value.GetValueOrDefault()) == long.MinValue;
+            return value;
+        }).AverageAsync(cancellationToken).ConfigureAwait(false);
 
-        return count == 0 ? null : sum / count;
+        return allNegativeZero && average == 0 ? -0.0 : average;
     }
 
     /// <summary>Averages the projected <see cref="decimal"/> values as the read returns the rows.</summary>
@@ -910,17 +777,7 @@ public static class AccessQueryExtensions
     /// <exception cref="InvalidOperationException">Thrown when the query produces no rows.</exception>
     /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="decimal"/>.</exception>
     public static async ValueTask<decimal> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal>> selector, CancellationToken cancellationToken = default)
-    {
-        decimal sum = 0;
-        long count = 0;
-        await foreach (decimal value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            sum += value;
-            count++;
-        }
-
-        return count == 0 ? throw NoElements() : sum / count;
-    }
+        => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>Averages the projected <see cref="decimal"/> values that are not null as the read returns the rows.</summary>
     /// <typeparam name="T">The query element type.</typeparam>
@@ -930,20 +787,7 @@ public static class AccessQueryExtensions
     /// <returns>The mean of the values that are not null, or <see langword="null"/> when there are none.</returns>
     /// <exception cref="OverflowException">Thrown when the sum of the values is outside the range of <see cref="decimal"/>.</exception>
     public static async ValueTask<decimal?> AverageAsync<T>(this IQueryable<T> source, Expression<Func<T, decimal?>> selector, CancellationToken cancellationToken = default)
-    {
-        decimal sum = 0;
-        long count = 0;
-        await foreach (decimal? value in Project(source, selector, cancellationToken).ConfigureAwait(false))
-        {
-            if (value is decimal present)
-            {
-                sum += present;
-                count++;
-            }
-        }
-
-        return count == 0 ? null : sum / count;
-    }
+        => await Project(source, selector).AverageAsync(cancellationToken).ConfigureAwait(false);
 
     internal static bool IsIncludeMethod(MethodInfo method) =>
         method.IsGenericMethod && method.GetGenericMethodDefinition() == IncludeMethodDefinition;
@@ -1022,24 +866,12 @@ public static class AccessQueryExtensions
     /// <typeparam name="TResult">The projected value type.</typeparam>
     /// <param name="source">The query to read.</param>
     /// <param name="selector">Projects each entity to its value.</param>
-    /// <param name="cancellationToken">A token used to cancel the enumeration.</param>
     /// <returns>The projected values, in the order the query produces the rows.</returns>
-    private static IAsyncEnumerable<TResult> Project<T, TResult>(IQueryable<T> source, Expression<Func<T, TResult>> selector, CancellationToken cancellationToken)
+    private static IAsyncEnumerable<TResult> Project<T, TResult>(IQueryable<T> source, Expression<Func<T, TResult>> selector)
     {
         Guard.NotNull(source, nameof(source));
         Guard.NotNull(selector, nameof(selector));
-        return ProjectAsync(AsAsyncEnumerable(source), selector.Compile(), cancellationToken);
-    }
-
-    private static async IAsyncEnumerable<TResult> ProjectAsync<T, TResult>(
-        IAsyncEnumerable<T> rows,
-        Func<T, TResult> selector,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (T row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            yield return selector(row);
-        }
+        return AsAsyncEnumerable(source).Select(selector.Compile());
     }
 
     /// <summary>
@@ -1063,7 +895,7 @@ public static class AccessQueryExtensions
     {
         bool any = false;
         TResult extreme = default!;
-        await foreach (TResult value in Project(source, selector, cancellationToken).ConfigureAwait(false))
+        await foreach (TResult value in Project(source, selector).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (value is null)
             {

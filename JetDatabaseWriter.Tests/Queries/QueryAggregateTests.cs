@@ -80,6 +80,15 @@ public sealed class QueryAggregateTests
         ["AverageNullableLongOverflow"] = new(static async (q, ct) => await q.AverageAsync(i => i.Score == null ? null : long.MaxValue, ct), static r => r.Average(i => i.Score == null ? null : long.MaxValue)),
         ["AverageDecimalOverflow"] = new(static async (q, ct) => await q.AverageAsync(_ => decimal.MaxValue, ct), static r => r.Average(_ => decimal.MaxValue)),
         ["AverageNullableDecimalOverflow"] = new(static async (q, ct) => await q.AverageAsync(i => i.Price == null ? null : decimal.MaxValue, ct), static r => r.Average(i => i.Price == null ? null : decimal.MaxValue)),
+        ["SumNullableLongOverflow"] = new(static async (q, ct) => await q.SumAsync(_ => (long?)long.MaxValue, ct), static r => r.Sum(_ => (long?)long.MaxValue)),
+        ["SumNullableDecimalOverflow"] = new(static async (q, ct) => await q.SumAsync(_ => (decimal?)decimal.MaxValue, ct), static r => r.Sum(_ => (decimal?)decimal.MaxValue)),
+        ["SumFloatNaN"] = new(static async (q, ct) => await q.SumAsync(i => i.Id == 3 ? float.NaN : i.Ratio, ct), static r => r.Sum(i => i.Id == 3 ? float.NaN : i.Ratio)),
+        ["SumDoubleOpposingInfinities"] = new(static async (q, ct) => await q.SumAsync(i => i.Id == 7 ? double.PositiveInfinity : double.NegativeInfinity, ct), static r => r.Sum(i => i.Id == 7 ? double.PositiveInfinity : double.NegativeInfinity)),
+        ["SumNullableDoubleNaN"] = new(static async (q, ct) => await q.SumAsync(i => i.Id == 3 ? double.NaN : i.Weight, ct), static r => r.Sum(i => i.Id == 3 ? double.NaN : i.Weight)),
+        ["AverageFloatAccumulatesInDouble"] = new(static async (q, ct) => await q.AverageAsync(i => i.Id == 7 ? 16_777_216f : 1f, ct), static r => r.Average(i => i.Id == 7 ? 16_777_216f : 1f)),
+        ["AverageNullableFloatAccumulatesInDouble"] = new(static async (q, ct) => await q.AverageAsync(i => i.Id == 7 ? 16_777_216f : i.Score, ct), static r => r.Average(i => i.Id == 7 ? 16_777_216f : i.Score)),
+        ["AverageFloatNaN"] = new(static async (q, ct) => await q.AverageAsync(i => i.Id == 3 ? float.NaN : i.Ratio, ct), static r => r.Average(i => i.Id == 3 ? float.NaN : i.Ratio)),
+        ["AverageNullableDoubleOpposingInfinities"] = new(static async (q, ct) => await q.AverageAsync(i => OpposingInfinityOrWeight(i), ct), static r => r.Average(i => OpposingInfinityOrWeight(i))),
         ["MinInt"] = new(static async (q, ct) => await q.MinAsync(i => i.Id, ct), static r => r.Min(i => i.Id)),
         ["MaxInt"] = new(static async (q, ct) => await q.MaxAsync(i => i.Id, ct), static r => r.Max(i => i.Id)),
         ["MinNullableInt"] = new(static async (q, ct) => await q.MinAsync(i => i.Score, ct), static r => r.Min(i => i.Score)),
@@ -238,6 +247,136 @@ public sealed class QueryAggregateTests
         Assert.Equal(expected, actual);
     }
 
+    [Theory]
+    [InlineData("PositiveZero")]
+    [InlineData("NegativeZero")]
+    [InlineData("MixedZeros")]
+    [InlineData("CancellingValues")]
+    [InlineData("NegativeUnderflow")]
+    [InlineData("LeadingAndTrailingNulls")]
+    public async Task AverageFloatingPoint_PreservesZeroSign(string scenario)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        double?[] doubles = scenario switch
+        {
+            "PositiveZero" => [0.0, 0.0],
+            "NegativeZero" => [-0.0, -0.0],
+            "MixedZeros" => [-0.0, 0.0, -0.0],
+            "CancellingValues" => [-1.0, 1.0, -0.0],
+            "NegativeUnderflow" => [-double.Epsilon, -0.0],
+            "LeadingAndTrailingNulls" => [null, -0.0, -0.0, null],
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario), scenario, "Unknown scenario."),
+        };
+        float?[] singles = [.. doubles.Select(value => (float?)value)];
+        if (scenario == "NegativeUnderflow")
+        {
+            singles[0] = -float.Epsilon;
+        }
+
+        IQueryable<AggItem> query = reader.Query<AggItem>(Table).OrderBy(i => i.Id).Take(doubles.Length);
+        List<AggItem> rows = await query.ToListAsync(ct);
+        double? nullableDouble = await query.AverageAsync(i => doubles[i.Id - 1], ct);
+        float? nullableFloat = await query.AverageAsync(i => singles[i.Id - 1], ct);
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(rows.Average(i => doubles[i.Id - 1])!.Value),
+            BitConverter.DoubleToInt64Bits(nullableDouble!.Value));
+        Assert.Equal(
+            BitConverter.SingleToInt32Bits(rows.Average(i => singles[i.Id - 1])!.Value),
+            BitConverter.SingleToInt32Bits(nullableFloat!.Value));
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(rows.Average(i => doubles[i.Id - 1] ?? -0.0)),
+            BitConverter.DoubleToInt64Bits(await query.AverageAsync(i => doubles[i.Id - 1] ?? -0.0, ct)));
+        Assert.Equal(
+            BitConverter.SingleToInt32Bits(rows.Average(i => singles[i.Id - 1] ?? -0.0f)),
+            BitConverter.SingleToInt32Bits(await query.AverageAsync(i => singles[i.Id - 1] ?? -0.0f, ct)));
+    }
+
+    [Fact]
+    public async Task FloatingPointAggregates_PreserveOrderAndSignedZero()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        IQueryable<AggItem> query = reader.Query<AggItem>(Table).OrderBy(i => i.Id).Take(4);
+        List<AggItem> rows = await query.ToListAsync(ct);
+        float[] singles = [16_777_216f, 1f, -16_777_216f, 1f];
+        double[] doubles = [1e16, 1, -1e16, 1];
+
+        Assert.Equal(
+            BitConverter.SingleToInt32Bits(rows.Sum(i => singles[i.Id - 1])),
+            BitConverter.SingleToInt32Bits(await query.SumAsync(i => singles[i.Id - 1], ct)));
+        Assert.Equal(
+            BitConverter.SingleToInt32Bits(rows.Average(i => singles[i.Id - 1])),
+            BitConverter.SingleToInt32Bits(await query.AverageAsync(i => singles[i.Id - 1], ct)));
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(rows.Sum(i => doubles[i.Id - 1])),
+            BitConverter.DoubleToInt64Bits(await query.SumAsync(i => doubles[i.Id - 1], ct)));
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(rows.Average(i => doubles[i.Id - 1])),
+            BitConverter.DoubleToInt64Bits(await query.AverageAsync(i => doubles[i.Id - 1], ct)));
+        Assert.Equal(0, BitConverter.SingleToInt32Bits(await query.SumAsync(_ => -0.0f, ct)));
+        Assert.Equal(0, BitConverter.DoubleToInt64Bits(await query.SumAsync(_ => -0.0, ct)));
+        Assert.Equal(0, BitConverter.SingleToInt32Bits((await query.SumAsync(i => i.Id == 1 ? null : -0.0f, ct))!.Value));
+        Assert.Equal(0, BitConverter.DoubleToInt64Bits((await query.SumAsync(i => i.Id == 1 ? null : -0.0, ct))!.Value));
+    }
+
+    [Theory]
+    [InlineData("Sum")]
+    [InlineData("Average")]
+    public async Task Aggregate_ReportsValidationAndSelectorFaultsThroughReturnedTask(string aggregate)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        IQueryable<AggItem> query = reader.Query<AggItem>(Table);
+
+        // Obtain each task before asserting its exception, so a synchronous throw fails the test.
+        Task nullSource = AggregateAsync(null!, aggregate, i => i.Id, ct);
+        Task nullSelector = AggregateAsync(query, aggregate, null!, ct);
+        Task unsupportedSource = AggregateAsync(Array.Empty<AggItem>().AsQueryable(), aggregate, i => i.Id, ct);
+        var unboundSelector = Expression.Lambda<Func<AggItem, int>>(
+            Expression.Parameter(typeof(int), "unbound"), Expression.Parameter(typeof(AggItem), "item"));
+        Task invalidSelector = AggregateAsync(query, aggregate, unboundSelector, ct);
+        Task selectorFault = AggregateAsync(query, aggregate, i => Fault(i), ct);
+
+        await Assert.ThrowsAsync<ArgumentNullException>("source", () => nullSource);
+        await Assert.ThrowsAsync<ArgumentNullException>("selector", () => nullSelector);
+        await Assert.ThrowsAsync<NotSupportedException>(() => unsupportedSource);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => invalidSelector);
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(() => selectorFault);
+        Assert.StartsWith(SelectorFault, error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Sum")]
+    [InlineData("Average")]
+    public async Task Aggregate_ObservesCancellationBeforeReadingAndBetweenRows(string aggregate)
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateItemsAsync(DatabaseFormat.AceAccdb, fillerRows: 0, ct);
+        await using AccessReader reader = await OpenReaderAsync(stream, ct);
+        IQueryable<AggItem> query = reader.Query<AggItem>(Table);
+        using var beforeRead = new CancellationTokenSource();
+        await beforeRead.CancelAsync();
+        Task cancelled = AggregateAsync(query, aggregate, i => Fault(i), beforeRead.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+
+        using var betweenRows = new CancellationTokenSource();
+        var selector = new CancellingSelector(betweenRows);
+        Task interrupted = AggregateAsync(query, aggregate, i => selector.Select(i), betweenRows.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => interrupted);
+        Assert.Equal(1, selector.Calls);
+    }
+
+    private static double? OpposingInfinityOrWeight(AggItem item) => item.Id switch
+    {
+        7 => double.PositiveInfinity,
+        3 => double.NegativeInfinity,
+        _ => item.Weight,
+    };
+
     private static IEnumerable<string> SelectorOverloads(Type type, string suffix, bool unwrapResult) =>
         type.GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Where(m => m.Name.EndsWith(suffix, StringComparison.Ordinal) && AggregateNames.Contains(m.Name[..^suffix.Length]))
@@ -359,6 +498,18 @@ public sealed class QueryAggregateTests
         public decimal? Price { get; set; }
 
         public float Ratio { get; set; }
+    }
+
+    private sealed class CancellingSelector(CancellationTokenSource cancellation)
+    {
+        public int Calls { get; private set; }
+
+        public int Select(AggItem item)
+        {
+            this.Calls++;
+            cancellation.Cancel();
+            return item.Id;
+        }
     }
 
     /// <summary>One aggregate: the async terminal over a query, and the LINQ to Objects call it must agree with.</summary>

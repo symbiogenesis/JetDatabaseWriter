@@ -40,25 +40,25 @@ internal static class InMemoryTail
 
     private static readonly Dictionary<string, StepFactory> Steps = new(StringComparer.Ordinal)
     {
-        ["Where"] = static (call, source, cancellationToken) => WhereAsync(source, CompileElementLambda<bool>(call), cancellationToken),
-        ["Select"] = static (call, source, cancellationToken) => SelectAsync(source, CompileElementLambda<object?>(call), cancellationToken),
-        ["Cast"] = static (call, source, cancellationToken) => SelectAsync(source, CompileCast(call.Method.GetGenericArguments()[0]), cancellationToken),
-        ["OfType"] = static (call, source, cancellationToken) => WhereAsync(source, call.Method.GetGenericArguments()[0].IsInstanceOfType, cancellationToken),
-        ["Skip"] = static (call, source, cancellationToken) => new SkipStage(CountArgument(call)).Apply(source, cancellationToken),
-        ["Take"] = static (call, source, cancellationToken) => new TakeStage(CountArgument(call)).Apply(source, cancellationToken),
-        ["SkipWhile"] = static (call, source, cancellationToken) => SkipWhileAsync(source, CompileElementLambda<bool>(call), cancellationToken),
-        ["TakeWhile"] = static (call, source, cancellationToken) => TakeWhileAsync(source, CompileElementLambda<bool>(call), cancellationToken),
-        ["SkipLast"] = static (call, source, cancellationToken) => SkipLastAsync(source, CountArgument(call), cancellationToken),
-        ["TakeLast"] = static (call, source, cancellationToken) => TakeLastAsync(source, CountArgument(call), cancellationToken),
-        ["Distinct"] = static (call, source, cancellationToken) => DistinctAsync(source, ElementEquality(call, comparerIndex: 1), cancellationToken),
-        ["Union"] = static (call, source, cancellationToken) => UnionAsync(source, SecondSource(call, cancellationToken), ElementEquality(call, comparerIndex: 2), cancellationToken),
+        ["Where"] = static (call, source, _) => source.Where(CompileElementLambda<bool>(call)),
+        ["Select"] = static (call, source, _) => source.Select(CompileElementLambda<object?>(call)),
+        ["Cast"] = static (call, source, _) => source.Select(CompileCast(call.Method.GetGenericArguments()[0])),
+        ["OfType"] = static (call, source, _) => source.Where(call.Method.GetGenericArguments()[0].IsInstanceOfType),
+        ["Skip"] = static (call, source, _) => source.Skip(CountArgument(call)),
+        ["Take"] = static (call, source, _) => source.Take(CountArgument(call)),
+        ["SkipWhile"] = static (call, source, _) => source.SkipWhile(CompileElementLambda<bool>(call)),
+        ["TakeWhile"] = static (call, source, _) => source.TakeWhile(CompileElementLambda<bool>(call)),
+        ["SkipLast"] = static (call, source, _) => source.SkipLast(CountArgument(call)),
+        ["TakeLast"] = static (call, source, _) => source.TakeLast(CountArgument(call)),
+        ["Distinct"] = static (call, source, _) => source.Distinct(ElementEquality(call, comparerIndex: 1)),
+        ["Union"] = static (call, source, cancellationToken) => source.Union(SecondSource(call, cancellationToken), ElementEquality(call, comparerIndex: 2)),
         ["Intersect"] = static (call, source, cancellationToken) => IntersectAsync(source, SecondSource(call, cancellationToken), ElementEquality(call, comparerIndex: 2), cancellationToken),
         ["Except"] = static (call, source, cancellationToken) => ExceptAsync(source, SecondSource(call, cancellationToken), ElementEquality(call, comparerIndex: 2), cancellationToken),
-        ["Concat"] = static (call, source, cancellationToken) => ConcatAsync(source, SecondSource(call, cancellationToken), cancellationToken),
-        ["Reverse"] = static (_, source, cancellationToken) => ReverseAsync(source, cancellationToken),
-        ["DefaultIfEmpty"] = static (call, source, cancellationToken) => DefaultIfEmptyAsync(source, DefaultElement(call), cancellationToken),
-        ["Append"] = static (call, source, cancellationToken) => AppendAsync(source, ClosureValueReader.Evaluate(call.Arguments[1]), cancellationToken),
-        ["Prepend"] = static (call, source, cancellationToken) => PrependAsync(source, ClosureValueReader.Evaluate(call.Arguments[1]), cancellationToken),
+        ["Concat"] = static (call, source, cancellationToken) => source.Concat(SecondSource(call, cancellationToken)),
+        ["Reverse"] = static (_, source, _) => source.Reverse(),
+        ["DefaultIfEmpty"] = static (call, source, _) => source.DefaultIfEmpty(DefaultElement(call)),
+        ["Append"] = static (call, source, _) => source.Append(ClosureValueReader.Evaluate(call.Arguments[1])),
+        ["Prepend"] = static (call, source, _) => source.Prepend(ClosureValueReader.Evaluate(call.Arguments[1])),
     };
 
     /// <summary>Builds the step one tail operator runs, over the sequence the operators before it produce.</summary>
@@ -300,120 +300,15 @@ internal static class InMemoryTail
         type.GetMethod(name, parameterTypes)
             ?? throw new InvalidOperationException($"{type} has no method {name} with {parameterTypes.Length} parameters.");
 
-    private static async IAsyncEnumerable<object?> WhereAsync(
-        IAsyncEnumerable<object?> source,
-        Func<object?, bool> predicate,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (predicate(item))
-            {
-                yield return item;
-            }
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> SelectAsync(
-        IAsyncEnumerable<object?> source,
-        Func<object?, object?> selector,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            yield return selector(item);
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> SkipWhileAsync(
-        IAsyncEnumerable<object?> source,
-        Func<object?, bool> predicate,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        bool yielding = false;
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (!yielding && predicate(item))
-            {
-                continue;
-            }
-
-            yielding = true;
-            yield return item;
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> TakeWhileAsync(
-        IAsyncEnumerable<object?> source,
-        Func<object?, bool> predicate,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (!predicate(item))
-            {
-                yield break;
-            }
-
-            yield return item;
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> SkipLastAsync(
-        IAsyncEnumerable<object?> source,
-        int count,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var held = new Queue<object?>();
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            held.Enqueue(item);
-            if (held.Count > count)
-            {
-                yield return held.Dequeue();
-            }
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> TakeLastAsync(
-        IAsyncEnumerable<object?> source,
-        int count,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        if (count <= 0)
-        {
-            yield break;
-        }
-
-        var last = new Queue<object?>();
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (last.Count == count)
-            {
-                _ = last.Dequeue();
-            }
-
-            last.Enqueue(item);
-        }
-
-        foreach (object? item in last)
-        {
-            yield return item;
-        }
-    }
-
     private static async IAsyncEnumerable<object?> SortAsync(
         IAsyncEnumerable<object?> source,
         List<SortKey> keys,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var buffer = new List<object?>();
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            buffer.Add(item);
-        }
+        List<object?> buffer = await source.ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        // Enumerable's sort is stable, so ties keep their stream order, as LINQ to Objects keeps them.
+        // Keep Enumerable's stable ordering: async ordering can lose a later key selector's
+        // exception and instead throw from comparing its uninitialized key buffer.
         SortKey first = keys[0];
         IOrderedEnumerable<object?> ordered = first.Descending
             ? buffer.OrderByDescending(first.Selector, first.Comparer)
@@ -432,75 +327,18 @@ internal static class InMemoryTail
         }
     }
 
-    private static async IAsyncEnumerable<object?> ReverseAsync(
-        IAsyncEnumerable<object?> source,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var buffer = new List<object?>();
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            buffer.Add(item);
-        }
-
-        for (int i = buffer.Count - 1; i >= 0; i--)
-        {
-            yield return buffer[i];
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> DistinctAsync(
-        IAsyncEnumerable<object?> source,
-        BoxedEqualityComparer comparer,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var seen = new HashSet<object?>(comparer);
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (seen.Add(item))
-            {
-                yield return item;
-            }
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> UnionAsync(
-        IAsyncEnumerable<object?> first,
-        IAsyncEnumerable<object?> second,
-        BoxedEqualityComparer comparer,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var seen = new HashSet<object?>(comparer);
-        await foreach (object? item in first.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (seen.Add(item))
-            {
-                yield return item;
-            }
-        }
-
-        await foreach (object? item in second.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (seen.Add(item))
-            {
-                yield return item;
-            }
-        }
-    }
-
     private static async IAsyncEnumerable<object?> IntersectAsync(
         IAsyncEnumerable<object?> first,
         IAsyncEnumerable<object?> second,
         BoxedEqualityComparer comparer,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // As in Enumerable.Intersect, the second sequence is read first, and each match is yielded once.
-        HashSet<object?> remaining = await ToSetAsync(second, comparer, cancellationToken).ConfigureAwait(false);
-        await foreach (object? item in first.WithCancellation(cancellationToken).ConfigureAwait(false))
+        // Async LINQ's Intersect can skip either source when an operand is empty.
+        // Prepare the second, then stream the first, preserving failures from both.
+        HashSet<object?> remaining = await second.ToHashSetAsync(comparer, cancellationToken).ConfigureAwait(false);
+        await foreach (object? item in first.Where(remaining.Remove).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            if (remaining.Remove(item))
-            {
-                yield return item;
-            }
+            yield return item;
         }
     }
 
@@ -510,85 +348,10 @@ internal static class InMemoryTail
         BoxedEqualityComparer comparer,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // As in Enumerable.Except, the second sequence is read first, and each survivor is yielded once.
-        HashSet<object?> excluded = await ToSetAsync(second, comparer, cancellationToken).ConfigureAwait(false);
-        await foreach (object? item in first.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (excluded.Add(item))
-            {
-                yield return item;
-            }
-        }
-    }
-
-    private static async ValueTask<HashSet<object?>> ToSetAsync(
-        IAsyncEnumerable<object?> source,
-        BoxedEqualityComparer comparer,
-        CancellationToken cancellationToken)
-    {
-        var set = new HashSet<object?>(comparer);
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            _ = set.Add(item);
-        }
-
-        return set;
-    }
-
-    private static async IAsyncEnumerable<object?> ConcatAsync(
-        IAsyncEnumerable<object?> first,
-        IAsyncEnumerable<object?> second,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (object? item in first.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            yield return item;
-        }
-
-        await foreach (object? item in second.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            yield return item;
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> DefaultIfEmptyAsync(
-        IAsyncEnumerable<object?> source,
-        object? defaultValue,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        bool any = false;
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            any = true;
-            yield return item;
-        }
-
-        if (!any)
-        {
-            yield return defaultValue;
-        }
-    }
-
-    private static async IAsyncEnumerable<object?> AppendAsync(
-        IAsyncEnumerable<object?> source,
-        object? element,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            yield return item;
-        }
-
-        yield return element;
-    }
-
-    private static async IAsyncEnumerable<object?> PrependAsync(
-        IAsyncEnumerable<object?> source,
-        object? element,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        yield return element;
-        await foreach (object? item in source.WithCancellation(cancellationToken).ConfigureAwait(false))
+        // Async LINQ's Except advances the first source before reading the second.
+        // Preserve second-source failures first, including when the first source is empty.
+        HashSet<object?> excluded = await second.ToHashSetAsync(comparer, cancellationToken).ConfigureAwait(false);
+        await foreach (object? item in first.Where(excluded.Add).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             yield return item;
         }
