@@ -16,7 +16,7 @@ All items belong to a workstream; independent items may run immediately without 
 
 | Workstream | Scope | Initial independent work | Dependencies |
 |---|---|---|---|
-| R — Relationships and constraints | Remaining R items | Stored-rule enforcement; cascade characterization | Coordinate schema/expression changes with F and S |
+| R — Relationships and constraints | Remaining R items | Expression semantics; complex-item mutation | Coordinate schema/expression changes with F and S |
 | F — Real formats and encryption | Remaining F items | Real encryption inventory | Page-codec integration with I; schema preservation with S |
 | S — Hostile-file parsing and schema preservation | Remaining S items | Exact long-value reads; corrupt catalog/property handling | Complex writes and schema edits coordinate with R/F/I |
 | I — Indexes, storage, APIs and validation | Remaining I and E items | Hosted gates; index ownership and evidence | Integrator owns shared files; major storage changes need fault sweeps |
