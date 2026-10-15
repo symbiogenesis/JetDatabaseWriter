@@ -178,7 +178,7 @@ internal sealed class TransactionLifecycle(
         {
             if (parent.NestingLevel == 7)
             {
-                throw JetErrors.Operation(JetErrorCode.TransactionNestingLimit, "At most seven transaction levels may be active on this writer.");
+                throw new JetOperationException(JetErrorCode.TransactionNestingLimit, "At most seven transaction levels may be active on this writer.");
             }
 
             WriterState state = this.CaptureWriterState();
@@ -291,7 +291,7 @@ internal sealed class TransactionLifecycle(
 
         if (transaction.IsTerminated)
         {
-            throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+            throw new JetOperationException(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
         }
 
         pager.ThrowIfDisposed();
@@ -309,12 +309,12 @@ internal sealed class TransactionLifecycle(
         {
             if (transaction.IsTerminated)
             {
-                throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+                throw new JetOperationException(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
             }
 
             if (!ReferenceEquals(this.ActiveTransaction, transaction))
             {
-                throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
+                throw new JetOperationException(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
             }
 
             if (transaction.Parent is not null)
@@ -404,7 +404,7 @@ internal sealed class TransactionLifecycle(
         Guard.NotNull(transaction, nameof(transaction));
         if (transaction.IsTerminated)
         {
-            throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+            throw new JetOperationException(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -413,12 +413,12 @@ internal sealed class TransactionLifecycle(
         {
             if (transaction.IsTerminated)
             {
-                throw JetErrors.Operation(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
+                throw new JetOperationException(JetErrorCode.TransactionEnded, JetTransaction.TerminatedMessage);
             }
 
             if (!ReferenceEquals(this.ActiveTransaction, transaction))
             {
-                throw JetErrors.Operation(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
+                throw new JetOperationException(JetErrorCode.TransactionNotActive, "The transaction is not active on this writer.");
             }
 
             if (transaction.Parent is not null)
@@ -455,7 +455,7 @@ internal sealed class TransactionLifecycle(
     {
         if (this.ActiveTransaction is { NestingLevel: > 5 })
         {
-            throw JetErrors.Operation(JetErrorCode.TransactionNestingLimit, "Database mutations require at most five active transaction levels. End the innermost scopes before writing.");
+            throw new JetOperationException(JetErrorCode.TransactionNestingLimit, "Database mutations require at most five active transaction levels. End the innermost scopes before writing.");
         }
     }
 
@@ -489,7 +489,7 @@ internal sealed class TransactionLifecycle(
     {
         if (this.mutationActive.Value is { IsActive: true })
         {
-            throw JetErrors.Operation(JetErrorCode.ReentrantWriterCall, "A writer mutation cannot be called from another writer mutation's callback.");
+            throw new JetOperationException(JetErrorCode.ReentrantWriterCall, "A writer mutation cannot be called from another writer mutation's callback.");
         }
 
         cancellationToken.ThrowIfCancellationRequested();

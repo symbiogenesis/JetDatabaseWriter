@@ -263,7 +263,7 @@ internal sealed class RelationshipManager(
 
         if (foreignKeys.Count != 0)
         {
-            throw JetErrors.Constraint(JetErrorCode.ForeignKeyMissingParent, $"Cannot create relationship '{relationship.Name}': existing rows in '{relationship.ForeignTable}' violate referential integrity because no matching row exists in '{relationship.PrimaryTable}'.", new JetErrorInfo { TableName = relationship.ForeignTable, RelationshipName = relationship.Name });
+            throw new JetConstraintException(JetErrorCode.ForeignKeyMissingParent, $"Cannot create relationship '{relationship.Name}': existing rows in '{relationship.ForeignTable}' violate referential integrity because no matching row exists in '{relationship.PrimaryTable}'.", new JetErrorInfo { TableName = relationship.ForeignTable, RelationshipName = relationship.Name });
         }
     }
 

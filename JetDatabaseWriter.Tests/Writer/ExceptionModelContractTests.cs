@@ -44,4 +44,23 @@ public sealed class ExceptionModelContractTests
         Assert.Equal(903, (int)JetErrorCode.LinkedTableHasNoIndexes);
         Assert.False(Enum.IsDefined(typeof(JetErrorCode), 902));
     }
+
+    [Fact]
+    public void ConstraintFailure_PreservesTheGoldenMessage()
+    {
+        const string message = "Foreign-key cascade depth exceeded 64. Possible cyclic relationship.";
+        var error = new JetConstraintException(JetErrorCode.CascadeDepthExceeded, message);
+        Assert.Equal(message, error.Message);
+        Assert.Equal(JetErrorCode.CascadeDepthExceeded, error.ErrorCode);
+    }
+
+    [Fact]
+    public void LimitationFailure_PreservesTheGoldenMessageAndReason()
+    {
+        const string message = "The indexes of table 'T' cannot be maintained: the index descriptor is damaged.";
+        var info = new JetErrorInfo { TableName = "T", Reason = "the index descriptor is damaged" };
+        var error = new JetLimitationException(JetErrorCode.IndexesUnmaintainable, message, info);
+        Assert.Equal(message, error.Message);
+        Assert.Same(info, error.ErrorInfo);
+    }
 }

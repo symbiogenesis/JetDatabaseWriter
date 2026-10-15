@@ -369,7 +369,7 @@ internal sealed class ConstraintRegistry(
                     }
                     else
                     {
-                        throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, $"Default expression '{c.DefaultValueExpression}' for column '{c.Name}' on table '{tableName}' cannot be evaluated for the column type.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                        throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Default expression '{c.DefaultValueExpression}' for column '{c.Name}' on table '{tableName}' cannot be evaluated for the column type.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                     }
                 }
 
@@ -384,12 +384,12 @@ internal sealed class ConstraintRegistry(
 
                 if (isNull && !c.IsNullable)
                 {
-                    throw JetErrors.Constraint(JetErrorCode.NotNullViolation, takeDefault ? $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and no value was supplied." : $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                    throw new JetConstraintException(JetErrorCode.NotNullViolation, takeDefault ? $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and no value was supplied." : $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                 }
 
                 if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
                 {
-                    throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                    throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
                 }
 
                 values[i] = value ?? DBNull.Value;
@@ -462,12 +462,12 @@ internal sealed class ConstraintRegistry(
             // only on omission; an explicit null follows Required and indexes.
             if (isNull && (!c.IsNullable || (c.IsAutoIncrement && c.ClrType != typeof(Guid))))
             {
-                throw JetErrors.Constraint(JetErrorCode.NotNullViolation, $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Column '{c.Name}' on table '{tableName}' is marked NOT NULL and cannot be set to null.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
 
             if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
             {
-                throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
         }
 
@@ -672,7 +672,7 @@ internal sealed class ConstraintRegistry(
     /// <param name="reason">The failure reason.</param>
     /// <returns>The contextual validation failure.</returns>
     private static JetValidationRuleException TableRuleFailure(string tableName, TableValidationConstraint rule, string reason)
-        => JetErrors.Validation(JetErrorCode.TableValidationRuleViolation, $"Table validation rule '{rule.Expression}' on table '{tableName}' {reason}. {rule.ValidationText}", new JetErrorInfo { TableName = tableName, Reason = reason });
+        => new(JetErrorCode.TableValidationRuleViolation, $"Table validation rule '{rule.Expression}' on table '{tableName}' {reason}. {rule.ValidationText}", new JetErrorInfo { TableName = tableName, Reason = reason });
 
     /// <summary>
     /// Evaluates the persisted <see cref="ColumnConstraint.ValidationRuleExpression"/> of each
@@ -716,13 +716,13 @@ internal sealed class ConstraintRegistry(
             }
             catch (Exception ex) when (ColumnValidationRule.IsEvaluationFailure(ex))
             {
-                throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, $"Validation rule '{c.ValidationRuleExpression}' for column '{c.Name}' on table '{tableName}' cannot be evaluated.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule '{c.ValidationRuleExpression}' for column '{c.Name}' on table '{tableName}' cannot be evaluated.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
 
             object value = values[i];
             string shown = value is null or DBNull ? "Null" : "'" + Convert.ToString(value, CultureInfo.InvariantCulture) + "'";
             string message = $"Validation rule '{c.ValidationRuleExpression}' for column '{c.Name}' on table '{tableName}' rejected value {shown}.";
-            throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, string.IsNullOrEmpty(c.ValidationText) ? message : message + " " + c.ValidationText, new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+            throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, string.IsNullOrEmpty(c.ValidationText) ? message : message + " " + c.ValidationText, new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
         }
     }
 
@@ -740,12 +740,12 @@ internal sealed class ConstraintRegistry(
             bool isNull = value is null or DBNull;
             if (isNull && !c.IsNullable)
             {
-                throw JetErrors.Constraint(JetErrorCode.NotNullViolation, $"Calculated column '{c.Name}' on table '{tableName}' evaluated to NULL but is marked NOT NULL.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                throw new JetConstraintException(JetErrorCode.NotNullViolation, $"Calculated column '{c.Name}' on table '{tableName}' evaluated to NULL but is marked NOT NULL.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
 
             if (!isNull && c.ValidationRule != null && !c.ValidationRule(value))
             {
-                throw JetErrors.Validation(JetErrorCode.ValidationRuleViolation, $"Validation rule for calculated column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
+                throw new JetValidationRuleException(JetErrorCode.ValidationRuleViolation, $"Validation rule for calculated column '{c.Name}' on table '{tableName}' rejected value '{value}'.", new JetErrorInfo { TableName = tableName, ColumnName = c.Name });
             }
         }
     }

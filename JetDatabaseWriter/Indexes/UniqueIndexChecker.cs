@@ -239,7 +239,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
                 if (!seenSets[d].Add(key)
                     || await cursor.ContainsKeyAsync(descriptor.RootPage, key, cancellationToken).ConfigureAwait(false))
                 {
-                    throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
+                    throw new JetConstraintException(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
                 }
             }
         }
@@ -300,7 +300,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         int nullCount = IndexHelpers.CountNullKeyColumns(descriptor.KeyColumns, row);
         if (descriptor.IsRequired && nullCount != 0)
         {
-            throw JetErrors.Constraint(
+            throw new JetConstraintException(
                 JetErrorCode.NotNullViolation,
                 $"Index '{descriptor.Name}' on table '{tableName}' requires a value for every key column. The table is unchanged.",
                 new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
@@ -398,7 +398,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
                 if (!seen.Add(key))
                 {
-                    throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
+                    throw new JetConstraintException(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
                 }
             }
 
@@ -413,7 +413,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
                 if (!seen.Add(key))
                 {
-                    throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
+                    throw new JetConstraintException(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key for index '{descriptor.Name}'. The conflict was detected before any row was written; the table is unchanged.", new JetErrorInfo { TableName = tableName, IndexName = descriptor.Name });
                 }
             }
         }

@@ -118,7 +118,7 @@ internal sealed class PagerTransaction
 
         if (this.pages.Count >= this.maxPages)
         {
-            throw JetErrors.Limitation(JetErrorCode.JournalBudgetExceeded, string.Format(
+            throw new JetLimitationException(JetErrorCode.JournalBudgetExceeded, string.Format(
                 CultureInfo.InvariantCulture,
                 "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation was rolled back; the transaction is still active.",
                 this.maxPages));
@@ -145,7 +145,7 @@ internal sealed class PagerTransaction
         // Pre-check budget so we don't increment _appendedCount on failure.
         if (!this.pages.ContainsKey(pageNumber) && this.pages.Count >= this.maxPages)
         {
-            throw JetErrors.Limitation(JetErrorCode.JournalBudgetExceeded, string.Format(
+            throw new JetLimitationException(JetErrorCode.JournalBudgetExceeded, string.Format(
                 CultureInfo.InvariantCulture,
                 "Transaction journal exceeded MaxTransactionPageBudget = {0} pages. The operation was rolled back; the transaction is still active.",
                 this.maxPages));

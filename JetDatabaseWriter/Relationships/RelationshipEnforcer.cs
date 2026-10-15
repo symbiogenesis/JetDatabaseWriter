@@ -504,7 +504,7 @@ internal sealed class RelationshipEnforcer(
                         + await this.CountDependentRowsOfKeyChangeAsync(change, self ? ownRows : null, ctx, cancellationToken).ConfigureAwait(false);
                     if (dependentCount > 0)
                     {
-                        throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
+                        throw new JetConstraintException(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the old key(s) and cascade-update is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
                     }
 
                     continue;
@@ -602,13 +602,13 @@ internal sealed class RelationshipEnforcer(
                     if (assignmentSources.TryGetValue(target, out string? source)
                         && !string.Equals(source, relationship.PrimaryTable, StringComparison.OrdinalIgnoreCase))
                     {
-                        throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' cannot cascade overlapping foreign keys from distinct parent tables into '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
+                        throw new JetConstraintException(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' cannot cascade overlapping foreign keys from distinct parent tables into '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
                     }
 
                     assignmentSources[target] = relationship.PrimaryTable;
                     if (generationAssignments.TryGetValue(target, out object? previous) && !SameKeyValue(previous, replacement, columns[index], definition))
                     {
-                        throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' has contradictory cascade assignments through relationship '{relationship.Name}' to '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
+                        throw new JetConstraintException(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' has contradictory cascade assignments through relationship '{relationship.Name}' to '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
                     }
 
                     generationAssignments[target] = replacement;
@@ -850,7 +850,7 @@ internal sealed class RelationshipEnforcer(
     {
         string columns = string.Join(", ", rel.ForeignColumns);
         return kind == FkCheckKind.Update
-            ? JetErrors.Constraint(JetErrorCode.ForeignKeyMissingParent, $"UPDATE of '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the new {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name }) : JetErrors.Constraint(JetErrorCode.ForeignKeyMissingParent, $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the supplied {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name });
+            ? new JetConstraintException(JetErrorCode.ForeignKeyMissingParent, $"UPDATE of '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the new {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name }) : new JetConstraintException(JetErrorCode.ForeignKeyMissingParent, $"INSERT into '{foreignTable}' violates foreign-key constraint '{rel.Name}': no matching row in '{rel.PrimaryTable}' for the supplied {columns} value(s).", new JetErrorInfo { TableName = foreignTable, RelationshipName = rel.Name });
     }
 
     /// <summary>
@@ -1057,7 +1057,7 @@ internal sealed class RelationshipEnforcer(
                 int dependentCount = await this.CountDependentRowsOfKeyChangeAsync(change, cascaded, ctx, cancellationToken).ConfigureAwait(false);
                 if (dependentCount > 0)
                 {
-                    throw JetErrors.Constraint(JetErrorCode.ForeignKeyRestrictDelete, $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
+                    throw new JetConstraintException(JetErrorCode.ForeignKeyRestrictDelete, $"DELETE on '{primaryTable}' violates foreign-key constraint '{rel.Name}': {dependentCount} dependent row(s) in '{rel.ForeignTable}' reference the deleted key(s) and cascade-delete is not enabled.", new JetErrorInfo { TableName = primaryTable, RelationshipName = rel.Name });
                 }
 
                 continue;

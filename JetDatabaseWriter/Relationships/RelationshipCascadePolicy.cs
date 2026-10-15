@@ -15,7 +15,7 @@ internal static class RelationshipCascadePolicy
     {
         if (depth > MaxDepth)
         {
-            throw JetErrors.Constraint(JetErrorCode.CascadeDepthExceeded, $"Foreign-key cascade depth exceeded {MaxDepth}. Possible cyclic relationship.");
+            throw new JetConstraintException(JetErrorCode.CascadeDepthExceeded, $"Foreign-key cascade depth exceeded {MaxDepth}. Possible cyclic relationship.");
         }
     }
 }

@@ -835,7 +835,7 @@ internal sealed class Pager : PageFile
     {
         if (this.IsFaulted)
         {
-            throw JetErrors.Operation(JetErrorCode.WriterFaulted, "The writer is faulted because a failed commit could not restore the original database image. Dispose it before reopening the database.");
+            throw new JetOperationException(JetErrorCode.WriterFaulted, "The writer is faulted because a failed commit could not restore the original database image. Dispose it before reopening the database.");
         }
     }
 

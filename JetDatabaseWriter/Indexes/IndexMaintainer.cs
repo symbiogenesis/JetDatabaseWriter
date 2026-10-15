@@ -691,7 +691,7 @@ internal sealed class IndexMaintainer(
                         if (IndexHelpers.CompareKeyBytes(entries[e - 1].Key, entries[e].Key) == 0
                             && (allowedNullKey is null || IndexHelpers.CompareKeyBytes(entries[e].Key, allowedNullKey) != 0))
                         {
-                            throw JetErrors.Constraint(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key detected after row mutation. The duplicate row has been written but the index B-tree was not rebuilt; remove one of the offending rows and retry the operation.", errorInfo: new JetErrorInfo { TableName = tableName, IndexName = catalog.Catalog.GetNameOrFallback(rieKey) });
+                            throw new JetConstraintException(JetErrorCode.UniqueViolation, $"Unique index violation on table '{tableName}': duplicate key detected after row mutation. The duplicate row has been written but the index B-tree was not rebuilt; remove one of the offending rows and retry the operation.", errorInfo: new JetErrorInfo { TableName = tableName, IndexName = catalog.Catalog.GetNameOrFallback(rieKey) });
                         }
                     }
                 }
