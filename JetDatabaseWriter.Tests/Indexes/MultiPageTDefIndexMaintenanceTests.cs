@@ -547,7 +547,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             Assert.Equal(expectedKeys.Order(), actualKeys);
 
             stream.Position = 0;
-            await using ReaderHarness harness = await ReaderHarness.OpenAsync(
+            await using AccessReader harness = await TestDatabase.OpenReaderAsync(
                 stream,
                 new AccessReaderOptions { UseLockFile = false, Password = password.AsMemory() },
                 leaveOpen: true,

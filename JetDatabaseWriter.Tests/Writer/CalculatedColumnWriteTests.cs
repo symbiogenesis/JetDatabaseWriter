@@ -33,7 +33,7 @@ public sealed class CalculatedColumnWriteTests
     public async Task CalculatedMemo_NativeInlineBoundary_PlansLvalWithoutWriting(int characters, bool spills)
     {
         await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         var encoder = new LongValueEncoder(harness.Database.Format, harness.Pager, harness.Services.PageAllocator, new AccessWriterOptions());
         var definition = new TableDef
         {
@@ -975,7 +975,7 @@ public sealed class CalculatedColumnWriteTests
         // Plant an unsupported stored expression through the internal schema
         // service, which skips the definition check.
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             await harness.Services.Schema.CreateTableAsync(
                 "CalcUnsupportedPercent",
@@ -1046,7 +1046,7 @@ public sealed class CalculatedColumnWriteTests
         // through the internal schema service to exercise a stored expression
         // using Access syntax this engine cannot evaluate.
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             await harness.Services.Schema.CreateTableAsync(
                 "CalcUnparsed",
@@ -1254,7 +1254,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Table1", TestContext.Current.CancellationToken));
         TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
         DatabaseFile db = harness.Database;
@@ -1371,7 +1371,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Table1", TestContext.Current.CancellationToken));
         TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
         ColumnInfo allNames = tableDef.Columns.Single(c => c.Name == "AllNames");
@@ -1422,7 +1422,7 @@ public sealed class CalculatedColumnWriteTests
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         DatabaseFile db = harness.Database;
         var live = new List<string>();
         foreach (uint pointer in lvalRows)
@@ -1762,7 +1762,7 @@ public sealed class CalculatedColumnWriteTests
     private static async Task<List<uint>> ReadLongValueRowPointersAsync(MemoryStream stream, string tableName, string columnName)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken));
         TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
         DatabaseFile db = harness.Database;

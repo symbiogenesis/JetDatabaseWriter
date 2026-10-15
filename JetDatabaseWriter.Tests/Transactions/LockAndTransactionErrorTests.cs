@@ -40,7 +40,7 @@ public sealed class LockAndTransactionErrorTests
             await writer.CreateTableAsync("Items", [new JetDatabaseWriter.Models.ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction active = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await using var foreign = new JetTransaction(harness.Services.Transactions, new PagerTransaction(stream.Length, harness.Database.Format.PageSize, 16));
         JetOperationException error = await Assert.ThrowsAsync<JetOperationException>(() => foreign.CommitAsync(TestContext.Current.CancellationToken).AsTask());

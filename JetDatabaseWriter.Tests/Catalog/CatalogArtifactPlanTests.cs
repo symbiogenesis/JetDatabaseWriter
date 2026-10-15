@@ -25,7 +25,7 @@ public sealed class CatalogArtifactPlanTests
             cancellationToken: cancellationToken);
         await created.DisposeAsync();
 
-        await using (WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: cancellationToken))
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: cancellationToken))
         {
             var plan = new CatalogArtifactPlan(
                 [
@@ -76,7 +76,7 @@ public sealed class CatalogArtifactPlanTests
             cancellationToken: cancellationToken);
         await created.DisposeAsync();
 
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: cancellationToken);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: cancellationToken);
         long templatePage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(
             Constants.ComplexTypeNames.Attachment,
             cancellationToken);

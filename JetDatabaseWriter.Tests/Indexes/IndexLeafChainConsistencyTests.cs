@@ -56,7 +56,7 @@ public sealed class IndexLeafChainConsistencyTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(fixturePath, cancellationToken: ct);
 
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
@@ -130,7 +130,7 @@ public sealed class IndexLeafChainConsistencyTests
     }
 
     private static async Task<long> FindFirstLeafPageAsync(
-        ReaderHarness pages,
+        AccessReader pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,

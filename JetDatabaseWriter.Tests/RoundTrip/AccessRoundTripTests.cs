@@ -347,7 +347,7 @@ public sealed class AccessRoundTripTests
         CancellationToken ct)
     {
         byte[] fileBytes = await File.ReadAllBytesAsync(dbPath, ct);
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(dbPath, cancellationToken: ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(dbPath, cancellationToken: ct);
         foreach (string tableName in tableNames)
         {
             CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, ct);

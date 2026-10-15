@@ -376,7 +376,7 @@ public sealed class DaoReplicationIdTests(ITestOutputHelper output)
     private async Task AssertGuidTableAsync(string path, string tableName, int expectedCount, byte expectedFlags)
     {
         ColumnInfo[] columns = await ReplicationIdDescriptorTests.ReadColumnsAsync(path, tableName);
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: Ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct))
         {
             long page = Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(Ct), table => table.Name == tableName).TDefPage;
             ColumnPropertyBlock properties = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Catalog.ReadLvPropForTableAsync(page, Ct));

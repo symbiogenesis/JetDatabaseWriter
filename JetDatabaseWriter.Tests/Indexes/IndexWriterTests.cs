@@ -574,7 +574,7 @@ public sealed class IndexWriterTests
     /// <param name="realIndexCount">The number of real indexes the table declares.</param>
     private static async ValueTask AssertUsedPagesPointersAsync(MemoryStream stream, string tableName, int realIndexCount)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         DatabaseFile db = harness.Database;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
@@ -598,7 +598,7 @@ public sealed class IndexWriterTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
     {
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken)
                 ?? throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
 

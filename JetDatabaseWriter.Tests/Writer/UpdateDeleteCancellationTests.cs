@@ -539,7 +539,7 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
     private static async Task<uint> ReadAutoNumberHighWaterAsync(MemoryStream ms, string tableName)
     {
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, ReaderOptions, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, ReaderOptions, cancellationToken: Ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, Ct);
         Assert.NotNull(entry);
         byte[] tdef = await harness.ReadPageCopyAsync(entry.TDefPage, Ct);

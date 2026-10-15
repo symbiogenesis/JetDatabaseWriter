@@ -394,7 +394,7 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
     private static async Task<HashSet<long>> ReadCatalogDataPagesAsync(MemoryStream ms)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, new AccessWriterOptions { UseLockFile = false }, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, new AccessWriterOptions { UseLockFile = false }, cancellationToken: Ct);
         long relationshipsPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
         Assert.True(relationshipsPage > 0, "The database has no MSysRelationships table.");
 

@@ -109,7 +109,7 @@ public sealed class DiagnosticSafetyTests
             await writer.CreateTableAsync("Docs", [new ColumnDefinition("Files", typeof(byte[])) { IsAttachment = true }], TestContext.Current.CancellationToken);
         }
 
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             long metadataPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
             TableDef definition = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(metadataPage, TestContext.Current.CancellationToken));

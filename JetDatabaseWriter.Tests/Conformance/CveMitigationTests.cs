@@ -612,7 +612,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
 
         byte[] bytes = source.ToArray();
         source.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(source, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(source, cancellationToken: cancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("MemoTarget", cancellationToken));
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, cancellationToken));
         ColumnInfo column = Assert.Single(definition.Columns);

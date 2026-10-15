@@ -103,7 +103,7 @@ public sealed class PlaylistFixtureContractTests
         }
 
         var projected = new List<SnapshotPlaylistRow>();
-        await foreach (SnapshotPlaylistRow row in reader.ReadPrivateField<ReaderServices>("services").Tables.RowsWithDecoder<SnapshotPlaylistRow>(
+        await foreach (SnapshotPlaylistRow row in reader.Services.Tables.RowsWithDecoder<SnapshotPlaylistRow>(
             "Playlists", forceProjection: true, progress: null, cancellationToken: TestContext.Current.CancellationToken))
         {
             projected.Add(row);

@@ -51,7 +51,7 @@ public sealed class IndexChildTailPointerTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(fixturePath, cancellationToken: ct);
 
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;

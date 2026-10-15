@@ -560,7 +560,7 @@ public sealed class IndexPrimaryKeyWriterTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
     {
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
 

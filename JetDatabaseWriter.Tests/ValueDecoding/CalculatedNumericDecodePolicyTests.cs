@@ -154,7 +154,7 @@ public sealed class CalculatedNumericDecodePolicyTests
         Assert.Equal(expected.Select(value => value.ToString("G", CultureInfo.InvariantCulture)), strings.Select(row => row[weeklySalary.Ordinal]));
         Assert.Equal(expected.Select(value => (decimal?)value), pocos.Select(row => row.WeeklySalary));
 
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(TestDatabases.CalcFieldTestV2010, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(TestDatabases.CalcFieldTestV2010, cancellationToken: ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Table1", ct));
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
         ColumnInfo column = Assert.IsType<ColumnInfo>(definition.FindColumn("WeeklySalary"));
@@ -215,7 +215,7 @@ public sealed class CalculatedNumericDecodePolicyTests
     private static async Task RewriteNumericPayloadAsync(MemoryStream original, byte[] bytes, short storedLength, int payloadLength, CancellationToken ct)
     {
         original.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(original, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(original, cancellationToken: ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Values", ct));
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
         ColumnInfo column = definition.Columns[0];

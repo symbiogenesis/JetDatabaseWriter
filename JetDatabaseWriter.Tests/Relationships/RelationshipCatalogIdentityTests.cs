@@ -100,7 +100,7 @@ public sealed class RelationshipCatalogIdentityTests(DatabaseCache db) : IClassF
     {
         await using MemoryStream stream = await this.CreateAsync(DatabaseFormat.AceAccdb);
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             TableDef objects = await harness.Database.TableDefs.ReadRequiredTableDefAsync(2, "MSysObjects", Ct);
             ColumnInfo name = Assert.IsType<ColumnInfo>(objects.FindColumn("Name"));
@@ -191,7 +191,7 @@ public sealed class RelationshipCatalogIdentityTests(DatabaseCache db) : IClassF
     {
         await using MemoryStream stream = await this.CreateAsync(DatabaseFormat.AceAccdb);
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             _ = await harness.Services.CatalogArtifacts.ExecutePlanAsync(new([], [CatalogObjectArtifact.Relationship("FK_Reserved")]), Ct);
         }
@@ -215,7 +215,7 @@ public sealed class RelationshipCatalogIdentityTests(DatabaseCache db) : IClassF
     {
         await using MemoryStream stream = await this.CreateAsync(DatabaseFormat.AceAccdb);
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             foreach (string name in new[] { "MSysObjects", "MSysACEs" })
             {
@@ -336,7 +336,7 @@ public sealed class RelationshipCatalogIdentityTests(DatabaseCache db) : IClassF
     private static async Task AssertSystemIndexesAsync(MemoryStream stream)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         foreach (string name in new[] { "MSysObjects", "MSysACEs" })
         {
             long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(name, Ct);

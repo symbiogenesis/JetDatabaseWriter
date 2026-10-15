@@ -155,7 +155,7 @@ public sealed class MalformedRowTraversalWriteBackTests
     private static async Task<RowLocation> ChangeDirectoryAsync(MemoryStream stream, string damage, CancellationToken ct)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(TableName, ct));
         RowLocation[] rows = [.. await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, ct)];
         Assert.Equal(2, rows.Length);

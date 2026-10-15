@@ -32,7 +32,7 @@ public sealed class DropTableReadTests(ITestOutputHelper output)
         await using var file = new MemoryStream();
         await file.WriteAsync(await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, Ct), Ct);
         await using var counting = new CountingStream(file);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(counting, cancellationToken: Ct);
         JetFormat format = harness.Database.Format;
         byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(2, Ct);
         Assert.True(UsageMap.TryReadPointer(tdef, format.TDef.UsedPages, out UsageMapPointer ownedMap));

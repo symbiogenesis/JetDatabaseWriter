@@ -95,7 +95,7 @@ public sealed class DaoRelationshipMetadataTests(ITestOutputHelper output)
 
     private static async Task<TableSnapshot> ReadSnapshotAsync(string path, string table)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
         CatalogEntry entry = await harness.GetCatalogEntryAsync(table, Ct) ?? throw new InvalidOperationException(table);
         TableDef definition = await harness.ReadTableDefAsync(entry.TDefPage, Ct) ?? throw new InvalidOperationException(table);
         byte[] td = (await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct))!;

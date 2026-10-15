@@ -454,7 +454,7 @@ public sealed class IndexSurgicalLeafMergeTests
     private async Task<(long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength)> ReadMergeSnapshotAsync(MemoryStream stream)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
         long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
         byte[] rootPage = await harness.Database.Pages.ReadPageCopyAsync(root, this.ct);
@@ -474,7 +474,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // tree: all surviving root/child pages retain their identities.
         Assert.Equal(before.FileLength, stream.Length);
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
         long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
         Assert.Equal(before.Root, root);

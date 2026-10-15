@@ -40,7 +40,7 @@ public sealed class DaoNativeJetSecurityTests
 
         newHeader.CopyTo(image, 0);
         await File.WriteAllBytesAsync(session.SourcePath, image, TestContext.Current.CancellationToken);
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(session.SourcePath, new AccessWriterOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(session.SourcePath, new AccessWriterOptions(password) { UseLockFile = false }, TestContext.Current.CancellationToken))
         {
             await NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, harness.Services.Indexes, oldHeader, newHeader, TestContext.Current.CancellationToken);
         }

@@ -99,7 +99,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             TestDatabases.TestIndexCodesV2010,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(TestDatabases.TestIndexCodesV2010, cancellationToken: ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(TestDatabases.TestIndexCodesV2010, cancellationToken: ct);
 
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
 
@@ -172,7 +172,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(fixturePath, cancellationToken: ct);
 
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
@@ -347,7 +347,7 @@ public sealed class GeneralEncoderLongRowPrefixTests
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
-        ReaderHarness pages,
+        AccessReader pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,

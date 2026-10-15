@@ -40,7 +40,7 @@ internal static class FlatTableRowCounts
         }
 
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, ReaderOptions, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, ReaderOptions, cancellationToken: cancellationToken);
         byte[] tdef = await harness.ReadPageCopyAsync(flatTdefPage, cancellationToken);
         List<RowLocation> live = await harness.Database.GetLiveRowLocationsAsync(flatTdefPage, cancellationToken);
         ms.Position = 0;

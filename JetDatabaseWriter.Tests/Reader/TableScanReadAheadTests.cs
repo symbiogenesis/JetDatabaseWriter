@@ -210,7 +210,7 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         var options = new AccessReaderOptions() { PageCacheSize = 0, UseLockFile = false };
 
         byte[][] expected;
-        await using (ReaderHarness sequential = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken))
+        await using (AccessReader sequential = await TestDatabase.OpenReaderAsync(path, options, TestContext.Current.CancellationToken))
         {
             DatabaseFile sequentialDb = sequential.Database;
             expected = new byte[checked((int)sequentialDb.Pages.PageCount)][];
@@ -221,7 +221,7 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         }
 
         // A fresh reader starts without cached pages.
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, options, TestContext.Current.CancellationToken);
         DatabaseFile db = reader.Database;
         for (int round = 0; round < 8; round++)
         {
@@ -283,9 +283,9 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
         string path = await this.CreateDatabaseAsync(format, withLongValues: format != DatabaseFormat.Jet3Mdb, encrypt: false);
         byte[] file = await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken);
 
-        // The harness opens the path as AccessReader.OpenAsync does, so Auto
-        // reads positionally and Disabled seeks and reads under the gate.
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(
+        // A production path open reads positionally in Auto mode;
+        // Disabled seeks and reads under the gate.
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(
             path,
             new AccessReaderOptions { PageCacheSize = 0, PageReadOptimizationMode = mode, UseLockFile = false },
             TestContext.Current.CancellationToken);
@@ -332,15 +332,14 @@ public sealed class TableScanReadAheadTests(GeneratedDatabaseCache seeds) : IDis
     /// <summary>
     /// Returns whether a reader opened on <paramref name="path"/> with
     /// <paramref name="options"/> reads <paramref name="tableName"/> ahead,
-    /// asking the table reader of a <see cref="ReaderHarness"/>, which opens
-    /// the path as <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/> does.
+    /// inspecting the production reader's table service.
     /// </summary>
     /// <param name="path">The database file.</param>
     /// <param name="options">The reader options.</param>
     /// <param name="tableName">The table.</param>
     private static async Task<bool> ReadsAheadAsync(string path, AccessReaderOptions options, string tableName)
     {
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(path, options, TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, options, TestContext.Current.CancellationToken);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(
             await reader.Services.Catalog.ResolveTableAsync(tableName, TestContext.Current.CancellationToken));
         IReadOnlyList<long> pages = await reader.Database.OwnedPages.GetOwnedDataPagesAsync(

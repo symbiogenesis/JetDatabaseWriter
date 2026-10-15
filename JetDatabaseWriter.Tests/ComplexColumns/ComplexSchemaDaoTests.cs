@@ -67,7 +67,7 @@ public sealed class ComplexSchemaDaoTests
         Dictionary<string, bool> appendOnly;
         ParentSnapshot parentValues;
         RowValues newRow;
-        await using (WriterHarness original = await WriterHarness.OpenAsync(session.SourcePath, cancellationToken: Ct))
+        await using (AccessWriter original = await TestDatabase.OpenWriterAsync(session.SourcePath, cancellationToken: Ct))
         {
             ResolvedTable table = await original.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
             using DataTable snapshot = await original.Services.Snapshots.ReadTableSnapshotAsync(tableName, Ct);
@@ -221,7 +221,7 @@ public sealed class ComplexSchemaDaoTests
             Assert.DoesNotContain(await reader.GetComplexColumnsAsync(tableName, Ct), column => column.ColumnName == "DroppedFiles");
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(path, cancellationToken: Ct);
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
         int actualCounter = await ReadCounterAsync(harness, table.Entry.TDefPage);
         if (allowCounterAdvance)
@@ -255,10 +255,10 @@ public sealed class ComplexSchemaDaoTests
         Assert.Equal(appendOnly.OrderBy(pair => pair.Key, StringComparer.Ordinal), (await ReadAppendOnlyAsync(harness, table.Entry.TDefPage)).OrderBy(pair => pair.Key, StringComparer.Ordinal));
     }
 
-    private static async Task<int> ReadCounterAsync(WriterHarness harness, long page)
+    private static async Task<int> ReadCounterAsync(AccessWriter harness, long page)
         => BinaryPrimitives.ReadInt32LittleEndian((await harness.Pager.ReadPageCopyAsync(page, Ct)).AsSpan(28, 4));
 
-    private static async Task<Dictionary<string, bool>> ReadAppendOnlyAsync(WriterHarness harness, long page)
+    private static async Task<Dictionary<string, bool>> ReadAppendOnlyAsync(AccessWriter harness, long page)
     {
         ColumnPropertyBlock? block = await harness.Services.Snapshots.ReadLvPropBlockAsync(page, Ct);
         return block?.Targets.Where(target => target.GetBooleanValue("AppendOnly").HasValue).ToDictionary(target => target.Name, target => target.GetBooleanValue("AppendOnly")!.Value, StringComparer.Ordinal) ?? [];

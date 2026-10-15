@@ -99,7 +99,7 @@ public sealed class ColumnDescriptorPreservationTests
     private static async Task<ColumnInfo[]> ReadColumnsAsync(MemoryStream stream, string table)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         long page = Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(TestContext.Current.CancellationToken), entry => entry.Name == table).TDefPage;
         TableDef definition = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(page, TestContext.Current.CancellationToken));
         return definition.Columns.ToArray();

@@ -34,15 +34,14 @@ public sealed class FixedTextFixtureTests
     public async Task NativeJet3FixedText_PreservesPaddingNullAndEmbeddedNul(int codePage)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", $"NativeFixedTextJet3Cp{codePage}.mdb");
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.True(harness.Database.Format.IsJet3);
-        Assert.Equal(codePage, harness.Database.Format.CodePage);
-        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("FixedText", TestContext.Current.CancellationToken));
-        TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.True(reader.Database.Format.IsJet3);
+        Assert.Equal(codePage, reader.Database.Format.CodePage);
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await reader.GetCatalogEntryAsync("FixedText", TestContext.Current.CancellationToken));
+        TableDef definition = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
         ColumnInfo value = Assert.Single(definition.Columns, column => column.Name == "Value");
         Assert.True(value.IsFixed);
         Assert.Equal(6, value.Size);
-        await using AccessReader reader = await AccessReader.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken);
         using DataTable table = await reader.ReadTableAsync("FixedText", cancellationToken: TestContext.Current.CancellationToken);
         object[] expected = codePage == 932
             ? ["      ", "A     ", "ABCDEF", "A\0B   ", DBNull.Value, "漢字  "]
@@ -73,7 +72,7 @@ public sealed class FixedTextFixtureTests
     public async Task NativeJet3FixedText_EncoderMatchesNativeBytes(int codePage, string text, byte[] expected)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", $"NativeFixedTextJet3Cp{codePage}.mdb");
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(path, cancellationToken: TestContext.Current.CancellationToken);
         var definition = new TableDef
         {
             Columns = [new ColumnInfo { Name = "Value", Type = ColumnType.TextType, Size = 6, Flags = Constants.ColumnDescriptorFlags.Fixed }],

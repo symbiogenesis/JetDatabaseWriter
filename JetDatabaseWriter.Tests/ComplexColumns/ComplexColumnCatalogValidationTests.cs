@@ -45,7 +45,7 @@ public sealed class ComplexColumnCatalogValidationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             ResolvedTable parent = await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", ComplexColumnTestSupport.Ct);
             byte[] page = await harness.Database.Pages.ReadPageCopyAsync(parent.Entry.TDefPage, ComplexColumnTestSupport.Ct);
@@ -92,7 +92,7 @@ public sealed class ComplexColumnCatalogValidationTests
             flatPage = Assert.Single(await inspection.GetComplexColumnsAsync("Docs", ComplexColumnTestSupport.Ct)).FlatTableId;
         }
 
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             if (zeroTemplate)
             {
@@ -151,7 +151,7 @@ public sealed class ComplexColumnCatalogValidationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             long metadataPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", ComplexColumnTestSupport.Ct);
             RowLocation location = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(metadataPage, ComplexColumnTestSupport.Ct));
@@ -179,7 +179,7 @@ public sealed class ComplexColumnCatalogValidationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             TableDef objects = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, ComplexColumnTestSupport.Ct));
             CatalogRow template = Assert.Single(await harness.Services.CatalogRows.GetCatalogRowsAsync(objects, ComplexColumnTestSupport.Ct), entry => entry.Name == "MSysComplexType_Attachment");
@@ -216,7 +216,7 @@ public sealed class ComplexColumnCatalogValidationTests
 
         int budget;
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             TableDef objects = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, ComplexColumnTestSupport.Ct));
             budget = (await harness.Services.CatalogRows.GetCatalogRowsAsync(objects, ComplexColumnTestSupport.Ct)).Count + 2;
@@ -259,7 +259,7 @@ public sealed class ComplexColumnCatalogValidationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             TableDef catalog = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, ComplexColumnTestSupport.Ct));
             CatalogRow entry = Assert.Single(await harness.Services.CatalogRows.GetCatalogRowsAsync(catalog, ComplexColumnTestSupport.Ct), row => row.Name == "MSysComplexColumns");
@@ -339,7 +339,7 @@ public sealed class ComplexColumnCatalogValidationTests
 
         stream.Position = 0;
         await using AccessReader inspection = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ComplexColumnTestSupport.Ct);
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             ComplexColumnInfo info = Assert.Single(await inspection.GetComplexColumnsAsync("Docs", ComplexColumnTestSupport.Ct));
             long targetPage = damageTemplate ? info.ComplexTypeObjectId : info.FlatTableId;
@@ -404,7 +404,7 @@ public sealed class ComplexColumnCatalogValidationTests
 
         stream.Position = 0;
         await using AccessReader inspection = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ComplexColumnTestSupport.Ct);
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             long pageNumber = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", ComplexColumnTestSupport.Ct);
             byte[] page = await harness.Database.Pages.ReadPageCopyAsync(pageNumber, ComplexColumnTestSupport.Ct);
@@ -446,7 +446,7 @@ public sealed class ComplexColumnCatalogValidationTests
 
         stream.Position = 0;
         await using AccessReader inspection = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, cancellationToken: ComplexColumnTestSupport.Ct);
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             long pageNumber = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", ComplexColumnTestSupport.Ct);
             TableDef definition = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(pageNumber, ComplexColumnTestSupport.Ct));

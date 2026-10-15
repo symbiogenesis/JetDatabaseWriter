@@ -43,7 +43,7 @@ public sealed class DaoTextCollationTests(ITestOutputHelper output)
         Assert.True(created.ExitCode == 0, $"DAO failed: {created.StdOut}\n{created.StdErr}");
         if (migrateTextEncoding)
         {
-            await using WriterHarness harness = await WriterHarness.OpenAsync(session.SourcePath, cancellationToken: TestContext.Current.CancellationToken);
+            await using AccessWriter harness = await TestDatabase.OpenWriterAsync(session.SourcePath, cancellationToken: TestContext.Current.CancellationToken);
             CatalogEntry entry = (await harness.Services.Catalog.ResolveRequiredTableAsync("Rules", TestContext.Current.CancellationToken)).Entry;
             ColumnPropertyBlock? stored = await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, TestContext.Current.CancellationToken);
             Assert.NotNull(stored);

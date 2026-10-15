@@ -140,7 +140,7 @@ public sealed class ReplicationIdDescriptorTests(ITestOutputHelper output)
 
     internal static async Task<ColumnInfo[]> ReadColumnsAsync(string path, string tableName)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
         long page = Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(Ct), table => table.Name == tableName).TDefPage;
         TableDef definition = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(page, Ct));
         return [.. definition.Columns];

@@ -42,7 +42,7 @@ public sealed class IndexPageReservationTests
     public async Task TryPlaceTree_RelocatedBuildThrows_ReleasesRunAndReturnsNull(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         PageAllocator allocator = harness.Services.PageAllocator;
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
@@ -85,7 +85,7 @@ public sealed class IndexPageReservationTests
     public async Task TryPlaceTree_InvalidRelocatedMetadata_ReleasesRunAndRethrows(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         PageAllocator allocator = harness.Services.PageAllocator;
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
@@ -127,7 +127,7 @@ public sealed class IndexPageReservationTests
     public async Task TryPlaceTree_RelocatedCancellation_ReleasesRunAndRethrows(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         PageAllocator allocator = harness.Services.PageAllocator;
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
@@ -179,7 +179,7 @@ public sealed class IndexPageReservationTests
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         PageAllocator allocator = harness.Services.PageAllocator;
         IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
@@ -228,7 +228,7 @@ public sealed class IndexPageReservationTests
         long freeRun;
         int treePages;
         SortedSet<long> allocatedBefore;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct))
         {
             DatabaseFile db = harness.Database;
             PageAllocator allocator = harness.Services.PageAllocator;
@@ -251,7 +251,7 @@ public sealed class IndexPageReservationTests
         }
 
         stream.Position = 0;
-        await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter reopened = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         for (long page = freeRun; page < freeRun + treePages; page++)
         {
             Assert.True(await reopened.Services.PageAllocator.IsPageFreeAsync(page, this.ct), $"Page {page} of the reused run should be free after commit.");
@@ -273,7 +273,7 @@ public sealed class IndexPageReservationTests
         // primary key's rebuilt tree was reserved and written but never
         // linked, since the TDEF patch happens at the end of the call.
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, uniqueName: false);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         (long tdefPage, TableDef tableDef) = await ResolveTableAsync(harness, this.ct);
 
         IReadOnlyList<IndexMetadata> indexes = await ListIndexesAsync(harness.Database, this.ct);
@@ -311,7 +311,7 @@ public sealed class IndexPageReservationTests
         // links them all at the end. A unique violation on the second index
         // throws after the first index's tree was written.
         await using MemoryStream stream = await CreateSeededDatabaseAsync(format, uniqueName: true);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         (long tdefPage, TableDef tableDef) = await ResolveTableAsync(harness, this.ct);
 
         var writtenRows = new List<LocatedRow>(SeedRows);
@@ -347,7 +347,7 @@ public sealed class IndexPageReservationTests
         // index from its entries instead. The split's own reservation used to
         // be taken first and then abandoned, unwritten and still marked used.
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         SortedSet<long> unlinkedBefore = await PageAudit.FindUnlinkedReservedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);
         int intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(harness.Database, this.ct);
 
@@ -387,7 +387,7 @@ public sealed class IndexPageReservationTests
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         SortedSet<long> unlinkedBefore;
         int intermediateRootsBefore;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct))
         {
             unlinkedBefore = await PageAudit.FindUnlinkedReservedPagesAsync(harness.Database, harness.Services.PageAllocator, this.ct);
             intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(harness.Database, this.ct);
@@ -416,7 +416,7 @@ public sealed class IndexPageReservationTests
         }
 
         stream.Position = 0;
-        await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter reopened = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         Assert.True(
             await CountMsysObjectsIntermediateRootsAsync(reopened.Database, this.ct) > intermediateRootsBefore,
             "The tables should have split an MSysObjects root leaf.");
@@ -438,7 +438,7 @@ public sealed class IndexPageReservationTests
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         PageAllocator allocator = harness.Services.PageAllocator;
         SortedSet<long> allocatedBefore = await PageAudit.FindAllocatedPagesAsync(harness.Database, allocator, this.ct);
         long pageCountBefore = harness.Database.Pages.PageCount;
@@ -504,7 +504,7 @@ public sealed class IndexPageReservationTests
     /// <param name="pageCount">The run length.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The first page of the run.</returns>
-    private static async Task<long> CreateFreeRunAsync(WriterHarness harness, int pageCount, CancellationToken cancellationToken)
+    private static async Task<long> CreateFreeRunAsync(AccessWriter harness, int pageCount, CancellationToken cancellationToken)
     {
         PageAllocator allocator = harness.Services.PageAllocator;
         long first = await allocator.ReserveContiguousPagesAsync(pageCount, cancellationToken);
@@ -572,7 +572,7 @@ public sealed class IndexPageReservationTests
         return stream;
     }
 
-    private static async Task<(long TDefPage, TableDef TableDef)> ResolveTableAsync(WriterHarness harness, CancellationToken cancellationToken)
+    private static async Task<(long TDefPage, TableDef TableDef)> ResolveTableAsync(AccessWriter harness, CancellationToken cancellationToken)
     {
         ResolvedTable resolved = await harness.Services.Catalog.ResolveRequiredTableAsync(TableName, cancellationToken);
         return (resolved.Entry.TDefPage, resolved.Definition);
@@ -584,7 +584,7 @@ public sealed class IndexPageReservationTests
         return await services.Indexes.ListIndexesAsync(TableName, cancellationToken);
     }
 
-    private static async Task StampPageTypeAsync(WriterHarness writer, long pageNumber, byte pageType, CancellationToken cancellationToken)
+    private static async Task StampPageTypeAsync(AccessWriter writer, long pageNumber, byte pageType, CancellationToken cancellationToken)
     {
         byte[] page = await writer.Database.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
         page[0] = pageType;

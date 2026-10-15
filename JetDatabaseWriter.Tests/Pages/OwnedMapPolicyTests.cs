@@ -35,7 +35,7 @@ public sealed class OwnedMapPolicyTests
     {
         await using (MemoryStream created = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb))
         await using (var counting = new CountingStream(created))
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(counting, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(counting, cancellationToken: Ct))
         {
             CatalogOwnedMapPolicy policy = harness.Services.OwnedMaps;
             long tdefPage = await TDefPageOfAsync(harness, TableName);
@@ -50,7 +50,7 @@ public sealed class OwnedMapPolicyTests
         }
 
         await using var fixture = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.Jet3Test, Ct));
-        await using WriterHarness accessAuthored = await WriterHarness.OpenAsync(fixture, cancellationToken: Ct);
+        await using AccessWriter accessAuthored = await TestDatabase.OpenWriterAsync(fixture, cancellationToken: Ct);
         List<CatalogEntry> tables = await accessAuthored.Services.Catalog.GetUserTablesAsync(Ct);
         Assert.NotEmpty(tables);
         foreach (CatalogEntry table in tables)
@@ -75,7 +75,7 @@ public sealed class OwnedMapPolicyTests
 
         // Measure the policy's memoization through physical reads of the catalog.
         var options = new AccessWriterOptions { PageCacheSize = 0, UseLockFile = false, UseByteRangeLocks = false };
-        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, options, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(counting, options, cancellationToken: Ct);
         CatalogOwnedMapPolicy policy = harness.Services.OwnedMaps;
         long[] systemTables =
         [
@@ -119,7 +119,7 @@ public sealed class OwnedMapPolicyTests
     public async Task RegisterWritable_OverridesARefusal()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         CatalogOwnedMapPolicy policy = harness.Services.OwnedMaps;
         long unnamedPage = harness.Database.Pages.PageCount + 10;
 
@@ -143,7 +143,7 @@ public sealed class OwnedMapPolicyTests
     public async Task RolledBackTable_IsForgotten()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         CatalogOwnedMapPolicy policy = harness.Services.OwnedMaps;
         Assert.True(await policy.CanMaintainAsync(await TDefPageOfAsync(harness, TableName), Ct));
         OwnedMapPolicyState before = policy.Capture();
@@ -170,7 +170,7 @@ public sealed class OwnedMapPolicyTests
         Assert.DoesNotContain(recreatedPage, policy.Capture().RefusedTdefs);
     }
 
-    private static async Task<long> TDefPageOfAsync(WriterHarness harness, string tableName)
+    private static async Task<long> TDefPageOfAsync(AccessWriter harness, string tableName)
     {
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(tableName, Ct);
         Assert.NotNull(entry);

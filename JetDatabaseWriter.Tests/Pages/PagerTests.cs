@@ -35,7 +35,7 @@ public sealed class PagerTests
     {
         await using MemoryStream stream = await CreateDatabaseAsync(format);
         byte[] fileBefore = stream.ToArray();
-        await using WriterHarness harness = await OpenAsync(stream, encrypted);
+        await using AccessWriter harness = await OpenAsync(stream, encrypted);
         DatabaseFile db = harness.Database;
         Pager pager = harness.Pager;
         int pageSize = db.Format.PageSize;
@@ -66,7 +66,7 @@ public sealed class PagerTests
     public async Task PageCount_WhileJournalAttached_IncludesAppendedPages(DatabaseFormat format, bool encrypted)
     {
         await using MemoryStream stream = await CreateDatabaseAsync(format);
-        await using WriterHarness harness = await OpenAsync(stream, encrypted);
+        await using AccessWriter harness = await OpenAsync(stream, encrypted);
         DatabaseFile db = harness.Database;
         Pager pager = harness.Pager;
         long physical = pager.PhysicalPageCount;
@@ -116,7 +116,7 @@ public sealed class PagerTests
                 await File.WriteAllBytesAsync(path, created.ToArray(), Ct);
             }
 
-            await using WriterHarness harness = await WriterHarness.OpenAsync(path, WriterOptions(encrypted), Ct);
+            await using AccessWriter harness = await TestDatabase.OpenWriterAsync(path, WriterOptions(encrypted), Ct);
             DatabaseFile db = harness.Database;
             Pager pager = harness.Pager;
             db.Pages.EnableRandomAccessPageReadsIfSupported();
@@ -166,7 +166,7 @@ public sealed class PagerTests
         byte[] page;
         long appended;
         int pageSize;
-        await using (WriterHarness harness = await OpenAsync(stream, encrypted))
+        await using (AccessWriter harness = await OpenAsync(stream, encrypted))
         {
             DatabaseFile db = harness.Database;
             pageSize = db.Format.PageSize;
@@ -191,7 +191,7 @@ public sealed class PagerTests
             Assert.Equal(page, onDisk);
         }
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, ReaderOptions(encrypted), cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, ReaderOptions(encrypted), cancellationToken: Ct);
         Assert.Equal(page, await reader.ReadPageCopyAsync(appended, Ct));
     }
 
@@ -201,7 +201,7 @@ public sealed class PagerTests
     public async Task BeginTransaction_WhileActive_SharesOneAttachedJournal(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateDatabaseAsync(format);
-        await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
+        await using AccessWriter harness = await OpenAsync(stream, encrypted: false);
         await using JetTransaction outer = await harness.Services.Transactions.BeginTransactionAsync(Ct);
         await using JetTransaction inner = await harness.Services.Transactions.BeginTransactionAsync(Ct);
         Assert.Same(outer.Journal, inner.Journal);
@@ -216,7 +216,7 @@ public sealed class PagerTests
     public async Task JournalGate_AttachTwice_Throws_AndDisposeReleasesTheGate()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness harness = await OpenAsync(stream, encrypted: false);
+        await using AccessWriter harness = await OpenAsync(stream, encrypted: false);
         Pager pager = harness.Pager;
 
         using (Pager.JournalGate gate = await pager.EnterJournalGateAsync(Ct))
@@ -240,7 +240,7 @@ public sealed class PagerTests
     public async Task ReaderPageCache_OverPager_RejectsPositiveCapacity()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness writer = await OpenAsync(stream, encrypted: false);
+        await using AccessWriter writer = await OpenAsync(stream, encrypted: false);
 
         ArgumentException ex = Assert.Throws<ArgumentException>(() => new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 1));
         Assert.Equal("capacity", ex.ParamName);
@@ -248,7 +248,7 @@ public sealed class PagerTests
         using var uncached = new ReaderPageCache(writer.Database.Format, writer.Database.Pages, capacity: 0);
         Assert.Equal(0, uncached.Hits);
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         using var cached = new ReaderPageCache(reader.Database.Format, reader.Database.Pages, capacity: 8);
         Assert.Equal(0, cached.Misses);
     }
@@ -266,8 +266,8 @@ public sealed class PagerTests
     private static AccessWriterOptions WriterOptions(bool encrypted)
         => new(encrypted ? Password : null) { UseLockFile = false, UseByteRangeLocks = false };
 
-    private static ValueTask<WriterHarness> OpenAsync(MemoryStream stream, bool encrypted)
-        => WriterHarness.OpenAsync(stream, WriterOptions(encrypted), cancellationToken: Ct);
+    private static ValueTask<AccessWriter> OpenAsync(MemoryStream stream, bool encrypted)
+        => TestDatabase.OpenWriterAsync(stream, WriterOptions(encrypted), cancellationToken: Ct);
 
     private static async Task<MemoryStream> CreateDatabaseAsync(DatabaseFormat format)
     {

@@ -24,7 +24,7 @@ public sealed class RelationshipSeekPlannerLayoutTests(DatabaseCache cache) : IC
         await using MemoryStream stream = await cache.CopyToStreamAsync(fixture, ct);
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false }, leaveOpen: true, ct);
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         var planner = new RelationshipSeekPlanner(harness.Database.Format, harness.Database.TableDefs, harness.Services.TableCatalog);
         int checkedRelationships = 0;
         foreach (RelationshipMetadata metadata in await reader.ListRelationshipsAsync(ct))

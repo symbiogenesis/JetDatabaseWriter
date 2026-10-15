@@ -30,7 +30,7 @@ public sealed class CatalogCorruptionTests
         }
 
         stream.Position = 0;
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         var catalog = new CatalogRowReader(reader.Database.Format, reader.Database.TableDefs, reader.Database.OwnedPages);
         TableDef definition = Assert.IsType<TableDef>(await reader.Database.TableDefs.ReadTableDefAsync(2, TestContext.Current.CancellationToken));
         System.Collections.Generic.List<CatalogRow> rows = await catalog.GetCatalogRowsAsync(definition, TestContext.Current.CancellationToken);
@@ -141,7 +141,7 @@ public sealed class CatalogCorruptionTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             TableDef definition = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, TestContext.Current.CancellationToken));
             ColumnInfo name = Assert.IsType<ColumnInfo>(definition.FindColumn("Name"));
@@ -210,7 +210,7 @@ public sealed class CatalogCorruptionTests
 
         stream.Position = 0;
         await using (var lookupStream = new MemoryStream(stream.ToArray(), writable: false))
-        await using (ReaderHarness lookup = await ReaderHarness.OpenAsync(lookupStream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessReader lookup = await TestDatabase.OpenReaderAsync(lookupStream, cancellationToken: TestContext.Current.CancellationToken))
         {
             for (int attempt = 0; attempt < 2; attempt++)
             {

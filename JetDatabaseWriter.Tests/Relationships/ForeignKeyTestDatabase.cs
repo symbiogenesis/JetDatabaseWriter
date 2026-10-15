@@ -197,7 +197,7 @@ internal static class ForeignKeyTestDatabase
     public static async Task PlantRelationshipAsync(MemoryStream ms, string name, string foreignTable, string foreignColumn, string primaryTable, string primaryColumn)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         long relationshipsPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
         Assert.True(relationshipsPage > 0, "The database has no MSysRelationships table.");
         TableDef relationshipsDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(relationshipsPage, Constants.SystemTableNames.Relationships, Ct);
@@ -231,7 +231,7 @@ internal static class ForeignKeyTestDatabase
     public static async Task AssertIndexesCoverRowsAsync(MemoryStream ms, params string[] tableNames)
     {
         ms.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(ms, ReaderOptions, cancellationToken: Ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(ms, ReaderOptions, cancellationToken: Ct))
         {
             foreach (string tableName in tableNames)
             {

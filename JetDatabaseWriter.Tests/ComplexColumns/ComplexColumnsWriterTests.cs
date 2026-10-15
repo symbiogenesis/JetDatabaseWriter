@@ -159,7 +159,7 @@ public sealed class ComplexColumnsWriterTests
         Assert.StartsWith("f_", attachment.FlatTableName, StringComparison.Ordinal);
         Assert.EndsWith("_Files", attachment.FlatTableName, StringComparison.Ordinal);
 
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await pages.GetCatalogEntryAsync("Documents", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
         TableDef? tableDef = await pages.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken);
@@ -540,7 +540,7 @@ public sealed class ComplexColumnsWriterTests
         }
 
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: TestContext.Current.CancellationToken))
         {
             long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
             byte[] tdef = await harness.Pager.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
@@ -659,7 +659,7 @@ public sealed class ComplexColumnsWriterTests
     private static async Task WriteComplexIdCounterAsync(MemoryStream ms, int counter)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);
         byte[] tdef = await harness.Pager.ReadPageCopyAsync(page, TestContext.Current.CancellationToken);
         System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(tdef.AsSpan(ComplexColumnTestSupport.AutoNumberOffset, 4), counter);

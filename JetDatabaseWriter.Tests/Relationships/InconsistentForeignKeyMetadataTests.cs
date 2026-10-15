@@ -77,7 +77,7 @@ public sealed class InconsistentForeignKeyMetadataTests(DatabaseCache db) : ICla
     private static async ValueTask<long> GetPageAsync(MemoryStream stream, string table)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = await harness.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken) ?? throw new InvalidOperationException("Table not found.");
         return entry.TDefPage;
     }
@@ -85,7 +85,7 @@ public sealed class InconsistentForeignKeyMetadataTests(DatabaseCache db) : ICla
     private static async ValueTask PatchChildAsync(MemoryStream stream, long partnerPage, int? partnerIndex)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = await harness.Services.Catalog.GetCatalogEntryAsync("Child", TestContext.Current.CancellationToken) ?? throw new InvalidOperationException("Table not found.");
         byte[] td = await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, TestContext.Current.CancellationToken) ?? throw new InvalidOperationException("TDEF not found.");
         JetFormat format = harness.Database.Format;

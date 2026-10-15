@@ -314,7 +314,7 @@ public sealed class LvPropReadTests
         Assert.SkipUnless(await TestDatabases.IsReadableAsync(fixture, Ct), $"Fixture not readable: {fixture}");
 
         await using MemoryStream ms = await CopyFixtureAsync(fixture);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(table, Ct));
         IReadOnlyList<RawCatalogRow> rows = await ReadRawCatalogRowsAsync(harness.Database);
 
@@ -347,7 +347,7 @@ public sealed class LvPropReadTests
     [MemberData(nameof(AccessAuthoredFixtures))]
     public async Task ReadLvProp_EveryFixtureTable_MatchesLegacyStringPath(string fixture)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(fixture, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(fixture, cancellationToken: Ct);
         (List<string> collisions, _) = await CompareWithLegacyStringPathAsync(harness);
 
         if (fixture == TestDatabases.NorthwindTraders)
@@ -378,7 +378,7 @@ public sealed class LvPropReadTests
         }
 
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         (List<string> collisions, List<string> signatures) = await CompareWithLegacyStringPathAsync(harness);
 
         string[] expectedSignatures = format == DatabaseFormat.Jet3Mdb ? ["T"] : [];
@@ -397,7 +397,7 @@ public sealed class LvPropReadTests
         Assert.SkipUnless(await TestDatabases.IsReadableAsync(TestDatabases.TestV2003, Ct), "testV2003 is not readable.");
 
         await using MemoryStream ms = await CopyFixtureAsync(TestDatabases.TestV2003);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("Table2", Ct));
         RawCatalogRow own = Assert.Single(await ReadRawCatalogRowsAsync(harness.Database), r => r.Id == entry.TDefPage);
         byte[] blob = Assert.IsType<byte[]>(await own.ReadLvPropAsync(harness.Database));
@@ -528,7 +528,7 @@ public sealed class LvPropReadTests
     private static async Task PatchLvPropAsync(MemoryStream stream, string tableName, bool breakChain)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         TableDef catalog = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, Ct));
         ColumnInfo nameColumn = Assert.IsType<ColumnInfo>(catalog.FindColumn("Name"));
         ColumnInfo propertyColumn = Assert.IsType<ColumnInfo>(catalog.FindColumn("LvProp"));
@@ -630,7 +630,7 @@ public sealed class LvPropReadTests
     /// </summary>
     /// <param name="harness">The open database.</param>
     /// <returns>The names of the tables in each kind of intended difference.</returns>
-    private static async Task<(List<string> Collisions, List<string> Signatures)> CompareWithLegacyStringPathAsync(ReaderHarness harness)
+    private static async Task<(List<string> Collisions, List<string> Signatures)> CompareWithLegacyStringPathAsync(AccessReader harness)
     {
         DatabaseFile db = harness.Database;
         IReadOnlyList<RawCatalogRow> rows = await ReadRawCatalogRowsAsync(db);

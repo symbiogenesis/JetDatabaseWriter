@@ -17,7 +17,7 @@ internal static class CollationTestSupport
     public static async Task<ColumnInfo> ReadColumnAsync(MemoryStream stream, string table, string column, CancellationToken ct)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         long tablePage = table == "MSysObjects" ? await harness.Services.Catalog.FindSystemTablePageAsync(table, ct) : Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(table, ct)).TDefPage;
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(tablePage, ct));
         return Assert.Single(definition.Columns, value => value.Name == column);
@@ -27,7 +27,7 @@ internal static class CollationTestSupport
     {
         stream.Position = 0;
         long offset;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             long tablePage = table == "MSysObjects" ? await harness.Services.Catalog.FindSystemTablePageAsync(table, ct) : Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(table, ct)).TDefPage;
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(tablePage, ct));

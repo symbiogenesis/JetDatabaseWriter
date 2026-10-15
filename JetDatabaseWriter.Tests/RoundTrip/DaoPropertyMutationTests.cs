@@ -203,14 +203,14 @@ public sealed class DaoPropertyMutationTests
 
     private static async Task<ColumnPropertyBlock> ReadPropertiesAsync(string path)
     {
-        await using WriterHarness harness = await WriterHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(path, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("PropertyVariants", Ct));
         return Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
     }
 
     private static async Task PlantLayoutVariantsAsync(string path, bool paddedEntries, bool duplicateNames, bool multiplePools)
     {
-        await using WriterHarness harness = await WriterHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(path, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("PropertyVariants", Ct));
         ColumnPropertyBlock original = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
         Assert.Empty(original.UnknownChunks);

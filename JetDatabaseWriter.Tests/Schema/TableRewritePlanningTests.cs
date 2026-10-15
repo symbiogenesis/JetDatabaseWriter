@@ -37,7 +37,7 @@ public sealed class TableRewritePlanningTests
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(
             stream,
             new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = true },
             cancellationToken: ct);
@@ -85,7 +85,7 @@ public sealed class TableRewritePlanningTests
         Assert.Equal(["Original"], (await harness.Services.Catalog.GetUserTablesAsync(ct)).Select(static entry => entry.Name));
     }
 
-    private static ValueTask<TableRewritePlan> PrepareReplacementAsync(WriterHarness harness, CancellationToken cancellationToken)
+    private static ValueTask<TableRewritePlan> PrepareReplacementAsync(AccessWriter harness, CancellationToken cancellationToken)
         => harness.Services.RewritePlanner.PrepareAsync(
             "Original",
             static (columns, _) =>

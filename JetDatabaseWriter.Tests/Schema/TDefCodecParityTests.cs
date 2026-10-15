@@ -38,7 +38,7 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
     public async Task Parse_FixtureTables_MatchesLegacyColumns(string path)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, new AccessReaderOptions { UseLockFile = false }, ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(path, new AccessReaderOptions { UseLockFile = false }, ct);
         using var reader = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: false);
         HashSet<long> roots = [];
         HashSet<long> continuations = [];
@@ -99,7 +99,7 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
         }
 
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         foreach (string table in new[] { "Parent", "Child", "Self" })
         {
             CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, ct);

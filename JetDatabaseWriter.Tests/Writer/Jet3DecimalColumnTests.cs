@@ -510,7 +510,7 @@ public sealed class Jet3DecimalColumnTests
     private static async Task<IReadOnlyList<ColumnInfo>> ReadColumnDescriptorsAsync(MemoryStream ms, CancellationToken cancellationToken)
     {
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: cancellationToken);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(TableName, cancellationToken);
         Assert.NotNull(entry);
         TableDef? definition = await harness.ReadTableDefAsync(entry.TDefPage, cancellationToken);

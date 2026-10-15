@@ -15,7 +15,6 @@ using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
-using JetDatabaseWriter.TestSupport;
 using JetDatabaseWriter.ValueDecoding;
 using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
@@ -72,7 +71,7 @@ public sealed class MixedOleScalarTypeTests
         }
 
         stream.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Values", Ct));
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, Ct));
@@ -138,7 +137,7 @@ public sealed class MixedOleScalarTypeTests
 
         byte[] bytes = original.ToArray();
         original.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(original, cancellationToken: Ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(original, cancellationToken: Ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Values", Ct));
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, Ct));
@@ -191,7 +190,7 @@ public sealed class MixedOleScalarTypeTests
         where T : class, new()
         => hybrid
             ? reader.Rows<T>("Values", cancellationToken: Ct)
-            : reader.ReadPrivateField<ReaderServices>("services").Tables.RowsWithDecoder<T>("Values", forceProjection: true, progress: null, cancellationToken: Ct);
+            : reader.Services.Tables.RowsWithDecoder<T>("Values", forceProjection: true, progress: null, cancellationToken: Ct);
 
     private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
     {

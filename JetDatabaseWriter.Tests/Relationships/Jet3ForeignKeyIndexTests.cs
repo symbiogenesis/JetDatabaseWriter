@@ -173,7 +173,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.True(UsageMap.TryReadPointer(child.Td, phys + 30, out UsageMapPointer pointer));
         Assert.True(pointer.PageNumber > 0);
         Assert.Equal(0x00, slot.Flags);
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct))
         {
             byte[] leaf = await harness.ReadPageCopyAsync((uint)Ri32(child.Td, slot.FirstDpOffset), this.ct);
             Assert.Equal(Constants.IndexLeafPage.PageTypeLeaf, leaf[0]);
@@ -214,7 +214,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         List<int> parentIds = await this.ReadParentIdsAsync(stream);
         var childIds = new List<int>();
 
-        await using (WriterHarness writer = await OpenHarnessAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await CreateChildAsync(writer, this.ct);
             for (int id = 1; id <= 5; id++)
@@ -295,7 +295,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         }
 
         SortedSet<long> unreachableBefore;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct))
         {
             // Both of the child's trees span several pages, so no rebuild can
             // reuse a single leaf in place.
@@ -309,7 +309,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             unreachableBefore = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
         }
 
-        await using (WriterHarness writer = await OpenHarnessAsync(stream, mode))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
             await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             for (int id = seedRows + 1; id <= seedRows + 10; id++)
@@ -340,7 +340,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             Assert.True(preservedMapPages.SetEquals(mappedPagesAfter));
         }
 
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct))
         {
             SortedSet<long> unreachableAfter = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
             long[] leaked = [.. unreachableAfter.Except(unreachableBefore).Except(preservedMapPages)];
@@ -484,7 +484,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal("Boss", Assert.Single(childFk.Columns).Name);
         Assert.True(parentFk.CascadeDeletes && childFk.CascadeDeletes);
 
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         await IndexLeafChain.AssertCoversLiveRowsAsync(harness.Database, table.Page, childFk.FirstDp, this.ct);
     }
 
@@ -514,7 +514,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(parentFk.IndexNumber, childFk.RelatedIndexNumber);
 
         long childPage = await this.GetTDefPageAsync(stream, "C2");
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         await IndexLeafChain.AssertCoversLiveRowsAsync(harness.Database, childPage, childFk.FirstDp, this.ct);
     }
 
@@ -555,7 +555,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(parentFk.IndexNumber, childFk.RelatedIndexNumber);
 
         long childPage = await this.GetTDefPageAsync(stream, Child);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         await IndexLeafChain.AssertCoversLiveRowsAsync(harness.Database, childPage, childFk.FirstDp, this.ct);
     }
 
@@ -571,7 +571,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         TDefIndexSection parentBefore = await this.ReadIndexSectionAsync(stream, Parent);
         TDefIndexSection childBefore = await this.ReadIndexSectionAsync(stream, Child);
         byte[] bytesBefore = stream.ToArray();
-        await using (WriterHarness writer = await OpenHarnessAsync(stream))
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct);
@@ -622,7 +622,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Assert.Equal(UsageMap.ReadUInt24(childBefore.Td, 36), mapPages[0]);
         var unchangedPages = new Dictionary<int, byte[]>();
         int availableRow;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct))
         {
             foreach (int pageNumber in mapPages.Take(2))
             {
@@ -658,7 +658,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             Assert.Equal(row, mapsAfter[pointer]);
         }
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         foreach ((int pageNumber, byte[] page) in unchangedPages)
         {
             Assert.Equal(page, await reader.ReadPageCopyAsync(pageNumber, this.ct));
@@ -680,7 +680,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         TDefIndexSection child = await this.ReadIndexSectionAsync(stream, Child);
         int mapPage = UsageMap.ReadUInt24(child.Td, 36);
         byte[] map;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct))
         {
             map = await harness.ReadPageCopyAsync(mapPage, this.ct);
         }
@@ -783,7 +783,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             Assert.True(stream.Faulted);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         Assert.DoesNotContain(await this.ListIndexesAsync(stream, Child), i => i.Kind == IndexKind.ForeignKey);
         List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, childPage, this.ct);
         var allocatedLeaves = new List<long>();
@@ -840,13 +840,6 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))],
             cancellationToken);
 
-    private static ValueTask CreateChildAsync(WriterHarness writer, CancellationToken cancellationToken)
-        => writer.CreateTableAsync(
-            Child,
-            [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }, new ColumnDefinition("ParentId", typeof(int))],
-            [],
-            cancellationToken);
-
     private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, WriteMode mode = WriteMode.Direct)
     {
         stream.Position = 0;
@@ -857,25 +850,12 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             TestContext.Current.CancellationToken);
     }
 
-    /// <summary>
-    /// Opens the writer's internal layers over <paramref name="stream"/>, for
-    /// the tests that check the writer's own services or read through its
-    /// pages; its mutation helpers run as the facade's do.
-    /// </summary>
-    /// <param name="stream">The database.</param>
-    /// <param name="mode">The write mode.</param>
-    private static ValueTask<WriterHarness> OpenHarnessAsync(MemoryStream stream, WriteMode mode = WriteMode.Direct)
-        => WriterHarness.OpenAsync(
-            stream,
-            WriteModes.WriterOptions(mode),
-            cancellationToken: TestContext.Current.CancellationToken);
-
     private async Task<MemoryStream> CopyFixtureAsync()
         => await cache.CopyToStreamAsync(TestDatabases.IndexTestV1997, this.ct);
 
     private async Task<long> GetTDefPageAsync(MemoryStream stream, string table)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         CatalogEntry entry = await harness.GetCatalogEntryAsync(table, this.ct) ?? throw new InvalidOperationException($"Table '{table}' not found.");
         return entry.TDefPage;
     }
@@ -902,7 +882,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     private async Task<int> CountTDefPagesAsync(MemoryStream stream, string table)
     {
         long page = await this.GetTDefPageAsync(stream, table);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         int count = 0;
         while (page != 0)
         {
@@ -921,7 +901,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     /// </summary>
     /// <param name="writer">The open writer's layers.</param>
     /// <param name="tables">The tables to check.</param>
-    private async Task AssertIndexesCoverRowsAsync(WriterHarness writer, params string[] tables)
+    private async Task AssertIndexesCoverRowsAsync(AccessWriter writer, params string[] tables)
     {
         DatabaseFile db = writer.Database;
         using var services = new ReaderServices(db, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 });
@@ -938,7 +918,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     private async Task<Dictionary<UsageMapPointer, byte[]>> ReadIndexMapRowsAsync(MemoryStream stream, string table, HashSet<long>? mappedPages = null)
     {
         TDefIndexSection section = await this.ReadIndexSectionAsync(stream, table);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         var rows = new Dictionary<UsageMapPointer, byte[]>();
         for (int index = 0; index < section.NumRealIdx; index++)
         {
@@ -975,7 +955,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
 
     private async Task<TDefIndexSection> ReadIndexSectionAsync(MemoryStream stream, string table)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         Assert.Equal(DatabaseFormat.Jet3Mdb, db.Format.Kind);
         CatalogEntry entry = await harness.GetCatalogEntryAsync(table, this.ct) ?? throw new InvalidOperationException($"Table '{table}' not found.");

@@ -101,7 +101,7 @@ public sealed class RelationshipNativeSecurityTests
     private static async Task CorruptAsync(MemoryStream stream, string corruption)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(
             stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
         string table = corruption is "owner" or "container" ? "MSysObjects" : "MSysACEs";
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(table, TestContext.Current.CancellationToken);

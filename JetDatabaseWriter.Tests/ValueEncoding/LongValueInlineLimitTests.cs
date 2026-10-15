@@ -28,7 +28,7 @@ public sealed class LongValueInlineLimitTests
             Assert.True(stream.Length > 0);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         var encoder = new LongValueEncoder(harness.Database.Format, harness.Pager, harness.Services.PageAllocator, new AccessWriterOptions());
         var definition = new TableDef { Columns = [new ColumnInfo { Name = "Value", Type = columnType }] };
         foreach (int payloadSize in new[] { 64, 66 })

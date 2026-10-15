@@ -29,7 +29,7 @@ public sealed class Jet3IndexSeekTests(DatabaseCache cache) : IClassFixture<Data
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await cache.CopyToStreamAsync(fixture, ct);
         JetFormat format;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             format = harness.Database.Format;
         }

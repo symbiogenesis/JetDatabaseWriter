@@ -266,7 +266,7 @@ public sealed class RenameColumnCaseTests
     private static async Task<long> GetTDefPageAsync(MemoryStream ms, string tableName)
     {
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, Ct);
         Assert.NotNull(entry);
         return entry.TDefPage;

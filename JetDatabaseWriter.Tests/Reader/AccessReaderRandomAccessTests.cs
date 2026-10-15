@@ -20,8 +20,7 @@ using Xunit;
 /// otherwise, and inline reads on pool threads for a path-opened reader.
 /// These tests check what the facade does: the handle it opens, the rows it
 /// reads, and how its scans complete. Which read path each way of opening
-/// sets up is asserted on the facades' own files in <c>ServiceGraphTests</c>,
-/// the one class that reflects into them.
+/// sets up is asserted on the facades' own files in <c>ServiceGraphTests</c>.
 /// </summary>
 /// <param name="seeds">Caches the generated database images shared by these read-only scenarios.</param>
 public sealed class AccessReaderRandomAccessTests(GeneratedDatabaseCache seeds) : IDisposable, IClassFixture<GeneratedDatabaseCache>
@@ -115,7 +114,7 @@ public sealed class AccessReaderRandomAccessTests(GeneratedDatabaseCache seeds) 
         string path = await this.CreateReadableDatabaseAsync(rowCount, format);
 
         await using var stream = new HandleCountingFileStream(path);
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(
             stream,
             new AccessReaderOptions
             {

@@ -58,7 +58,7 @@ internal static class TextIndexEncoderFixtureHarness
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(fixturePath, cancellationToken: ct);
 
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
@@ -150,7 +150,7 @@ internal static class TextIndexEncoderFixtureHarness
     }
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
-        ReaderHarness pages,
+        AccessReader pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,

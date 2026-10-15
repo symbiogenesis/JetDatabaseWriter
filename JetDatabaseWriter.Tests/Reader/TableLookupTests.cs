@@ -135,7 +135,7 @@ public class TableLookupTests(DatabaseCache db) : IClassFixture<DatabaseCache>
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct))
         {
             TableDef objects = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, ct));
             CatalogRow entry = Assert.Single(await harness.Services.CatalogRows.GetCatalogRowsAsync(objects, ct), row => row.Name == "Unusable");

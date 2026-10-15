@@ -201,7 +201,7 @@ public sealed partial class CatalogDiagnosticsTests
     private static async ValueTask ZeroColumnCountOfLastUserTableRowAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: cancellationToken);
         DatabaseFile db = harness.Database;
         TableDef? msys = await harness.ReadTableDefAsync(2, cancellationToken);
         Assert.NotNull(msys);

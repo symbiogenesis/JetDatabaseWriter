@@ -299,7 +299,7 @@ public sealed class NativeJet3SchemaRewriteTests
             session.WorkDir,
             TimeSpan.FromMinutes(2));
         Assert.True(created.ExitCode == 0, $"DAO36 large catalog create failed: {created.StandardOutput}\n{created.StandardError}");
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(session.SourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(session.SourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             JetFormat format = harness.Database.Format;
             byte[] definition = Assert.IsType<byte[]>(await harness.Database.TableDefs.ReadTDefBytesAsync(2, TestContext.Current.CancellationToken));
@@ -370,7 +370,7 @@ public sealed class NativeJet3SchemaRewriteTests
             await writer.AddColumnAsync("Longs", new ColumnDefinition("Added", typeof(int)), TestContext.Current.CancellationToken);
         }
 
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(session.SourcePath, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(session.SourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {
             JetFormat format = harness.Database.Format;
             long root = Assert.IsType<JetDatabaseWriter.Catalog.Models.CatalogEntry>(await harness.GetCatalogEntryAsync("Longs", TestContext.Current.CancellationToken)).TDefPage;
@@ -418,7 +418,7 @@ public sealed class NativeJet3SchemaRewriteTests
     private static async Task<string[]> ReadStoredCatalogKeysAsync(MemoryStream stream)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         JetFormat format = harness.Database.Format;
         byte[] definition = Assert.IsType<byte[]>(await harness.Database.TableDefs.ReadTDefBytesAsync(2, TestContext.Current.CancellationToken));
         TDefCounts counts = TDefCodec.ReadCounts(format, definition);

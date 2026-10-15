@@ -34,7 +34,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
     public async Task Rebuild_UnmaintainedDescriptorWithSharedOrOpaqueOwnership_DoesNotFreeCandidate(int ownership)
     {
         await using MemoryStream stream = await cache.CopyToStreamAsync(TestDatabases.IndexTestV1997, this.ct);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("Table1", this.ct))!;
         DatabaseFile db = harness.Database;
         TableDef definition = (await db.TableDefs.ReadTableDefAsync(table.TDefPage, this.ct))!;
@@ -147,7 +147,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             }
 
             stream.Position = 0;
-            await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+            await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
             CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("Table1", this.ct))!;
             SortedSet<long> unreachable = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct);
             if (retained is null)
@@ -187,7 +187,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             if (format == DatabaseFormat.Jet3Mdb)
             {
                 await using var initial = new MemoryStream(stream.ToArray());
-                await using WriterHarness initialHarness = await WriterHarness.OpenAsync(initial, cancellationToken: this.ct);
+                await using AccessWriter initialHarness = await TestDatabase.OpenWriterAsync(initial, cancellationToken: this.ct);
                 CatalogEntry initialTable = (await initialHarness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
                 long initialRoot = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(initialHarness.Database, initialTable.TDefPage, this.ct));
                 (protectedPointer, protectedMapRow, List<long> mappedPages) = await this.ReadSingleInlineIndexMapAsync(initialHarness, initialTable.TDefPage);
@@ -199,7 +199,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             await writer.InsertRowsAsync("T", Enumerable.Range(0, 4000).Select(static id => new object?[] { id }), this.ct);
             byte[] before = stream.ToArray();
             await using (var grown = new MemoryStream(before))
-            await using (WriterHarness grownHarness = await WriterHarness.OpenAsync(grown, cancellationToken: this.ct))
+            await using (AccessWriter grownHarness = await TestDatabase.OpenWriterAsync(grown, cancellationToken: this.ct))
             {
                 CatalogEntry grownTable = (await grownHarness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
                 Assert.Equal(protectedPages, await PageAudit.FindUnreachableIndexPagesAsync(grownHarness.Database, grownHarness.Services.PageAllocator, grownTable.TDefPage, this.ct));
@@ -223,7 +223,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
         Assert.Equal(protectedPages, await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
         if (format == DatabaseFormat.Jet3Mdb)
@@ -257,7 +257,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
         }
     }
 
-    private async ValueTask<(UsageMapPointer Pointer, byte[] RowBytes, List<long> Pages)> ReadSingleInlineIndexMapAsync(WriterHarness harness, long tdefPage)
+    private async ValueTask<(UsageMapPointer Pointer, byte[] RowBytes, List<long> Pages)> ReadSingleInlineIndexMapAsync(AccessWriter harness, long tdefPage)
     {
         DatabaseFile db = harness.Database;
         byte[] definition = (await db.TableDefs.ReadTDefBytesAsync(tdefPage, this.ct))!;

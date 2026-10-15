@@ -21,7 +21,7 @@ public sealed class SystemTableIndexMaintenanceTests
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         TableDef tableDef = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
@@ -49,7 +49,7 @@ public sealed class SystemTableIndexMaintenanceTests
         // a root leaf used to throw (bail C13) instead of growing the index.
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         for (int i = 0; i < 700; i++)
@@ -122,7 +122,7 @@ public sealed class SystemTableIndexMaintenanceTests
             Assert.Equal(tableCount, tables.Count(name => name.StartsWith("Tbl", StringComparison.Ordinal)));
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
         long acesTdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, acesTdefPage, ct))
         {
@@ -135,7 +135,7 @@ public sealed class SystemTableIndexMaintenanceTests
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.ComplexColumns, ct);
         TableDef tableDef = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.ComplexColumns, ct);
@@ -161,7 +161,7 @@ public sealed class SystemTableIndexMaintenanceTests
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateFreshAceDatabaseAsync(ct);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
 
         long tdefPage = await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
         TableDef tableDef = await writer.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, Constants.SystemTableNames.Aces, ct);
@@ -199,7 +199,7 @@ public sealed class SystemTableIndexMaintenanceTests
                 ct);
         }
 
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct))
         {
             long acesTdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, ct);
             await CorruptFirstIndexRootPageTypeAsync(harness, acesTdefPage, ct);
@@ -225,7 +225,7 @@ public sealed class SystemTableIndexMaintenanceTests
         return stream;
     }
 
-    private static async ValueTask CorruptFirstIndexRootPageTypeAsync(WriterHarness writer, long tdefPage, CancellationToken cancellationToken)
+    private static async ValueTask CorruptFirstIndexRootPageTypeAsync(AccessWriter writer, long tdefPage, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
         byte[] tdef = await db.Pages.ReadPageAsync(tdefPage, cancellationToken);

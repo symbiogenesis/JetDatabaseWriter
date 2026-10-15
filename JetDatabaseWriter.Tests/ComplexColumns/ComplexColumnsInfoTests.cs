@@ -243,7 +243,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
     {
         await using var stream = new MemoryStream();
         await stream.WriteAsync(database, TestContext.Current.CancellationToken);
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             await ClearComplexTypeObjectIdsAsync(harness);
         }
@@ -251,7 +251,7 @@ public sealed class ComplexColumnsInfoTests(DatabaseCache db) : IClassFixture<Da
         return stream.ToArray();
     }
 
-    private static async ValueTask ClearComplexTypeObjectIdsAsync(WriterHarness harness)
+    private static async ValueTask ClearComplexTypeObjectIdsAsync(AccessWriter harness)
     {
         DatabaseFile file = harness.Database;
         long tdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", TestContext.Current.CancellationToken);

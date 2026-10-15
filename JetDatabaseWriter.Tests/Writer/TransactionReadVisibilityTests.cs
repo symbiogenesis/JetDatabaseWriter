@@ -339,7 +339,7 @@ public sealed class TransactionReadVisibilityTests
 
         // Zero row 1's column count. The row stays live on its page, but no
         // decoder can read it. Reads omit it; write-back snapshots must refuse it.
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, WriterOptions(WriteMode.Direct), cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, WriterOptions(WriteMode.Direct), cancellationToken: Ct))
         {
             CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", Ct);
             TableDef tableDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, "T", Ct);

@@ -294,7 +294,7 @@ public sealed class LongValueWriteBackTests
         }
 
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         using DataTable snapshot = await harness.Services.Snapshots.ReadTableSnapshotAsync(TableName, TestContext.Current.CancellationToken);
         Assert.Equal(60, snapshot.Rows.Count);
         foreach (DataRow row in snapshot.Rows)
@@ -339,7 +339,7 @@ public sealed class LongValueWriteBackTests
         }
 
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         using DataTable child = await harness.Services.Snapshots.ReadTableSnapshotAsync("Child", TestContext.Current.CancellationToken);
         DataRow first = child.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 10);
         DataRow second = child.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == 11);
@@ -606,7 +606,7 @@ public sealed class LongValueWriteBackTests
     private static async Task<DataRow> ReadSnapshotRowAsync(MemoryStream ms, int id)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         DataTable snapshot = await harness.Services.Snapshots.ReadTableSnapshotAsync(TableName, TestContext.Current.CancellationToken);
         return snapshot.Rows.Cast<DataRow>().Single(r => (int)r["Id"] == id);
     }

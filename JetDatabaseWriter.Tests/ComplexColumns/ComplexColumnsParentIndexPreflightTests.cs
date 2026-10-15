@@ -46,7 +46,7 @@ public sealed class ComplexColumnsParentIndexPreflightTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Table1", Ct);
             await IndexMetadataCorruptionInjector.SetPhantomKeyColumnAsync(harness, table.Entry.TDefPage, realIndexNumber, Ct);

@@ -300,7 +300,7 @@ public sealed class OverflowRowWriteTests
             UseTransactionalWrites = mode == WriteMode.AutoCommit,
             SecureEraseMode = secureErase ? SecureEraseMode.DeletedRowsAndFreedPages : SecureEraseMode.None,
         };
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, options, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, options, cancellationToken: Ct))
         {
             DatabaseFile db = harness.Database;
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(SyntheticTable, Ct));
@@ -886,7 +886,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<int?> CountPrimaryKeyEntriesAsync(byte[] bytes, string table)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, Ct);
         Assert.NotNull(entry);
@@ -910,7 +910,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<int> ReadOverflowIdAsync(byte[] bytes)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(SyntheticTable, Ct));
         TableDef tableDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, SyntheticTable, Ct);
         int keyOrdinal = tableDef.FindColumnIndex("Id");
@@ -939,7 +939,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<List<(long Page, int Row)>> FindOverflowHeadersAsync(byte[] bytes, string table)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, Ct);
         Assert.NotNull(entry);
@@ -969,7 +969,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<(int PageSize, int RowsStart)> PageLayoutAsync(byte[] bytes)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         return (harness.Database.Format.PageSize, harness.Database.Format.DataPage.RowsStart);
     }
 
@@ -979,7 +979,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<CatalogRow> FindCatalogRowAsync(byte[] bytes, string name)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         TableDef? msys = await harness.ReadTableDefAsync(2, Ct);
         Assert.NotNull(msys);
         List<CatalogRow> rows = await new CatalogRowReader(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages).GetCatalogRowsAsync(msys, Ct);
@@ -994,7 +994,7 @@ public sealed class OverflowRowWriteTests
     private static async ValueTask<bool> IsOverflowRowAsync(byte[] bytes, string table, string keyColumn, int key)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, Ct);
         Assert.NotNull(entry);
         TableDef? tableDef = await harness.ReadTableDefAsync(entry.TDefPage, Ct);

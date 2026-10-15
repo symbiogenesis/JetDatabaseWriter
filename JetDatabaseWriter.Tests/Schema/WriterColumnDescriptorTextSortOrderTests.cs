@@ -58,7 +58,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -151,7 +151,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         CatalogEntry? entry = await pages.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
@@ -171,7 +171,7 @@ public sealed class WriterColumnDescriptorTextSortOrderTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        await using ReaderHarness daoPages = await ReaderHarness.OpenAsync(daoMs, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader daoPages = await TestDatabase.OpenReaderAsync(daoMs, cancellationToken: TestContext.Current.CancellationToken);
 
         IReadOnlyList<string> daoTables = await daoReader.ListTablesAsync(TestContext.Current.CancellationToken);
         var daoTextCols = new List<(string Table, int ColIndex, byte ColType, ushort Lcid, ushort SortVersion)>();

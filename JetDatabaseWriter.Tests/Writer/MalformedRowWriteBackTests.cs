@@ -105,7 +105,7 @@ public sealed class MalformedRowWriteBackTests
         stream.Position = 0;
         RowLocation malformed;
         long tdefPage;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(TableName, ct));
             tdefPage = entry.TDefPage;
@@ -135,7 +135,7 @@ public sealed class MalformedRowWriteBackTests
 
         // Both defects remain live slots and reach the writer's row visitor.
         stream.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             Assert.Contains(malformed, await harness.Database.GetLiveRowLocationsAsync(tdefPage, ct));
         }

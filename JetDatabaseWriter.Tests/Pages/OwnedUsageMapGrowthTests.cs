@@ -66,7 +66,7 @@ public sealed class OwnedUsageMapGrowthTests
 
         await using var backing = new MemoryStream(stream.ToArray(), writable: false);
         await using var counting = new CountingStream(backing);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(counting, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         long tdefPage = await TDefPageAsync(harness, WideTable);
 
@@ -110,7 +110,7 @@ public sealed class OwnedUsageMapGrowthTests
             _ = await writer.InsertRowsAsync(lateTable, WideRows(1, lateRows), Ct);
         }
 
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         long tdefPage = await TDefPageAsync(harness, lateTable);
         HashSet<long> dataPages = await ReadDataPagesOfAsync(db, tdefPage);
@@ -190,7 +190,7 @@ public sealed class OwnedUsageMapGrowthTests
     {
         const int keyRows = 3_000;
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, WideTable);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: Ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: Ct);
         DatabaseFile db = writer.Database;
         await writer.CreateTableAsync("Parent", [new("Id", typeof(int)) { IsNullable = false }], [new IndexDefinition("PK_Parent", "Id") { IsPrimaryKey = true }], Ct);
         await writer.CreateTableAsync(
@@ -332,7 +332,7 @@ public sealed class OwnedUsageMapGrowthTests
         return stream;
     }
 
-    private static async Task<long> TDefPageAsync(ReaderHarness harness, string tableName)
+    private static async Task<long> TDefPageAsync(AccessReader harness, string tableName)
     {
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, Ct);
         Assert.NotNull(entry);
@@ -366,7 +366,7 @@ public sealed class OwnedUsageMapGrowthTests
     /// <param name="stream">The database.</param>
     private static async Task<SortedSet<long>> ReadWideTableBitmapPagesAsync(MemoryStream stream)
     {
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);
         Assert.NotNull(entry);
@@ -393,7 +393,7 @@ public sealed class OwnedUsageMapGrowthTests
     /// <param name="pages">The pages that must be free.</param>
     private static async Task AssertPagesFreeAsync(MemoryStream stream, SortedSet<long> pages)
     {
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: Ct);
         foreach (long page in pages)
         {
             Assert.True(await harness.Services.PageAllocator.IsPageFreeAsync(page, Ct), $"Bitmap page {page} should be free.");

@@ -188,7 +188,7 @@ public sealed class ConstraintReplacementTests
     private static async Task<(long Page, byte[] Bytes, TableDef Definition)> DefinitionAsync(MemoryStream stream)
     {
         await using var copy = new MemoryStream(stream.ToArray());
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(copy, cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(copy, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await reader.GetCatalogEntryAsync("Rules", Ct));
         TableDef definition = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(entry.TDefPage, Ct));
         return (entry.TDefPage, await reader.ReadPageCopyAsync(entry.TDefPage, Ct), definition);
@@ -197,7 +197,7 @@ public sealed class ConstraintReplacementTests
     private static async Task<(long Page, ColumnInfo Column)> ScoreColumnAsync(MemoryStream stream)
     {
         await using var copy = new MemoryStream(stream.ToArray());
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(copy, cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(copy, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await reader.GetCatalogEntryAsync("Rules", Ct));
         TableDef definition = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(entry.TDefPage, Ct));
         return (entry.TDefPage, Assert.Single(definition.Columns, column => column.Name == "Score"));

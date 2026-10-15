@@ -39,20 +39,15 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
         };
 
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using (AccessReader reader = await AccessReader.OpenAsync(
+        await using AccessReader reader = await AccessReader.OpenAsync(
             stream,
             options,
             leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-            Assert.Equal(0, reader.PageCacheSize);
-            Assert.NotEmpty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
-        }
-
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
-        Assert.Null(ReadPrivateField(harness.Services.PageCache, PageCacheFieldName));
-        Assert.Null(ReadPrivateField(harness.Services.PageCache, RowBoundsCacheFieldName));
-        Assert.NotEmpty(await harness.Services.Schema.ListTablesAsync(TestContext.Current.CancellationToken));
+            TestContext.Current.CancellationToken);
+        Assert.Equal(0, reader.PageCacheSize);
+        Assert.NotEmpty(await reader.ListTablesAsync(TestContext.Current.CancellationToken));
+        Assert.Null(ReadPrivateField(reader.Services.PageCache, PageCacheFieldName));
+        Assert.Null(ReadPrivateField(reader.Services.PageCache, RowBoundsCacheFieldName));
     }
 
     [Fact]
@@ -72,7 +67,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
@@ -161,7 +156,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
         LruCache<long, byte[]> pageCache = ReadRequiredPrivateField<LruCache<long, byte[]>>(reader.Services.PageCache, PageCacheFieldName);
         LruCache<long, RowBound[]> rowBoundsCache = ReadRequiredPrivateField<LruCache<long, RowBound[]>>(reader.Services.PageCache, RowBoundsCacheFieldName);
 
@@ -205,7 +200,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
@@ -233,7 +228,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             UseLockFile = false,
         };
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, options, cancellationToken: TestContext.Current.CancellationToken);
 
         int actualRows = await CountRowsAsync(reader, tableName, TestContext.Current.CancellationToken);
 
@@ -268,15 +263,10 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        // The same options build the same reader services under the facades.
-        await using (ReaderHarness cached = await ReaderHarness.OpenAsync(cachedStream, new AccessReaderOptions { PageCacheSize = 16, UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
-        await using (ReaderHarness uncached = await ReaderHarness.OpenAsync(uncachedStream, new AccessReaderOptions { PageCacheSize = 0, UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
-        {
-            Assert.NotNull(ReadPrivateField(cached.Services.PageCache, PageCacheFieldName));
-            Assert.NotNull(ReadPrivateField(cached.Services.PageCache, RowBoundsCacheFieldName));
-            Assert.Null(ReadPrivateField(uncached.Services.PageCache, PageCacheFieldName));
-            Assert.Null(ReadPrivateField(uncached.Services.PageCache, RowBoundsCacheFieldName));
-        }
+        Assert.NotNull(ReadPrivateField(cachedReader.Services.PageCache, PageCacheFieldName));
+        Assert.NotNull(ReadPrivateField(cachedReader.Services.PageCache, RowBoundsCacheFieldName));
+        Assert.Null(ReadPrivateField(uncachedReader.Services.PageCache, PageCacheFieldName));
+        Assert.Null(ReadPrivateField(uncachedReader.Services.PageCache, RowBoundsCacheFieldName));
 
         foreach (string tableName in (string[])[AlphaRowsTable, BetaRowsTable])
         {
@@ -301,7 +291,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
                 ("JournalRows", 4, "J"),
             },
             TestContext.Current.CancellationToken);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         using var cache = new ReaderPageCache(harness.Database.Format, harness.Database.Pages, capacity: 0);
         int pageSize = harness.Database.Format.PageSize;
 
@@ -384,7 +374,7 @@ public sealed class AccessReaderCacheTests(DatabaseCache db) : IClassFixture<Dat
     private static string CreatePayload(string prefix, int rowNumber) =>
         prefix + "-" + rowNumber.ToString("D4", CultureInfo.InvariantCulture) + "-" + new string('x', 180);
 
-    private static async ValueTask<int> CountRowsAsync(ReaderHarness reader, string tableName, CancellationToken cancellationToken)
+    private static async ValueTask<int> CountRowsAsync(AccessReader reader, string tableName, CancellationToken cancellationToken)
     {
         int rowCount = 0;
         await foreach (object[] row in reader.Services.Tables.Rows(tableName, progress: null, cancellationToken).ConfigureAwait(false))

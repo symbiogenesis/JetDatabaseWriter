@@ -26,7 +26,7 @@ public sealed class CatalogOwnedUsageMapTests
     {
         await using MemoryStream stream = await CopyFixtureAsync();
         HashSet<long> before;
-        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct))
         {
             before = await ReadCatalogDataPagesAsync(reader.Database);
         }
@@ -36,7 +36,7 @@ public sealed class CatalogOwnedUsageMapTests
             await writer.RenameColumnAsync("Table4", "name", "Label", Ct);
         }
 
-        await using ReaderHarness after = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader after = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         DatabaseFile db = after.Database;
         List<long> owned = await ReadLiteralCatalogOwnedMapAsync(db);
         long rowPage = await FindCatalogRowPageAsync(db, "Table4");
@@ -50,7 +50,7 @@ public sealed class CatalogOwnedUsageMapTests
     {
         await using MemoryStream stream = await CopyFixtureAsync();
         HashSet<long> before;
-        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct))
         {
             before = await ReadCatalogDataPagesAsync(reader.Database);
         }
@@ -63,7 +63,7 @@ public sealed class CatalogOwnedUsageMapTests
             }
         }
 
-        await using ReaderHarness after = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader after = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         DatabaseFile db = after.Database;
         List<long> owned = await ReadLiteralCatalogOwnedMapAsync(db);
         HashSet<long> physical = await ReadCatalogDataPagesAsync(db);

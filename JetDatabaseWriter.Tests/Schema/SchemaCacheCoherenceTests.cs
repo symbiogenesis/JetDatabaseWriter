@@ -41,7 +41,7 @@ public sealed class SchemaCacheCoherenceTests
             await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], ct);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, WriteModes.WriterOptions(mode), cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, WriteModes.WriterOptions(mode), cancellationToken: ct);
         harness.Database.TableDefs.VerifyOnHit = true;
         ResolvedTable original = await harness.Services.Catalog.ResolveRequiredTableAsync("T", ct);
         ResolvedTable repeated = await harness.Services.Catalog.ResolveRequiredTableAsync("T", ct);
@@ -94,7 +94,7 @@ public sealed class SchemaCacheCoherenceTests
             await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], ct);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: ct);
         harness.Database.TableDefs.VerifyOnHit = true;
         ResolvedTable original = await harness.Services.Catalog.ResolveRequiredTableAsync("T", ct);
         await harness.InsertRowAsync("T", [1], ct);

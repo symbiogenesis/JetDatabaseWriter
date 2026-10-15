@@ -37,7 +37,7 @@ public sealed class TableSnapshotDiagnosticsTests
         await using var stream = new MemoryStream(image, 0, image.Length, writable: true, publiclyVisible: true);
         RowLocation damaged = await DamageRowAsync(stream, moved, ct);
         byte[] before = stream.ToArray();
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(await harness.Services.Snapshots.ResolveTableAsync(TableName, ct));
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await harness.Services.Snapshots.ForEachTypedRowAsync(
@@ -77,7 +77,7 @@ public sealed class TableSnapshotDiagnosticsTests
         SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(image, TableName, layout, ct);
         await using var stream = new MemoryStream(image, 0, image.Length, writable: true, publiclyVisible: true);
         RowLocation damaged = await DamageRowAsync(stream, moved, ct, invalidLayout: true);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(await harness.Services.Snapshots.ResolveTableAsync(TableName, ct));
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await harness.Services.Snapshots.ForEachTypedRowAsync(resolved.Entry.TDefPage, resolved.Definition, [false, false, true], (_, _, _) => new ValueTask<bool>(true), ct));
@@ -96,7 +96,7 @@ public sealed class TableSnapshotDiagnosticsTests
         await using var stream = new MemoryStream(image, 0, image.Length, writable: true, publiclyVisible: true);
         RowLocation damaged = await DamageRowAsync(stream, moved, ct);
         byte[] before = stream.ToArray();
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(await harness.Services.Snapshots.ResolveTableAsync(TableName, ct));
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await harness.Services.Snapshots.ForEachTypedRowAsync(resolved.Entry.TDefPage, resolved.Definition, [false, false, true], (_, _, _) => new ValueTask<bool>(true), ct));
@@ -114,7 +114,7 @@ public sealed class TableSnapshotDiagnosticsTests
         byte[] image = await CreateImageAsync(DatabaseFormat.AceAccdb, ct);
         await using var stream = new MemoryStream(image, 0, image.Length, writable: true, publiclyVisible: true);
         _ = await DamageRowAsync(stream, moved: null, ct);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(await harness.Services.Snapshots.ResolveTableAsync(TableName, ct));
         var expected = new JetCorruptDataException(JetErrorCode.MalformedValue, "callback failure", new JetErrorInfo { TableName = "Callback", PageNumber = 999, Reason = "original reason" });
         JetCorruptDataException actual = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
@@ -138,7 +138,7 @@ public sealed class TableSnapshotDiagnosticsTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         byte[] image = await CreateImageAsync(DatabaseFormat.AceAccdb, ct);
         await using var stream = new FailingReadStream(image);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct);
         ResolvedTable resolved = Assert.IsType<ResolvedTable>(await harness.Services.Snapshots.ResolveTableAsync(TableName, ct));
         stream.FailReads = true;
         IOException actual = await Assert.ThrowsAsync<IOException>(async () =>
@@ -153,7 +153,7 @@ public sealed class TableSnapshotDiagnosticsTests
     {
         stream.Position = 0;
         RowLocation location;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(TableName, ct));
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));

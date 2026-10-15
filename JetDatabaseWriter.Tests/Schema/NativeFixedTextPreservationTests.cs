@@ -276,7 +276,7 @@ public sealed class NativeFixedTextPreservationTests
     private static async Task DamageFixedTextAsync(MemoryStream stream, int targetId)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("FixedText", TestContext.Current.CancellationToken));
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
         ColumnInfo value = Assert.Single(definition.Columns, column => column.Name == "Value");
@@ -339,7 +339,7 @@ public sealed class NativeFixedTextPreservationTests
         }
 
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("FixedText", TestContext.Current.CancellationToken));
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
         ColumnInfo value = Assert.Single(definition.Columns, column => column.Name == "Value");
@@ -382,7 +382,7 @@ public sealed class NativeFixedTextPreservationTests
     private static async Task<(ColumnInfo Column, Dictionary<int, byte[]> Values)> ReadStorageAsync(MemoryStream stream, string tableName, string columnName)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken));
         TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken));
         ColumnInfo value = Assert.Single(definition.Columns, column => column.Name == columnName);

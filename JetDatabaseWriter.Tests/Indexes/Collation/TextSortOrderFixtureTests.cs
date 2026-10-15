@@ -40,7 +40,7 @@ public sealed class TextSortOrderFixtureTests
     [MemberData(nameof(Families))]
     public async Task HeaderAndColumnSortOrders_MatchFixtureFamily(string fixturePath, bool hasVersion, byte version)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(fixturePath, cancellationToken: TestContext.Current.CancellationToken);
         var expected = new TextSortOrder(0x0409, version, hasVersion);
         Assert.Equal(expected, harness.Database.Format.DefaultTextSortOrder);
         List<CatalogEntry> tables = await harness.Services.Catalog.GetUserTablesAsync(TestContext.Current.CancellationToken);

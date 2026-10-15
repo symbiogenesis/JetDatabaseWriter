@@ -1044,7 +1044,7 @@ public sealed class ColumnConstraintTests
         await WriteInModeAsync(stream, mode, writer => writer.CreateTableAsync(table, columns, TestContext.Current.CancellationToken).AsTask());
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             LongValueDescriptor properties = await ReadCatalogLvPropDescriptorAsync(harness.Database, table);
             Assert.True(properties.IsSinglePage);
@@ -1905,7 +1905,7 @@ public sealed class ColumnConstraintTests
         long tdefPage;
         int autoNumberOffset;
         stream.Position = 0;
-        await using (ReaderHarness pages = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessReader pages = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken))
         {
             CatalogEntry? entry = await pages.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken);
             Assert.NotNull(entry);

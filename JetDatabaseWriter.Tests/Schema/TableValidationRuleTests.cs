@@ -143,7 +143,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
 
         stream.Position = 0;
         ColumnPropertyTarget before;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("Rules", Ct));
             ColumnPropertyBlock stored = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
@@ -169,7 +169,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
         }
 
         stream.Position = 0;
-        await using WriterHarness final = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter final = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         long page = (await final.Services.Catalog.ResolveRequiredTableAsync("Rules", Ct)).Entry.TDefPage;
         ColumnPropertyTarget after = Assert.IsType<ColumnPropertyTarget>((await final.Services.Snapshots.ReadLvPropBlockAsync(page, Ct))?.FindTableTarget());
         Assert.Equal(before.Entries.Select(entry => entry.Name), after.Entries.Select(entry => entry.Name));
@@ -199,7 +199,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             long tablePage = (await harness.Services.Catalog.ResolveRequiredTableAsync("Rules", Ct)).Entry.TDefPage;
             ColumnPropertyBlock? properties = await harness.Services.Snapshots.ReadLvPropBlockAsync(tablePage, Ct);
@@ -265,7 +265,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
     private static async Task<ColumnPropertyBlock> PlantRepeatedRulesAsync(MemoryStream stream, bool conflicting)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("Rules", Ct));
         ColumnPropertyBlock stored = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
         var builder = ColumnPropertyBlockBuilder.FromBlock(stored);
@@ -302,7 +302,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
     private static async Task<ColumnPropertyBlock> ReadRulePropertiesAsync(MemoryStream stream)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         long page = (await harness.Services.Catalog.ResolveRequiredTableAsync("Rules", Ct)).Entry.TDefPage;
         return Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(page, Ct));
     }

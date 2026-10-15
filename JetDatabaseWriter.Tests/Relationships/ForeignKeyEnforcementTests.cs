@@ -799,7 +799,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(table, [1, 12.345m], TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
+        await using AccessWriter harness = await OpenAccessWriterAsync(temp);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
         TableDef def = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
         List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
@@ -841,7 +841,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
                 TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
+        await using AccessWriter harness = await OpenAccessWriterAsync(temp);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
         TableDef def = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
         List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
@@ -882,7 +882,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
             await writer.InsertRowAsync(table, [1, "memo payload"], TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await OpenWriterHarnessAsync(temp);
+        await using AccessWriter harness = await OpenAccessWriterAsync(temp);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync(table, TestContext.Current.CancellationToken);
         TableDef def = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, table, TestContext.Current.CancellationToken);
         List<RowLocation> locations = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, TestContext.Current.CancellationToken);
@@ -1170,7 +1170,7 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
 
         // Plant a relationship row with no referenced column directly through the
         // system-table index maintainer; the public API refuses to write one.
-        await using (WriterHarness harness = await OpenWriterHarnessAsync(temp))
+        await using (AccessWriter harness = await OpenAccessWriterAsync(temp))
         {
             long relationshipsTdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(
                 Constants.SystemTableNames.Relationships,
@@ -1218,10 +1218,10 @@ public sealed class ForeignKeyEnforcementTests(DatabaseCache db) : IClassFixture
         return AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true);
     }
 
-    private static ValueTask<WriterHarness> OpenWriterHarnessAsync(MemoryStream stream)
+    private static ValueTask<AccessWriter> OpenAccessWriterAsync(MemoryStream stream)
     {
         stream.Position = 0;
-        return WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        return TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)

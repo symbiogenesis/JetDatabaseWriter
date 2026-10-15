@@ -49,7 +49,7 @@ internal static class IndexMetadataCorruptionInjector
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The real-index numbers that now name a missing key column, in ascending order, or an empty list when the injected header damage makes the entire chain unreadable.</returns>
     /// <exception cref="InvalidOperationException">The database is Jet3, or a stray byte would land in a continuation page's header past its page-type byte.</exception>
-    public static async ValueTask<IReadOnlyList<int>> InjectStrayUsedPagesByteAsync(WriterHarness writer, long tdefPage, CancellationToken cancellationToken)
+    public static async ValueTask<IReadOnlyList<int>> InjectStrayUsedPagesByteAsync(AccessWriter writer, long tdefPage, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
         if (db.Format.Kind == DatabaseFormat.Jet3Mdb)
@@ -119,7 +119,7 @@ internal static class IndexMetadataCorruptionInjector
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the TDEF has been written.</returns>
     /// <exception cref="InvalidOperationException">The real index does not exist, or its slot 1 already names a column.</exception>
-    public static async ValueTask SetPhantomKeyColumnAsync(WriterHarness writer, long tdefPage, int realIndexNumber, CancellationToken cancellationToken)
+    public static async ValueTask SetPhantomKeyColumnAsync(AccessWriter writer, long tdefPage, int realIndexNumber, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
         LogicalTDefChain chain = await db.TableDefs.ReadTDefChainAsync(tdefPage, cancellationToken);

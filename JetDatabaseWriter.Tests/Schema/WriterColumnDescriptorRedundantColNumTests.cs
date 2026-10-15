@@ -33,7 +33,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(tables);
@@ -91,7 +91,7 @@ public sealed class WriterColumnDescriptorRedundantColNumTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         CatalogEntry? entry = await pages.GetCatalogEntryAsync("Customers", TestContext.Current.CancellationToken);
         Assert.NotNull(entry);

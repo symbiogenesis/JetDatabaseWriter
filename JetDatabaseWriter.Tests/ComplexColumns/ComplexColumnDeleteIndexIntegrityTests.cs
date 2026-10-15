@@ -61,7 +61,7 @@ public sealed class ComplexColumnDeleteIndexIntegrityTests
             long page;
             int liveCount;
             stream.Position = 0;
-            await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+            await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
             {
                 page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(table, Ct);
                 liveCount = (await harness.Database.GetLiveRowLocationsAsync(page, Ct)).Count;

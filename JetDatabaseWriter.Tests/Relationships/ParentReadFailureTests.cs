@@ -27,7 +27,7 @@ public sealed class ParentReadFailureTests(DatabaseCache db) : IClassFixture<Dat
         // CompanyName has no covering index, so this additional relationship
         // forces a parent snapshot even when ShipperID can be sought directly.
         await ForeignKeyTestDatabase.PlantRelationshipAsync(stream, "FK_DecodeParent", "Orders", "ShipVia", "Shippers", "CompanyName");
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, ForeignKeyTestDatabase.WriterOptions(WriteMode.Direct), cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, ForeignKeyTestDatabase.WriterOptions(WriteMode.Direct), cancellationToken: Ct))
         {
             CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("Shippers", Ct);
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, "Shippers", Ct);

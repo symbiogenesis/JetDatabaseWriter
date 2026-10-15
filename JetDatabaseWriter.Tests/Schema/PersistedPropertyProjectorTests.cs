@@ -252,7 +252,7 @@ public sealed class PersistedPropertyProjectorTests
             "CompIndexTestV2000" => TestDatabases.CompIndexTestV2000,
             _ => TestDatabases.CalcFieldTestV2010,
         };
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(table, Ct));
         ColumnPropertyBlock block = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Catalog.ReadLvPropForTableAsync(entry.TDefPage, Ct));
 

@@ -172,7 +172,7 @@ public sealed class RowSizeLimitTests
 
         ms.Position = 0;
         var options = new AccessWriterOptions { UseLockFile = false };
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(TableName, ct));
         TableDef tableDef = await db.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, TableName, ct);

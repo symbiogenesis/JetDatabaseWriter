@@ -50,7 +50,7 @@ public sealed class VariableSlotBoundsDecodePolicyTests
 
         byte[] bytes = original.ToArray();
         original.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(original, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(original, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Values", ct));
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));

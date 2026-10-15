@@ -38,7 +38,7 @@ public sealed class TextCollationSchemaTests(DatabaseCache cache) : IClassFixtur
         await using MemoryStream stream = await cache.CopyToStreamAsync(fixture, ct);
         TextSortOrder header;
         DatabaseFormat format;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             header = harness.Database.Format.DefaultTextSortOrder;
             format = harness.Database.Format.Kind;
@@ -90,7 +90,7 @@ public sealed class TextCollationSchemaTests(DatabaseCache cache) : IClassFixtur
         }
 
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         Assert.Equal(new TextSortOrder(0x0409, 0, false), harness.Database.Format.DefaultTextSortOrder);
         foreach (string table in new[] { "MSysObjects", "Stamped" })
         {

@@ -42,7 +42,7 @@ public sealed class OwnedDataPagesTests
     public async Task FullRowDirectory_ClearsFreeMapAndRollbackRestoresIt(DatabaseFormat format, bool referenceMap)
     {
         await using MemoryStream stream = await CreateDatabaseAsync(format);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         await writer.CreateTableAsync("Tiny", [new ColumnDefinition("Id", typeof(int))], [], Ct);
         CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync("Tiny", Ct);
         Assert.NotNull(entry);
@@ -86,7 +86,7 @@ public sealed class OwnedDataPagesTests
     public async Task CachingOverPager_IsRejected()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
 
         ArgumentException ex = Assert.Throws<ArgumentException>(
             () => new OwnedDataPages(writer.Database.Pages, writer.Database.Format, cacheResults: true));
@@ -95,7 +95,7 @@ public sealed class OwnedDataPagesTests
         using var uncached = new OwnedDataPages(writer.Database.Pages, writer.Database.Format, cacheResults: false);
         Assert.Empty(await uncached.GetOwnedDataPagesAsync(0, Ct));
 
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         using var cached = new OwnedDataPages(reader.Database.Pages, reader.Database.Format, cacheResults: true);
         Assert.Empty(await cached.GetOwnedDataPagesAsync(0, Ct));
     }
@@ -106,7 +106,7 @@ public sealed class OwnedDataPagesTests
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
         await using var counting = new CountingStream(stream);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, new AccessWriterOptions { PageCacheSize = 0 }, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(counting, new AccessWriterOptions { PageCacheSize = 0 }, cancellationToken: Ct);
         await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct);
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
         Assert.NotNull(entry);
@@ -126,7 +126,7 @@ public sealed class OwnedDataPagesTests
     [MemberData(nameof(Fixtures))]
     public async Task GetOwnedDataPages_MatchesForEachOwnedDataPage(string fixture)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(PathOf(fixture), cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(PathOf(fixture), cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         using var uncached = new OwnedDataPages(db.Pages, db.Format, cacheResults: false);
 
@@ -167,7 +167,7 @@ public sealed class OwnedDataPagesTests
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
         long tdefPage;
         int numRowsOffset;
-        await using (WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             Assert.Equal(60, await writer.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct));
             CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
@@ -182,7 +182,7 @@ public sealed class OwnedDataPagesTests
 
         await using var backing = new MemoryStream(bytes, writable: false);
         await using var counting = new CountingStream(backing);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(counting, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         using var cached = new OwnedDataPages(db.Pages, db.Format, cacheResults: true);
         using var uncached = new OwnedDataPages(db.Pages, db.Format, cacheResults: false);
@@ -214,7 +214,7 @@ public sealed class OwnedDataPagesTests
     [MemberData(nameof(Fixtures))]
     public async Task DataPageRows_ArrayAndIterator_Agree(string fixture)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(PathOf(fixture), cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(PathOf(fixture), cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         JetFormat format = db.Format;
         int dataPages = 0;
@@ -266,7 +266,7 @@ public sealed class OwnedDataPagesTests
         const int rowCount = 300;
         await using MemoryStream stream = await CreateDatabaseAsync(format);
         AccessWriterOptions options = WriteModes.WriterOptions(mode);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, options, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, options, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         long physicalPages = stream.Length / db.Format.PageSize;
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
@@ -306,7 +306,7 @@ public sealed class OwnedDataPagesTests
     public async Task WriterOwnedPages_Mutations_MatchPhysicalScan(DatabaseFormat format)
     {
         await using MemoryStream stream = await CreateDatabaseAsync(format);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         await AssertScanParityAsync(harness);
         await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 100).Select(id => new object?[] { id, new string('p', 120) }), Ct);
         await AssertScanParityAsync(harness);
@@ -330,7 +330,7 @@ public sealed class OwnedDataPagesTests
     public async Task WriterOwnedPages_CorruptPointerAndOwner_MatchScan()
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct);
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
         Assert.NotNull(entry);
@@ -361,7 +361,7 @@ public sealed class OwnedDataPagesTests
     {
         await using MemoryStream stream = await CreateDatabaseAsync(DatabaseFormat.AceAccdb);
         await using var counting = new CountingStream(stream);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, new AccessWriterOptions { PageCacheSize = 0 }, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(counting, new AccessWriterOptions { PageCacheSize = 0 }, cancellationToken: Ct);
         await harness.InsertRowsAsync(TableName, Enumerable.Range(1, 60).Select(id => new object?[] { id, new string('p', 120) }), Ct);
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
         Assert.NotNull(entry);
@@ -432,7 +432,7 @@ public sealed class OwnedDataPagesTests
         await AssertScanParityAsync(harness);
     }
 
-    private static async Task AssertScanParityAsync(WriterHarness harness)
+    private static async Task AssertScanParityAsync(AccessWriter harness)
     {
         CatalogEntry? entry = await harness.Services.Catalog.GetCatalogEntryAsync(TableName, Ct);
         Assert.NotNull(entry);

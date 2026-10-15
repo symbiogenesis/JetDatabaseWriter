@@ -120,7 +120,7 @@ public sealed class ComplexColumnsFallbackOwnershipTests
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct);
         long tdefPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", ComplexColumnTestSupport.Ct);
         if (damage == "TDEF")
         {

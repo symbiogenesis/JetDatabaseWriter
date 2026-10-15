@@ -1120,7 +1120,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
     private static async Task PlantCascadeRelationshipAsync(MemoryStream ms)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
         TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, Ct);
         object[] row = definition.CreateNullValueRow();
@@ -1166,7 +1166,7 @@ public sealed class ForeignKeyCascadeUpdateTests(DatabaseCache db) : IClassFixtu
     private static async Task<HashSet<long>> ReadDataPagesAsync(MemoryStream ms, string tableName)
     {
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, ReaderOptions, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, ReaderOptions, cancellationToken: Ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, Ct);
         Assert.NotNull(entry);
         List<RowLocation> rows = await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, Ct);

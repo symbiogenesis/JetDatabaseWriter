@@ -68,7 +68,7 @@ public sealed class TableDefReaderTests
     {
         Assert.True(TableDefReader.VerifyCacheHits);
         await using MemoryStream stream = await CreateWideTableAsync(DatabaseFormat.Jet4Mdb);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         Assert.True(harness.Database.TableDefs.VerifyOnHit);
     }
 
@@ -86,7 +86,7 @@ public sealed class TableDefReaderTests
     public async Task ReadTableDef_EveryFixtureTable_MatchesPinnedDescriptors(string fixture, string? password, string expectedSha256)
     {
         var options = new AccessReaderOptions(password) { UseLockFile = false };
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(FixturePath(fixture), options, Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(FixturePath(fixture), options, Ct);
         using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: false);
 
         var text = new StringBuilder();
@@ -112,7 +112,7 @@ public sealed class TableDefReaderTests
     public async Task ReadTableDef_EveryFixtureTable_MatchesColumnMetadata(string fixture, string? password)
     {
         var options = new AccessReaderOptions(password) { UseLockFile = false };
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(FixturePath(fixture), options, Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(FixturePath(fixture), options, Ct);
         using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: false);
 
         IReadOnlyList<string> tables = await harness.Services.Schema.ListTablesAsync(Ct);
@@ -159,7 +159,7 @@ public sealed class TableDefReaderTests
     {
         await using var file = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.NorthwindTraders, Ct));
         await using var counting = new CountingStream(file);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(counting, cancellationToken: Ct);
         using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults) { VerifyOnHit = false };
         int pageSize = harness.Database.Format.PageSize;
 
@@ -197,7 +197,7 @@ public sealed class TableDefReaderTests
     {
         await using MemoryStream stream = await CreateWideTableAsync(format);
         await using var counting = new CountingStream(stream);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(counting, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(counting, cancellationToken: Ct);
         using var tableDefs = new TableDefReader(harness.Database.Pages, harness.Database.Format, cacheResults: true) { VerifyOnHit = false };
         int pageSize = harness.Database.Format.PageSize;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(WideTable, Ct);
@@ -234,7 +234,7 @@ public sealed class TableDefReaderTests
     public async Task CachingOverPager_UsesWriteObservedImages()
     {
         await using MemoryStream stream = await CreateWideTableAsync(DatabaseFormat.AceAccdb);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         TableDefReader tableDefs = writer.Database.TableDefs;
         CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);
         Assert.NotNull(entry);
@@ -274,7 +274,7 @@ public sealed class TableDefReaderTests
     {
         const int patched = 0x5A17C0DE;
         await using MemoryStream stream = await CreateWideTableAsync(format);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         using var tableDefs = new TableDefReader(db.Pages, db.Format, cacheResults: false);
         int pageSize = db.Format.PageSize;

@@ -55,7 +55,7 @@ public sealed class NativeJetSecurityTests
         byte[] oldHeader = original.AsSpan(0, 4096).ToArray();
         byte[] newHeader = (byte[])oldHeader.Clone();
         EncryptionManager.WriteNativeJet4EncryptionHeader(newHeader, 0, "Changed123");
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
         long tablePage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(table, TestContext.Current.CancellationToken);
         JetDatabaseWriter.Catalog.Models.TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(tablePage, table, TestContext.Current.CancellationToken);
         byte[] tdef = Assert.IsType<byte[]>(await harness.Database.TableDefs.ReadTDefBytesAsync(tablePage, TestContext.Current.CancellationToken));
@@ -99,7 +99,7 @@ public sealed class NativeJetSecurityTests
         await using var stream = new MemoryStream(original.AsSpan().ToArray());
         byte[] oldHeader = original.AsSpan(0, 4096).ToArray();
         byte[] newHeader = oracle.AsSpan(0, 4096).ToArray();
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
         {
             await NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, harness.Services.Indexes, oldHeader, newHeader, TestContext.Current.CancellationToken);
         }
@@ -123,7 +123,7 @@ public sealed class NativeJetSecurityTests
         byte[] oldHeader = original.AsSpan(0, 4096).ToArray();
         byte[] newHeader = (byte[])oldHeader.Clone();
         EncryptionManager.WriteNativeJet4EncryptionHeader(newHeader, 0, "Changed123");
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken);
         await NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, harness.Services.Indexes, oldHeader, newHeader, TestContext.Current.CancellationToken);
         await NativeJetSecurity.RewriteAsync(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager, harness.Services.Indexes, newHeader, oldHeader, TestContext.Current.CancellationToken);
         Assert.Equal(original, stream.ToArray());

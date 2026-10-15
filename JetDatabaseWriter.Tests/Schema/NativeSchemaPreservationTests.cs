@@ -173,7 +173,7 @@ public sealed class NativeSchemaPreservationTests
     private static async Task<TableDef> ReadDefinitionAsync(MemoryStream stream, string table)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         long root = Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(Ct), entry => entry.Name == table).TDefPage;
         return Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(root, Ct));
     }
@@ -181,14 +181,14 @@ public sealed class NativeSchemaPreservationTests
     private static async Task<long> ReadRootAsync(MemoryStream stream, string table)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         return Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(Ct), entry => entry.Name == table).TDefPage;
     }
 
     private static async Task AssertContinuationAsync(MemoryStream stream, long root)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         LogicalTDefChain chain = await LogicalTDefChain.ReadRequiredAsync(root, harness.Database.Format.PageSize, harness.Pager.ReadPageAsync, JetDatabaseWriter.Pages.Paging.PageBuffers.Return, true, Ct);
         Assert.True(chain.PageNumbers.Count > 1);
     }

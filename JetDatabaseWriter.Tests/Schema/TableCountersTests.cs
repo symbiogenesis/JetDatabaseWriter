@@ -28,7 +28,7 @@ public sealed class TableCountersTests
         }
 
         await using var counting = new CountingStream(stream);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(counting, new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, PageCacheSize = 0 }, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(counting, new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, PageCacheSize = 0 }, cancellationToken: ct);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", ct);
         _ = await harness.Database.TableDefs.ReadImageAsync(entry.TDefPage, ct);
         counting.Reset();
@@ -59,7 +59,7 @@ public sealed class TableCountersTests
             await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], [new IndexDefinition("IX_Id", "Id")], ct);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, WriteModes.WriterOptions(WriteMode.Direct), cancellationToken: ct);
         CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("T", ct);
         JetFormat profile = harness.Database.Format;
         await harness.Services.TDefWriter.WriteInt32Async(entry.TDefPage, profile.TDef.NumRows, 99, ct);

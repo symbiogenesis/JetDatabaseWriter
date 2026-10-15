@@ -34,7 +34,7 @@ public sealed class SchemaEvolutionTests
         }
 
         byte[] original = stream.ToArray();
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         using var cancellation = new System.Threading.CancellationTokenSource();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
             await harness.Services.RewritePlanner.PrepareAsync(
@@ -64,7 +64,7 @@ public sealed class SchemaEvolutionTests
         }
 
         byte[] original = stream.ToArray();
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         JetOperationException error = await Assert.ThrowsAsync<JetOperationException>(async () =>
             await harness.Services.RewritePlanner.PrepareAsync(
                 "Original",
@@ -733,7 +733,7 @@ public sealed class SchemaEvolutionTests
     private static async ValueTask<IReadOnlyList<ColumnInfo>> ReadColumnDescriptorsAsync(MemoryStream stream, string tableName)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
         TableDef? definition = await harness.ReadTableDefAsync(entry.TDefPage, TestContext.Current.CancellationToken);

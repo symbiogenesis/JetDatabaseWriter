@@ -70,7 +70,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         var expectedIds = new List<int>();
         await using MemoryStream stream = await this.CopySeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, expectedIds);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
             await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             await this.InsertTailThenSingleKeysAsync(writer, expectedIds);
@@ -94,7 +94,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         var seededIds = new List<int>();
         await using MemoryStream stream = await this.CopySeededDatabaseAsync(format, baseRows: 4000, keyStep: 1000, seededIds);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             var pendingIds = new List<int>(seededIds);
@@ -129,7 +129,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         var expectedIds = new List<int>();
         await using MemoryStream stream = await this.CopySeededDatabaseAsync(format, baseRows, keyStep: 10, expectedIds);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
             await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
 
@@ -173,7 +173,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         List<int> expectedIds = DistinctRandomIds(1500);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
             await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             await CreateKeyedTableAsync(writer, this.ct);
@@ -216,7 +216,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         List<int> expectedIds = DistinctRandomIds(400);
         var expectedParentIds = new Dictionary<int, int>(expectedIds.Count);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, mode))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
             await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
             await writer.CreateTableAsync(
@@ -251,7 +251,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         }
 
         stream.Position = 0;
-        await using ReaderHarness reopened = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        await using AccessReader reopened = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
         await AssertChildIndexesMatchAsync(reopened.Database, expectedParentIds, this.ct);
     }
 
@@ -264,7 +264,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         await using MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         List<int> expectedIds = DistinctRandomIds(1500);
 
-        await using (WriterHarness writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
         {
             await using JetTransaction tx = await writer.BeginTransactionAsync(this.ct);
             await CreateKeyedTableAsync(writer, this.ct);
@@ -297,9 +297,6 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
     }
 
     private static ValueTask CreateKeyedTableAsync(AccessWriter writer, CancellationToken cancellationToken)
-        => writer.CreateTableAsync(TableName, KeyedTableColumns(), [KeyedTablePrimaryKey()], cancellationToken);
-
-    private static ValueTask CreateKeyedTableAsync(WriterHarness writer, CancellationToken cancellationToken)
         => writer.CreateTableAsync(TableName, KeyedTableColumns(), [KeyedTablePrimaryKey()], cancellationToken);
 
     private static ColumnDefinition[] KeyedTableColumns() =>
@@ -362,22 +359,20 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
     }
 
     /// <summary>
-    /// Opens the writer's internal layers over <paramref name="stream"/>, so a
-    /// test can read through the writer's own pages and services; the
-    /// harness's mutation helpers run in the auto-commit scope as the
-    /// facade's methods do.
+    /// Opens the production writer over <paramref name="stream"/> for mutations
+    /// and inspection of its own pages and services.
     /// </summary>
     /// <param name="stream">The database.</param>
     /// <param name="mode">The write mode.</param>
-    private static ValueTask<WriterHarness> OpenWriterAsync(MemoryStream stream, WriteMode mode)
-        => WriterHarness.OpenAsync(
+    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream, WriteMode mode)
+        => TestDatabase.OpenWriterAsync(
             stream,
             WriteModes.WriterOptions(mode),
             cancellationToken: TestContext.Current.CancellationToken);
 
     private static async Task AssertReopenedTableAndPrimaryKeyMatchAsync(MemoryStream stream, List<int> expectedIds, CancellationToken cancellationToken)
     {
-        await using ReaderHarness reopened = await ReaderHarness.OpenAsync(stream, ReaderOptions, cancellationToken: cancellationToken);
+        await using AccessReader reopened = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: cancellationToken);
         await AssertTableAndPrimaryKeyMatchAsync(reopened.Database, expectedIds, cancellationToken);
     }
 
@@ -632,7 +627,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
 
         MemoryStream stream = await CreateEmptyDatabaseAsync(format);
         var parentIds = new List<int>();
-        await using (WriterHarness writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
+        await using (AccessWriter writer = await OpenWriterAsync(stream, mode: WriteMode.Direct))
         {
             await writer.CreateTableAsync(
                 "P",
@@ -661,7 +656,7 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
             () => CreateSeededDatabaseAsync(format, baseRows, keyStep));
     }
 
-    private async Task InsertTailThenSingleKeysAsync(WriterHarness writer, List<int> expectedIds)
+    private async Task InsertTailThenSingleKeysAsync(AccessWriter writer, List<int> expectedIds)
     {
         // A batch whose rows need new data pages, then single inserts
         // packed into one key range of the multi-level primary key, so the

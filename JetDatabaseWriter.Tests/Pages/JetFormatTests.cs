@@ -292,7 +292,7 @@ public sealed class JetFormatTests
     [InlineData("NorthwindTraders")]
     public async Task DatabaseFile_FormatComesFromHeader(string fixture)
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(PathOf(fixture), cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(PathOf(fixture), cancellationToken: TestContext.Current.CancellationToken);
         DatabaseFile db = harness.Database;
         var expected = JetFormat.FromHeader(await ReadHeaderAsync(fixture));
 

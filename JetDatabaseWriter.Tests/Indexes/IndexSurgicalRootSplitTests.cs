@@ -168,7 +168,7 @@ public sealed class IndexSurgicalRootSplitTests
 
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
 
         var visited = new HashSet<long>();
         int reachableLeafEntries = 0;

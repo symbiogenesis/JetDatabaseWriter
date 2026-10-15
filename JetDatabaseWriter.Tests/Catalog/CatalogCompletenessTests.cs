@@ -101,7 +101,7 @@ public sealed class CatalogCompletenessTests
     public async Task ListTables_MatchesEveryUserTableRowInMSysObjects(string path)
     {
         SortedSet<string> expected;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: this.ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(path, cancellationToken: this.ct))
         {
             expected = await RawCatalogWalker.GetUserTableNamesAsync(harness, this.ct);
         }
@@ -111,7 +111,7 @@ public sealed class CatalogCompletenessTests
         Assert.Equal(expected, listed.Order(StringComparer.Ordinal));
 
         await using var copy = new MemoryStream(await File.ReadAllBytesAsync(path, this.ct));
-        await using (WriterHarness writer = await WriterHarness.OpenAsync(copy, cancellationToken: this.ct))
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(copy, cancellationToken: this.ct))
         {
             List<CatalogEntry> writerTables = await writer.Services.Catalog.GetUserTablesAsync(this.ct);
             Assert.Equal(expected, writerTables.Select(e => e.Name).Order(StringComparer.Ordinal));

@@ -124,7 +124,7 @@ public sealed class UnknownColumnTypeTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateUnknownColumnAsync(kind, variable, ct);
         byte[] original = stream.ToArray();
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Samples", ct));
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
@@ -213,7 +213,7 @@ public sealed class UnknownColumnTypeTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: cancellationToken))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: cancellationToken))
         {
             ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Samples", cancellationToken);
             long pageNumber = table.Entry.TDefPage;

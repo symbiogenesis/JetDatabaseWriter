@@ -38,7 +38,7 @@ public sealed class ComplexColumnStorageReclamationTests
 
         var pages = new HashSet<long> { flatPage };
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(flatPage, Ct);
             pages.Add(UsageMap.ReadUInt24(tdef, harness.Database.Format.TDef.UsedPagesPage));
@@ -78,7 +78,7 @@ public sealed class ComplexColumnStorageReclamationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             foreach (long page in pages)
             {
@@ -103,7 +103,7 @@ public sealed class ComplexColumnStorageReclamationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             SortedSet<long> allocated = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, Ct);
             Assert.Contains(pages, allocated.Contains);
@@ -168,7 +168,7 @@ public sealed class ComplexColumnStorageReclamationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             long complexPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", Ct);
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(complexPage, "MSysComplexColumns", Ct);

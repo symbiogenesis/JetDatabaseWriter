@@ -109,7 +109,7 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
         await using MemoryStream stream = format == DatabaseFormat.Jet3Mdb
             ? await cache.CopyToStreamAsync(TestDatabases.IndexTestV1997, this.ct)
             : await CreateDatabaseAsync(format, this.ct);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         Assert.Equal(format, db.Format.Kind);
 
@@ -136,7 +136,7 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
     public async Task EncodeTDefNameRecord_Jet3NameOver255Bytes_Throws()
     {
         await using MemoryStream stream = await cache.CopyToStreamAsync(TestDatabases.IndexTestV1997, this.ct);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: this.ct);
 
         Assert.Equal(256, harness.Database.Format.EncodeTDefNameRecord(new string('n', 255)).Length);
         Assert.Throws<ArgumentException>(() => harness.Database.Format.EncodeTDefNameRecord(new string('n', 256)));
@@ -157,7 +157,7 @@ public sealed class IndexLayoutWriterTests(DatabaseCache cache) : IClassFixture<
     {
         string path = format == DatabaseFormat.Jet3Mdb ? TestDatabases.IndexTestV1997 : TestDatabases.IndexTestV2000;
         await using MemoryStream stream = await cache.CopyToStreamAsync(path, this.ct);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: this.ct);
         DatabaseFile db = harness.Database;
         IndexLayout layout = db.Format.Index;
         Assert.Equal(format, db.Format.Kind);

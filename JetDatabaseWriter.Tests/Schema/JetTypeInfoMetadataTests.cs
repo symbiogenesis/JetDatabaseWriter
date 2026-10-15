@@ -145,7 +145,7 @@ public sealed class JetTypeInfoMetadataTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ct))
         {
             ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Samples", ct);
             long pageNumber = table.Entry.TDefPage;

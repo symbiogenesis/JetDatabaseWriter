@@ -71,7 +71,7 @@ public sealed class SystemTableLookupTests
         Assert.False(await CorruptCatalogSelfRowAsync(bytes, this.ct));
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
-        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
+        await using (AccessReader reader = await TestDatabase.OpenReaderAsync(readStream, cancellationToken: this.ct))
         {
             Assert.Equal(2, await reader.Services.Catalog.FindSystemTablePageAsync(CatalogTable, this.ct));
             Assert.Equal(2, await reader.Services.Catalog.FindSystemTablePageAsync("msysobjects", this.ct));
@@ -79,7 +79,7 @@ public sealed class SystemTableLookupTests
 
         await using var writeStream = new MemoryStream();
         await writeStream.WriteAsync(bytes, this.ct);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(writeStream, cancellationToken: this.ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(writeStream, cancellationToken: this.ct);
         Assert.Equal(2, await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(CatalogTable, this.ct));
     }
 
@@ -94,7 +94,7 @@ public sealed class SystemTableLookupTests
         Assert.True(await CorruptCatalogSelfRowAsync(bytes, this.ct));
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
-        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
+        await using (AccessReader reader = await TestDatabase.OpenReaderAsync(readStream, cancellationToken: this.ct))
         {
             JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
                 await reader.Services.Catalog.FindSystemTablePageAsync(CatalogTable, this.ct));
@@ -103,7 +103,7 @@ public sealed class SystemTableLookupTests
 
         await using var writeStream = new MemoryStream();
         await writeStream.WriteAsync(bytes, this.ct);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(writeStream, cancellationToken: this.ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(writeStream, cancellationToken: this.ct);
         JetCorruptDataException writerError = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(CatalogTable, this.ct));
         Assert.Equal(JetErrorCode.CorruptCatalog, writerError.ErrorCode);
@@ -121,7 +121,7 @@ public sealed class SystemTableLookupTests
         byte[] bytes = await File.ReadAllBytesAsync(TestDatabases.OdbcLinkerTestV2007, this.ct);
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
-        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(readStream, cancellationToken: this.ct))
+        await using (AccessReader reader = await TestDatabase.OpenReaderAsync(readStream, cancellationToken: this.ct))
         {
             long tdefPage = await reader.Services.Catalog.FindSystemTablePageAsync(linkedOdbcTable, this.ct);
             Assert.Equal(127, tdefPage);
@@ -132,7 +132,7 @@ public sealed class SystemTableLookupTests
 
         await using var writeStream = new MemoryStream();
         await writeStream.WriteAsync(bytes, this.ct);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(writeStream, cancellationToken: this.ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(writeStream, cancellationToken: this.ct);
         Assert.Equal(0, await writer.Services.CatalogRows.FindSystemTableTdefPageAsync(linkedOdbcTable, this.ct));
     }
 
@@ -161,7 +161,7 @@ public sealed class SystemTableLookupTests
     [Fact]
     public async Task FindSystemTable_ByNameSuffix_FindsComplexFlatTables()
     {
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(TestDatabases.ComplexFields, cancellationToken: this.ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(TestDatabases.ComplexFields, cancellationToken: this.ct);
         await using AccessReader reader = await TestDatabases.OpenAsync(TestDatabases.ComplexFields, cancellationToken: this.ct);
 
         var flatTables = new List<string>();
@@ -193,7 +193,7 @@ public sealed class SystemTableLookupTests
         }
 
         stream.Position = 0;
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: this.ct);
         Assert.Equal(0, await reader.Services.Catalog.FindSystemTablePageAsync("LinkedOrders", this.ct));
         Assert.NotNull(await reader.Services.Catalog.GetUserTablesAsync(this.ct));
     }
@@ -204,7 +204,7 @@ public sealed class SystemTableLookupTests
     {
         byte[] bytes = await CreateDatabaseAsync(DatabaseFormat.AceAccdb, this.ct);
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: this.ct);
         JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await reader.Services.Catalog.FindSystemTablePageAsync(static _ => true, this.ct));
         Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
@@ -213,7 +213,7 @@ public sealed class SystemTableLookupTests
     private static async ValueTask<bool> CorruptCatalogSelfRowAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: cancellationToken);
         DatabaseFile database = harness.Database;
         TableDef? catalog = await harness.ReadTableDefAsync(2, cancellationToken);
         Assert.NotNull(catalog);
@@ -250,7 +250,7 @@ public sealed class SystemTableLookupTests
     private static async ValueTask<(TableDef Definition, long RowCount)> ReadCatalogTableDefAsync(byte[] bytes, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: cancellationToken);
         TableDef? catalog = await harness.ReadTableDefAsync(2, cancellationToken);
         Assert.NotNull(catalog);
         TableCounters? counters = await harness.Database.TableDefs.ReadTableCountersAsync(2, cancellationToken);

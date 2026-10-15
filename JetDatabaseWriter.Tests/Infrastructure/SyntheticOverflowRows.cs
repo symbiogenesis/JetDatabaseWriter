@@ -128,7 +128,7 @@ internal static class SyntheticOverflowRows
     public static async ValueTask<SyntheticOverflowRow> MoveRowAsync(byte[] image, string tableName, OverflowRowLayout layout, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(image, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: cancellationToken);
         DatabaseFile db = harness.Database;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, cancellationToken);
         Assert.NotNull(entry);
@@ -238,7 +238,7 @@ internal static class SyntheticOverflowRows
     private static async ValueTask<bool> LastPageHasRoomAsync(byte[] image, string tableName, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(image, writable: false);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: cancellationToken);
         DatabaseFile db = harness.Database;
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, cancellationToken);
         Assert.NotNull(entry);

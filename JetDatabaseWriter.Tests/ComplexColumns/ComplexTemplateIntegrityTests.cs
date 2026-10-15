@@ -49,7 +49,7 @@ public sealed class ComplexTemplateIntegrityTests
         byte[] bytes = created.ToArray();
         await DeleteTemplateCatalogRowAsync(bytes);
         await using (var missingStream = new MemoryStream(bytes, writable: false))
-        await using (ReaderHarness reader = await ReaderHarness.OpenAsync(missingStream, cancellationToken: Ct))
+        await using (AccessReader reader = await TestDatabase.OpenReaderAsync(missingStream, cancellationToken: Ct))
         {
             TableDef catalog = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(2, Ct));
             var rows = new CatalogRowReader(reader.Database.Format, reader.Database.TableDefs, reader.Database.OwnedPages);
@@ -113,7 +113,7 @@ public sealed class ComplexTemplateIntegrityTests
     private static async Task DamageTemplateAsync(byte[] bytes, string damage)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         DatabaseFile database = reader.Database;
         TableDef catalog = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(2, Ct));
         var catalogRows = new CatalogRowReader(database.Format, database.TableDefs, database.OwnedPages);
@@ -142,7 +142,7 @@ public sealed class ComplexTemplateIntegrityTests
     private static async Task DeleteTemplateCatalogRowAsync(byte[] bytes)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         DatabaseFile database = reader.Database;
         TableDef? catalog = await reader.ReadTableDefAsync(2, Ct);
         Assert.NotNull(catalog);

@@ -130,7 +130,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         IReadOnlyList<string> columnNames,
         CancellationToken cancellationToken)
     {
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(dbPath, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(dbPath, cancellationToken: cancellationToken).ConfigureAwait(false);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, cancellationToken).ConfigureAwait(false);
         Assert.NotNull(entry);
 

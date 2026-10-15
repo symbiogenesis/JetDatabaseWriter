@@ -28,7 +28,7 @@ public abstract class AccessBase : IAccessBase
     public int CodePage => this.Database.Format.CodePage;
 
     /// <summary>Gets the open database file this reader or writer owns.</summary>
-    private protected DatabaseFile Database { get; }
+    internal DatabaseFile Database { get; }
 
     /// <inheritdoc/>
     public abstract ValueTask DisposeAsync();

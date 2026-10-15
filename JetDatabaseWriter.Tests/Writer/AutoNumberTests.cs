@@ -1005,7 +1005,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     private static async ValueTask<HashSet<long>> ReadDataPagesAsync(MemoryStream ms, string table, CancellationToken ct)
     {
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, ct);
         Assert.NotNull(entry);
         IReadOnlyList<long> owned = await harness.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, ct);
@@ -1072,7 +1072,7 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     {
         long offset;
         ms.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: ct))
         {
             CatalogEntry? entry = await harness.GetCatalogEntryAsync(table, ct);
             Assert.NotNull(entry);

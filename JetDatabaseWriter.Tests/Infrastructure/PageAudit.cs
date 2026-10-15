@@ -19,7 +19,7 @@ internal static class PageAudit
     /// <param name="harness">The active writer graph.</param>
     /// <param name="cancellationToken">The token used for reads.</param>
     /// <returns>The multiply owned page numbers.</returns>
-    public static async ValueTask<SortedSet<long>> FindMultiplyOwnedDataPagesAsync(WriterHarness harness, CancellationToken cancellationToken)
+    public static async ValueTask<SortedSet<long>> FindMultiplyOwnedDataPagesAsync(AccessWriter harness, CancellationToken cancellationToken)
     {
         var owned = new HashSet<long>();
         var duplicates = new SortedSet<long>();

@@ -54,7 +54,7 @@ public sealed class CatalogTraversalCorruptionTests
         }
 
         stream.Position = 0;
-        await using ReaderHarness lookup = await ReaderHarness.OpenAsync(stream, options, cancellationToken: ct);
+        await using AccessReader lookup = await TestDatabase.OpenReaderAsync(stream, options, cancellationToken: ct);
         for (int attempt = 0; attempt < 2; attempt++)
         {
             JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
@@ -82,7 +82,7 @@ public sealed class CatalogTraversalCorruptionTests
         }
 
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         TableDef msys = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(2, ct));
         CatalogRow victim = Assert.Single(
             await new CatalogRowReader(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages).GetCatalogRowsAsync(msys, ct),

@@ -45,7 +45,7 @@ public sealed class RowDirectoryTests
     [MemberData(nameof(Formats))]
     public async Task LiveRowFollowedByDeletedSlotsAtSameOffset_GetsFullLength(DatabaseFormat format)
     {
-        await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
+        await using AccessReader harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
         int top = db.Format.PageSize;
         int shared = top - 300;
@@ -63,7 +63,7 @@ public sealed class RowDirectoryTests
     [MemberData(nameof(Formats))]
     public async Task DeletedSlotsBeforeLiveSlotAtSameOffset_GetsFullLength(DatabaseFormat format)
     {
-        await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
+        await using AccessReader harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
         int top = db.Format.PageSize;
         int shared = top - 300;
@@ -81,7 +81,7 @@ public sealed class RowDirectoryTests
     [MemberData(nameof(Formats))]
     public async Task OffsetsNotDescending_EndAtNextGreaterOffset(DatabaseFormat format)
     {
-        await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
+        await using AccessReader harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
         int top = db.Format.PageSize;
         byte[] page = BuildDataPage(db, top - 600, top - 100, top - 300, (top - 450) | Deleted);
@@ -105,7 +105,7 @@ public sealed class RowDirectoryTests
     [MemberData(nameof(Formats))]
     public async Task RowDirectory_FlagsOverflowHeadersAndLeavesOutDeletedSlots(DatabaseFormat format)
     {
-        await using ReaderHarness harness = await OpenEmptyAsync(format, this.ct);
+        await using AccessReader harness = await OpenEmptyAsync(format, this.ct);
         DatabaseFile db = harness.Database;
         int top = db.Format.PageSize;
         byte[] page = BuildDataPage(db, top - 100, (top - 200) | Overflow, (top - 300) | Deleted, (top - 400) | Deleted | Overflow);
@@ -141,7 +141,7 @@ public sealed class RowDirectoryTests
         return page;
     }
 
-    private static async ValueTask<ReaderHarness> OpenEmptyAsync(DatabaseFormat format, CancellationToken cancellationToken)
+    private static async ValueTask<AccessReader> OpenEmptyAsync(DatabaseFormat format, CancellationToken cancellationToken)
     {
         var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -155,6 +155,6 @@ public sealed class RowDirectoryTests
         }
 
         ms.Position = 0;
-        return await ReaderHarness.OpenAsync(ms, leaveOpen: false, cancellationToken: cancellationToken);
+        return await TestDatabase.OpenReaderAsync(ms, leaveOpen: false, cancellationToken: cancellationToken);
     }
 }

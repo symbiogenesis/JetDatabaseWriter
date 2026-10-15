@@ -31,7 +31,7 @@ public sealed class IndexMutationPhaseTests
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, PageCacheSize = 0 }, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, new AccessWriterOptions { UseLockFile = false, UseByteRangeLocks = false, PageCacheSize = 0 }, cancellationToken: ct);
         var editor = new IndexBTreeEditor(harness.Database.Format, harness.Pager, harness.Services.TDefWriter, harness.Services.PageAllocator);
         IndexPageLayout layout = harness.Database.Format.IndexPage;
         var entries = new List<IndexEntry>();

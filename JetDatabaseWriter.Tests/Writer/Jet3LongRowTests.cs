@@ -306,7 +306,7 @@ public sealed class Jet3LongRowTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateDatabaseAsync(null, [], ct);
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: ct);
         var encoder = new RowEncoder(harness.Database.Format);
         var random = new Random(20261003);
         int withJumps = 0;
@@ -395,7 +395,7 @@ public sealed class Jet3LongRowTests
         }
 
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: ct);
         var wide = new TableDef
         {
             Columns = [.. Enumerable.Range(0, 256).Select(FixedLong)],
@@ -417,7 +417,7 @@ public sealed class Jet3LongRowTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream ms = await CreateDatabaseAsync(null, [], ct);
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: ct);
         var encoder = new RowEncoder(harness.Database.Format);
         int[] lengths = [.. Enumerable.Repeat(-1, 255)];
         (TableDef tableDef, object[] values) = BuildRow(new Random(1), fixedCount: 0, lengths);
@@ -579,7 +579,7 @@ public sealed class Jet3LongRowTests
     {
         var rows = new Dictionary<int, byte[]>();
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: cancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(table, cancellationToken));
         await harness.Database.OwnedPages.ForEachLiveTableRowAsync(
             entry.TDefPage,

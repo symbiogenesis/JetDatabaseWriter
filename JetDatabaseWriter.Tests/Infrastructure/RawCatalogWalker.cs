@@ -34,7 +34,7 @@ internal static class RawCatalogWalker
     /// </summary>
     /// <param name="harness">The open database.</param>
     /// <param name="cancellationToken">A token used to cancel the reads.</param>
-    public static async ValueTask<SortedSet<string>> GetUserTableNamesAsync(ReaderHarness harness, CancellationToken cancellationToken)
+    public static async ValueTask<SortedSet<string>> GetUserTableNamesAsync(AccessReader harness, CancellationToken cancellationToken)
     {
         DatabaseFile db = harness.Database;
         TableDef? msys = await harness.ReadTableDefAsync(2, cancellationToken);
@@ -114,7 +114,7 @@ internal static class RawCatalogWalker
         return end - start;
     }
 
-    private static async ValueTask<(byte[] RowPage, int Start, int Size)?> FollowAsync(ReaderHarness harness, byte[] page, int pointerStart, CancellationToken cancellationToken)
+    private static async ValueTask<(byte[] RowPage, int Start, int Size)?> FollowAsync(AccessReader harness, byte[] page, int pointerStart, CancellationToken cancellationToken)
     {
         DatabaseFile db = harness.Database;
         for (int hop = 0; hop < 8; hop++)

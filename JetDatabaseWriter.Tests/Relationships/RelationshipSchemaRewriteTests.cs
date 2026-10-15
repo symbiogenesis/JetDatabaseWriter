@@ -829,7 +829,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     private static async ValueTask PointForeignKeyEntryAtAsync(MemoryStream stream, string table, string entryName, long page, int? relIdxNum = null)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         DatabaseFile database = harness.Database;
         CatalogEntry entry = await harness.Services.Catalog.GetCatalogEntryAsync(table, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException($"Table '{table}' not found.");
@@ -947,7 +947,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
     private static async ValueTask<long> GetTDefPageAsync(MemoryStream stream, string tableName)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);
         Assert.NotNull(entry);
         return entry.TDefPage;

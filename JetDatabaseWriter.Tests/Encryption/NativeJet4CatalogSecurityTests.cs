@@ -111,7 +111,7 @@ public sealed class NativeJet4CatalogSecurityTests
         await using var stream = new MemoryStream(await File.ReadAllBytesAsync(
             Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"),
             TestContext.Current.CancellationToken));
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(
             stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
         {
             long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysACEs", TestContext.Current.CancellationToken);
@@ -190,7 +190,7 @@ public sealed class NativeJet4CatalogSecurityTests
         await using var stream = new MemoryStream(await File.ReadAllBytesAsync(
             Path.Combine(TestDatabases.EncryptedRoot, "NativeJet4Schema.mdb"),
             TestContext.Current.CancellationToken));
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(
             stream, new AccessWriterOptions("Native123") { UseLockFile = false }, cancellationToken: TestContext.Current.CancellationToken))
         {
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(2, "MSysObjects", TestContext.Current.CancellationToken);

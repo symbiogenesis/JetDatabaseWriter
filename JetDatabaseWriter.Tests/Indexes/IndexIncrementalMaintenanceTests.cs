@@ -263,7 +263,7 @@ public sealed class IndexIncrementalMaintenanceTests
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
         const int rowCount = 600;
 
-        await using (WriterHarness writer = await WriterHarness.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, cancellationToken: this.ct))
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, new AccessWriterOptions { UseLockFile = false }, cancellationToken: this.ct))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -286,7 +286,7 @@ public sealed class IndexIncrementalMaintenanceTests
 
         long tdefPage = await GetTDefPageNumberAsync(stream, "T");
         stream.Position = 0;
-        await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter reopened = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(reopened.Database, tdefPage, this.ct);
         Assert.Equal(2, roots.Count);
         foreach (long root in roots)
@@ -386,7 +386,7 @@ public sealed class IndexIncrementalMaintenanceTests
         long tdefPage = await GetTDefPageNumberAsync(stream, "T");
 
         stream.Position = 0;
-        await using WriterHarness reopened = await WriterHarness.OpenAsync(stream, cancellationToken: this.ct);
+        await using AccessWriter reopened = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         TableDef tableDef = await reopened.Database.TableDefs.ReadRequiredTableDefAsync(tdefPage, "T", this.ct);
         await ClearRealIdxColMapsAsync(reopened, tdefPage, this.ct);
 
@@ -477,7 +477,7 @@ public sealed class IndexIncrementalMaintenanceTests
 
     private static async ValueTask<long> GetTDefPageNumberAsync(MemoryStream stream, string tableName)
     {
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException($"Table '{tableName}' not found in catalog.");
 
@@ -485,7 +485,7 @@ public sealed class IndexIncrementalMaintenanceTests
     }
 
     private static async ValueTask ClearRealIdxColMapsAsync(
-        WriterHarness writer,
+        AccessWriter writer,
         long tdefPage,
         CancellationToken cancellationToken)
     {

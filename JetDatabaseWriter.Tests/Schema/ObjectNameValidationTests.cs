@@ -404,7 +404,7 @@ public sealed class ObjectNameValidationTests
     {
         const string invalidName = "   ";
         await using MemoryStream ms = await CreateDatabaseAsync(format);
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             await harness.Services.Schema.CreateTableAsync(
                 invalidName,

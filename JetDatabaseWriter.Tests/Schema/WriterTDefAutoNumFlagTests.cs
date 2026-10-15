@@ -60,7 +60,7 @@ public sealed class WriterTDefAutoNumFlagTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
         IReadOnlyList<string> tables = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
@@ -187,7 +187,7 @@ public sealed class WriterTDefAutoNumFlagTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: TestContext.Current.CancellationToken);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
 
         int pageSize = reader.PageSize;
         CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken);

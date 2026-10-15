@@ -416,7 +416,7 @@ public sealed class ReadSurfaceConsistencyTests
     private static async ValueTask CorruptAsync(byte[] bytes, Action<DatabaseFile, byte[], int> corrupt, CancellationToken cancellationToken)
     {
         await using var ms = new MemoryStream(bytes, writable: true);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: cancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: cancellationToken);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(TableName, cancellationToken);
         Assert.NotNull(entry);
 

@@ -77,7 +77,7 @@ public sealed class CatalogScanProjectionTests
     public async Task EnumerateRowsForTdef_ProjectedOutMemoColumn_IsNotDecoded(DatabaseFormat format)
     {
         await using MemoryStream ms = await CreateDatabaseWithUnreadableMemoAsync(format);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("T", Ct));
         TableDef td = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, Ct));
         var decoder = new RowDecoder(harness.Database.Format, harness.Database.OwnedPages, harness.Services.PageCache, new LongValueDecoder(harness.Database.Format, harness.Services.PageCache), strictParsing: true);
@@ -103,7 +103,7 @@ public sealed class CatalogScanProjectionTests
     public async Task ListLinkedTables_WithProjection_MatchesFixtureMetadata(string fixture)
     {
         string path = fixture == "LinkerTestV2007" ? TestDatabases.LinkerTestV2007 : TestDatabases.OdbcLinkerTestV2007;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(path, cancellationToken: Ct);
         TableDef msys = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(2, Ct));
         int name = msys.FindColumnIndex("Name");
         int type = msys.FindColumnIndex("Type");

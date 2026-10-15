@@ -6,8 +6,7 @@ using Xunit;
 
 /// <summary>
 /// Pins the reader's page-read rule, <see cref="AccessReaderOptions.UsesPositionalPageReads"/>,
-/// which <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/>
-/// and <see cref="ReaderHarness"/> share: positional <c>RandomAccess</c> reads
+/// used by <see cref="AccessReader.OpenAsync(string, AccessReaderOptions?, System.Threading.CancellationToken)"/>: positional <c>RandomAccess</c> reads
 /// only for a file the reader opened by path, unless the mode is
 /// <see cref="PageReadOptimizationMode.Disabled"/>, and never in the
 /// netstandard2.1 build, which has no <c>RandomAccess</c>.

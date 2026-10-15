@@ -24,7 +24,6 @@ using JetDatabaseWriter.Transactions;
 public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 {
     private readonly LockFileCoordinator lockFileCoordinator;
-    private readonly WriterServices services;
 
     [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope", Justification = "AccessBase takes ownership of the database file; DisposeAsync disposes it as the last LockFileCoordinator.DisposeAfterAsync step.")]
     private AccessWriter(
@@ -42,7 +41,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         try
         {
             pager.ByteRangeLock = options.CreateByteRangeLock(stream);
-            this.services = new WriterServices(this.Database, pager, options, pager.ByteRangeLock);
+            this.Services = new WriterServices(this.Database, pager, options, pager.ByteRangeLock);
         }
         catch
         {
@@ -50,6 +49,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             throw;
         }
     }
+
+    /// <summary>Gets the writer services for internal inspection.</summary>
+    internal WriterServices Services { get; }
+
+    /// <summary>Gets the writer's page store for internal inspection and fault injection.</summary>
+    internal Pager Pager => (Pager)this.Database.Pages;
 
     /// <summary>
     /// Asynchronously opens a JET database file for writing and returns a new <see cref="AccessWriter"/> instance.
@@ -229,7 +234,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The asynchronous operation.</returns>
     public ValueTask SetTableValidationRuleAsync(string tableName, TableValidationRule? rule, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Schema.SetTableValidationRuleAsync(tableName, rule, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Schema.SetTableValidationRuleAsync(tableName, rule, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, CancellationToken cancellationToken = default)
@@ -237,53 +242,53 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <inheritdoc/>
     public ValueTask CreateTableAsync(string tableName, IReadOnlyList<ColumnDefinition> columns, IReadOnlyList<IndexDefinition> indexes, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Schema.CreateDeclaredTableAsync(tableName, columns, indexes, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Schema.CreateDeclaredTableAsync(tableName, columns, indexes, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask DropTableAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Schema.DropTableAsync(tableName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Schema.DropTableAsync(tableName, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Schema.AddColumnAsync(tableName, column, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Schema.AddColumnAsync(tableName, column, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask DropColumnAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Schema.DropColumnAsync(tableName, columnName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Schema.DropColumnAsync(tableName, columnName, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask RenameColumnAsync(string tableName, string oldColumnName, string newColumnName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Schema.RenameColumnAsync(tableName, oldColumnName, newColumnName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Schema.RenameColumnAsync(tableName, oldColumnName, newColumnName, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask InsertRowAsync(string tableName, object?[] values, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Data.InsertRowAsync(tableName, values, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.InsertRowAsync(tableName, values, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<object?[]> rows, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Data.InsertRowsAsync(tableName, rows, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.InsertRowsAsync(tableName, rows, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask InsertRowAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, T item, CancellationToken cancellationToken = default)
         where T : class, new()
-        => this.RunAutoCommitAsync(_ => this.services.Data.InsertItemAsync(tableName, item, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.InsertItemAsync(tableName, item, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<int> InsertRowsAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, IEnumerable<T> items, CancellationToken cancellationToken = default)
         where T : class, new()
-        => this.RunAutoCommitAsync(_ => this.services.Data.InsertItemsAsync(tableName, items, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.InsertItemsAsync(tableName, items, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask InsertRowAsync(string tableName, RowValues row, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Data.InsertNamedRowAsync(tableName, row, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.InsertNamedRowAsync(tableName, row, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<int> InsertRowsAsync(string tableName, IEnumerable<RowValues> rows, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Data.InsertNamedRowsAsync(tableName, rows, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.InsertNamedRowsAsync(tableName, rows, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<int> UpdateRowsAsync(string tableName, RowCriteria criteria, RowValues updatedValues, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Data.UpdateRowsAsync(tableName, criteria, updatedValues, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.UpdateRowsAsync(tableName, criteria, updatedValues, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<int> UpdateRowsAsync(string tableName, string predicateColumn, object? predicateValue, IReadOnlyDictionary<string, object?> updatedValues, CancellationToken cancellationToken = default)
@@ -291,7 +296,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
         Guard.NotNull(updatedValues, nameof(updatedValues));
         return this.RunAutoCommitAsync(
-            _ => this.services.Data.UpdateRowsAsync(
+            _ => this.Services.Data.UpdateRowsAsync(
                 tableName,
                 RowCriteria.Where(predicateColumn, predicateValue),
                 new RowValues(updatedValues),
@@ -301,14 +306,14 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <inheritdoc/>
     public ValueTask<int> DeleteRowsAsync(string tableName, RowCriteria criteria, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Data.DeleteRowsAsync(tableName, criteria, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Data.DeleteRowsAsync(tableName, criteria, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<int> DeleteRowsAsync(string tableName, string predicateColumn, object? predicateValue, CancellationToken cancellationToken = default)
     {
         Guard.NotNullOrEmpty(predicateColumn, nameof(predicateColumn));
         return this.RunAutoCommitAsync(
-            _ => this.services.Data.DeleteRowsAsync(tableName, RowCriteria.Where(predicateColumn, predicateValue), cancellationToken),
+            _ => this.Services.Data.DeleteRowsAsync(tableName, RowCriteria.Where(predicateColumn, predicateValue), cancellationToken),
             cancellationToken);
     }
 
@@ -324,7 +329,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTableAsync(string linkedTableName, string sourceDatabasePath, string foreignTableName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTableAsync(this.Database.Format, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTableAsync(this.Database.Format, this.Database.Pages, this.Services.CatalogArtifacts, linkedTableName, sourceDatabasePath, foreignTableName, cancellationToken), cancellationToken);
 
     /// <summary>
     /// Asynchronously creates a linked-ODBC table entry (MSysObjects type 4) that references
@@ -405,7 +410,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <exception cref="ArgumentException">Thrown, before anything is written, when <paramref name="linkedTableName"/> is empty (<see cref="ArgumentNullException"/> when it is <see langword="null"/>) or breaks the naming rules.</exception>
     public ValueTask CreateLinkedTextTableAsync(string linkedTableName, string sourceDirectoryPath, string foreignFileName, string connectString, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTextTableAsync(this.Database.Format, this.Database.Pages, this.services.CatalogArtifacts, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => LinkedTableManager.CreateLinkedTextTableAsync(this.Database.Format, this.Database.Pages, this.Services.CatalogArtifacts, linkedTableName, sourceDirectoryPath, foreignFileName, connectString, cancellationToken), cancellationToken);
 
     // ════════════════════════════════════════════════════════════════
     // Foreign-key relationships — thin forwarders to RelationshipManager
@@ -413,15 +418,15 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
     /// <inheritdoc/>
     public ValueTask CreateRelationshipAsync(RelationshipDefinition relationship, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Relationships.CreateRelationshipAsync(relationship, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Relationships.CreateRelationshipAsync(relationship, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask DropRelationshipAsync(string relationshipName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Relationships.DropRelationshipAsync(relationshipName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Relationships.DropRelationshipAsync(relationshipName, cancellationToken), cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask RenameRelationshipAsync(string oldName, string newName, CancellationToken cancellationToken = default)
-        => this.RunAutoCommitAsync(_ => this.services.Relationships.RenameRelationshipAsync(oldName, newName, cancellationToken), cancellationToken);
+        => this.RunAutoCommitAsync(_ => this.Services.Relationships.RenameRelationshipAsync(oldName, newName, cancellationToken), cancellationToken);
 
     // ── Row-level APIs for complex (Attachment / MultiValue) columns ──
     // See docs/design/complex-columns-format-notes.md §2.1 / §2.4 / §3.
@@ -437,7 +442,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         Guard.NotNull(attachment, nameof(attachment));
         return this.RunAutoCommitAsync(
-            _ => this.services.ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken),
+            _ => this.Services.ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, attachment, expectAttachment: true, cancellationToken),
             cancellationToken);
     }
 
@@ -451,7 +456,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     {
         Guard.NotNull(parentRowKey, nameof(parentRowKey));
         return this.RunAutoCommitAsync(
-            _ => this.services.ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken),
+            _ => this.Services.ComplexColumns.AddComplexItemCoreAsync(tableName, columnName, parentRowKey, value, expectAttachment: false, cancellationToken),
             cancellationToken);
     }
 
@@ -465,7 +470,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public async ValueTask<int> ScrubFreePagesAsync(CancellationToken cancellationToken = default)
     {
         this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
-        return await this.RunAutoCommitAsync(this.services.PageAllocator.ScrubFreePagesAsync, cancellationToken).ConfigureAwait(false);
+        return await this.RunAutoCommitAsync(this.Services.PageAllocator.ScrubFreePagesAsync, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -478,11 +483,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     public async ValueTask<long> ShrinkDatabaseAsync(CancellationToken cancellationToken = default)
     {
         this.Database.Pages.ThrowIfDisposedOrCancelled(cancellationToken);
-        return await this.services.Transactions.RunMutationAsync(
+        return await this.Services.Transactions.RunMutationAsync(
             async () =>
             {
-                await using WriteScope scope = this.services.Transactions.BeginWriteScope();
-                return await this.services.PageAllocator.ShrinkDatabaseAsync(cancellationToken).ConfigureAwait(false);
+                await using WriteScope scope = this.Services.Transactions.BeginWriteScope();
+                return await this.Services.PageAllocator.ShrinkDatabaseAsync(cancellationToken).ConfigureAwait(false);
             },
             cancellationToken).ConfigureAwait(false);
     }
@@ -512,7 +517,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// </exception>
     /// <exception cref="ObjectDisposedException">Thrown when the writer has been disposed.</exception>
     public ValueTask<JetTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
-        => this.services.Transactions.BeginTransactionAsync(cancellationToken);
+        => this.Services.Transactions.BeginTransactionAsync(cancellationToken);
 
     /// <inheritdoc/>
     public override async ValueTask DisposeAsync()
@@ -524,7 +529,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
 
         // The coordinator drains every step in order, aggregates failures,
         // and unconditionally releases the .ldb / .laccdb slot last.
-        await this.services.Transactions.RunDisposalAsync(this.DisposeCoreAsync).ConfigureAwait(false);
+        await this.Services.Transactions.RunDisposalAsync(this.DisposeCoreAsync).ConfigureAwait(false);
         this.lockFileCoordinator.Dispose();
     }
 
@@ -545,12 +550,12 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         PageFile.OpenFileStream(path, FileAccess.ReadWrite, FileShare.None, FileOptions.Asynchronous | FileOptions.RandomAccess);
 
     private ValueTask DisposeCoreAsync()
-        => this.services.Transactions.IsFaulted
+        => this.Services.Transactions.IsFaulted
             ? this.lockFileCoordinator.DisposeAfterAsync(
                 this.Database.DisposeAsync)
             : this.lockFileCoordinator.DisposeAfterAsync(
-                this.services.Transactions.DisposeActiveTransactionAsync,
-                this.services.Transactions.FlushPendingWritesAsync,
+                this.Services.Transactions.DisposeActiveTransactionAsync,
+                this.Services.Transactions.FlushPendingWritesAsync,
                 this.Database.DisposeAsync);
 
     /// <summary>
@@ -563,7 +568,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private ValueTask RunAutoCommitAsync(Func<CancellationToken, ValueTask> work, CancellationToken cancellationToken)
-        => this.services.Transactions.RunAutoCommitAsync(work, cancellationToken);
+        => this.Services.Transactions.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
     /// Generic-result variant of <see cref="RunAutoCommitAsync(Func{CancellationToken, ValueTask}, CancellationToken)"/>.
@@ -572,7 +577,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="work">The work to execute.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private ValueTask<TResult> RunAutoCommitAsync<TResult>(Func<CancellationToken, ValueTask<TResult>> work, CancellationToken cancellationToken)
-        => this.services.Transactions.RunAutoCommitAsync(work, cancellationToken);
+        => this.Services.Transactions.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
     /// Completes a freshly written empty database: reserves the core Jet4/ACE
@@ -582,11 +587,11 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask InitializeFreshDatabaseAsync(CancellationToken cancellationToken)
     {
-        await using WriteScope scope = this.services.Transactions.BeginWriteScope();
-        long coreSystemTableStartPage = await this.services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(cancellationToken).ConfigureAwait(false);
-        await this.services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(cancellationToken).ConfigureAwait(false);
-        await this.services.SystemCatalog.CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
-        await this.services.ComplexColumns.ScaffoldComplexSystemTablesAsync(cancellationToken).ConfigureAwait(false);
+        await using WriteScope scope = this.Services.Transactions.BeginWriteScope();
+        long coreSystemTableStartPage = await this.Services.CatalogArtifacts.ReserveFreshCoreSystemTablePagesAsync(cancellationToken).ConfigureAwait(false);
+        await this.Services.CatalogArtifacts.InitializeFreshCatalogIndexesAsync(cancellationToken).ConfigureAwait(false);
+        await this.Services.SystemCatalog.CreateCoreSystemTablesAsync(coreSystemTableStartPage, cancellationToken).ConfigureAwait(false);
+        await this.Services.ComplexColumns.ScaffoldComplexSystemTablesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private ValueTask CreateLinkedOdbcTableCoreAsync(
@@ -600,7 +605,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
             _ => LinkedTableManager.CreateLinkedOdbcTableAsync(
                 this.Database.Format,
                 this.Database.Pages,
-                this.services.CatalogArtifacts,
+                this.Services.CatalogArtifacts,
                 linkedTableName,
                 connectionString,
                 foreignTableName,

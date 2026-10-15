@@ -93,7 +93,7 @@ internal static class ComplexColumnTestSupport
     public static async Task<RawTable> ReadRawTableAsync(MemoryStream ms, string tableName)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
         List<LocatedRow> rows = await harness.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, Ct);
         byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(table.Entry.TDefPage, Ct);
@@ -127,7 +127,7 @@ internal static class ComplexColumnTestSupport
     public static async Task SetComplexSlotsAsync(MemoryStream ms, string tableName, Func<object[], bool> rowFilter, Func<object[], string, int?> slotFor, bool clearCounter = false)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         DatabaseFile db = harness.Database;
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
         foreach (LocatedRow row in await harness.Services.Snapshots.ReadRowsAsync(table.Entry.TDefPage, Ct))
@@ -165,7 +165,7 @@ internal static class ComplexColumnTestSupport
     public static async Task<byte[]> ReadSystemTdefAsync(MemoryStream ms, string systemTableName)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(systemTableName, Ct);
         Assert.True(page > 0, $"System table '{systemTableName}' was not found.");
         return await harness.Database.Pages.ReadPageCopyAsync(page, Ct);
@@ -195,7 +195,7 @@ internal static class ComplexColumnTestSupport
         }
 
         ms.Position = 0;
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         return await CollectLeafKeysAsync(pages, JetFormat.ForNewDatabase(format).IndexPage, pageSize, index.FirstDp, Ct);
     }
 
@@ -206,7 +206,7 @@ internal static class ComplexColumnTestSupport
     /// <param name="rootPage">The index root page.</param>
     /// <param name="ct">The cancellation token.</param>
     public static async Task<List<byte[]>> CollectLeafKeysAsync(
-        ReaderHarness pages,
+        AccessReader pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,

@@ -313,7 +313,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         // Only the flat FK exceeds the counter: the single parent keeps its
         // valid reference 1, so parent validation cannot mask the flat defect.
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             TableDef flatDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(flatPage, "<flat>", Ct);
             ColumnInfo foreignKey = Assert.IsType<ColumnInfo>(flatDef.FindColumn("_Files"));
@@ -545,7 +545,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         Assert.Equal(3, docs.ComplexAutoNumber);
 
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             long parentPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", Ct)).Entry.TDefPage;
             long complexPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", Ct);
@@ -716,7 +716,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         }
 
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync("T", Ct)).Entry.TDefPage;
         byte[] before = await harness.Database.Pages.ReadPageCopyAsync(tdefPage, Ct);
         var autoNumbers = new AutoNumberMaintainer(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Pager);
@@ -768,7 +768,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
 
         ms.Position = 0;
         byte[] baseline;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, WriterOptions(mode), cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, WriterOptions(mode), cancellationToken: Ct))
         {
             // Prime the same writer's next-reference cache before corrupting
             // persisted slots, so allocation cannot rely on a cold seed scan.
@@ -833,7 +833,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
         // Write-back decoding refuses malformed assigned references. Inspect the
         // fixture's fixed slots directly to verify they survived that refusal.
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Docs", Ct);
         JetFormat format = harness.Database.Format;
         var rows = new List<object[]>();
@@ -883,7 +883,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
     private static async Task SetComplexAutoNumberAsync(MemoryStream ms, string tableName, int counter)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         long tdefPage = (await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct)).Entry.TDefPage;
         byte[] tdef = await harness.Database.Pages.ReadPageCopyAsync(tdefPage, Ct);
         System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(tdef.AsSpan(ComplexAutoNumberOffset, 4), counter);

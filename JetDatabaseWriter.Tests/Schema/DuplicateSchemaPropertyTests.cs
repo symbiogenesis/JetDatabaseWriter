@@ -251,7 +251,7 @@ public sealed class DuplicateSchemaPropertyTests
     private static async Task PlantDuplicatesAsync(MemoryStream stream, bool splitTargets, string? contradictoryProperty = null)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         CatalogEntry entry = Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(Ct), value => value.Name == "T");
         ColumnPropertyBlock original = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
         var builder = ColumnPropertyBlockBuilder.FromBlock(original);
@@ -299,7 +299,7 @@ public sealed class DuplicateSchemaPropertyTests
     private static async Task<ColumnPropertyBlock> ReadBlockAsync(MemoryStream stream)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         CatalogEntry entry = Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(Ct), value => value.Name == "T");
         return Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct));
     }

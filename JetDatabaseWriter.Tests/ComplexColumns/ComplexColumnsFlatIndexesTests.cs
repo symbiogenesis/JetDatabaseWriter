@@ -46,7 +46,7 @@ public sealed class ComplexColumnsFlatIndexesTests
 
         Assert.Equal(2, columns.Count);
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         foreach (ComplexColumnInfo column in columns)
         {
             byte[] page = await harness.Pager.ReadPageCopyAsync(column.FlatTableId, TestContext.Current.CancellationToken);

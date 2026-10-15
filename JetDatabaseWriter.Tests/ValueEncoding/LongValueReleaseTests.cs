@@ -38,7 +38,7 @@ public sealed class LongValueReleaseTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         AccessWriterOptions options = Options(secureErase);
         await using MemoryStream ms = await CreateDatabaseAsync(format, ct);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
         var encoder = new LongValueEncoder(db.Format, harness.Pager, harness.Services.PageAllocator, options);
 
@@ -89,7 +89,7 @@ public sealed class LongValueReleaseTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         AccessWriterOptions options = Options(secureErase);
         await using MemoryStream ms = await CreateDatabaseAsync(format, ct);
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, options, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, options, cancellationToken: ct);
         DatabaseFile db = harness.Database;
         var encoder = new LongValueEncoder(db.Format, harness.Pager, harness.Services.PageAllocator, options);
         CatalogEntry table = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("T", ct));

@@ -569,13 +569,13 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectDup");
 
-        await using (WriterHarness setup = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessWriter setup = await TestDatabase.OpenWriterAsync(frontEndPath, cancellationToken: ct))
         {
             await InsertCatalogObjectAsync(setup, -500, "LowLevelDuplicate", ct);
         }
 
         byte[] before = await File.ReadAllBytesAsync(frontEndPath, ct);
-        await using (WriterHarness writer = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct))
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(frontEndPath, cancellationToken: ct))
         {
             JetObjectExistsException ex = await Assert.ThrowsAsync<JetObjectExistsException>(() =>
                 InsertCatalogObjectAsync(writer, -501, "lowlevelduplicate", ct).AsTask());
@@ -591,7 +591,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("CatalogObjectSplit");
 
-        await using WriterHarness writer = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(frontEndPath, cancellationToken: ct);
         int intermediateRootsBefore = await CountMsysObjectsIntermediateRootsAsync(writer.Database, ct);
 
         string lastName = string.Empty;
@@ -627,7 +627,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
         }
 
         Assert.Equal(before, await File.ReadAllBytesAsync(frontEndPath, ct));
-        await using WriterHarness harness = await WriterHarness.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(frontEndPath, cancellationToken: ct);
         Assert.False(
             await CatalogObjectExistsAsync(harness, "LinkedData", ct),
             "The failed catalog splice should roll back the linked-table MSysObjects row.");
@@ -695,7 +695,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
     }
 
     private static ValueTask<long[]> InsertCatalogObjectAsync(
-        WriterHarness writer,
+        AccessWriter writer,
         int objectId,
         string objectName,
         CancellationToken cancellationToken)
@@ -767,7 +767,7 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
             (byte[])lvProp.Clone());
     }
 
-    private static async ValueTask<bool> CatalogObjectExistsAsync(WriterHarness writer, string objectName, CancellationToken cancellationToken)
+    private static async ValueTask<bool> CatalogObjectExistsAsync(AccessWriter writer, string objectName, CancellationToken cancellationToken)
     {
         TableDef msys = await writer.Database.TableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken);
         List<CatalogRow> rows = await writer.Services.CatalogRows.GetCatalogRowsAsync(msys, cancellationToken);
@@ -936,11 +936,11 @@ public sealed class LinkedTableCatalogWriterTests : IDisposable
 
     private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(string dbPath, CancellationToken cancellationToken)
     {
-        await using WriterHarness harness = await WriterHarness.OpenAsync(dbPath, cancellationToken: cancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(dbPath, cancellationToken: cancellationToken);
         await CorruptMsysObjectsFirstIndexRootPageTypeAsync(harness, cancellationToken);
     }
 
-    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(WriterHarness writer, CancellationToken cancellationToken)
+    private static async ValueTask CorruptMsysObjectsFirstIndexRootPageTypeAsync(AccessWriter writer, CancellationToken cancellationToken)
     {
         DatabaseFile db = writer.Database;
         byte[] tdef = await db.Pages.ReadPageAsync(2, cancellationToken);

@@ -108,7 +108,7 @@ public sealed class LvalFormAssertionTests
     internal static async Task AssertStorageModeAsync(MemoryStream stream, string tableName, byte expectedStorageMode)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(tableName, TestContext.Current.CancellationToken));
         DataPageLayout layout = harness.Database.Format.DataPage;
         var modes = new List<byte>();

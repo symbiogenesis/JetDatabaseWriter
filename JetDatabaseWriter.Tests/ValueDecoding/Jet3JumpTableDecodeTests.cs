@@ -91,7 +91,7 @@ public sealed class Jet3JumpTableDecodeTests
             Assert.Skip("test2V1997.mdb is unavailable on this machine.");
         }
 
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(TestDatabases.Test2V1997, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(TestDatabases.Test2V1997, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("MSP_PROJECTS", ct));
             TableDef tableDef = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
@@ -168,7 +168,7 @@ public sealed class Jet3JumpTableDecodeTests
 
         RowLocation location;
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("T", ct));
             location = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, ct));

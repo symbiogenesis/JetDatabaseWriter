@@ -230,7 +230,7 @@ public sealed class UnmaintainableIndexWriteTests
         // Real indexes 0 to 2 (UX_00, IX_01 and IX_02) come before the first
         // phantom one: each must hold exactly one entry per live row.
         stream.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct))
         {
             CatalogEntry? entry = await harness.GetCatalogEntryAsync(TableName, Ct);
             Assert.NotNull(entry);
@@ -530,7 +530,7 @@ public sealed class UnmaintainableIndexWriteTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct))
         {
             ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(TableName, Ct);
             IReadOnlyList<int> phantoms;

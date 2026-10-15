@@ -63,7 +63,7 @@ public sealed class IndexCodesAggregateTests
             fixturePath,
             new AccessReaderOptions { UseLockFile = false },
             ct);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(fixturePath, cancellationToken: ct);
+        await using AccessReader pages = await TestDatabase.OpenReaderAsync(fixturePath, cancellationToken: ct);
 
         IndexPageLayout layout = JetFormat.ForNewDatabase(reader.DatabaseFormat).IndexPage;
         int pageSize = reader.PageSize;
@@ -209,7 +209,7 @@ public sealed class IndexCodesAggregateTests
         => s.Length <= max ? s : s[..max] + "...(+" + (s.Length - max).ToString(CultureInfo.InvariantCulture) + ")";
 
     private static async Task<List<byte[]>> CollectAllLeafKeysAsync(
-        ReaderHarness pages,
+        AccessReader pages,
         IndexPageLayout layout,
         int pageSize,
         long rootPage,

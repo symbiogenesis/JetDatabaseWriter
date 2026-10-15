@@ -105,7 +105,7 @@ public sealed class NativeSchemaDaoTests
             createScript,
             TimeSpan.FromMinutes(2));
         Assert.True(created.ExitCode == 0, $"DAO create failed: {created.StdOut}\n{created.StdErr}");
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(session.SourcePath, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(session.SourcePath, cancellationToken: Ct))
         {
             long root = Assert.Single(await harness.Services.Catalog.GetUserTablesAsync(Ct), entry => entry.Name == "Documents").TDefPage;
             JetDatabaseWriter.Schema.LogicalTDefChain chain = await JetDatabaseWriter.Schema.LogicalTDefChain.ReadRequiredAsync(root, harness.Database.Format.PageSize, harness.Pager.ReadPageAsync, JetDatabaseWriter.Pages.Paging.PageBuffers.Return, true, Ct);

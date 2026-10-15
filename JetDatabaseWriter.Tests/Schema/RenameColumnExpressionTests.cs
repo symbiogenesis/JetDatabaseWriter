@@ -255,7 +255,7 @@ public sealed class RenameColumnExpressionTests
         // Plant an unsupported stored expression through the internal schema
         // service, which skips the definition check.
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             await harness.Services.Schema.CreateTableAsync(
                 "CalcUnsupportedPercent",

@@ -478,7 +478,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     private static async ValueTask RemoveRelationshipRowsAsync(MemoryStream stream, string relationshipName)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
         TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, Ct);
         var store = new RelationshipCatalogStore(harness.Database.Format, harness.Database.TableDefs, harness.Database.OwnedPages, harness.Services.Indexes, harness.Services.CatalogRows, harness.Services.Snapshots, harness.Services.Catalog);
@@ -602,7 +602,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     private static async ValueTask<int> ReadRealIndexCountAsync(MemoryStream stream, string table)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         CatalogEntry entry = await harness.GetCatalogEntryAsync(table, Ct) ?? throw new InvalidOperationException($"Table '{table}' not found.");
         byte[] td = await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct) ?? throw new InvalidOperationException($"Table '{table}' has no TDEF.");
         return Ri32(td, harness.Database.Format.TDef.NumRealIdx);
@@ -611,7 +611,7 @@ public sealed class DropTableRelationshipTests(DatabaseCache db) : IClassFixture
     private static async ValueTask<long> GetTDefPageAsync(MemoryStream stream, string tableName)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync(tableName, Ct);
         Assert.NotNull(entry);
         return entry.TDefPage;

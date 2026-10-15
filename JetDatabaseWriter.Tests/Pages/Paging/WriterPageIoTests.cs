@@ -69,7 +69,7 @@ public sealed class WriterPageIoTests(ITestOutputHelper output)
 
         int pageSize = format == DatabaseFormat.Jet3Mdb ? 2048 : 4096;
         await using var trace = new PageTraceStream(stream, pageSize);
-        await using WriterHarness writer = await WriterHarness.OpenAsync(trace, Options(256, mode == WriteMode.AutoCommit), cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(trace, Options(256, mode == WriteMode.AutoCommit), cancellationToken: TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("PageIo", [1], TestContext.Current.CancellationToken);
         await using JetTransaction? transaction = mode == WriteMode.ExplicitCommit
             ? await writer.BeginTransactionAsync(TestContext.Current.CancellationToken) : null;

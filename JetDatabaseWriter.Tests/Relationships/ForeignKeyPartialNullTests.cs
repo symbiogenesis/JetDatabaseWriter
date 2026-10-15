@@ -234,7 +234,7 @@ public sealed class ForeignKeyPartialNullTests(DatabaseCache db) : IClassFixture
             await setup.InsertRowAsync("C", [20, null, 9], Ct);
         }
 
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Relationships, Ct);
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(page, Constants.SystemTableNames.Relationships, Ct);

@@ -39,7 +39,7 @@ public sealed class NativeBigBinaryTests
         byte[] original = await File.ReadAllBytesAsync(TestDatabases.TestV2000, ct);
         byte[] adapted = (byte[])original.Clone();
         await using (var source = new MemoryStream(original, writable: false))
-        await using (ReaderHarness catalogReader = await ReaderHarness.OpenAsync(source, cancellationToken: ct))
+        await using (AccessReader catalogReader = await TestDatabase.OpenReaderAsync(source, cancellationToken: ct))
         {
             TableDef catalog = Assert.IsType<TableDef>(await catalogReader.ReadTableDefAsync(2, ct));
             var rows = new CatalogRowReader(catalogReader.Database.Format, catalogReader.Database.TableDefs, catalogReader.Database.OwnedPages);
@@ -55,7 +55,7 @@ public sealed class NativeBigBinaryTests
 
         await using var fixture = new MemoryStream(adapted, writable: false);
         var expected = new List<byte[]>();
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(fixture, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(fixture, cancellationToken: ct))
         {
             DatabaseFile database = harness.Database;
             var catalogRows = new CatalogRowReader(database.Format, database.TableDefs, database.OwnedPages);
@@ -107,7 +107,7 @@ public sealed class NativeBigBinaryTests
         }
 
         stream.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Samples", ct));
             TableDef definition = Assert.IsType<TableDef>(await harness.ReadTableDefAsync(entry.TDefPage, ct));
@@ -146,7 +146,7 @@ public sealed class NativeBigBinaryTests
 
         stream.Position = 0;
         RowLocation location;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("Samples", ct));
             location = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(entry.TDefPage, ct));

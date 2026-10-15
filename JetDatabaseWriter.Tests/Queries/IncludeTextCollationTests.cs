@@ -78,7 +78,7 @@ public sealed class IncludeTextCollationTests(DatabaseCache cache) : IClassFixtu
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await cache.CopyToStreamAsync(fixture, ct);
         TextSortOrder stored;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             TextSortOrder header = harness.Database.Format.DefaultTextSortOrder;
             stored = header.HasVersion
@@ -110,7 +110,7 @@ public sealed class IncludeTextCollationTests(DatabaseCache cache) : IClassFixtu
         }
 
         stream.Position = 0;
-        await using (ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct))
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct))
         {
             foreach (string table in new[] { "TextJoinParent", "TextJoinChild" })
             {

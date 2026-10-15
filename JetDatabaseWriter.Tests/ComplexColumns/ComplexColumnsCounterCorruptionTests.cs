@@ -70,7 +70,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
         await CreatePopulatedAsync(ms);
         long flatPage = await ReadFlatPageAsync(ms);
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             TableDef flatDef = await harness.Database.TableDefs.ReadRequiredTableDefAsync(flatPage, "<flat>", Ct);
             ColumnInfo foreignKey = Assert.IsType<ColumnInfo>(flatDef.FindColumn("_Files"));
@@ -128,7 +128,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
         await CreatePopulatedAsync(ms);
         ms.Position = 0;
         long complexPage;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             complexPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", Ct);
         }
@@ -157,7 +157,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
         await using var ms = new MemoryStream();
         await CreatePopulatedAsync(ms);
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct))
         {
             long complexPage = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexColumns", Ct);
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(complexPage, "MSysComplexColumns", Ct);
@@ -222,7 +222,7 @@ public sealed class ComplexColumnsCounterCorruptionTests
     private static async Task RenameStoredColumnAsync(MemoryStream ms, long tdefPage, string oldName, string newName)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         byte[] page = await harness.Pager.ReadPageCopyAsync(tdefPage, Ct);
         byte[] oldBytes = Encoding.Unicode.GetBytes(oldName);
         byte[] newBytes = Encoding.Unicode.GetBytes(newName);

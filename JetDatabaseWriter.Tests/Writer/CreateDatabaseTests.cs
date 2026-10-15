@@ -484,7 +484,7 @@ public sealed class CreateDatabaseTests
 
             Assert.NotNull(publishedBytes);
             Assert.Equal(publishedBytes, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
-            await using (ReaderHarness reader = await ReaderHarness.OpenAsync(path, new AccessReaderOptions("Creation123") { UseLockFile = false }, TestContext.Current.CancellationToken))
+            await using (AccessReader reader = await TestDatabase.OpenReaderAsync(path, new AccessReaderOptions("Creation123") { UseLockFile = false }, TestContext.Current.CancellationToken))
             {
                 TableDef? catalog = await reader.ReadTableDefAsync(2, TestContext.Current.CancellationToken);
                 Assert.NotNull(catalog);
@@ -668,7 +668,7 @@ public sealed class CreateDatabaseTests
         }
 
         ms.Position = 0;
-        await using ReaderHarness reader = await ReaderHarness.OpenAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(ms, cancellationToken: TestContext.Current.CancellationToken);
         TableDef? msys = await reader.ReadTableDefAsync(2, TestContext.Current.CancellationToken);
 
         Assert.NotNull(msys);

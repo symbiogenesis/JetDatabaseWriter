@@ -119,7 +119,7 @@ public sealed class TransactionSavepointTests
             await writer.InsertRowAsync("Items", [1], TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         SortedSet<long> before = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
@@ -150,7 +150,7 @@ public sealed class TransactionSavepointTests
             await writer.CreateTableAsync("Seed", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
             async token =>
@@ -179,7 +179,7 @@ public sealed class TransactionSavepointTests
             await writer.CreateRelationshipAsync(new RelationshipDefinition("FK_Child", "Parent", "Id", "Child", "ParentId") { CascadeDeletes = true }, TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         SortedSet<long> before = await PageAudit.FindAllocatedPagesAsync(harness.Database, harness.Services.PageAllocator, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<InvalidDataException>(() => harness.Services.Transactions.RunAutoCommitAsync(
@@ -239,7 +239,7 @@ public sealed class TransactionSavepointTests
             await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var proceed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -279,7 +279,7 @@ public sealed class TransactionSavepointTests
             await writer.CreateTableAsync("Items", [new ColumnDefinition("Id", typeof(int))], TestContext.Current.CancellationToken);
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         await using JetTransaction transaction = await harness.BeginTransactionAsync(TestContext.Current.CancellationToken);
         var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var proceed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

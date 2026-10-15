@@ -149,7 +149,7 @@ public sealed class AttachmentWrapperDaoTests
             }
         }
 
-        await using WriterHarness harness = await WriterHarness.OpenAsync(path, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(path, cancellationToken: Ct);
         long flatTdefPage = CatalogValueReader.TdefPageFromId(flatId);
         TableDef flat = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(flatTdefPage, Ct));
         int fileName = flat.FindColumnIndex("FileName");

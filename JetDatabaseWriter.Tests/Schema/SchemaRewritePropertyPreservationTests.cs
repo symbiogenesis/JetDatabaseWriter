@@ -610,7 +610,7 @@ public sealed class SchemaRewritePropertyPreservationTests
     private static async Task PlantPropertiesAsync(MemoryStream ms, string table, Action<ColumnPropertyBlockBuilder> edit)
     {
         ms.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(table, Ct));
         ColumnPropertyBlock? stored = await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct);
         ColumnPropertyBlockBuilder builder = stored is null ? new ColumnPropertyBlockBuilder() : ColumnPropertyBlockBuilder.FromBlock(stored);
@@ -643,7 +643,7 @@ public sealed class SchemaRewritePropertyPreservationTests
     private static async Task<List<TargetView>> ReadTargetsAsync(MemoryStream ms, string table)
     {
         ms.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(ms, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(table, Ct));
         ColumnPropertyBlock? block = await harness.Services.Catalog.ReadLvPropForTableAsync(entry.TDefPage, Ct);
         return block is null

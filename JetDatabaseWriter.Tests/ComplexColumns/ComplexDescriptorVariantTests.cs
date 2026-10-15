@@ -36,7 +36,7 @@ public sealed class ComplexDescriptorVariantTests
     public async Task NativeMultiValueDescriptors_DecimalUsesPrecisionInsteadOfTextMisc()
     {
         await using var stream = new MemoryStream(await File.ReadAllBytesAsync(NativeFixture, Ct));
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         ResolvedTable parent = await harness.Services.Catalog.ResolveRequiredTableAsync("Variants", Ct);
         Assert.Equal(3, BinaryPrimitives.ReadInt32LittleEndian((await harness.Pager.ReadPageCopyAsync(parent.Entry.TDefPage, Ct)).AsSpan(28, 4)));
         ColumnPropertyBlock block = Assert.IsType<ColumnPropertyBlock>(await harness.Services.Snapshots.ReadLvPropBlockAsync(parent.Entry.TDefPage, Ct));
@@ -94,7 +94,7 @@ public sealed class ComplexDescriptorVariantTests
         }
 
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         AssertDecimalDescriptor(Assert.Single((await ReadTemplateAsync(harness)).Columns));
         long flatPage;
         stream.Position = 0;
@@ -230,7 +230,7 @@ public sealed class ComplexDescriptorVariantTests
     public async Task NativeCalculatedDescriptors_RetainDistinctStorageAndResultTypes()
     {
         await using var stream = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.CalcFieldTestV2010, Ct));
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync("Table1", Ct);
         (string Name, ColumnType Storage, ColumnType Result)[] variants =
         [
@@ -251,7 +251,7 @@ public sealed class ComplexDescriptorVariantTests
         }
     }
 
-    private static async Task<TableDef> ReadTemplateAsync(WriterHarness harness)
+    private static async Task<TableDef> ReadTemplateAsync(AccessWriter harness)
     {
         long page = await harness.Services.CatalogRows.FindSystemTableTdefPageAsync("MSysComplexType_Decimal", Ct);
         return Assert.IsType<TableDef>(await harness.Services.Catalog.ReadTableDefAsync(page, Ct));
@@ -260,7 +260,7 @@ public sealed class ComplexDescriptorVariantTests
     private static async Task AssertReferencesAsync(MemoryStream stream, int counter, int[] identifiers, bool allowCounterAdvance = false)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         ResolvedTable parent = await harness.Services.Catalog.ResolveRequiredTableAsync("Variants", Ct);
         int actualCounter = BinaryPrimitives.ReadInt32LittleEndian((await harness.Pager.ReadPageCopyAsync(parent.Entry.TDefPage, Ct)).AsSpan(28, 4));
         Assert.InRange(actualCounter, counter, allowCounterAdvance ? int.MaxValue : counter);
@@ -290,7 +290,7 @@ public sealed class ComplexDescriptorVariantTests
     private static async Task<Dictionary<string, byte[]>> ReadDescriptorsAsync(MemoryStream stream, string tableName)
     {
         stream.Position = 0;
-        await using WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         ResolvedTable table = await harness.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
         return table.Definition.Columns.ToDictionary(column => column.Name, column => column.RawDescriptor.Where((_, offset) => offset is < 5 or (> 8 and < 21) or > 22).ToArray(), StringComparer.Ordinal);
     }

@@ -127,7 +127,7 @@ public sealed class Jet3LongValueTests
 
         // The writer's own snapshot, which updates and schema rewrites copy rows from.
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: ct))
         {
             using DataTable snapshot = await harness.Services.Snapshots.ReadTableSnapshotAsync(TableName, ct);
             Assert.Equal(Sizes.Length, snapshot.Rows.Count);
@@ -196,7 +196,7 @@ public sealed class Jet3LongValueTests
         {
             copy.Write(access);
             copy.Position = 0;
-            await using WriterHarness harness = await WriterHarness.OpenAsync(copy, cancellationToken: ct);
+            await using AccessWriter harness = await TestDatabase.OpenWriterAsync(copy, cancellationToken: ct);
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("MSP_PROJECTS", ct));
             accessSingle = Assert.Single(await ReadDescriptorsAsync(harness.Database, entry.TDefPage, "PROJ_PROP_AUTHOR", ct), d => d.IsExternal);
             accessChained = Assert.Single(await ReadDescriptorsAsync(harness.Database, entry.TDefPage, "RESERVED_BINARY_DATA", ct), d => d.IsExternal);
@@ -219,7 +219,7 @@ public sealed class Jet3LongValueTests
 
         List<LongValueDescriptor> written;
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: ct))
         {
             CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync(TableName, ct));
             written = await ReadDescriptorsAsync(harness.Database, entry.TDefPage, "Blob", ct);
@@ -288,7 +288,7 @@ public sealed class Jet3LongValueTests
         }
 
         await using (var copy = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.Test2V1997, ct)))
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(copy, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(copy, cancellationToken: ct))
         {
             using DataTable snapshot = await harness.Services.Snapshots.ReadTableSnapshotAsync("MSP_PROJECTS", ct);
             byte[] binary = Assert.IsType<byte[]>(Assert.Single(snapshot.Rows.Cast<DataRow>(), r => r["RESERVED_BINARY_DATA"] is byte[] { Length: 22970 })["RESERVED_BINARY_DATA"]);
@@ -340,7 +340,7 @@ public sealed class Jet3LongValueTests
         // The writer's snapshot, which updates and schema rewrites copy, holds the
         // stored bytes, as the public OLE reads now return them too.
         await using (var copy = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.MdbtoolsNwind, ct)))
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(copy, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(copy, cancellationToken: ct))
         {
             using DataTable categories = await harness.Services.Snapshots.ReadTableSnapshotAsync("Categories", ct);
             byte[] picture = Assert.IsType<byte[]>(categories.Rows.Cast<DataRow>().Single(r => Convert.ToInt32(r["CategoryID"], System.Globalization.CultureInfo.InvariantCulture) == 1)["Picture"]);
@@ -407,7 +407,7 @@ public sealed class Jet3LongValueTests
 
         long keepPage;
         ms.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(ms, cancellationToken: ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(ms, cancellationToken: ct))
         {
             CatalogEntry keep = Assert.IsType<CatalogEntry>(await harness.Services.Catalog.GetCatalogEntryAsync("Keep", ct));
             keepPage = (await harness.Database.GetLiveRowLocationsAsync(keep.TDefPage, ct))[0].PageNumber;

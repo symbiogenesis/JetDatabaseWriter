@@ -32,8 +32,7 @@ using Xunit;
 /// <see cref="AccessBase"/>, or a composition root; each collaborator graph
 /// must be acyclic; the facade must not be reachable from its services at
 /// runtime; the reader's graph neither holds nor names anything that writes;
-/// each facade sets up its page reads by how it was opened; and the facades
-/// expose no internal members.
+/// each facade sets up its page reads by how it was opened.
 /// </summary>
 public sealed class ServiceGraphTests
 {
@@ -315,8 +314,8 @@ public sealed class ServiceGraphTests
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
-        DatabaseFile database = FacadeDatabase(writer);
+        HashSet<object> reachable = ReachableLibraryObjects(writer.Services);
+        DatabaseFile database = writer.Database;
 
         // Every part comes from the writer's own file, and snapshot page
         // caches keep nothing between calls.
@@ -342,10 +341,10 @@ public sealed class ServiceGraphTests
 
         await writer.InsertRowAsync("Items", [2], TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
+        HashSet<object> reachable = ReachableLibraryObjects(writer.Services);
 
         Pager pager = Assert.IsType<Pager>(Assert.Single(reachable, item => item is Pager));
-        Assert.Same(FacadeDatabase(writer).Pages, pager);
+        Assert.Same(writer.Database.Pages, pager);
         _ = Assert.Single(reachable, item => item is TDefWriter);
     }
 
@@ -365,7 +364,7 @@ public sealed class ServiceGraphTests
             leaveOpen: true,
             TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
+        HashSet<object> reachable = ReachableLibraryObjects(writer.Services);
 
         _ = Assert.Single(reachable, item => item is IOwnedMapPolicy);
     }
@@ -384,15 +383,15 @@ public sealed class ServiceGraphTests
         _ = await reader.ListTablesAsync(TestContext.Current.CancellationToken);
         _ = await reader.ReadTableAsync("Items", cancellationToken: TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(reader));
+        HashSet<object> reachable = ReachableLibraryObjects(reader.Services);
 
         Assert.DoesNotContain(reader, reachable);
-        AssertSharesDatabaseParts(FacadeDatabase(reader), reachable);
+        AssertSharesDatabaseParts(reader.Database, reachable);
 
         // The reader's graph cannot write: no pager, journal, byte-range lock
         // or TDEF writer.
         Assert.DoesNotContain(reachable, item => WriteCapabilities.Contains(item.GetType()));
-        Assert.IsNotType<Pager>(FacadeDatabase(reader).Pages);
+        Assert.IsNotType<Pager>(reader.Database.Pages);
     }
 
     [Fact]
@@ -407,10 +406,10 @@ public sealed class ServiceGraphTests
 
         await writer.InsertRowAsync("Items", [2], TestContext.Current.CancellationToken);
 
-        HashSet<object> reachable = ReachableLibraryObjects(FacadeServices(writer));
+        HashSet<object> reachable = ReachableLibraryObjects(writer.Services);
 
         Assert.DoesNotContain(writer, reachable);
-        AssertSharesDatabaseParts(FacadeDatabase(writer), reachable);
+        AssertSharesDatabaseParts(writer.Database, reachable);
     }
 
     /// <summary>
@@ -422,9 +421,7 @@ public sealed class ServiceGraphTests
     /// even in <see cref="PageReadOptimizationMode.Enabled"/>: the caller may
     /// still use the stream's position, and its handle may be overlapped. A
     /// writer never reads inline, before a write, after one or inside a
-    /// transaction, because its handle is overlapped. <see cref="ReaderHarness"/>,
-    /// which other tests open in the reader's place, sets up a path and a
-    /// stream the same way.
+    /// transaction, because its handle is overlapped.
     /// </summary>
     /// <param name="mode">The readers' page-read optimization mode.</param>
     [Theory]
@@ -444,27 +441,18 @@ public sealed class ServiceGraphTests
             var readerOptions = new AccessReaderOptions { PageReadOptimizationMode = mode, UseLockFile = false };
             bool positional = mode != PageReadOptimizationMode.Disabled && !LibraryTarget.IsNetStandard;
             await using (AccessReader reader = await AccessReader.OpenAsync(path, readerOptions, TestContext.Current.CancellationToken))
-            await using (ReaderHarness harness = await ReaderHarness.OpenAsync(path, readerOptions, TestContext.Current.CancellationToken))
             {
-                DatabaseFile db = FacadeDatabase(reader);
+                DatabaseFile db = reader.Database;
                 Assert.Equal(positional, db.Pages.UsesRandomAccessPageReads);
                 Assert.True(db.Pages.ReadsInlineOnThreadPool, $"{mode}: a path-opened reader reads inline on pool threads.");
-                Assert.Equal(positional, harness.Database.Pages.UsesRandomAccessPageReads);
-                Assert.True(harness.Database.Pages.ReadsInlineOnThreadPool, $"{mode}: ReaderHarness opens a path as the reader does.");
             }
 
             await using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.Asynchronous | FileOptions.RandomAccess))
+            await using (AccessReader reader = await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, TestContext.Current.CancellationToken))
             {
-                await using (AccessReader reader = await AccessReader.OpenAsync(stream, readerOptions, leaveOpen: true, TestContext.Current.CancellationToken))
-                {
-                    DatabaseFile db = FacadeDatabase(reader);
-                    Assert.False(db.Pages.UsesRandomAccessPageReads, $"{mode}: a reader over a caller's stream reads positionally.");
-                    Assert.False(db.Pages.ReadsInlineOnThreadPool, $"{mode}: a reader over a caller's stream reads inline.");
-                }
-
-                await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, readerOptions, leaveOpen: true, TestContext.Current.CancellationToken);
-                Assert.False(harness.Database.Pages.UsesRandomAccessPageReads);
-                Assert.False(harness.Database.Pages.ReadsInlineOnThreadPool);
+                DatabaseFile db = reader.Database;
+                Assert.False(db.Pages.UsesRandomAccessPageReads, $"{mode}: a reader over a caller's stream reads positionally.");
+                Assert.False(db.Pages.ReadsInlineOnThreadPool, $"{mode}: a reader over a caller's stream reads inline.");
             }
 
             foreach (bool transactional in (bool[])[false, true])
@@ -473,7 +461,7 @@ public sealed class ServiceGraphTests
                     path,
                     new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = transactional },
                     TestContext.Current.CancellationToken);
-                DatabaseFile db = FacadeDatabase(writer);
+                DatabaseFile db = writer.Database;
                 Assert.False(db.Pages.ReadsInlineOnThreadPool);
                 await writer.InsertRowAsync("Items", [transactional ? 3 : 2], TestContext.Current.CancellationToken);
                 Assert.False(db.Pages.ReadsInlineOnThreadPool);
@@ -487,57 +475,6 @@ public sealed class ServiceGraphTests
         {
             File.Delete(path);
         }
-    }
-
-    /// <summary>
-    /// The facades carry no members for tests to reach into, and none for the
-    /// writer either: the writer reads its own file through its own
-    /// <see cref="DatabaseFile"/> instead of a reader opened over it.
-    /// </summary>
-    /// <param name="facade">The facade type.</param>
-    [Theory]
-    [InlineData(typeof(AccessBase))]
-    [InlineData(typeof(AccessReader))]
-    [InlineData(typeof(AccessWriter))]
-    public void Facade_ExposesNoInternalMembers(Type facade)
-    {
-        ArgumentNullException.ThrowIfNull(facade);
-
-        IEnumerable<string> fields = facade.GetFields(DeclaredMembers)
-            .Where(field => field.IsAssembly || field.IsFamilyOrAssembly)
-            .Select(field => field.Name);
-        IEnumerable<string> methods = facade.GetMethods(DeclaredMembers).Cast<MethodBase>()
-            .Concat(facade.GetConstructors(DeclaredMembers))
-            .Where(method => (method.IsAssembly || method.IsFamilyOrAssembly) && !method.IsDefined(typeof(CompilerGeneratedAttribute)))
-            .Select(method => method.IsSpecialName && method.Name.Length > 4 && method.Name[3] == '_' ? method.Name[4..] : method.Name);
-        IEnumerable<string> nestedTypes = facade.GetNestedTypes(DeclaredMembers)
-            .Where(nested => (nested.IsNestedAssembly || nested.IsNestedFamORAssem) && !nested.IsDefined(typeof(CompilerGeneratedAttribute)))
-            .Select(nested => nested.Name);
-
-        string[] actual = [.. fields.Concat(methods).Concat(nestedTypes).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
-
-        Assert.Empty(actual);
-    }
-
-    /// <summary>
-    /// Returns the service graph a reader or writer built at open, from the
-    /// facade's private <c>services</c> field. This class checks how the
-    /// facades are composed, so it is the one place tests reflect into them;
-    /// every other test opens <see cref="ReaderHarness"/> or <see cref="WriterHarness"/>.
-    /// </summary>
-    /// <param name="facade">The reader or writer.</param>
-    /// <exception cref="MissingFieldException">Thrown when the facade no longer declares the field, or it is null.</exception>
-    private static object FacadeServices(AccessBase facade) => ReadField(facade, "services")
-        ?? throw new MissingFieldException(facade.GetType().FullName, "services");
-
-    /// <summary>Returns the database file a reader or writer owns, from <see cref="AccessBase"/>'s private <c>Database</c> property.</summary>
-    /// <param name="facade">The reader or writer.</param>
-    /// <exception cref="MissingMemberException">Thrown when <see cref="AccessBase"/> no longer declares the property.</exception>
-    private static DatabaseFile FacadeDatabase(AccessBase facade)
-    {
-        PropertyInfo property = typeof(AccessBase).GetProperty("Database", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMemberException(typeof(AccessBase).FullName, "Database");
-        return (DatabaseFile)property.GetValue(facade)!;
     }
 
     /// <summary>Reads a private instance field declared on <paramref name="instance"/>'s type or a base type.</summary>

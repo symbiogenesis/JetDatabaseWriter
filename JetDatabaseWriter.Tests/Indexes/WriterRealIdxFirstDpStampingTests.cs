@@ -109,10 +109,6 @@ public sealed class WriterRealIdxFirstDpStampingTests
             new AccessReaderOptions { UseLockFile = false },
             leaveOpen: true,
             cancellationToken: ct);
-        await using ReaderHarness pages = await ReaderHarness.OpenAsync(
-            new MemoryStream(fileBytes),
-            leaveOpen: false,
-            cancellationToken: ct);
 
         int pageSize = reader.PageSize;
         long totalPages = fileBytes.LongLength / pageSize;
@@ -133,7 +129,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
                 string rangeMessage = $"{tableName}.{idx.Name}: FirstDp={idx.FirstDp} out of range (must be > 1 and < {totalPages}). Regression: writer emitted a zero / invalid real-idx first_dp stamp.";
                 Assert.True(idx.FirstDp > 1 && idx.FirstDp < totalPages, rangeMessage);
 
-                byte[] page = await pages.ReadPageCopyAsync(idx.FirstDp, ct);
+                byte[] page = await reader.ReadPageCopyAsync(idx.FirstDp, ct);
                 byte tag = page[0];
                 string tagMessage = $"{tableName}.{idx.Name}: page {idx.FirstDp} (FirstDp target) has page tag 0x{tag:X2}, expected 0x04 (leaf) or 0x03 (intermediate). Regression: writer's first_dp does not point at an index B-tree page.";
                 Assert.True(tag is 0x04 or 0x03, tagMessage);
@@ -152,7 +148,7 @@ public sealed class WriterRealIdxFirstDpStampingTests
         // would still allow DAO to choke on the same byte.
         foreach (string tableName in tableNames)
         {
-            CatalogEntry? entry = await pages.GetCatalogEntryAsync(tableName, ct);
+            CatalogEntry? entry = await reader.GetCatalogEntryAsync(tableName, ct);
             Assert.NotNull(entry);
             int tdefPage = (int)entry.TDefPage;
             int off = tdefPage * pageSize;

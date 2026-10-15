@@ -36,7 +36,7 @@ public sealed class LinkedCatalogValidationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             TableDef objects = Assert.IsType<TableDef>(await harness.Database.TableDefs.ReadTableDefAsync(2, ComplexColumnTestSupport.Ct));
             CatalogRow link = Assert.Single(await harness.Services.CatalogRows.GetCatalogRowsAsync(objects, ComplexColumnTestSupport.Ct), row => row.Name == "Alias2");
@@ -81,7 +81,7 @@ public sealed class LinkedCatalogValidationTests
         }
 
         stream.Position = 0;
-        await using (WriterHarness harness = await WriterHarness.OpenAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
+        await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: ComplexColumnTestSupport.Ct))
         {
             byte[] page = await harness.Database.Pages.ReadPageCopyAsync(2, ComplexColumnTestSupport.Ct);
             int offset = page.AsSpan().IndexOf(Encoding.Unicode.GetBytes(missing));

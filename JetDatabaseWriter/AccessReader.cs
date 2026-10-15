@@ -54,9 +54,6 @@ public sealed class AccessReader : AccessBase, IAccessReader
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync after the database closes; failed open disposes the lease in OpenAsync.")]
     private readonly FileStream? snapshotLease;
 
-    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Disposed in DisposeReaderResourcesAsync, passed as a step to LockFileCoordinator.DisposeAfterAsync; failed construction disposes it in the constructor.")]
-    private readonly ReaderServices services;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="AccessReader"/> class.
     /// Opens <paramref name="path"/> and detects the JET version.
@@ -92,7 +89,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         try
         {
             services = new ReaderServices(this.Database, options);
-            this.services = services;
+            this.Services = services;
 
             if (options.ValidateOnOpen)
             {
@@ -130,7 +127,10 @@ public sealed class AccessReader : AccessBase, IAccessReader
     public PageReadOptimizationMode PageReadOptimizationMode { get; }
 
     /// <summary>Gets diagnostic output populated after each call to <see cref="ListTablesAsync"/>.</summary>
-    public string LastDiagnostics => this.services.Catalog.FormatDiagnostics(this.DiagnosticsEnabled);
+    public string LastDiagnostics => this.Services.Catalog.FormatDiagnostics(this.DiagnosticsEnabled);
+
+    /// <summary>Gets the reader services for internal inspection.</summary>
+    internal ReaderServices Services { get; }
 
     /// <summary>
     /// Asynchronously opens a JET database file and returns a new <see cref="AccessReader"/> instance.
@@ -226,40 +226,40 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     /// <inheritdoc/>
     public ValueTask<DataTable> ReadFirstTableAsStringsAsync(uint? maxRows = null, CancellationToken cancellationToken = default)
-        => this.services.Tables.ReadFirstTableAsStringsAsync(maxRows, cancellationToken);
+        => this.Services.Tables.ReadFirstTableAsStringsAsync(maxRows, cancellationToken);
 
     /// <summary>Returns the names of all user tables in the database asynchronously.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A list of user table names.</returns>
     public ValueTask<IReadOnlyList<string>> ListTablesAsync(CancellationToken cancellationToken = default)
-        => this.services.Schema.ListTablesAsync(cancellationToken);
+        => this.Services.Schema.ListTablesAsync(cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<bool> TryLookupTableAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.services.Tables.TryLookupTableAsync(tableName, cancellationToken);
+        => this.Services.Tables.TryLookupTableAsync(tableName, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<LinkedTableInfo>> ListLinkedTablesAsync(CancellationToken cancellationToken = default)
-        => this.services.Schema.ListLinkedTablesAsync(cancellationToken);
+        => this.Services.Schema.ListLinkedTablesAsync(cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<TableStat>> GetTableStatsAsync(CancellationToken cancellationToken = default)
-        => this.services.Schema.GetTableStatsAsync(cancellationToken);
+        => this.Services.Schema.GetTableStatsAsync(cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<DataTable> GetTablesAsDataTableAsync(CancellationToken cancellationToken = default)
-        => this.services.Schema.GetTablesAsDataTableAsync(cancellationToken);
+        => this.Services.Schema.GetTablesAsDataTableAsync(cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<long> GetRealRowCountAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.services.Tables.GetRealRowCountAsync(tableName, cancellationToken);
+        => this.Services.Tables.GetRealRowCountAsync(tableName, cancellationToken);
 
     /// <inheritdoc/>
     public IAsyncEnumerable<object[]> Rows(
         string tableName,
         IProgress<long>? progress = null,
         CancellationToken cancellationToken = default)
-        => this.services.Tables.Rows(tableName, progress, cancellationToken);
+        => this.Services.Tables.Rows(tableName, progress, cancellationToken);
 
     /// <inheritdoc/>
     public IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
@@ -267,7 +267,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         IProgress<long>? progress = null,
         CancellationToken cancellationToken = default)
         where T : class, new()
-        => this.services.Tables.Rows<T>(tableName, progress, cancellationToken);
+        => this.Services.Tables.Rows<T>(tableName, progress, cancellationToken);
 
     /// <inheritdoc/>
     public IAsyncEnumerable<T> Rows<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(
@@ -276,42 +276,42 @@ public sealed class AccessReader : AccessBase, IAccessReader
         IProgress<long>? progress = null,
         CancellationToken cancellationToken = default)
         where T : class, new()
-        => this.services.Indexes.Rows(tableName, predicate, progress, cancellationToken);
+        => this.Services.Indexes.Rows(tableName, predicate, progress, cancellationToken);
 
     /// <inheritdoc/>
     public IAsyncEnumerable<string[]> RowsAsStrings(
         string tableName,
         IProgress<long>? progress = null,
         CancellationToken cancellationToken = default)
-        => this.services.Tables.RowsAsStrings(tableName, progress, cancellationToken);
+        => this.Services.Tables.RowsAsStrings(tableName, progress, cancellationToken);
 
     /// <summary>Reads a table's persisted validation expression and message.</summary>
     /// <param name="tableName">The table name.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The table rule, or null when no rule is stored.</returns>
     public ValueTask<TableValidationRule?> GetTableValidationRuleAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.services.Schema.GetTableValidationRuleAsync(tableName, cancellationToken);
+        => this.Services.Schema.GetTableValidationRuleAsync(tableName, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<ColumnMetadata>> GetColumnMetadataAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.services.Schema.GetColumnMetadataAsync(tableName, cancellationToken);
+        => this.Services.Schema.GetColumnMetadataAsync(tableName, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<IndexMetadata>> ListIndexesAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.services.Indexes.ListIndexesAsync(tableName, cancellationToken);
+        => this.Services.Indexes.ListIndexesAsync(tableName, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<RelationshipMetadata>> ListRelationshipsAsync(CancellationToken cancellationToken = default)
-        => this.services.Schema.ListRelationshipsAsync(cancellationToken);
+        => this.Services.Schema.ListRelationshipsAsync(cancellationToken);
 
     /// <inheritdoc/>
     public IAccessIndexQuery<object[]> FromIndex(string tableName, string indexName)
-        => new AccessObjectIndexQuery(this.services.Indexes, tableName, indexName);
+        => new AccessObjectIndexQuery(this.Services.Indexes, tableName, indexName);
 
     /// <inheritdoc/>
     public IAccessIndexQuery<T> FromIndex<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, string indexName)
         where T : class, new()
-            => new AccessTypedIndexQuery<T>(this.services.Indexes, tableName, indexName);
+            => new AccessTypedIndexQuery<T>(this.Services.Indexes, tableName, indexName);
 
     /// <inheritdoc/>
     [RequiresUnreferencedCode("LINQ queries and Include discover entity types and members at runtime. Use typed row readers for trimmed applications.")]
@@ -320,7 +320,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
         where T : class, new()
     {
         Guard.NotNullOrEmpty(tableName, nameof(tableName));
-        var provider = new AccessQueryProvider<T>(this.services.Tables, this.services.Indexes, this.services.Schema, tableName, this.services.Operations);
+        var provider = new AccessQueryProvider<T>(this.Services.Tables, this.Services.Indexes, this.Services.Schema, tableName, this.Services.Operations);
         return new AccessQueryable<T>(provider);
     }
 
@@ -330,19 +330,19 @@ public sealed class AccessReader : AccessBase, IAccessReader
         string indexName,
         IReadOnlyList<object?> keyValues,
         CancellationToken cancellationToken = default)
-        => this.services.Indexes.SeekRowsAsync(tableName, indexName, keyValues, cancellationToken);
+        => this.Services.Indexes.SeekRowsAsync(tableName, indexName, keyValues, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<ComplexColumnInfo>> GetComplexColumnsAsync(string tableName, CancellationToken cancellationToken = default)
-        => this.services.Schema.GetComplexColumnsAsync(tableName, cancellationToken);
+        => this.Services.Schema.GetComplexColumnsAsync(tableName, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<AttachmentRecord>> GetAttachmentsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
-        => this.services.ComplexItems.GetAttachmentsAsync(tableName, columnName, cancellationToken);
+        => this.Services.ComplexItems.GetAttachmentsAsync(tableName, columnName, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<MultiValueItem>> GetMultiValueItemsAsync(string tableName, string columnName, CancellationToken cancellationToken = default)
-        => this.services.ComplexItems.GetMultiValueItemsAsync(tableName, columnName, cancellationToken);
+        => this.Services.ComplexItems.GetMultiValueItemsAsync(tableName, columnName, cancellationToken);
 
     /// <summary>
     /// Reads the entire table into a DataTable with properly typed columns asynchronously.
@@ -354,12 +354,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> containing the table's data with properly typed columns.</returns>
     public ValueTask<DataTable> ReadTableAsync(string? tableName = null, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
-        => this.services.Tables.ReadTableAsync(tableName, maxRows, progress, cancellationToken);
+        => this.Services.Tables.ReadTableAsync(tableName, maxRows, progress, cancellationToken);
 
     /// <inheritdoc/>
     public ValueTask<IReadOnlyList<T>> ReadTableAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string tableName, uint? maxRows = null, CancellationToken cancellationToken = default)
         where T : class, new()
-        => this.services.Tables.ReadTableAsync<T>(tableName, maxRows, cancellationToken);
+        => this.Services.Tables.ReadTableAsync<T>(tableName, maxRows, cancellationToken);
 
     /// <summary>
     /// Reads up to <paramref name="maxRows"/> rows as a string-typed <see cref="DataTable"/> asynchronously.
@@ -370,7 +370,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A <see cref="DataTable"/> with all columns typed as <see cref="string"/>.</returns>
     public ValueTask<DataTable> ReadTableAsStringsAsync(string tableName, uint? maxRows = null, IProgress<long>? progress = null, CancellationToken cancellationToken = default)
-        => this.services.Tables.ReadTableAsStringsAsync(tableName, maxRows, progress, cancellationToken);
+        => this.Services.Tables.ReadTableAsStringsAsync(tableName, maxRows, progress, cancellationToken);
 
     /// <summary>
     /// Returns statistical information about the database asynchronously.
@@ -378,7 +378,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A <see cref="DatabaseStatistics"/> object containing various metrics about the database.</returns>
     public ValueTask<DatabaseStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
-        => this.services.Schema.GetStatisticsAsync(cancellationToken);
+        => this.Services.Schema.GetStatisticsAsync(cancellationToken);
 
     /// <summary>
     /// Reads all tables into a dictionary of DataTables with properly typed columns asynchronously.
@@ -388,12 +388,12 @@ public sealed class AccessReader : AccessBase, IAccessReader
     /// <param name="cancellationToken">Token used to cancel the asynchronous operation.</param>
     /// <returns>A dictionary mapping table names to their corresponding DataTables.</returns>
     public ValueTask<IReadOnlyDictionary<string, DataTable>> ReadAllTablesAsync(IProgress<TableProgress>? progress = null, CancellationToken cancellationToken = default)
-        => this.services.Tables.ReadAllTablesAsync(progress, cancellationToken);
+        => this.Services.Tables.ReadAllTablesAsync(progress, cancellationToken);
 
     /// <inheritdoc/>
     public override async ValueTask DisposeAsync()
     {
-        AsyncReentrantOperationGate operations = this.services.Operations;
+        AsyncReentrantOperationGate operations = this.Services.Operations;
         if (!operations.TryBeginDispose(out Task? waitForOperations))
         {
             await operations.DisposeCompleted.ConfigureAwait(false);
@@ -441,7 +441,7 @@ public sealed class AccessReader : AccessBase, IAccessReader
 
     private async ValueTask DisposeReaderResourcesAsync()
     {
-        this.services.Dispose();
+        this.Services.Dispose();
         try
         {
             await this.Database.DisposeAsync().ConfigureAwait(false);

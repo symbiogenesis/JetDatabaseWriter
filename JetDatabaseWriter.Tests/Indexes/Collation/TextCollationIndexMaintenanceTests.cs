@@ -151,7 +151,7 @@ public sealed class TextCollationIndexMaintenanceTests(DatabaseCache cache) : IC
         using DataTable scanned = await reader.ReadTableAsync("CollatedKeys", cancellationToken: ct);
         Assert.Equal(2, scanned.Rows.Count);
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: ct);
         JetFormat format = harness.Database.Format;
         var cursor = new IndexCursor(format.IndexPage, harness.ReadPageCopyAsync, format.PageSize);
         foreach (string key in new[] { "\u0152uvre", "r\u00e9sum\u00e9" })

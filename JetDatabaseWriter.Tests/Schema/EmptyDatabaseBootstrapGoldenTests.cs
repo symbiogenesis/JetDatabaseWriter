@@ -68,7 +68,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     public async Task CreateTable_EveryAuthorableTypeAndTwoTextIndexes_TDefMatchesGoldenHash(DatabaseFormat format, string expectedSha256)
     {
         await using MemoryStream stream = await CreateGoldenTableAsync(format);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         CatalogEntry? entry = await harness.GetCatalogEntryAsync("Golden", Ct);
         Assert.NotNull(entry);
 
@@ -88,7 +88,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     public async Task CreateTable_AccdbComplexColumn_FlatTableTDefMatchesGoldenHash(string column, string expectedSha256)
     {
         await using MemoryStream stream = await CreateGoldenTableAsync(DatabaseFormat.AceAccdb);
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: Ct);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         IReadOnlyList<ComplexColumnInfo> complex = await harness.Services.Schema.GetComplexColumnsAsync("Golden", Ct);
         ComplexColumnInfo info = Assert.Single(complex, c => c.ColumnName == column);
         Assert.True(info.FlatTableId > 0, $"The {column} column has no flat table.");
@@ -200,7 +200,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     /// </summary>
     /// <param name="harness">The open reader harness.</param>
     /// <param name="tdefPage">The first TDEF page.</param>
-    private static async ValueTask<byte[]> ReadTDefChainPagesAsync(ReaderHarness harness, long tdefPage)
+    private static async ValueTask<byte[]> ReadTDefChainPagesAsync(AccessReader harness, long tdefPage)
     {
         var chain = new List<byte>();
         var visited = new HashSet<long>();

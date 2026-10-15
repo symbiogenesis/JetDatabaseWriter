@@ -30,7 +30,7 @@ internal static class ForeignKeyLinks
     public static async ValueTask<Dictionary<long, List<IndexMetadata>>> ReadForeignKeyEntriesAsync(MemoryStream stream)
     {
         stream.Position = 0;
-        await using ReaderHarness harness = await ReaderHarness.OpenAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: TestContext.Current.CancellationToken);
         var pending = new Queue<long>();
         foreach (CatalogEntry entry in await harness.Services.TableCatalog.GetUserTablesAsync(TestContext.Current.CancellationToken))
         {
