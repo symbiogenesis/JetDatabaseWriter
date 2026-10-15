@@ -22,7 +22,7 @@ an explicit inheritable owner entry, DAO uses that entry's permission mask;
 it does not combine the masks. Native identities and oracle details are in
 [native-encryption-evidence.md](native-encryption-evidence.md).
 
-ACE catalog creation and schema rewrites use the same inheritance policy.
+ACE catalog creation inherits container permissions. Schema rewrites preserve the original object ID, catalog owner and per-object permission rows instead of inheriting them again.
 In TestV2010 Table4, the native owner and Users identities are derived from
 that file's header; literal `7110`/`7010` identities belong to a particular
 bootstrap header and cannot be copied into another database. Native DAO read

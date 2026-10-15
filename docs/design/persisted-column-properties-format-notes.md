@@ -194,7 +194,7 @@ AddColumn, DropColumn and RenameColumn rebuild a table and write its blob again.
 
 Jet4/ACE descriptors retain the native identity at bytes 9–10 independently of the row-layout column number at bytes 5–6. Added columns receive unused identities above surviving identities when possible. The Microsoft-authored TestV2010 Table4 identities and native compact/readback are covered by `NativeSchemaPreservationTests` and `NativeSchemaDaoTests`; broader unmodeled TDEF and index-descriptor preservation remains open.
 
-The projected blob is the same on both rewrite paths: the copy that is renamed into place and the copy transplanted onto the original TDEF page.
+Every schema rewrite publishes private replacement storage on the original TDEF root and updates that original catalog row with the projected blob. Table identity, ownership and permission rows remain attached.
 
 ## Table-level validation
 

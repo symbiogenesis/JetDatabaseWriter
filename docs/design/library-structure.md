@@ -8,7 +8,7 @@ This document describes the architecture and folder organization of the `JetData
 
 `TableSchemaEditor` retains declaration policy and coordinates preparation, replacement creation and application. `TableRewritePlanner.PrepareAsync` captures original properties, descriptors, row projections, surviving indexes, relationship/complex identities and both persisted counter high-water values in `TableRewritePlan` before creating a temporary table. Preparation may reserve complex references in the constraint cache: callers must hold the serialized write scope and transaction/savepoint checkpoint, and must roll back if the plan is abandoned. It does not publish database pages.
 
-`TableStorageEditor` owns row/index copying, validation of the completed `TableRewriteCopy`, then replacement/transplant and reclamation. Validation and cancellation checks precede destruction of the original table. Dependent complex and relationship metadata repair remains inside the caller's transaction, using the same pager and cache checkpoints. Storage reclamation and publication are absent from the declaration service and the planner.
+`TableStorageEditor` owns row/index copying, validation of the completed `TableRewriteCopy`, then publication on the original TDEF root and reclamation. Replacement data/index pages retain a private temporary owner through validation. Publication transfers only the captured row pages and index pages reachable from the replacement roots/maps, including retained initial leaves; it does not scan the database to repair owners. The original catalog row retains its ID, owner, dates, unassigned fields and permission rows; only projected properties and the complex-column flag change. Validation and cancellation checks precede destruction of the original table. Dependent complex and relationship metadata repair remains inside the caller's transaction, using the same pager and cache checkpoints. Storage reclamation and publication are absent from the declaration service and the planner.
 
 ## Directory layout
 
@@ -105,7 +105,6 @@ JetDatabaseWriter/
 │       ├── ResolvedTable.cs
 │       ├── TableDef.cs
 │       ├── UserTableCatalogDeletionArtifact.cs
-│       ├── UserTableCatalogDeletionResult.cs
 │       └── UserTableCatalogReplacementArtifact.cs
 │
 ├── DelimitedText/                         (internal CSV/delimited text parsing for linked text tables)

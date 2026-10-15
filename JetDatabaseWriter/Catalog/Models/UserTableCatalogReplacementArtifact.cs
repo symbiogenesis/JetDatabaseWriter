@@ -7,4 +7,7 @@ internal sealed record UserTableCatalogReplacementArtifact(
     byte[]? LvProp = null,
     bool IncludeSystemTables = true,
     string? Operation = null,
-    string? MissingMessage = null);
+    string? MissingMessage = null)
+{
+    public bool? HasComplexColumns { get; init; }
+}

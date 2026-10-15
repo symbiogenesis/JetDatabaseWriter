@@ -19,12 +19,10 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="FixedTextBytes">Original fixed Text slots in projected column order, paired with each row.</param>
 /// <param name="Relationships">The captured relationship identities.</param>
 /// <param name="MapColumnName">The column identity projection.</param>
-/// <param name="ComplexColumns">Surviving complex columns by their persisted ID.</param>
 /// <param name="DroppedComplexColumns">Complex children to reclaim after replacement.</param>
 /// <param name="RenamedComplexColumns">Complex artifact names to update after replacement.</param>
 /// <param name="AutoNumberHighWater">The original AutoNumber counter captured before replacement creation.</param>
 /// <param name="ComplexHighWater">The original complex reference counter captured before replacement creation.</param>
-/// <param name="Transplant">Whether the replacement retains the original TDEF identity.</param>
 internal sealed record TableRewritePlan(
     string TableName,
     CatalogEntry Entry,
@@ -37,9 +35,7 @@ internal sealed record TableRewritePlan(
     List<IReadOnlyDictionary<int, byte[]>?> FixedTextBytes,
     RelationshipRewriteState Relationships,
     Func<string, string?> MapColumnName,
-    Dictionary<int, ColumnDefinition> ComplexColumns,
     List<(string Name, int ComplexId)> DroppedComplexColumns,
     List<(string OldName, string NewName, int ComplexId)> RenamedComplexColumns,
     long AutoNumberHighWater,
-    long ComplexHighWater,
-    bool Transplant);
+    long ComplexHighWater);

@@ -670,7 +670,7 @@ internal sealed class ForeignKeyMetadataEditor(
     /// on <paramref name="targetTdefPage"/>, the rebuilt copy of the table, with
     /// their names, sides and cascade flags. Each entry gets a new logical-idx
     /// number; an entry that points back at the same table (a self-referencing
-    /// relationship) is pointed at <paramref name="finalTdefPage"/> and its
+    /// relationship) retains the original table identity and uses its
     /// partner's new number. Partner tables are not touched here; see
     /// <see cref="RelationshipManager.CompleteRewriteAsync"/>. The new FK leaves are empty until the
     /// caller rebuilds the copy's indexes.
@@ -678,7 +678,6 @@ internal sealed class ForeignKeyMetadataEditor(
     /// <param name="state">The state captured before the rewrite.</param>
     /// <param name="targetTdefPage">The TDEF page of the rebuilt copy.</param>
     /// <param name="targetDef">The rebuilt copy's table definition.</param>
-    /// <param name="finalTdefPage">The TDEF page the table occupies once the copy has replaced it.</param>
     /// <param name="mapColumnName">Maps each captured column name to its name in the copy.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The map from each entry's old <c>index_num</c> to its new one.</returns>
@@ -688,7 +687,6 @@ internal sealed class ForeignKeyMetadataEditor(
         RelationshipRewriteState state,
         long targetTdefPage,
         TableDef targetDef,
-        long finalTdefPage,
         Func<string, string?> mapColumnName,
         CancellationToken cancellationToken)
     {
@@ -761,7 +759,7 @@ internal sealed class ForeignKeyMetadataEditor(
                     plan,
                     relTblTypeThisSide: entry.RelTblType,
                     relIdxNumOtherSide: relIdxNum,
-                    relTblPageOther: selfReferencing ? finalTdefPage : entry.RelTblPage,
+                    relTblPageOther: selfReferencing ? state.TDefPage : entry.RelTblPage,
                     cascadeUps: entry.CascadeUps,
                     cascadeDels: entry.CascadeDels,
                     runs,
@@ -921,23 +919,21 @@ internal sealed class ForeignKeyMetadataEditor(
     /// <summary>
     /// On the partner TDEF at <paramref name="partnerTdefPage"/>, finds the FK
     /// logical-idx entry numbered <paramref name="partnerIndexNumber"/> that
-    /// points at <paramref name="oldTdefPage"/>. Points it at
-    /// <paramref name="newTdefPage"/> and <paramref name="newRelIdxNum"/>, or
+    /// points at <paramref name="relatedTdefPage"/>. Updates its logical-index
+    /// partner number to <paramref name="newRelIdxNum"/>, or
     /// removes it (with its name) when <paramref name="newRelIdxNum"/> is
     /// <see langword="null"/> because the rewritten side has no matching entry.
     /// Does nothing when the partner TDEF or entry is not found.
     /// </summary>
     /// <param name="partnerTdefPage">The partner table's TDEF page.</param>
     /// <param name="partnerIndexNumber">The partner entry's <c>index_num</c>.</param>
-    /// <param name="oldTdefPage">The rewritten table's former TDEF page.</param>
-    /// <param name="newTdefPage">The rewritten table's TDEF page.</param>
+    /// <param name="relatedTdefPage">The rewritten table's unchanged TDEF page.</param>
     /// <param name="newRelIdxNum">The re-emitted entry's logical-idx number, or <see langword="null"/> to remove the partner entry.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask UpdatePartnerFkEntryAsync(
         long partnerTdefPage,
         int partnerIndexNumber,
-        long oldTdefPage,
-        long newTdefPage,
+        long relatedTdefPage,
         int? newRelIdxNum,
         CancellationToken cancellationToken)
     {
@@ -960,14 +956,13 @@ internal sealed class ForeignKeyMetadataEditor(
             int f = this.format.Index.LogicalIdxFieldsOffset(layout.LogIdxStart, li);
             if (td[f + Constants.TableDefinition.Jet3.LogicalIdx.IndexTypeOffset] != (byte)IndexKind.ForeignKey
                 || Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.IndexNumOffset) != partnerIndexNumber
-                || Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) != oldTdefPage)
+                || Ri32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset) != relatedTdefPage)
             {
                 continue;
             }
 
             if (newRelIdxNum is int relIdxNum)
             {
-                Wi32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelTblPageOffset, checked((int)newTdefPage));
                 Wi32(td, f + Constants.TableDefinition.Jet3.LogicalIdx.RelIdxNumOffset, relIdxNum);
                 await this.WriteLogicalTDefChainAsync(chain, td, layout.CurrentEnd, cancellationToken).ConfigureAwait(false);
             }

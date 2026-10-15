@@ -25,9 +25,9 @@ Before caching a user-table list or resolving a system-table name, `CatalogRowRe
 
 Negative ODBC IDs identify catalog-only objects whose cached schema can live in `LvProp`; their low bits are not page pointers. Those objects participate in name checks but do not resolve to a local TDEF. These checks apply in both strict and lenient modes, and a failed scan cannot publish a partial user-table cache. Access/text links also participate in alias and identity checks without treating their IDs as physical pages. Missing required linked metadata columns are corruption errors in every mode; incomplete Access/text source metadata is rejected strictly or omitted leniently, while native ODBC cached-schema entries can lack connection metadata. Complex discovery validates parent, template and flat-table schemas with the configurable aggregate budget described in [the complex-column notes](complex-columns-format-notes.md).
 
-## Jet3 schema identity and catalog keys
+## Schema identity and native catalog keys
 
-Column rewrites transplant rebuilt storage onto the original table's TDEF
+Column rewrites publish isolated rebuilt storage onto the original table's TDEF
 root. Its catalog row keeps the original object ID, owner, dates and other
 unassigned values, and original permission rows remain attached. Unchanged
 catalog index values retain their stored keys while the row pointer moves.

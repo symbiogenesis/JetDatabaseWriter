@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
@@ -20,7 +21,7 @@ using JetDatabaseWriter.ValueEncoding;
 using static JetDatabaseWriter.Enums.ColumnType;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
-/// <summary>Owns replacement row copies, table storage transfers and page reclamation.</summary>
+/// <summary>Builds isolated replacement storage, publishes it on the original table identity and reclaims pages.</summary>
 /// <param name="format">The format service.</param>
 /// <param name="tableDefs">The tableDefs service.</param>
 /// <param name="ownedPages">The ownedPages service.</param>
@@ -60,32 +61,26 @@ internal sealed class TableStorageEditor(
     internal async ValueTask ApplyAsync(TableRewritePlan plan, string tempName, CancellationToken cancellationToken)
     {
         TableRewriteCopy copy = await this.CopyRowsAndIndexesAsync(plan, tempName, cancellationToken).ConfigureAwait(false);
-        await this.ValidateCopyAsync(plan, copy, cancellationToken).ConfigureAwait(false);
+        await this.ValidateCopyAsync(copy, cancellationToken).ConfigureAwait(false);
         await this.ReplaceOriginalAsync(plan, copy, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<TableRewriteCopy> CopyRowsAndIndexesAsync(TableRewritePlan plan, string tempName, CancellationToken cancellationToken)
     {
-        CatalogEntry entry = plan.Entry;
         List<IndexDefinition> projectedIndexes = plan.Indexes;
         List<object[]> projectedRows = plan.Rows;
         RelationshipRewriteState relationshipState = plan.Relationships;
         Func<string, string?> mapColumnName = plan.MapColumnName;
-        bool transplant = plan.Transplant;
         ResolvedTable tempTable = await catalog.ResolveRequiredTableAsync(tempName, cancellationToken).ConfigureAwait(false);
         CatalogEntry tempEntry = tempTable.Entry;
         TableDef tempDef = tempTable.Definition;
 
-        // Re-emit the foreign-key index entries on the copy before the row copy,
-        // so the single index rebuild below also fills their leaves. A
-        // self-referencing entry points at the page the table ends up on: the
-        // original TDEF page when the copy is transplanted, else the copy's.
-        long finalTdefPage = transplant ? entry.TDefPage : tempEntry.TDefPage;
+        // Build FK leaves privately; self references name the original identity
+        // that the replacement will occupy once publication completes.
         IReadOnlyDictionary<int, int> fkIndexNumbers = await relationships.EmitFkEntriesForRewriteAsync(
             relationshipState,
             tempEntry.TDefPage,
             tempDef,
-            finalTdefPage,
             mapColumnName,
             cancellationToken).ConfigureAwait(false);
         if (fkIndexNumbers.Count > 0)
@@ -101,18 +96,23 @@ internal sealed class TableStorageEditor(
         long autoNumberHighWater = plan.AutoNumberHighWater;
         long complexHighWater = plan.ComplexHighWater;
         var writtenRows = new List<LocatedRow>(projectedRows.Count);
+        var storagePages = new SortedSet<long>();
         for (int rowIndex = 0; rowIndex < projectedRows.Count; rowIndex++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             object[] projected = projectedRows[rowIndex];
             RowLocation location = await tableRows.InsertRowDataLocAsync(tempEntry.TDefPage, tempDef, projected, fixedTextBytes: plan.FixedTextBytes[rowIndex], cancellationToken: cancellationToken).ConfigureAwait(false);
             writtenRows.Add(new LocatedRow(location, projected));
+            storagePages.Add(location.PageNumber);
+            storagePages.Add(location.DataPageNumber);
             autoNumberHighWater = Math.Max(autoNumberHighWater, AutoNumberMaintainer.MaxAutoNumberValue(tempDef, projected));
             complexHighWater = Math.Max(complexHighWater, AutoNumberMaintainer.MaxComplexReference(tempDef, projected));
         }
 
         await autoNumbers.RaiseHighWaterAsync(tempEntry.TDefPage, autoNumberHighWater, cancellationToken).ConfigureAwait(false);
         await autoNumbers.RaiseComplexHighWaterAsync(tempEntry.TDefPage, complexHighWater, cancellationToken).ConfigureAwait(false);
+
+        long[] initialIndexPages = await indexMaintainer.CollectRewriteIndexPagesAsync(tempEntry.TDefPage, cancellationToken).ConfigureAwait(false);
 
         // Rebuild forwarded indexes once after the bulk row copy completes,
         // so we don't pay the rebuild cost per row. The rebuild keys the rows
@@ -124,17 +124,33 @@ internal sealed class TableStorageEditor(
             await indexMaintainer.RebuildIndexesAsync(tempEntry.TDefPage, tempDef, tempName, writtenRows, cancellationToken).ConfigureAwait(false);
         }
 
-        return new TableRewriteCopy(tempName, tempEntry, tempDef, finalTdefPage, fkIndexNumbers);
-    }
+        storagePages.UnionWith(await indexMaintainer.CollectRewriteIndexPagesAsync(tempEntry.TDefPage, cancellationToken).ConfigureAwait(false));
 
-    private async ValueTask ValidateCopyAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!plan.Transplant)
+        // Some formats retain initial leaves when long values or native maps
+        // prevent reclamation. They are private too, even outside the new tree.
+        foreach (long pageNumber in initialIndexPages)
         {
-            return;
+            byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.Freed)
+                {
+                    _ = this.ReplacementOwnerOffset(page, pageNumber, tempEntry.TDefPage);
+                    storagePages.Add(pageNumber);
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
         }
 
+        return new TableRewriteCopy(tempName, tempEntry, tempDef, [.. storagePages], fkIndexNumbers);
+    }
+
+    private async ValueTask ValidateCopyAsync(TableRewriteCopy copy, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         _ = await LogicalTDefChain.ReadRequiredAsync(
             copy.Entry.TDefPage,
             format.PageSize,
@@ -142,108 +158,75 @@ internal sealed class TableStorageEditor(
             PageBuffers.Return,
             retainPageNumbers: false,
             cancellationToken).ConfigureAwait(false);
+
+        foreach (long pageNumber in copy.StoragePages)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _ = this.ReplacementOwnerOffset(page, pageNumber, copy.Entry.TDefPage);
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
     }
 
     private async ValueTask ReplaceOriginalAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
     {
-        string tableName = plan.TableName;
-        CatalogEntry entry = plan.Entry;
-        TableDef tableDef = plan.Definition;
-        byte[]? persistedLvProp = plan.PropertyBytes;
-        RelationshipRewriteState relationshipState = plan.Relationships;
-        Func<string, string?> mapColumnName = plan.MapColumnName;
-        Dictionary<int, ColumnDefinition> newComplexById = plan.ComplexColumns;
-        List<(string Name, int ComplexId)> droppedComplex = plan.DroppedComplexColumns;
-        List<(string OldName, string NewName, int ComplexId)> renamedComplex = plan.RenamedComplexColumns;
-        bool transplant = plan.Transplant;
-        string tempName = copy.Name;
-        CatalogEntry tempEntry = copy.Entry;
-        TableDef tempDef = copy.Definition;
-        long finalTdefPage = copy.FinalTDefPage;
-        IReadOnlyDictionary<int, int> fkIndexNumbers = copy.FkIndexNumbers;
+        await this.PublishReplacementAsync(plan, copy, cancellationToken).ConfigureAwait(false);
 
-        // Drop the original table, then rename the temp catalog entry to take its place.
-        // Either way the table's catalog row carries the projected persisted properties.
-        if (transplant)
+        // Only new complex descriptors were emitted under the private parent.
+        // Existing children already name the unchanged original table identity.
+        var originalComplexIds = new HashSet<int>();
+        foreach (ColumnInfo column in plan.Definition.Columns)
         {
-            await this.TransplantTempTableToOriginalAsync(
-                tableName,
-                entry.TDefPage,
-                tableDef,
-                tempName,
-                tempEntry.TDefPage,
-                persistedLvProp,
-                cancellationToken).ConfigureAwait(false);
-
-            // New complex columns were emitted under the temporary parent.
-            // Their catalog ownership must follow the transplanted TDEF too.
-            foreach (ColumnInfo column in tempDef.Columns)
+            if (column.Type is ComplexType)
             {
-                if ((column.Type is ComplexType) && column.Misc > 0)
-                {
-                    await complexColumns.UpdateComplexColumnParentTableIdAsync(
-                        column.Misc,
-                        checked((int)entry.TDefPage),
-                        cancellationToken).ConfigureAwait(false);
-                }
+                originalComplexIds.Add(column.Misc);
             }
         }
-        else
-        {
-            await this.DropTableCoreAsync(tableName, rewriting: true, cancellationToken).ConfigureAwait(false);
-            await catalogWriter.RenameTableInCatalogAsync(tempName, tableName, persistedLvProp, cancellationToken).ConfigureAwait(false);
 
-            foreach (ColumnDefinition survivor in newComplexById.Values)
+        foreach (ColumnInfo column in copy.Definition.Columns)
+        {
+            if (column.Type is ComplexType && column.Misc > 0 && !originalComplexIds.Contains(column.Misc))
             {
                 await complexColumns.UpdateComplexColumnParentTableIdAsync(
-                    survivor.ComplexId,
-                    checked((int)tempEntry.TDefPage),
+                    column.Misc,
+                    checked((int)plan.Entry.TDefPage),
                     cancellationToken).ConfigureAwait(false);
-            }
-
-            foreach ((string colName, int complexId) in droppedComplex)
-            {
-                await complexColumns.DropSingleComplexChildAsync(entry.TDefPage, colName, complexId, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
-            }
-
-            foreach ((string oldColName, string newColName, int complexId) in renamedComplex)
-            {
-                await complexColumns.RenameComplexColumnArtifactsAsync(oldColName, newColName, complexId, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        // Point every partner table's FK entry at the table's final TDEF page
-        // and renumbered entries, and rename key columns in MSysRelationships.
-        await relationships.CompleteRewriteAsync(relationshipState, finalTdefPage, fkIndexNumbers, mapColumnName, cancellationToken).ConfigureAwait(false);
+        foreach ((string name, int complexId) in plan.DroppedComplexColumns)
+        {
+            await complexColumns.DropSingleComplexChildAsync(plan.Entry.TDefPage, name, complexId, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
+        }
+
+        foreach ((string oldName, string newName, int complexId) in plan.RenamedComplexColumns)
+        {
+            await complexColumns.RenameComplexColumnArtifactsAsync(oldName, newName, complexId, cancellationToken).ConfigureAwait(false);
+        }
+
+        // Table identities stay fixed; logical FK slots can still be renumbered.
+        await relationships.CompleteRewriteAsync(plan.Relationships, copy.FkIndexNumbers, plan.MapColumnName, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Moves the rebuilt copy onto the original TDEF page, so the complex columns'
-    /// <c>MSysComplexColumns</c> rows keep naming the table, and frees the original's
-    /// storage. The rebuilt continuation pages remain linked from the transferred root.
-    /// </summary>
-    /// <param name="tableName">The table being rewritten.</param>
-    /// <param name="originalTdefPage">The original's TDEF page, which the copy takes over.</param>
-    /// <param name="originalDef">The original's definition, with its calculated result types.</param>
-    /// <param name="tempName">The rebuilt copy's name.</param>
-    /// <param name="tempTdefPage">The rebuilt copy's TDEF page.</param>
-    /// <param name="lvProp">The persisted properties for the table's catalog row.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>A task that completes when the copy has replaced the original.</returns>
-    private async ValueTask TransplantTempTableToOriginalAsync(
-        string tableName,
-        long originalTdefPage,
-        TableDef originalDef,
-        string tempName,
-        long tempTdefPage,
-        byte[]? lvProp,
-        CancellationToken cancellationToken)
+    /// <summary>Publishes private replacement storage on the original root and retains its catalog identity.</summary>
+    /// <param name="plan">The original identity and prepared schema.</param>
+    /// <param name="copy">The validated private replacement.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    private async ValueTask PublishReplacementAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
     {
+        long originalTdefPage = plan.Entry.TDefPage;
+        long tempTdefPage = copy.Entry.TDefPage;
         byte[] tempTdef = await pager.ReadPageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
         try
         {
-            await this.ReclaimTableStoragePagesAsync(originalTdefPage, originalDef, includeTDefRoot: false, cancellationToken).ConfigureAwait(false);
-            await this.PatchTablePageOwnersAsync(tempTdefPage, originalTdefPage, cancellationToken).ConfigureAwait(false);
+            await this.ReclaimTableStoragePagesAsync(originalTdefPage, plan.Definition, includeTDefRoot: false, cancellationToken).ConfigureAwait(false);
+            await this.PatchReplacementPageOwnersAsync(copy, originalTdefPage, cancellationToken).ConfigureAwait(false);
             await pager.WritePageAsync(originalTdefPage, tempTdef, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -257,53 +240,43 @@ internal sealed class TableStorageEditor(
                 CatalogReplacements =
                 [
                     new UserTableCatalogReplacementArtifact(
-                        tableName,
-                        tableName,
+                        plan.TableName,
+                        plan.TableName,
                         originalTdefPage,
-                        lvProp,
-                        Operation: $"replacing catalog row for '{tableName}'",
-                        MissingMessage: $"Catalog row for '{tableName}' was not found during schema rewrite."),
+                        plan.PropertyBytes,
+                        Operation: $"replacing catalog row for '{plan.TableName}'",
+                        MissingMessage: $"Catalog row for '{plan.TableName}' was not found during schema rewrite.")
+                    {
+                        HasComplexColumns = copy.Definition.HasComplexColumns,
+                    },
                 ],
                 CatalogDeletions =
                 [
                     new UserTableCatalogDeletionArtifact(
-                        tempName,
+                        copy.Name,
                         tempTdefPage,
-                        Operation: $"deleting catalog row for '{tempName}'"),
+                        Operation: $"deleting catalog row for '{copy.Name}'"),
                 ],
             },
             cancellationToken).ConfigureAwait(false);
         await catalogWriter.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
         await pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);
 
-        // The rebuilt schema's constraints were registered under the temp name.
-        // Move them onto the table, as the drop-and-rename path does, so the
-        // stale pre-rewrite list (with its old column count and in-session
-        // AutoNumber seed) is not applied to the next insert.
-        constraints.Unregister(tableName);
-        constraints.Rename(tempName, tableName);
-        constraints.RebindPhysicalTable(tableName, originalTdefPage);
+        constraints.Unregister(plan.TableName);
+        constraints.Rename(copy.Name, plan.TableName);
+        constraints.RebindPhysicalTable(plan.TableName, originalTdefPage);
     }
 
-    private async ValueTask PatchTablePageOwnersAsync(long fromTdefPage, long toTdefPage, CancellationToken cancellationToken)
+    private async ValueTask PatchReplacementPageOwnersAsync(TableRewriteCopy copy, long originalTdefPage, CancellationToken cancellationToken)
     {
-        long totalPages = pager.PageCount;
-        for (long pageNumber = 3; pageNumber < totalPages; pageNumber++)
+        foreach (long pageNumber in copy.StoragePages)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
             byte[] page = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                bool patchDataPage = page[0] == Constants.PageTypes.Data && Ri32(page, format.DataPage.TDefOff) == fromTdefPage;
-                bool patchIndexPage = page[0] is Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf && Ri32(page, 4) == fromTdefPage;
-                if (!patchDataPage && !patchIndexPage)
-                {
-                    continue;
-                }
-
-                int ownerOffset = patchDataPage ? format.DataPage.TDefOff : 4;
-                Wi32(page, ownerOffset, checked((int)toTdefPage));
+                int ownerOffset = this.ReplacementOwnerOffset(page, pageNumber, copy.Entry.TDefPage);
+                Wi32(page, ownerOffset, checked((int)originalTdefPage));
                 await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
             }
             finally
@@ -313,23 +286,26 @@ internal sealed class TableStorageEditor(
         }
     }
 
-    /// <summary>
-    /// Shared implementation backing <see cref="TableSchemaEditor.DropTableAsync"/> and the
-    /// <c>RewriteTableAsync</c> path. The rewrite path sets
-    /// <paramref name="rewriting"/>, so the hidden flat child tables and
-    /// matching <c>MSysComplexColumns</c> rows for surviving complex columns
-    /// stay attached to the rebuilt parent, and the partner tables' FK entries
-    /// are left for <see cref="RelationshipManager.CompleteRewriteAsync"/> to
-    /// re-link. A real drop removes both.
-    /// </summary>
+    private int ReplacementOwnerOffset(byte[] page, long pageNumber, long tempTdefPage)
+    {
+        int ownerOffset = page[0] == Constants.PageTypes.Data ? format.DataPage.TDefOff : 4;
+        if (page[0] is not (Constants.PageTypes.Data or Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf)
+            || Ri32(page, ownerOffset) != tempTdefPage)
+        {
+            throw new JetCorruptDataException($"Replacement storage page {pageNumber} does not belong to temporary table {tempTdefPage}.");
+        }
+
+        return ownerOffset;
+    }
+
+    /// <summary>Drops a table, its relationship links and its complex children.</summary>
     /// <param name="tableName">The table name.</param>
-    /// <param name="rewriting">Whether a schema rewrite is replacing the table with its rebuilt copy.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when <c>MSysObjects</c> is missing or no matching user table exists.</exception>
-    internal async ValueTask DropTableCoreAsync(string tableName, bool rewriting, CancellationToken cancellationToken)
+    internal async ValueTask DropTableCoreAsync(string tableName, CancellationToken cancellationToken)
     {
         Dictionary<long, TableDef> definitions = await this.ReadDefinitionsBeforeDropAsync(tableName, cancellationToken).ConfigureAwait(false);
-        UserTableCatalogDeletionResult deleted = await catalogWriter.DeleteUserTableCatalogRowsAsync(
+        IReadOnlyList<long> deletedPages = await catalogWriter.DeleteUserTableCatalogRowsAsync(
             tableName,
             tdefPage: null,
             includeSystemTables: false,
@@ -338,27 +314,24 @@ internal sealed class TableStorageEditor(
             missingMessage: $"Table '{tableName}' does not exist.",
             cancellationToken).ConfigureAwait(false);
 
-        if (!rewriting)
+        // No MSysRelationships row names the table (DropTableAsync removed or refused
+        // otherwise), but its TDEF can still hold FK entries that earlier
+        // builds left behind. Remove the partner entries that name it
+        // while its TDEF is intact, so none is left naming a freed page
+        // or, later, the unrelated table that reuses it.
+        foreach (long tdefPage in deletedPages)
         {
-            // No MSysRelationships row names the table (DropTableAsync removed or refused
-            // otherwise), but its TDEF can still hold FK entries that earlier
-            // builds left behind. Remove the partner entries that name it
-            // while its TDEF is intact, so none is left naming a freed page
-            // or, later, the unrelated table that reuses it.
-            foreach (long tdefPage in deleted.TDefPages)
-            {
-                await relationships.RemovePartnerLinksAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-            }
-
-            foreach (long parentTdefPage in deleted.TDefPages)
-            {
-                await complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
-            }
+            await relationships.RemovePartnerLinksAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         }
 
-        await catalogWriter.DeleteAceRowsForObjectIdsAsync(deleted.TDefPages, cancellationToken).ConfigureAwait(false);
+        foreach (long parentTdefPage in deletedPages)
+        {
+            await complexColumns.DropComplexChildrenForTableAsync(parentTdefPage, (page, definition, token) => this.ReclaimTableStoragePagesAsync(page, definition, includeTDefRoot: true, token), cancellationToken).ConfigureAwait(false);
+        }
 
-        foreach (long tdefPage in deleted.TDefPages)
+        await catalogWriter.DeleteAceRowsForObjectIdsAsync(deletedPages, cancellationToken).ConfigureAwait(false);
+
+        foreach (long tdefPage in deletedPages)
         {
             await this.ReclaimTableStoragePagesAsync(tdefPage, definitions.GetValueOrDefault(tdefPage), includeTDefRoot: true, cancellationToken).ConfigureAwait(false);
         }

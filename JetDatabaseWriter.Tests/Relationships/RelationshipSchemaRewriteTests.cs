@@ -19,10 +19,9 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>
 /// Foreign-key relationships across the copy-and-swap rewrite behind
 /// <see cref="AccessWriter.AddColumnAsync"/>, <see cref="AccessWriter.DropColumnAsync"/>
-/// and <see cref="AccessWriter.RenameColumnAsync"/>. The rewritten table moves
-/// to a new TDEF page, so its FK logical-index entries must be re-emitted there
-/// and the partner table's entry must point at the new page and the new
-/// logical-index number. Jet4 runs over a copy of the Access-authored
+/// and <see cref="AccessWriter.RenameColumnAsync"/>. The rewritten table keeps
+/// its TDEF page; its FK logical-index entries are re-emitted and its partners
+/// must point at the rebuilt logical-index numbers. Jet4 runs over a copy of the Access-authored
 /// <c>AdventureLT2008.mdb</c> (fresh Jet4 files have no <c>MSysRelationships</c>);
 /// ACCDB runs over a fresh database.
 /// </summary>
@@ -352,7 +351,7 @@ public sealed class RelationshipSchemaRewriteTests(DatabaseCache db) : IClassFix
         }
 
         long childPageAfter = await GetTDefPageAsync(stream, Child);
-        Assert.Equal(commit, childPageAfter != childPageBefore);
+        Assert.Equal(childPageBefore, childPageAfter);
         await AssertRelationshipLinkedAsync(stream, Parent, "Id", Child, "ParentId");
         await AssertEnforcementAndCascadeAsync(stream);
     }

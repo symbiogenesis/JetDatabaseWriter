@@ -437,7 +437,7 @@ internal sealed class RelationshipManager(
     /// on <paramref name="targetTdefPage"/>, the rebuilt copy of the table, with
     /// their names, sides and cascade flags. Each entry gets a new logical-idx
     /// number; an entry that points back at the same table (a self-referencing
-    /// relationship) is pointed at <paramref name="finalTdefPage"/> and its
+    /// relationship) retains the original table identity and uses its
     /// partner's new number. Partner tables are not touched here; see
     /// <see cref="CompleteRewriteAsync"/>. The new FK leaves are empty until the
     /// caller rebuilds the copy's indexes.
@@ -445,7 +445,6 @@ internal sealed class RelationshipManager(
     /// <param name="state">The state captured before the rewrite.</param>
     /// <param name="targetTdefPage">The TDEF page of the rebuilt copy.</param>
     /// <param name="targetDef">The rebuilt copy's table definition.</param>
-    /// <param name="finalTdefPage">The TDEF page the table occupies once the copy has replaced it.</param>
     /// <param name="mapColumnName">Maps each captured column name to its name in the copy.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The map from each entry's old <c>index_num</c> to its new one.</returns>
@@ -455,7 +454,6 @@ internal sealed class RelationshipManager(
         RelationshipRewriteState state,
         long targetTdefPage,
         TableDef targetDef,
-        long finalTdefPage,
         Func<string, string?> mapColumnName,
         CancellationToken cancellationToken)
     {
@@ -464,26 +462,24 @@ internal sealed class RelationshipManager(
             await this.catalogArtifacts.ThrowIfNativeSecurityUnmaintainableAsync(relationships: true, cancellationToken).ConfigureAwait(false);
         }
 
-        return await this.metadata.EmitFkEntriesForRewriteAsync(state, targetTdefPage, targetDef, finalTdefPage, mapColumnName, cancellationToken).ConfigureAwait(false);
+        return await this.metadata.EmitFkEntriesForRewriteAsync(state, targetTdefPage, targetDef, mapColumnName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Finishes a schema rewrite once the rebuilt copy has replaced the table.
     /// Points each partner table's FK logical-idx entry at
-    /// <paramref name="finalTdefPage"/> and at the re-emitted entry's new
+    /// the unchanged original table identity and the re-emitted entry's new
     /// logical-idx number, or removes the partner's entry when this side was
     /// not re-emitted, and writes renamed key columns into the
     /// <c>MSysRelationships</c> rows.
     /// </summary>
     /// <param name="state">The state captured before the rewrite.</param>
-    /// <param name="finalTdefPage">The TDEF page the table now occupies.</param>
     /// <param name="newIndexNumbers">The map returned by <see cref="EmitFkEntriesForRewriteAsync"/>.</param>
     /// <param name="mapColumnName">Maps each captured column name to its name after the rewrite.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     internal async ValueTask CompleteRewriteAsync(
         RelationshipRewriteState state,
-        long finalTdefPage,
         IReadOnlyDictionary<int, int> newIndexNumbers,
         Func<string, string?> mapColumnName,
         CancellationToken cancellationToken)
@@ -507,7 +503,6 @@ internal sealed class RelationshipManager(
                 entry.RelTblPage,
                 entry.RelIdxNum,
                 state.TDefPage,
-                finalTdefPage,
                 newIndexNumber,
                 cancellationToken).ConfigureAwait(false);
         }

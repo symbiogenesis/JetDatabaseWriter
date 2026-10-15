@@ -7,11 +7,11 @@ using JetDatabaseWriter.Catalog.Models;
 /// <param name="Name">The temporary catalog name.</param>
 /// <param name="Entry">The temporary storage identity.</param>
 /// <param name="Definition">The replacement schema including emitted foreign-key indexes.</param>
-/// <param name="FinalTDefPage">The final table-definition identity.</param>
+/// <param name="StoragePages">The private data and index pages whose owner changes at publication.</param>
 /// <param name="FkIndexNumbers">The original-to-replacement FK index mapping.</param>
 internal sealed record TableRewriteCopy(
     string Name,
     CatalogEntry Entry,
     TableDef Definition,
-    long FinalTDefPage,
+    IReadOnlyList<long> StoragePages,
     IReadOnlyDictionary<int, int> FkIndexNumbers);

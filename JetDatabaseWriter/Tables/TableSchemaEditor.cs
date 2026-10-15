@@ -347,7 +347,7 @@ internal sealed class TableSchemaEditor(
             await relationships.DropRelationshipAsync(relationshipName, cancellationToken).ConfigureAwait(false);
         }
 
-        await tableStorage.DropTableCoreAsync(tableName, rewriting: false, cancellationToken).ConfigureAwait(false);
+        await tableStorage.DropTableCoreAsync(tableName, cancellationToken).ConfigureAwait(false);
     }
 
     internal ValueTask AddColumnAsync(string tableName, ColumnDefinition column, CancellationToken cancellationToken)

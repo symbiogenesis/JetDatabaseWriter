@@ -35,7 +35,6 @@ using JetDatabaseWriter.ValueEncoding;
 /// <param name="tableRows">Writes and tombstones catalog rows.</param>
 /// <param name="indexes">Keeps the catalog and <c>MSysACEs</c> indexes current.</param>
 /// <param name="longValueEncoder">Encodes linked-table memo fields as LVAL chains.</param>
-/// <param name="constraints">Follows table renames in the client-side constraint registry.</param>
 /// <param name="catalogRows">Scans <c>MSysObjects</c> rows and locates system tables.</param>
 /// <param name="pager">The writer page file.</param>
 /// <param name="snapshots">Reads existing catalog values for preservation.</param>
@@ -47,7 +46,6 @@ internal sealed class CatalogWriter(
     TableRowStore tableRows,
     IndexMaintainer indexes,
     LongValueEncoder longValueEncoder,
-    ConstraintRegistry constraints,
     CatalogRowReader catalogRows,
     Pager pager,
     TableSnapshotReader snapshots)
@@ -791,30 +789,6 @@ internal sealed class CatalogWriter(
         return sid;
     }
 
-    /// <summary>
-    /// Renames a table in the catalog by deleting the old row and inserting a
-    /// new one with the updated name and LvProp.
-    /// </summary>
-    /// <param name="oldName">The old name.</param>
-    /// <param name="newName">The new name.</param>
-    /// <param name="lvProp">The LvProp payload.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <exception cref="InvalidOperationException">Thrown when no catalog row exists for <paramref name="oldName"/>.</exception>
-    internal async ValueTask RenameTableInCatalogAsync(string oldName, string newName, byte[]? lvProp, CancellationToken cancellationToken)
-    {
-        _ = await this.ReplaceUserTableCatalogEntryAsync(
-            oldName,
-            newName,
-            tdefPage: null,
-            lvProp,
-            includeSystemTables: true,
-            operation: $"renaming catalog row '{oldName}' to '{newName}'",
-            missingMessage: $"Catalog row for '{oldName}' was not found during rename.",
-            cancellationToken).ConfigureAwait(false);
-        constraints.Rename(oldName, newName);
-        catalog.Invalidate();
-    }
-
     internal async ValueTask<long> ReplaceUserTableCatalogEntryAsync(
         string existingName,
         string replacementName,
@@ -823,46 +797,11 @@ internal sealed class CatalogWriter(
         bool includeSystemTables,
         string operation,
         string? missingMessage,
+        bool? hasComplexColumns,
         CancellationToken cancellationToken)
     {
         await this.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
 
-        if (format.IsJet3)
-        {
-            return await this.ReplaceJet3CatalogEntryAsync(existingName, replacementName, tdefPage, lvProp, includeSystemTables, missingMessage, cancellationToken).ConfigureAwait(false);
-        }
-
-        UserTableCatalogDeletionResult deleted = await this.DeleteUserTableCatalogRowsAsync(
-            existingName,
-            tdefPage,
-            includeSystemTables,
-            throwIfNotFound: true,
-            operation,
-            missingMessage,
-            cancellationToken).ConfigureAwait(false);
-
-        long replacementTdefPage = tdefPage ?? deleted.FirstTDefPage
-            ?? throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, missingMessage ?? $"Catalog row for '{existingName}' was not found.", new JetErrorInfo { ObjectName = existingName });
-
-        await this.InsertCatalogEntryAsync(
-            replacementName,
-            replacementTdefPage,
-            lvProp,
-            deleted.FirstCatalogFlags,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        catalog.Invalidate();
-        return replacementTdefPage;
-    }
-
-    private async ValueTask<long> ReplaceJet3CatalogEntryAsync(
-        string existingName,
-        string replacementName,
-        long? tdefPage,
-        byte[]? lvProp,
-        bool includeSystemTables,
-        string? missingMessage,
-        CancellationToken cancellationToken)
-    {
         TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
         int nameIndex = objects.FindColumnIndex("Name");
         int idIndex = objects.FindColumnIndex("Id");
@@ -890,8 +829,14 @@ internal sealed class CatalogWriter(
         object[] replacement = (object[])original.Values.Clone();
         replacement[nameIndex] = replacementName;
         replacement[propertyIndex] = lvProp ?? (object)DBNull.Value;
+        if (hasComplexColumns is bool complex)
+        {
+            uint flags = unchecked((uint)Convert.ToInt32(original.Values[flagsIndex], System.Globalization.CultureInfo.InvariantCulture));
+            replacement[flagsIndex] = unchecked((int)((flags & ~0x00040000U) | (complex ? 0x00040000U : 0U)));
+        }
+
         UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
-        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [nameIndex, propertyIndex]);
+        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [nameIndex, propertyIndex, flagsIndex]);
         _ = tableRows.EncodeRow(objects, replacement, fixedTextBytes);
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, objects, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
@@ -910,7 +855,7 @@ internal sealed class CatalogWriter(
                 objects,
                 [(inserted, replacement)],
                 [(original.Location, original.Values)],
-                $"preserving catalog row for '{existingName}'",
+                operation,
                 cancellationToken).ConfigureAwait(false);
         }
 
@@ -918,7 +863,7 @@ internal sealed class CatalogWriter(
         return originalTdefPage;
     }
 
-    internal async ValueTask<UserTableCatalogDeletionResult> DeleteUserTableCatalogRowsAsync(
+    internal async ValueTask<IReadOnlyList<long>> DeleteUserTableCatalogRowsAsync(
         string tableName,
         long? tdefPage,
         bool includeSystemTables,
@@ -932,8 +877,6 @@ internal sealed class CatalogWriter(
         List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(msys, cancellationToken).ConfigureAwait(false);
         var droppedTdefPages = new List<long>();
         var deletedCatalogRows = new List<(RowLocation Loc, object[] Row)>();
-        long? firstTdefPage = null;
-        uint firstCatalogFlags = 0;
 
         foreach (CatalogRow row in rows)
         {
@@ -962,12 +905,6 @@ internal sealed class CatalogWriter(
                 droppedTdefPages.Add(row.TDefPage);
             }
 
-            firstTdefPage ??= row.TDefPage;
-            if (deletedCatalogRows.Count == 0)
-            {
-                firstCatalogFlags = unchecked((uint)row.Flags);
-            }
-
             object[] indexRow = CreateMsysObjectsIndexRow(msys, row);
             deletedCatalogRows.Add((new RowLocation(row.PageNumber, row.RowIndex, 0, 0), indexRow));
 
@@ -981,7 +918,7 @@ internal sealed class CatalogWriter(
                 throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, missingMessage ?? $"Catalog row for '{tableName}' was not found.", errorInfo: new JetErrorInfo { TableName = tableName });
             }
 
-            return new UserTableCatalogDeletionResult(0, [], null, 0);
+            return [];
         }
 
         await tableRows.AdjustTDefRowCountAsync(2, -deletedCatalogRows.Count, cancellationToken).ConfigureAwait(false);
@@ -993,7 +930,7 @@ internal sealed class CatalogWriter(
             cancellationToken).ConfigureAwait(false);
 
         catalog.Invalidate();
-        return new UserTableCatalogDeletionResult(deletedCatalogRows.Count, droppedTdefPages, firstTdefPage, firstCatalogFlags);
+        return droppedTdefPages;
     }
 
     /// <summary>Deletes catalog rows for hidden tables, keeping catalog indexes and counts current.</summary>

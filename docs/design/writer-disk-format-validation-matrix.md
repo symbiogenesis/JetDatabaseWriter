@@ -170,6 +170,12 @@ Manual Microsoft Access UI verification is supplemental evidence. It remains use
 
 When the matrix says "writer-created", read that as the output under validation. Do not infer that a writer-created database is an engine-authored source of truth.
 
+## Schema rewrite identity
+
+Add, drop and rename publish isolated replacement storage on the original TDEF root across Jet3, Jet4 and ACE. `TableRewriteIdentityTests` checks unchanged table IDs, catalog fields and permissions, continuation chains, complex parent/flat IDs and relationships. `TableRewriteStorageIsolationTests` guards unrelated data-page reads during Jet4/ACE publication; `TableRewriteFailureTests` sweeps complex rename/drop write failures and cancellation with exact rollback and same-writer retries.
+
+Native coverage uses `NativeSchemaDaoTests`, `NativeJet3SchemaRewriteTests`, `ComplexSchemaDaoTests` and the single/composite PK/FK compact cases. Northwind's original `ProductCategories` data macro depends on `GetAuditFieldsUserName` and already refuses standalone DAO parent updates with error 3892; `ComplexSchemaMacroDaoTests` verifies the refusal before any writer mutation and successful native compact. Its rewrite coverage retains catalog/application blobs and verifies native reads, extraction and compact. The other three complex fixtures retain persisted native attachment/multi-value writes. This does not establish arbitrary data-macro dependency rewriting or application execution semantics.
+
 ## Coverage Matrix
 
 | Area | Base fixture / oracle | Strongest automated signal | Current coverage and tests / probes | Residual trigger |

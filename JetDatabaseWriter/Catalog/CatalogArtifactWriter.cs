@@ -268,6 +268,7 @@ internal sealed class CatalogArtifactWriter(
                 replacement.IncludeSystemTables,
                 replacement.Operation ?? $"replacing catalog row for '{replacement.ExistingName}'",
                 replacement.MissingMessage,
+                replacement.HasComplexColumns,
                 cancellationToken).ConfigureAwait(false);
         }
 

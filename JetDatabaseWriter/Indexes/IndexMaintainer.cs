@@ -1297,6 +1297,112 @@ internal sealed class IndexMaintainer(
         }
     }
 
+    /// <summary>Collects every current index page of a private schema-rewrite replacement.</summary>
+    /// <param name="tdefPage">The replacement table's first TDEF page.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The distinct pages reachable from all physical index roots and maps, in page order.</returns>
+    /// <exception cref="JetCorruptDataException">An index descriptor, map or reachable tree cannot be traversed safely.</exception>
+    internal async ValueTask<long[]> CollectRewriteIndexPagesAsync(long tdefPage, CancellationToken cancellationToken)
+    {
+        (TdefPreambleStatus status, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (preamble.NumIdx == 0 && preamble.NumRealIdx == 0)
+        {
+            return [];
+        }
+
+        if (status != TdefPreambleStatus.Ok)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement table at page {tdefPage} has unreadable index definitions.", new JetErrorInfo { PageNumber = tdefPage });
+        }
+
+        // Jet3 rebuilds retain existing map membership. Current trees can
+        // outgrow those maps, whose original leaves must retain the owner too.
+        var pages = new SortedSet<long>();
+        for (int realIdxNum = 0; realIdxNum < preamble.NumRealIdx; realIdxNum++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!format.Index.TryReadRealIdxSlot(preamble.Buffer, preamble.RealIdxDescStart, realIdxNum, out RealIdxSlot slot))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement table at page {tdefPage} has an unreadable physical index descriptor {realIdxNum}.", new JetErrorInfo { PageNumber = tdefPage });
+            }
+
+            long rootPage = Ru32(preamble.Buffer, slot.FirstDpOffset);
+            long[] treePages = await this.TryCollectIndexTreePagesAsync(format.IndexPage, tdefPage, rootPage, cancellationToken).ConfigureAwait(false)
+                ?? throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement table's index {realIdxNum} rooted at page {rootPage} cannot be traversed safely.", new JetErrorInfo { PageNumber = rootPage });
+
+            pages.UnionWith(treePages);
+            if (!UsageMap.TryReadPointer(preamble.Buffer, slot.FirstDpOffset - 4, out UsageMapPointer pointer))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement table at page {tdefPage} has an unreadable index map pointer {realIdxNum}.", new JetErrorInfo { PageNumber = tdefPage });
+            }
+
+            // Fresh FK leaves acquire their map during the bulk rebuild.
+            if (pointer.PageNumber == 0 && pointer.RowIndex == 0)
+            {
+                continue;
+            }
+
+            List<long> mappedPages = await this.ReadRequiredRewriteIndexMapAsync(pointer, cancellationToken).ConfigureAwait(false);
+            foreach (long pageNumber in mappedPages)
+            {
+                if (pages.Contains(pageNumber))
+                {
+                    continue;
+                }
+
+                if (!await this.IsReplacedIndexPageAsync(pageNumber, tdefPage, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement table's index {realIdxNum} map names page {pageNumber} with an invalid type or owner.", new JetErrorInfo { PageNumber = pageNumber });
+                }
+
+                pages.Add(pageNumber);
+            }
+        }
+
+        return [.. pages];
+    }
+
+    private async ValueTask<List<long>> ReadRequiredRewriteIndexMapAsync(UsageMapPointer pointer, CancellationToken cancellationToken)
+    {
+        if (pointer.PageNumber <= 2 || pointer.PageNumber >= pager.PageCount)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement index map page {pointer.PageNumber} lies outside the database.", new JetErrorInfo { PageNumber = pointer.PageNumber });
+        }
+
+        byte[] page = await pager.ReadPageAsync(pointer.PageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (page[0] != Constants.PageTypes.Data
+                || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound rowBound))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement index map at page {pointer.PageNumber}, row {pointer.RowIndex} cannot be read.", new JetErrorInfo { PageNumber = pointer.PageNumber });
+            }
+
+            var pageNumbers = new List<long>();
+            bool recognized = await UsageMap.TryEnumeratePagesAsync(
+                page,
+                rowBound,
+                format.PageSize,
+                pager.PageCount,
+                minimumPageNumber: 3,
+                strict: true,
+                pager.ReadPageAsync,
+                PageBuffers.Return,
+                pageNumbers,
+                cancellationToken).ConfigureAwait(false);
+            if (!recognized || pageNumbers.Count == 0)
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement index map at page {pointer.PageNumber}, row {pointer.RowIndex} has no safely traversable index pages.", new JetErrorInfo { PageNumber = pointer.PageNumber });
+            }
+
+            return pageNumbers;
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
+    }
+
     private async ValueTask<long[]?> TryCollectIndexTreePagesAsync(
         IndexPageLayout layout,
         long tdefPage,

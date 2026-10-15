@@ -67,9 +67,11 @@ public sealed class ComplexSchemaDaoTests
         Dictionary<string, bool> appendOnly;
         ParentSnapshot parentValues;
         RowValues newRow;
+        string[] catalogIdentity;
         await using (AccessWriter original = await TestDatabase.OpenWriterAsync(session.SourcePath, cancellationToken: Ct))
         {
             ResolvedTable table = await original.Services.Catalog.ResolveRequiredTableAsync(tableName, Ct);
+            catalogIdentity = await ReadCatalogIdentityAsync(original, tableName);
             using DataTable snapshot = await original.Services.Snapshots.ReadTableSnapshotAsync(tableName, Ct);
             string keyColumn = indexes.FirstOrDefault(index => index.Kind == IndexKind.PrimaryKey)?.Columns[0].Name
                 ?? table.Definition.Columns.First(column => column.Type != ColumnType.ComplexType).Name;
@@ -101,6 +103,7 @@ public sealed class ComplexSchemaDaoTests
             await writer.RenameColumnAsync(tableName, "AddedFiles", "RenamedFiles", Ct);
             await writer.DropColumnAsync(tableName, "DroppedFiles", Ct);
             await writer.InsertRowAsync(tableName, newRow, Ct);
+            Assert.Equal(catalogIdentity, await ReadCatalogIdentityAsync(writer, tableName));
         }
 
         await AssertMetadataAsync(session.SourcePath, tableName, renamedColumn, indexes, seed + 1, parentValues, appendOnly);
@@ -108,12 +111,13 @@ public sealed class ComplexSchemaDaoTests
         string payloadPath = Path.Combine(session.WorkDir, "native-added.txt");
         await File.WriteAllBytesAsync(payloadPath, [5, 8, 13], Ct);
         string tableLiteral = Quote(tableName);
-        string nativeMutation = $$"""
-            $table = $db.TableDefs({{tableLiteral}})
-            foreach ($columnName in @('RenamedFiles','AddedTags','RenamedAttachment')) {
-                $matches = @($table.Indexes | Where-Object { $_.Fields.Count -eq 1 -and $_.Fields.Item(0).Name -eq $columnName })
-                if ($matches.Count -ne 1 -or !$matches[0].Unique -or !$matches[0].Required) { throw ('Invalid reference index: ' + $columnName) }
-            }
+
+        // The unchanged Northwind table refuses parent updates through DAO with
+        // error 3892: its data macro calls the application-only GetAuditFieldsUserName.
+        // Keep that macro intact and verify native reads/compact for this fixture.
+        bool nativeWrites = tableName != "ProductCategories";
+        string nativeMarker = nativeWrites ? "NATIVE_MUTATION_OK" : "NATIVE_READ_OK";
+        string nativeEdit = nativeWrites ? $$"""
             $rs = $db.OpenRecordset({{tableLiteral}})
             try {
                 $rs.Edit()
@@ -131,10 +135,18 @@ public sealed class ComplexSchemaDaoTests
                 } finally { $child.Close() }
                 $rs.Update()
             } finally { $rs.Close() }
-            Write-Output 'NATIVE_MUTATION_OK'
+            """ : string.Empty;
+        string nativeMutation = $$"""
+            $table = $db.TableDefs({{tableLiteral}})
+            foreach ($columnName in @('RenamedFiles','AddedTags','RenamedAttachment')) {
+                $matches = @($table.Indexes | Where-Object { $_.Fields.Count -eq 1 -and $_.Fields.Item(0).Name -eq $columnName })
+                if ($matches.Count -ne 1 -or !$matches[0].Unique -or !$matches[0].Required) { throw ('Invalid reference index: ' + $columnName) }
+            }
+            {{nativeEdit}}
+            Write-Output '{{nativeMarker}}'
             """;
         AccessRoundTripEnvironment.CompactResult result = session.RunDaoDatabaseScriptThenCompact(nativeMutation, TimeSpan.FromMinutes(2));
-        AssertDaoSuccess(result, "NATIVE_MUTATION_OK");
+        AssertDaoSuccess(result, nativeMarker);
 
         await AssertMetadataAsync(session.CompactedPath, tableName, renamedColumn, indexes, seed + 1, parentValues, appendOnly, allowCounterAdvance: true);
         await using (AccessReader compacted = await AccessReader.OpenAsync(session.CompactedPath, new AccessReaderOptions { UseLockFile = false }, Ct))
@@ -151,8 +163,16 @@ public sealed class ComplexSchemaDaoTests
                 Assert.Equal(expected.OrderBy(ItemIdentity), actual.OrderBy(ItemIdentity));
             }
 
-            Assert.Equal([5, 8, 13], Assert.Single(await compacted.GetAttachmentsAsync(tableName, "RenamedFiles", Ct)).FileData);
-            Assert.Equal("native-tag", Assert.Single(await compacted.GetMultiValueItemsAsync(tableName, "AddedTags", Ct)).Value);
+            if (nativeWrites)
+            {
+                Assert.Equal([5, 8, 13], Assert.Single(await compacted.GetAttachmentsAsync(tableName, "RenamedFiles", Ct)).FileData);
+                Assert.Equal("native-tag", Assert.Single(await compacted.GetMultiValueItemsAsync(tableName, "AddedTags", Ct)).Value);
+            }
+            else
+            {
+                Assert.Empty(await compacted.GetAttachmentsAsync(tableName, "RenamedFiles", Ct));
+                Assert.Empty(await compacted.GetMultiValueItemsAsync(tableName, "AddedTags", Ct));
+            }
         }
 
         string nativeReadback = BuildNativeReadbackScript(tableName, renamedColumn, complex, attachments, values, appendOnly, parentValues, session.WorkDir);
@@ -162,6 +182,17 @@ public sealed class ComplexSchemaDaoTests
         {
             Assert.Equal(attachment.FileData, await File.ReadAllBytesAsync(Path.Combine(session.WorkDir, $"preserved-{fileIndex++}.bin"), Ct));
         }
+    }
+
+    private static async Task<string[]> ReadCatalogIdentityAsync(AccessWriter writer, string tableName)
+    {
+        using DataTable objects = await writer.Services.Snapshots.ReadTableSnapshotAsync("MSysObjects", Ct);
+        DataRow row = Assert.Single(objects.AsEnumerable(), item => Equals(item["Name"], tableName));
+
+        // Retain application blobs (including data macros) as well as security
+        // and dates; a schema rewrite changes only the projected properties.
+        return [.. objects.Columns.Cast<DataColumn>().Where(column => column.ColumnName != "LvProp").Select(column =>
+            column.ColumnName + "=" + (row[column] is byte[] bytes ? Convert.ToHexString(bytes) : Convert.ToString(row[column], CultureInfo.InvariantCulture)))];
     }
 
     private static RowValues BuildNewRow(DataTable snapshot, TableDef definition, IReadOnlyList<IndexMetadata> indexes, string keyColumn)

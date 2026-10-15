@@ -202,16 +202,8 @@ internal sealed class TableRewritePlanner(
 
         await this.InitializeNewComplexReferencesAsync(tableName, tableDef, newDefs, projectedRows, cancellationToken).ConfigureAwait(false);
 
-        // Identify complex columns being dropped or renamed by this rewrite
-        // BEFORE the cascade-skipping drop runs. Surviving complex columns (matched by
-        // ComplexId between the existing and projected schemas) are preserved as-is —
-        // their flat child tables and MSysComplexColumns rows stay attached to the
-        // rebuilt parent. If no complex column is dropped or renamed, the temp table
-        // is transplanted onto the original TDEF page so MSysComplexColumns keeps the
-        // same parent object id; otherwise surviving rows are patched to the temp
-        // TDEF page after the copy/swap. Dropped complex columns get their flat child
-        // + catalog row removed surgically; renamed complex columns get their
-        // MSysComplexColumns row rewritten with the new ColumnName.
+        // Preserve surviving complex identities; reclaim dropped children and rename
+        // their catalog artifacts after publishing storage on the original root.
         Dictionary<int, ColumnDefinition> newComplexById = [];
         foreach (ColumnDefinition c in newDefs)
         {
@@ -241,10 +233,6 @@ internal sealed class TableRewritePlanner(
             }
         }
 
-        // Jet3 permissions and application metadata name the original object id.
-        // Keep that identity and its native ACE rows when replacing its storage.
-        bool transplant = format.IsJet3 || (newComplexById.Count > 0 && droppedComplex.Count == 0 && renamedComplex.Count == 0);
-
         long autoNumberHighWater = await autoNumbers.ReadHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         long complexHighWater = await autoNumbers.ReadComplexHighWaterAsync(entry.TDefPage, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
@@ -260,12 +248,10 @@ internal sealed class TableRewritePlanner(
             projectedFixedText,
             relationshipState,
             mapColumnName,
-            newComplexById,
             droppedComplex,
             renamedComplex,
             autoNumberHighWater,
-            complexHighWater,
-            transplant);
+            complexHighWater);
     }
 
     /// <summary>
