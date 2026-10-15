@@ -21,12 +21,12 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// formats. One instance is built per open file from its header
 /// (<see cref="FromHeader"/>), or for a new database of a format
 /// (<see cref="ForNewDatabase"/>). It holds no file state and never changes.
-/// Outside this file and the enum itself, only the encryption code, which
+/// Outside the profile files and the enum itself, only the encryption code, which
 /// classifies a file and unmasks its header before any profile exists, and
 /// the facades name a <see cref="DatabaseFormat"/> value; FormatKnowledgeTests
 /// enforces it.
 /// </summary>
-internal sealed class JetFormat
+internal sealed partial class JetFormat
 {
     /// <summary>
     /// <see cref="AnsiEncoding"/> with an encoder that throws for a character
@@ -290,10 +290,11 @@ internal sealed class JetFormat
         byte[] unmasked = (byte[])header.Clone();
         EncryptionManager.TransformHeaderMask(unmasked, kind);
         bool jet3 = kind == DatabaseFormat.Jet3Mdb;
-        int offset = jet3 ? 0x3A : 0x6E;
+        DatabaseHeaderLayout headerLayout = HeaderLayoutOf(kind);
+        int offset = headerLayout.SortOrderOffset;
         var order = new TextSortOrder(
             System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(unmasked.AsSpan(offset, 2)),
-            jet3 ? (byte)0 : unmasked[0x71],
+            headerLayout.SortVersionOffset < 0 ? (byte)0 : unmasked[headerLayout.SortVersionOffset],
             !jet3);
 
         // Zero in the database header names General Legacy. New Jet3
@@ -355,6 +356,12 @@ internal sealed class JetFormat
     /// <summary>Gets the database-specific property text encoding, refusing unrepresentable Jet3 text.</summary>
     internal Encoding PropertyTextEncoding => this.IsJet3 ? this.ansiTextEncoder : Encoding.Unicode;
 
+    /// <summary>Gets the byte width of one declared text code unit.</summary>
+    internal int TextCodeUnitSize => this.IsJet3 ? 1 : 2;
+
+    /// <summary>Gets the byte width of a TDEF name's length prefix.</summary>
+    internal int TDefNameLengthSize => this.IsJet3 ? 1 : 2;
+
     /// <summary>
     /// Returns the magic an <c>LvProp</c> property block of
     /// <paramref name="format"/> starts with: <c>KKD\0</c> on Jet3,
@@ -364,6 +371,16 @@ internal sealed class JetFormat
     /// <returns>The magic, as a little-endian 32-bit value.</returns>
     internal static uint PropertyBlockMagicOf(DatabaseFormat format)
         => format == DatabaseFormat.Jet3Mdb ? ColumnPropertyBlock.MagicKkd : ColumnPropertyBlock.MagicMr2;
+
+    /// <summary>Returns a Text descriptor's byte width for a declared character limit.</summary>
+    /// <param name="maxLength">The character limit, or zero for the default 255.</param>
+    /// <returns>The declared byte width.</returns>
+    internal int GetTextDeclaredSize(int maxLength) => (maxLength > 0 ? maxLength : 255) * this.TextCodeUnitSize;
+
+    /// <summary>Returns the character limit represented by a Text descriptor's byte width.</summary>
+    /// <param name="declaredSize">The descriptor's byte width.</param>
+    /// <returns>At least one character, matching schema projection.</returns>
+    internal int GetTextMaxLength(int declaredSize) => Math.Max(1, declaredSize / this.TextCodeUnitSize);
 
     /// <summary>
     /// Reads the per-row column count from the row header at
@@ -375,7 +392,7 @@ internal sealed class JetFormat
     /// <returns>The row's column count.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal int ReadRowColumnCount(byte[] page, int rowStart)
-        => this.IsJet3 ? page[rowStart] : Ru16(page, rowStart);
+        => this.RowFields.ReadNumCols(page, rowStart);
 
     /// <summary>
     /// Decodes a text/memo slice using the format-appropriate codec
@@ -555,27 +572,28 @@ internal sealed class JetFormat
     internal byte[] EncodeTDefNameRecord(string name)
     {
         bool jet3 = this.IsJet3;
-        byte[] nameBytes = jet3 ? this.EncodeAnsiText(name) : Encoding.Unicode.GetBytes(name);
-        int prefixSize = jet3 ? 1 : 2;
+        Encoding encoding = this.PropertyTextEncoding;
+        int nameByteCount = encoding.GetByteCount(name);
+        int prefixSize = this.TDefNameLengthSize;
         int maxLength = jet3 ? byte.MaxValue : ushort.MaxValue;
-        if (nameBytes.Length > maxLength)
+        if (nameByteCount > maxLength)
         {
             throw new ArgumentException(
-                $"The name '{name}' encodes to {nameBytes.Length} bytes; a {this.Kind} table definition stores at most {maxLength}.",
+                $"The name '{name}' encodes to {nameByteCount} bytes; a {this.Kind} table definition stores at most {maxLength}.",
                 nameof(name));
         }
 
-        byte[] record = new byte[prefixSize + nameBytes.Length];
+        byte[] record = new byte[prefixSize + nameByteCount];
         if (jet3)
         {
-            record[0] = (byte)nameBytes.Length;
+            record[0] = (byte)nameByteCount;
         }
         else
         {
-            Wu16(record, 0, nameBytes.Length);
+            Wu16(record, 0, nameByteCount);
         }
 
-        Buffer.BlockCopy(nameBytes, 0, record, prefixSize, nameBytes.Length);
+        _ = encoding.GetBytes(name.AsSpan(), record.AsSpan(prefixSize));
         return record;
     }
 

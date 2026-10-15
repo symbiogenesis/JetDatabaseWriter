@@ -174,6 +174,11 @@ internal readonly record struct TDefHeaderLayout(
 /// <param name="FlagsOff">The flags off.</param>
 /// <param name="NumOff">The number of off.</param>
 /// <param name="MiscOff">The misc off.</param>
+/// <param name="NativeIdentityOff">The native identity or redundant column-number offset.</param>
+/// <param name="SortOrderOff">The text sort-order word offset.</param>
+/// <param name="SortVersionOff">The text sort-version byte offset, or -1 when absent.</param>
+/// <param name="CodePageOff">The text code-page word offset, or -1 when absent.</param>
+/// <param name="ExtraFlagsOff">The extended flags byte offset, or -1 when absent.</param>
 internal readonly record struct ColumnDescriptorLayout(
     int Size,
     int TypeOff,
@@ -182,7 +187,12 @@ internal readonly record struct ColumnDescriptorLayout(
     int SzOff,
     int FlagsOff,
     int NumOff,
-    int MiscOff)
+    int MiscOff,
+    int NativeIdentityOff,
+    int SortOrderOff,
+    int SortVersionOff,
+    int CodePageOff,
+    int ExtraFlagsOff)
 {
     /// <summary>Gets the Jet3 column-descriptor layout.</summary>
     public static ColumnDescriptorLayout Jet3 => new(
@@ -193,7 +203,12 @@ internal readonly record struct ColumnDescriptorLayout(
         SzOff: 16, // col_len (2)
         FlagsOff: 13, // bitmask (1)
         NumOff: 1, // col_num (2)
-        MiscOff: 7); // misc (4) — Jet3 has no complex columns; included for layout symmetry
+        MiscOff: 7, // misc (4) — Jet3 has no complex columns; included for layout symmetry
+        NativeIdentityOff: 5,
+        SortOrderOff: 9,
+        SortVersionOff: -1,
+        CodePageOff: 11,
+        ExtraFlagsOff: -1);
 
     /// <summary>Gets the Jet4 / ACE column-descriptor layout.</summary>
     public static ColumnDescriptorLayout Jet4 => new(
@@ -204,7 +219,12 @@ internal readonly record struct ColumnDescriptorLayout(
         SzOff: 23, // col_len (2)
         FlagsOff: 15, // bitmask (1): 1+4+2+2+2+2+2
         NumOff: 5, // col_num (2)
-        MiscOff: 11); // misc (4): 1+4+2+2+2 — carries ComplexID for complex columns
+        MiscOff: 11, // misc (4): 1+4+2+2+2 — carries ComplexID for complex columns
+        NativeIdentityOff: 9,
+        SortOrderOff: 11,
+        SortVersionOff: 14,
+        CodePageOff: -1,
+        ExtraFlagsOff: 16);
 }
 
 /// <summary>

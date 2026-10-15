@@ -184,7 +184,8 @@ internal static class TDefCodec
             // = 0xC0). Read unconditionally for Jet4/ACE so calc columns
             // round-trip through the schema-rewrite path; harmless for cols
             // Access wrote with the slot at zero.
-            byte extraFlags = !format.IsJet3 && o + 16 < td.Length ? td[o + 16] : (byte)0;
+            int extraFlagsOffset = format.ColumnDescriptor.ExtraFlagsOff;
+            byte extraFlags = extraFlagsOffset >= 0 ? td[o + extraFlagsOffset] : (byte)0;
             int misc = Ri32(td, o + format.ColumnDescriptor.MiscOff);
 
             // For Numeric the misc 4-byte slot reuses bytes 11/12
@@ -207,9 +208,9 @@ internal static class TDefCodec
                 numericPrecision,
                 numericScale,
                 new JetDatabaseWriter.Indexes.Collation.TextSortOrder(
-                    Ru16(td, o + (format.IsJet3 ? 9 : 11)),
-                    format.IsJet3 ? (byte)0 : td[o + 14],
-                    !format.IsJet3)));
+                    Ru16(td, o + format.ColumnDescriptor.SortOrderOff),
+                    format.ColumnDescriptor.SortVersionOff < 0 ? (byte)0 : td[o + format.ColumnDescriptor.SortVersionOff],
+                    format.ColumnDescriptor.SortVersionOff >= 0)));
         }
 
         // Column names follow directly after all descriptors (in TDEF / descriptor order).

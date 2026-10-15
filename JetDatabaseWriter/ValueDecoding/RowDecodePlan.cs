@@ -138,7 +138,7 @@ internal sealed class RowDecodePlan
             return false;
         }
 
-        int nullMaskSz = JetTypeInfo.GetNullMaskSizeBytes(numCols);
+        int nullMaskSz = JetFormat.GetNullMaskSizeBytes(numCols);
         int nullMaskPos = rowSize - nullMaskSz;
         if (nullMaskPos < rowFields.NumCols)
         {
@@ -198,7 +198,7 @@ internal sealed class RowDecodePlan
         ColumnInfo col)
     {
         bool nullBit = col.ColNum < layout.NumCols
-            && JetTypeInfo.IsNullMaskBitSet(
+            && JetFormat.IsNullMaskBitSet(
                 page.Slice(rowStart + layout.NullMaskPos, rowSize - layout.NullMaskPos),
                 col.ColNum);
 
@@ -273,7 +273,7 @@ internal sealed class RowDecodePlan
     internal static ColumnSlice ResolveFixedColumnSlice(in RowFieldSizes rowFields, ReadOnlySpan<byte> page, int rowStart, in RowLayout layout, ColumnInfo col)
     {
         int start = rowFields.NumCols + col.FixedOff;
-        int sz = col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type);
+        int sz = col.IsCalculated ? col.Size : JetTypeInfo.GetFixedStorageSize(col.Type, col.Size);
         int payloadEnd = Math.Min(layout.Eod, layout.NullMaskPos);
         if (layout.VarTableStart < layout.NullMaskPos)
         {

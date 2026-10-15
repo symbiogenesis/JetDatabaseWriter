@@ -3,8 +3,6 @@ namespace JetDatabaseWriter.Schema;
 using System;
 using System.Buffers.Binary;
 using System.Globalization;
-using System.Runtime.InteropServices;
-using System.Text;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Infrastructure;
@@ -13,14 +11,58 @@ using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 /// <summary>
-/// Per-JET column-type metadata table. Centralises facts that previously
-/// lived in scattered <c>switch (col.Type)</c> blocks across the reader,
-/// writer, and column-info model — fixed on-disk byte size, default CLR
-/// projection, and "always variable-length" classification — so adding a
-/// new type code requires editing exactly one file.
+/// Per-JET column-type metadata and scalar codecs. Each known type has one
+/// immutable descriptor for its byte widths, CLR projection and storage
+/// classification. Unknown codes have no descriptor or inferred codec.
 /// </summary>
 internal static class JetTypeInfo
 {
+    private static readonly JetTypeMetadata?[] Types = CreateTypeTable();
+
+    /// <summary>Returns verified facts for a known discriminator, or no descriptor for an unknown code.</summary>
+    /// <param name="type">The on-disk column-type discriminator.</param>
+    /// <returns>The immutable type descriptor, or <see langword="null"/> when its native semantics are unknown.</returns>
+    internal static JetTypeMetadata? GetMetadata(ColumnType type) => Types[(byte)type];
+
+    /// <summary>Returns the physical fixed-slot width, using the descriptor width only for verified declared-width types.</summary>
+    /// <param name="type">The on-disk column-type discriminator.</param>
+    /// <param name="declaredSize">The original descriptor width.</param>
+    /// <returns>The fixed-slot byte width, or zero for unknown type codes.</returns>
+    internal static int GetFixedStorageSize(ColumnType type, int declaredSize)
+    {
+        JetTypeMetadata? metadata = GetMetadata(type);
+        if (metadata is null)
+        {
+            return 0;
+        }
+
+        return metadata.UsesDeclaredFixedSize ? declaredSize : metadata.FixedSize;
+    }
+
+    private static JetTypeMetadata?[] CreateTypeTable()
+    {
+        var types = new JetTypeMetadata?[byte.MaxValue + 1];
+        types[(byte)BooleanType] = new(0, 0, typeof(bool), "Yes/No", JetColumnSizeKind.BooleanBit, UsesNullMaskValue: true);
+        types[(byte)ByteType] = new(1, 1, typeof(byte), "Byte");
+        types[(byte)IntegerType] = new(2, 2, typeof(short), "Integer");
+        types[(byte)LongIntegerType] = new(4, 4, typeof(int), "Long Integer");
+        types[(byte)MoneyType] = new(8, 8, typeof(decimal), "Currency");
+        types[(byte)FloatType] = new(4, 4, typeof(float), "Single");
+        types[(byte)DoubleType] = new(8, 8, typeof(double), "Double");
+        types[(byte)DateTimeType] = new(8, 8, typeof(DateTime), "Date/Time");
+        types[(byte)BinaryType] = new(0, 0, typeof(byte[]), "Binary", JetColumnSizeKind.DeclaredBytes, AlwaysVariableLength: true, UsesDeclaredFixedSize: true);
+        types[(byte)TextType] = new(0, 0, typeof(string), "Text", JetColumnSizeKind.TextCharacters, AlwaysVariableLength: true, UsesDeclaredFixedSize: true);
+        types[(byte)OleType] = new(0, 0, typeof(byte[]), "OLE Object", JetColumnSizeKind.LongValue, AlwaysVariableLength: true, IsLongValue: true);
+        types[(byte)MemoType] = new(0, 0, typeof(string), "Memo", JetColumnSizeKind.LongValue, AlwaysVariableLength: true, IsLongValue: true);
+        types[(byte)GuidType] = new(16, 16, typeof(Guid), "GUID");
+        types[(byte)NumericType] = new(17, 17, typeof(decimal), "Decimal");
+        types[(byte)BigBinaryType] = new(3992, 0, typeof(byte[]), "Big Binary", JetColumnSizeKind.DeclaredBytes, UsesDeclaredFixedSize: true);
+        types[(byte)ComplexType] = new(4, 4, typeof(byte[]), "Complex", JetColumnSizeKind.LongValue);
+        types[(byte)BigIntType] = new(8, 8, typeof(long), "Big Integer");
+        types[(byte)DateTimeExtendedType] = new(42, 42, typeof(DateTime), "Date/Time Extended", JetColumnSizeKind.DeclaredBytes);
+        return types;
+    }
+
     /// <summary>
     /// Returns the on-disk fixed byte size for a fixed-length JET column type
     /// (<c>BYTE/INT/LONG/MONEY/FLOAT/DOUBLE/DATETIME/GUID/NUMERIC/BIGINT</c>), or
@@ -28,35 +70,7 @@ internal static class JetTypeInfo
     /// per-type sizes documented in mdbtools <see href="HACKING.md" />.
     /// </summary>
     /// <param name="type">JET column-type code (see <see cref="ColumnType"/>).</param>
-    public static int GetFixedSize(ColumnType type) => type switch
-    {
-        ByteType => 1,
-        IntegerType => 2,
-        LongIntegerType => 4,
-        MoneyType => 8,
-        FloatType => 4,
-        DoubleType => 8,
-        DateTimeType => 8,
-        GuidType => 16,
-        NumericType => 17,
-        BigIntType => 8,
-
-        // All complex-column subtypes share a 4-byte reference into a flat table.
-        ComplexType => 4,
-
-        // Jet4 MSysAccessObjects.Data stores a whole fixed binary chunk.
-        BigBinaryType => 3992,
-
-        // Access 2019+ "Date/Time Extended" — 42-byte fixed slot.
-        DateTimeExtendedType => 42,
-
-        BooleanType or
-        BinaryType or
-        TextType or
-        OleType or
-        MemoType or
-        _ => 0,
-    };
+    public static int GetFixedSize(ColumnType type) => GetMetadata(type)?.FixedSize ?? 0;
 
     /// <summary>
     /// Returns <see langword="true"/> when a variable-length row slot stores a
@@ -69,42 +83,19 @@ internal static class JetTypeInfo
     /// <param name="byteCount">Receives the required fixed-payload byte count.</param>
     public static bool TryGetVariableSlotFixedPayloadSize(ColumnType type, out int byteCount)
     {
-        byteCount = type switch
-        {
-            ComplexType => 4,
-            ByteType or
-            IntegerType or
-            LongIntegerType or
-            MoneyType or
-            FloatType or
-            DoubleType or
-            DateTimeType or
-            GuidType or
-            NumericType or
-            BigIntType or
-            DateTimeExtendedType => GetFixedSize(type),
-            BooleanType or
-            BinaryType or
-            TextType or
-            OleType or
-            MemoType or
-            BigBinaryType or
-            _ => 0,
-        };
-
+        byteCount = GetMetadata(type)?.VariableSlotPayloadSize ?? 0;
         return byteCount > 0;
     }
 
     /// <summary>
     /// Returns <see langword="true"/> for the four JET types
-    /// (<c>TEXT/BINARY/MEMO/OLE</c>) that are <i>always</i> stored in the
-    /// row's variable-length area. Other types may still live in the variable
-    /// area when the per-column <c>FLAG_FIXED</c> bit is cleared in the TDEF
-    /// descriptor — see <see cref="ColumnInfo.IsFixed"/>.
+    /// (<c>TEXT/BINARY/MEMO/OLE</c>) whose default storage uses the row's
+    /// variable-length area. Native Text and Binary descriptors can still
+    /// select fixed storage; other scalar types can select variable storage.
+    /// See <see cref="ColumnInfo.IsFixed"/> for the descriptor-aware decision.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
-    public static bool IsAlwaysVariableLength(ColumnType type)
-        => type is TextType or BinaryType or MemoType or OleType;
+    public static bool IsAlwaysVariableLength(ColumnType type) => GetMetadata(type)?.AlwaysVariableLength == true;
 
     /// <summary>
     /// Returns the CLR type used when projecting a TDEF column descriptor back
@@ -116,28 +107,7 @@ internal static class JetTypeInfo
     /// projection. Returns <see langword="null"/> for unknown codes.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
-    public static Type? GetClrType(ColumnType type) => type switch
-    {
-        BooleanType => typeof(bool),
-        ByteType => typeof(byte),
-        IntegerType => typeof(short),
-        LongIntegerType => typeof(int),
-        MoneyType => typeof(decimal),
-        FloatType => typeof(float),
-        DoubleType => typeof(double),
-        DateTimeType => typeof(DateTime),
-        NumericType => typeof(decimal),
-        BigIntType => typeof(long),
-        GuidType => typeof(Guid),
-        TextType => typeof(string),
-        MemoType => typeof(string),
-        BinaryType => typeof(byte[]),
-        OleType => typeof(byte[]),
-        BigBinaryType => typeof(byte[]),
-        ComplexType => typeof(byte[]),
-        DateTimeExtendedType => typeof(DateTime),
-        _ => null,
-    };
+    public static Type? GetClrType(ColumnType type) => GetMetadata(type)?.ClrType;
 
     /// <summary>
     /// Returns <see langword="true"/> when the column is a MEMO whose TDEF flag
@@ -176,28 +146,7 @@ internal static class JetTypeInfo
     /// names exposed by the legacy DAO/ADO type-name properties.
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
-    public static string GetTypeDisplayName(ColumnType type) => type switch
-    {
-        BooleanType => "Yes/No",
-        ByteType => "Byte",
-        IntegerType => "Integer",
-        LongIntegerType => "Long Integer",
-        MoneyType => "Currency",
-        FloatType => "Single",
-        DoubleType => "Double",
-        DateTimeType => "Date/Time",
-        BinaryType => "Binary",
-        TextType => "Text",
-        OleType => "OLE Object",
-        MemoType => "Memo",
-        GuidType => "GUID",
-        NumericType => "Decimal",
-        BigBinaryType => "Big Binary",
-        ComplexType => "Complex",
-        BigIntType => "Big Integer",
-        DateTimeExtendedType => "Date/Time Extended",
-        _ => $"0x{(byte)type:X2}",
-    };
+    public static string GetTypeDisplayName(ColumnType type) => GetMetadata(type)?.DisplayName ?? $"0x{(byte)type:X2}";
 
     /// <summary>
     /// Returns the user-facing <see cref="ColumnSize"/> for a column.
@@ -207,19 +156,9 @@ internal static class JetTypeInfo
     /// </summary>
     /// <param name="type">The JET column type or operation type.</param>
     /// <param name="declaredSize">The declared size.</param>
-    public static ColumnSize GetColumnSize(ColumnType type, int declaredSize) => type switch
-    {
-        BooleanType => ColumnSize.FromBits(1),
-        ByteType => ColumnSize.FromBytes(1),
-        IntegerType => ColumnSize.FromBytes(2),
-        LongIntegerType or FloatType => ColumnSize.FromBytes(4),
-        MoneyType or DoubleType or DateTimeType or BigIntType => ColumnSize.FromBytes(8),
-        GuidType => ColumnSize.FromBytes(16),
-        NumericType => ColumnSize.FromBytes(17),
-        TextType => ColumnSize.FromChars(declaredSize > 0 ? declaredSize / 2 : 255),
-        MemoType or OleType or ComplexType => ColumnSize.Lval,
-        BinaryType or BigBinaryType or DateTimeExtendedType or _ => declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable,
-    };
+    public static ColumnSize GetColumnSize(ColumnType type, int declaredSize)
+        => GetMetadata(type)?.GetColumnSize(declaredSize)
+            ?? (declaredSize > 0 ? ColumnSize.FromBytes(declaredSize) : ColumnSize.Variable);
 
     internal static ColumnType TypeCodeFromDefinition(ColumnDefinition column)
         => TypeCodeFromDefinition(column, nameof(column));
@@ -852,7 +791,7 @@ internal static class JetTypeInfo
 #if NET8_0_OR_GREATER
         // .NET 8 JIT emits efficient code for uint endianness reversal; process
         // full 4-byte words first, then handle any trailing bytes defensively.
-        Span<uint> words = MemoryMarshal.Cast<byte, uint>(bytes);
+        Span<uint> words = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint>(bytes);
         for (int i = 0; i < words.Length; i++)
         {
             words[i] = BinaryPrimitives.ReverseEndianness(words[i]);
@@ -978,75 +917,6 @@ internal static class JetTypeInfo
         }
     }
 
-    /// <summary>
-    /// Returns the number of bytes needed to hold a row's null bitmap: one bit
-    /// per column, rounded up to a whole byte.
-    /// </summary>
-    /// <param name="columnCount">The number of columns in the row.</param>
-    internal static int GetNullMaskSizeBytes(int columnCount) => (columnCount + 7) / 8;
-
-    /// <summary>
-    /// Returns <see langword="true"/> when the null-bitmap bit for
-    /// <paramref name="columnNumber"/> is set in <paramref name="mask"/> — the column
-    /// is present (non-null), or for a Boolean column holds <see langword="true"/>.
-    /// Returns <see langword="false"/> when the bit lies outside <paramref name="mask"/>.
-    /// </summary>
-    /// <param name="mask">The row's null-bitmap bytes (bit 0 = column 0).</param>
-    /// <param name="columnNumber">The zero-based column number.</param>
-    internal static bool IsNullMaskBitSet(ReadOnlySpan<byte> mask, int columnNumber)
-    {
-        if (columnNumber < 0)
-        {
-            return false;
-        }
-
-        int byteOffset = columnNumber / 8;
-        return byteOffset < mask.Length
-            && (mask[byteOffset] & (1 << (columnNumber % 8))) != 0;
-    }
-
-    /// <summary>
-    /// Sets or clears the null-bitmap bit for <paramref name="columnNumber"/> in
-    /// <paramref name="mask"/>. No-ops when the bit lies outside <paramref name="mask"/>.
-    /// </summary>
-    /// <param name="mask">The row's null-bitmap bytes (bit 0 = column 0).</param>
-    /// <param name="columnNumber">The zero-based column number.</param>
-    /// <param name="state">The bit value to write.</param>
-    internal static void SetNullMaskBit(byte[] mask, int columnNumber, bool state)
-        => SetNullMaskBit(mask.AsSpan(), columnNumber, state);
-
-    /// <summary>
-    /// Sets or clears the null-bitmap bit for <paramref name="columnNumber"/> in the
-    /// span-backed <paramref name="mask"/>. No-ops when the bit lies outside
-    /// <paramref name="mask"/>.
-    /// </summary>
-    /// <param name="mask">The row's null-bitmap bytes (bit 0 = column 0).</param>
-    /// <param name="columnNumber">The zero-based column number.</param>
-    /// <param name="state">The bit value to write.</param>
-    internal static void SetNullMaskBit(Span<byte> mask, int columnNumber, bool state)
-    {
-        if (columnNumber < 0)
-        {
-            return;
-        }
-
-        int byteOffset = columnNumber / 8;
-        int bitOffset = columnNumber % 8;
-        if (byteOffset >= mask.Length)
-        {
-            return;
-        }
-
-        if (state)
-        {
-            mask[byteOffset] |= (byte)(1 << bitOffset);
-        }
-        else
-        {
-            mask[byteOffset] &= unchecked((byte)~(1 << bitOffset));
-        }
-    }
-
     /// <summary>Reads a 24-bit little-endian unsigned integer.</summary>
     /// <param name="source">The source.</param>
     internal static int ReadUInt24LittleEndian(ReadOnlySpan<byte> source) =>
@@ -1083,363 +953,6 @@ internal static class JetTypeInfo
 #else
         BitConverter.ToString(source.ToArray()).Replace("-", string.Empty, StringComparison.Ordinal);
 #endif
-
-    // ── UTF-16LE bytes \u2192 string helpers ─────────────────────────────────
-    // The on-disk text encoding for Jet4/ACE is UCS-2 LE, which is the exact
-    // in-memory layout of <c>char</c> on supported .NET runtimes
-    // (all little-endian). Re-interpreting the byte span as a char span
-    // therefore skips the validation pass and intermediate buffers that
-    // <c>Encoding.Unicode.GetString</c> performs. On a hypothetical big-endian
-    // host the JIT-constant <c>BitConverter.IsLittleEndian</c> check folds
-    // the fast path away and we fall back to <c>Encoding.Unicode</c>.
-
-    /// <summary>
-    /// Decodes a UCS-2 LE byte slice into a <see cref="string"/>. The slice
-    /// length must be even; the caller is responsible for trimming any odd
-    /// trailing byte before calling. Allocates exactly one string.
-    /// </summary>
-    /// <param name="bytes">The bytes.</param>
-    internal static string DecodeUtf16LE(ReadOnlySpan<byte> bytes)
-    {
-        if (bytes.IsEmpty)
-        {
-            return string.Empty;
-        }
-
-        if (BitConverter.IsLittleEndian)
-        {
-            return new string(MemoryMarshal.Cast<byte, char>(bytes));
-        }
-
-        return Encoding.Unicode.GetString(bytes);
-    }
-
-    // ── JET4 compressed-unicode text codec ──────────────────
-    // Pure static encode/decode for Jet4/ACE Text and Memo columns, sitting
-    // next to the UTF-16LE helper above. Moved out of AccessBase because the
-    // codec is format-agnostic and holds no instance/database state.
-
-    /// <summary>
-    /// Encodes a string for storage in a Jet4 text/memo column.
-    /// When all characters are in the U+0001..U+00FF range, emits the
-    /// compressed form (<c>0xFF 0xFE</c> marker + 1 byte per character),
-    /// which the reader decodes via <c>DecompressJet4</c>.
-    /// Otherwise emits plain UCS-2 LE.
-    /// </summary>
-    /// <param name="value">The value.</param>
-    /// <param name="compress">The compress.</param>
-    /// <remarks>
-    /// The "no NUL" restriction (chars must be > U+0000) avoids ambiguity
-    /// with the compressed-mode toggle byte (<c>0x00</c>). The compressed
-    /// form is only chosen when it actually saves bytes (length &gt;= 3
-    /// characters), so 1- and 2-character strings are still written as
-    /// plain UCS-2 to avoid the 2-byte marker overhead.
-    /// </remarks>
-    internal static byte[] EncodeJet4Text(string value, bool compress = true) => EncodeJet4Text(value, int.MaxValue, compress);
-
-    /// <summary>
-    /// Encodes a string into Jet4 text format, truncating to at most
-    /// <paramref name="maxBytes"/> output bytes. Avoids a secondary
-    /// <c>Array.Resize</c> when the caller has a column-size limit.
-    /// </summary>
-    /// <param name="value">The string to encode.</param>
-    /// <param name="maxBytes">Maximum output byte count.</param>
-    /// <param name="compress">When <see langword="true"/> (the default) and
-    /// all characters fit in Latin-1, emits the compressed form
-    /// (<c>0xFF 0xFE</c> marker + 1 byte/char). When <see langword="false"/>
-    /// always emits plain UCS-2 LE. Callers should pass <see langword="false"/>
-    /// for columns whose <c>ExtraFlags</c> byte does not have the
-    /// <see cref="Constants.CompressedUnicodeExtFlagMask"/> bit set.</param>
-    internal static byte[] EncodeJet4Text(string value, int maxBytes, bool compress = true)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return [];
-        }
-
-        bool compressible = compress && value.Length >= 3;
-        if (compressible)
-        {
-            for (int i = 0; i < value.Length; i++)
-            {
-                char c = value[i];
-                if (c is '\0' or > (char)0xFF)
-                {
-                    compressible = false;
-                    break;
-                }
-            }
-        }
-
-        if (!compressible)
-        {
-            int charCount = Math.Min(value.Length, maxBytes / 2);
-            byte[] result = new byte[charCount * 2];
-            Encoding.Unicode.GetBytes(value.AsSpan(0, charCount), result);
-            return result;
-        }
-
-        int compressedLen = Math.Min(value.Length + 2, maxBytes);
-        int charsToEncode = compressedLen - 2;
-        if (charsToEncode <= 0)
-        {
-            return [];
-        }
-
-        byte[] compressed = new byte[charsToEncode + 2];
-        compressed[0] = 0xFF;
-        compressed[1] = 0xFE;
-        for (int i = 0; i < charsToEncode; i++)
-        {
-            compressed[i + 2] = (byte)value[i];
-        }
-
-        return compressed;
-    }
-
-    /// <summary>
-    /// Decodes Jet4 text (UCS-2 / UTF-16LE).
-    /// If data starts with the compressed-unicode marker 0xFF 0xFE, the
-    /// JET4 compressed-string algorithm is applied first.
-    /// </summary>
-    /// <param name="bytes">The bytes.</param>
-    /// <param name="start">The start.</param>
-    /// <param name="len">The length in bytes.</param>
-    /// <returns>The decoded string.</returns>
-    internal static string DecodeJet4Text(byte[] bytes, int start, int len)
-    {
-        if (len < 2)
-        {
-            return string.Empty;
-        }
-
-        if (bytes[start] == 0xFF && bytes[start + 1] == 0xFE)
-        {
-            return DecompressJet4(bytes, start + 2, len - 2);
-        }
-
-        // Plain UCS-2 LE — length must be even
-        int evenLen = len & ~1;
-        return evenLen > 0 ? DecodeUtf16LE(bytes.AsSpan(start, evenLen)) : string.Empty;
-    }
-
-    /// <summary>
-    /// Decodes Jet4 text from a span-backed buffer. Array-backed reader hot paths
-    /// use the byte-array overload so compressed strings can be built directly.
-    /// </summary>
-    /// <param name="bytes">The bytes.</param>
-    /// <param name="start">The start.</param>
-    /// <param name="len">The length in bytes.</param>
-    /// <returns>The decoded string.</returns>
-    internal static string DecodeJet4Text(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        if (len < 2)
-        {
-            return string.Empty;
-        }
-
-        if (bytes[start] == 0xFF && bytes[start + 1] == 0xFE)
-        {
-            return DecompressJet4(bytes, start + 2, len - 2);
-        }
-
-        // Plain UCS-2 LE — length must be even
-        int evenLen = len & ~1;
-        return evenLen > 0 ? DecodeUtf16LE(bytes.Slice(start, evenLen)) : string.Empty;
-    }
-
-    /// <summary>
-    /// Decodes the JET4 "compressed unicode" encoding.
-    /// A 0x00 byte toggles between 1-byte compressed (ASCII) and 2-byte
-    /// uncompressed (UCS-2) mode.
-    /// </summary>
-    /// <param name="bytes">The bytes.</param>
-    /// <param name="start">The start.</param>
-    /// <param name="len">The length in bytes.</param>
-    /// <returns>The decompressed string.</returns>
-    private static string DecompressJet4(byte[] bytes, int start, int len)
-    {
-        // Fast path: if no 0x00 byte appears in the data, the entire string
-        // is compressed Latin-1 with no mode switches. This is the overwhelming
-        // majority of text values in real Jet4 databases.
-        int end = start + len;
-        bool allCompressed = true;
-        for (int index = start; index < end; index++)
-        {
-            if (bytes[index] == 0x00)
-            {
-                allCompressed = false;
-                break;
-            }
-        }
-
-        if (allCompressed)
-        {
-            return CreateFromCompressed(bytes, start, len);
-        }
-
-        return DecompressJet4Slow(bytes, start, len);
-    }
-
-    /// <summary>
-    /// Decodes the JET4 "compressed unicode" encoding from a span-backed buffer.
-    /// </summary>
-    /// <param name="bytes">The bytes.</param>
-    /// <param name="start">The start.</param>
-    /// <param name="len">The length in bytes.</param>
-    /// <returns>The decompressed string.</returns>
-    private static string DecompressJet4(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        int end = start + len;
-        bool allCompressed = true;
-        for (int index = start; index < end; index++)
-        {
-            if (bytes[index] == 0x00)
-            {
-                allCompressed = false;
-                break;
-            }
-        }
-
-        if (allCompressed)
-        {
-            return CreateFromCompressed(bytes, start, len);
-        }
-
-        return DecompressJet4Slow(bytes, start, len);
-    }
-
-    private static string CreateFromCompressed(byte[] bytes, int start, int len) =>
-#if NET6_0_OR_GREATER
-        Encoding.Latin1.GetString(bytes, start, len);
-#else
-        string.Create(
-            len,
-            (Bytes: bytes, Start: start),
-            static (chars, state) =>
-            {
-                for (int index = 0; index < chars.Length; index++)
-                {
-                    chars[index] = (char)state.Bytes[state.Start + index];
-                }
-            });
-#endif
-
-    private static string CreateFromCompressed(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        char[] chars = new char[len];
-        for (int index = 0; index < len; index++)
-        {
-            chars[index] = (char)bytes[start + index];
-        }
-
-        return new string(chars);
-    }
-
-    private static string DecompressJet4Slow(byte[] bytes, int start, int len)
-    {
-        int charCount = CountDecompressedChars(bytes, start, len);
-        return string.Create(
-            charCount,
-            (Bytes: bytes, Start: start, Length: len),
-            static (chars, state) => FillDecompressed(state.Bytes, state.Start, state.Length, chars));
-    }
-
-    private static string DecompressJet4Slow(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        // Two-pass: count output chars first, then fill directly into char[].
-        int charCount = CountDecompressedChars(bytes, start, len);
-        char[] chars = new char[charCount];
-        FillDecompressed(bytes, start, len, chars);
-        return new string(chars);
-    }
-
-    private static int CountDecompressedChars(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        int count = 0;
-        bool compressed = true;
-        int i = start, end = start + len;
-
-        while (i < end)
-        {
-            if (compressed)
-            {
-                if (bytes[i] == 0x00)
-                {
-                    compressed = false;
-                    i++;
-                    continue;
-                }
-
-                count++;
-                i++;
-            }
-            else
-            {
-                int runStart = i;
-                while (i + 1 < end && !(bytes[i] == 0x00 && bytes[i + 1] == 0x00))
-                {
-                    i += 2;
-                }
-
-                count += (i - runStart) / 2;
-
-                if (i + 1 >= end)
-                {
-                    break;
-                }
-
-                compressed = true;
-                i += 2;
-            }
-        }
-
-        return count;
-    }
-
-    private static void FillDecompressed(ReadOnlySpan<byte> bytes, int start, int len, Span<char> output)
-    {
-        int pos = 0;
-        bool compressed = true;
-        int i = start, end = start + len;
-
-        while (i < end)
-        {
-            if (compressed)
-            {
-                if (bytes[i] == 0x00)
-                {
-                    compressed = false;
-                    i++;
-                    continue;
-                }
-
-                output[pos++] = (char)bytes[i++];
-            }
-            else
-            {
-                int runStart = i;
-                while (i + 1 < end && !(bytes[i] == 0x00 && bytes[i + 1] == 0x00))
-                {
-                    i += 2;
-                }
-
-                int runLen = i - runStart;
-                for (int r = 0; r < runLen; r += 2)
-                {
-                    output[pos++] = (char)(bytes[runStart + r] | (bytes[runStart + r + 1] << 8));
-                }
-
-                if (i + 1 >= end)
-                {
-                    break;
-                }
-
-                compressed = true;
-                i += 2;
-            }
-        }
-    }
 
     // ── Typed primitive readers ───────────────────────────────
     // Used by RowMapper<T>'s compiled direct decoder. Each helper returns

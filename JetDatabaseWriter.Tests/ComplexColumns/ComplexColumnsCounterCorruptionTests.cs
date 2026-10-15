@@ -14,7 +14,6 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
-using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -76,8 +75,8 @@ public sealed class ComplexColumnsCounterCorruptionTests
             ColumnInfo foreignKey = Assert.IsType<ColumnInfo>(flatDef.FindColumn("_Files"));
             RowLocation row = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(flatPage, Ct));
             byte[] page = await harness.Pager.ReadPageCopyAsync(row.DataPageNumber, Ct);
-            int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(harness.Database.Format.ReadRowColumnCount(page, row.RowStart));
-            JetTypeInfo.SetNullMaskBit(page.AsSpan(row.RowStart + row.RowSize - nullMaskSize, nullMaskSize), foreignKey.ColNum, reference.HasValue);
+            int nullMaskSize = JetFormat.GetNullMaskSizeBytes(harness.Database.Format.ReadRowColumnCount(page, row.RowStart));
+            JetFormat.SetNullMaskBit(page.AsSpan(row.RowStart + row.RowSize - nullMaskSize, nullMaskSize), foreignKey.ColNum, reference.HasValue);
             BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + foreignKey.FixedOff, 4), reference ?? 0);
             await harness.Pager.WritePageAsync(row.DataPageNumber, page, Ct);
         }
@@ -164,8 +163,8 @@ public sealed class ComplexColumnsCounterCorruptionTests
             ColumnInfo idColumn = Assert.IsType<ColumnInfo>(definition.FindColumn("ComplexID"));
             RowLocation row = Assert.Single(await harness.Database.GetLiveRowLocationsAsync(complexPage, Ct));
             byte[] page = await harness.Pager.ReadPageCopyAsync(row.DataPageNumber, Ct);
-            int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(harness.Database.Format.ReadRowColumnCount(page, row.RowStart));
-            JetTypeInfo.SetNullMaskBit(page.AsSpan(row.RowStart + row.RowSize - nullMaskSize, nullMaskSize), idColumn.ColNum, reference.HasValue);
+            int nullMaskSize = JetFormat.GetNullMaskSizeBytes(harness.Database.Format.ReadRowColumnCount(page, row.RowStart));
+            JetFormat.SetNullMaskBit(page.AsSpan(row.RowStart + row.RowSize - nullMaskSize, nullMaskSize), idColumn.ColNum, reference.HasValue);
             BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(row.RowStart + harness.Database.Format.RowFields.NumCols + idColumn.FixedOff, 4), reference ?? 0);
             await harness.Pager.WritePageAsync(row.DataPageNumber, page, Ct);
         }

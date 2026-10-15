@@ -452,11 +452,11 @@ string materialization.
 
 Primary code path:
 
-- `JetTypeInfo.DecodeJet4Text`
-- `JetTypeInfo.DecompressJet4`
-- `JetTypeInfo.CreateFromCompressed`
-- `JetTypeInfo.DecompressJet4Slow`
-- `JetTypeInfo.DecodeUtf16LE`
+- `JetFormat.DecodeJet4Text`
+- `JetFormat.DecompressJet4`
+- `JetFormat.CreateFromCompressed`
+- `JetFormat.DecompressJet4Slow`
+- `JetFormat.DecodeUtf16LE`
 
 ### 4. Unprojected wide-row decode
 

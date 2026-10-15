@@ -697,7 +697,7 @@ internal sealed class TableRewritePlanner(
         {
             case TextType:
                 int textSize = column.IsCalculated ? CalculatedPayloadSize(column, sizedByDescriptor, Constants.CalculatedColumn.MaxTextResultBytes) : column.Size;
-                int charLen = format.IsJet3 ? Math.Max(1, textSize) : Math.Max(1, textSize / 2);
+                int charLen = format.GetTextMaxLength(textSize);
                 baseDef = new ColumnDefinition(column.Name, typeof(string), charLen);
                 break;
             case BinaryType:

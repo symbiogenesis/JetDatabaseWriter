@@ -116,7 +116,7 @@ internal static class EncryptionManager
             return 0;
         }
 
-        int rc4Length = format == DatabaseFormat.Jet3Mdb ? 126 : 128;
+        int rc4Length = JetFormat.HeaderLayoutOf(format).MaskLength;
         if (hdr.Length < 0x18 + rc4Length)
         {
             rc4Length = hdr.Length - 0x18;
@@ -156,7 +156,7 @@ internal static class EncryptionManager
     internal static void TransformHeaderMask(byte[] headerPage, DatabaseFormat format)
     {
         Guard.NotNull(headerPage, nameof(headerPage));
-        int maskLength = format == DatabaseFormat.Jet3Mdb ? Constants.DatabaseHeader.Jet3MaskLength : Constants.DatabaseHeader.MaskLength;
+        int maskLength = JetFormat.HeaderLayoutOf(format).MaskLength;
         int length = Math.Min(maskLength, headerPage.Length - Constants.DatabaseHeader.MaskStart);
         if (length > 0)
         {
@@ -183,8 +183,9 @@ internal static class EncryptionManager
     /// <returns><see langword="true"/> when the password area holds a password; <see langword="false"/> when it holds Access's empty-password pattern or the header is too short to hold the area.</returns>
     internal static bool HasHeaderPassword(byte[] header, DatabaseFormat format)
     {
-        bool jet3 = format == DatabaseFormat.Jet3Mdb;
-        int passwordLength = jet3 ? Constants.DatabaseHeader.Jet3PasswordLength : Constants.DatabaseHeader.PasswordLength;
+        DatabaseHeaderLayout layout = JetFormat.HeaderLayoutOf(format);
+        bool jet3 = !layout.UsesCreationDatePassword;
+        int passwordLength = layout.PasswordLength;
         int length = jet3
             ? Constants.DatabaseHeader.Password + passwordLength
             : Constants.DatabaseHeader.CreationDate + sizeof(double);
@@ -237,10 +238,11 @@ internal static class EncryptionManager
     /// <param name="format">The database format.</param>
     internal static void WriteEmptyHeaderPassword(Span<byte> unmaskedHeader, DatabaseFormat format)
     {
-        bool jet3 = format == DatabaseFormat.Jet3Mdb;
+        DatabaseHeaderLayout layout = JetFormat.HeaderLayoutOf(format);
+        bool jet3 = !layout.UsesCreationDatePassword;
         Span<byte> area = unmaskedHeader.Slice(
             Constants.DatabaseHeader.Password,
-            jet3 ? Constants.DatabaseHeader.Jet3PasswordLength : Constants.DatabaseHeader.PasswordLength);
+            layout.PasswordLength);
 
         Span<byte> pattern = stackalloc byte[4];
         if (jet3 || !TryGetEmptyPasswordPattern(unmaskedHeader, pattern))

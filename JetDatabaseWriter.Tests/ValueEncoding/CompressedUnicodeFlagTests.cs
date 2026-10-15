@@ -6,7 +6,6 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Schema;
 using Xunit;
 
 /// <summary>
@@ -126,10 +125,10 @@ public sealed class CompressedUnicodeFlagTests
         ArgumentException.ThrowIfNullOrEmpty(value);
 
         byte[] expected = compress ? BuildCompressed(value) : Encoding.Unicode.GetBytes(value);
-        byte[] actual = JetTypeInfo.EncodeJet4Text(value, compress);
+        byte[] actual = JetFormat.EncodeJet4Text(value, compress);
 
         Assert.Equal(expected, actual);
-        Assert.Equal(value, JetTypeInfo.DecodeJet4Text(actual, 0, actual.Length));
+        Assert.Equal(value, JetFormat.DecodeJet4Text(actual, 0, actual.Length));
     }
 
     /// <summary>
@@ -151,7 +150,7 @@ public sealed class CompressedUnicodeFlagTests
         ArgumentException.ThrowIfNullOrEmpty(expected);
 
         byte[] bytes = compressed ? BuildCompressed(expected) : Encoding.Unicode.GetBytes(expected);
-        string actual = JetTypeInfo.DecodeJet4Text(bytes, 0, bytes.Length);
+        string actual = JetFormat.DecodeJet4Text(bytes, 0, bytes.Length);
         Assert.Equal(expected, actual);
     }
 

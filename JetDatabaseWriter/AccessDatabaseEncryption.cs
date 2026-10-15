@@ -95,7 +95,7 @@ public static class AccessDatabaseEncryption
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        int pageSize = format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+        int pageSize = JetFormat.PageSizeOf(format);
         byte[] sourceHeader = plaintext.AsSpan(0, pageSize).ToArray();
         byte[] targetHeader = (byte[])sourceHeader.Clone();
         try
@@ -298,7 +298,7 @@ public static class AccessDatabaseEncryption
         byte[] prefix = new byte[0x100];
         await source.ReadExactlyAsync(prefix.AsMemory(), cancellationToken).ConfigureAwait(false);
         DatabaseFormat format = JetFormat.DetectFormat(prefix);
-        int pageSize = format == DatabaseFormat.Jet3Mdb ? Constants.PageSizes.Jet3 : Constants.PageSizes.Jet4;
+        int pageSize = JetFormat.PageSizeOf(format);
         byte[] header = new byte[pageSize];
         source.Position = 0;
         await source.ReadExactlyAsync(header.AsMemory(), cancellationToken).ConfigureAwait(false);

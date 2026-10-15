@@ -22,7 +22,7 @@ using Xunit;
 public sealed partial class FormatKnowledgeTests
 {
     /// <summary>The library-relative paths that may name a format value: files, or folders ending in a slash.</summary>
-    private static readonly string[] AllowedPaths = ["JetFormat.cs", "Enums/", "Encryption/", "AccessReader.cs", "AccessWriter.cs", "AccessDatabaseEncryption.cs"];
+    private static readonly string[] AllowedPaths = ["JetFormat.cs", "JetFormat.Header.cs", "Enums/", "Encryption/", "AccessReader.cs", "AccessWriter.cs", "AccessDatabaseEncryption.cs"];
 
     [Fact]
     public async Task DatabaseFormatValues_AreNamedOnlyByTheFormatProfile()

@@ -57,11 +57,11 @@ internal sealed class ComplexReferenceSeedReader(JetFormat format, TableDefReade
         }
 
         int columnCount = format.ReadRowColumnCount(page, rowStart);
-        int nullMaskSize = GetNullMaskSizeBytes(columnCount);
+        int nullMaskSize = JetFormat.GetNullMaskSizeBytes(columnCount);
         int fixedAreaSize = rowSize - format.RowFields.NumCols - nullMaskSize;
         if (column.ColNum >= columnCount
             || column.FixedOff > fixedAreaSize - 4
-            || !IsNullMaskBitSet(page.AsSpan(rowStart + rowSize - nullMaskSize, nullMaskSize), column.ColNum))
+            || !JetFormat.IsNullMaskBitSet(page.AsSpan(rowStart + rowSize - nullMaskSize, nullMaskSize), column.ColNum))
         {
             return false;
         }

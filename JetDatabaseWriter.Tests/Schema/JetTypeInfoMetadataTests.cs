@@ -77,6 +77,48 @@ public sealed class JetTypeInfoMetadataTests
         }
     }
 
+    [Fact]
+    public void PhysicalMetadata_All256TypeCodes_HaveExplicitKnownFactsOrNoDescriptor()
+    {
+        for (int code = 0; code <= byte.MaxValue; code++)
+        {
+            var type = (ColumnType)code;
+            if (KnownTypes.TryGetValue(type, out ExpectedTypeInfo expected))
+            {
+                JetTypeMetadata metadata = Assert.IsType<JetTypeMetadata>(JetTypeInfo.GetMetadata(type));
+                Assert.Equal(expected.FixedSize, metadata.FixedSize);
+                Assert.Equal(expected.VariablePayloadSize, metadata.VariableSlotPayloadSize);
+                Assert.Equal(expected.ClrType, metadata.ClrType);
+                Assert.Equal(expected.DisplayName, metadata.DisplayName);
+                Assert.Equal(expected.AlwaysVariable, metadata.AlwaysVariableLength);
+                Assert.Equal(type is TextType or BinaryType or BigBinaryType, metadata.UsesDeclaredFixedSize);
+                Assert.Equal(metadata.UsesDeclaredFixedSize ? DeclaredSize : expected.FixedSize, JetTypeInfo.GetFixedStorageSize(type, DeclaredSize));
+                Assert.Equal(type is MemoType or OleType, metadata.IsLongValue);
+                Assert.Equal(type == BooleanType, metadata.UsesNullMaskValue);
+            }
+            else
+            {
+                Assert.Null(JetTypeInfo.GetMetadata(type));
+                Assert.Equal(0, JetTypeInfo.GetFixedStorageSize(type, DeclaredSize));
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ColumnSize_NonpositiveDeclaredSize_PreservesTypeSpecificDefaults(int declaredSize)
+    {
+        Assert.Equal(ColumnSize.FromBits(1), JetTypeInfo.GetColumnSize(BooleanType, declaredSize));
+        Assert.Equal(ColumnSize.FromChars(255), JetTypeInfo.GetColumnSize(TextType, declaredSize));
+        Assert.Equal(ColumnSize.FromBytes(4), JetTypeInfo.GetColumnSize(LongIntegerType, declaredSize));
+        Assert.Equal(ColumnSize.Lval, JetTypeInfo.GetColumnSize(MemoType, declaredSize));
+        Assert.Equal(ColumnSize.Lval, JetTypeInfo.GetColumnSize(ComplexType, declaredSize));
+        Assert.Equal(ColumnSize.Variable, JetTypeInfo.GetColumnSize(BinaryType, declaredSize));
+        Assert.Equal(ColumnSize.Variable, JetTypeInfo.GetColumnSize(BigBinaryType, declaredSize));
+        Assert.Equal(ColumnSize.Variable, JetTypeInfo.GetColumnSize(DateTimeExtendedType, declaredSize));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -322,6 +322,38 @@ public sealed class JetFormatTests
                 .Select(static property => property.Name)
                 .OrderBy(static name => name, StringComparer.Ordinal));
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, 1, 5, 9, -1, 11, -1)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 2, 9, 11, 14, -1, 16)]
+    [InlineData(DatabaseFormat.AceAccdb, 2, 9, 11, 14, -1, 16)]
+    public void DescriptorAndTextFacts_MatchNativeLayouts(
+        DatabaseFormat kind,
+        int textUnitSize,
+        int identityOffset,
+        int sortOffset,
+        int sortVersionOffset,
+        int codePageOffset,
+        int extraFlagsOffset)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        Assert.Equal(kind == DatabaseFormat.Jet3Mdb ? 126 : 128, format.Header.MaskLength);
+        Assert.Equal(kind == DatabaseFormat.Jet3Mdb ? 20 : 40, format.Header.PasswordLength);
+        Assert.Equal(kind == DatabaseFormat.Jet3Mdb ? 0x3A : 0x6E, format.Header.SortOrderOffset);
+        Assert.Equal(kind == DatabaseFormat.Jet3Mdb ? -1 : 0x71, format.Header.SortVersionOffset);
+        Assert.Equal(kind != DatabaseFormat.Jet3Mdb, format.Header.UsesCreationDatePassword);
+        Assert.Equal(textUnitSize, format.TextCodeUnitSize);
+        Assert.Equal(textUnitSize, format.TDefNameLengthSize);
+        Assert.Equal(identityOffset, format.ColumnDescriptor.NativeIdentityOff);
+        Assert.Equal(sortOffset, format.ColumnDescriptor.SortOrderOff);
+        Assert.Equal(sortVersionOffset, format.ColumnDescriptor.SortVersionOff);
+        Assert.Equal(codePageOffset, format.ColumnDescriptor.CodePageOff);
+        Assert.Equal(extraFlagsOffset, format.ColumnDescriptor.ExtraFlagsOff);
+        Assert.Equal(255 * textUnitSize, format.GetTextDeclaredSize(0));
+        Assert.Equal(17 * textUnitSize, format.GetTextDeclaredSize(17));
+        Assert.Equal(17, format.GetTextMaxLength(17 * textUnitSize));
+        Assert.Equal(1, format.GetTextMaxLength(0));
+    }
+
     private static async ValueTask<byte[]> ReadHeaderAsync(string fixture)
     {
         byte[] file = await File.ReadAllBytesAsync(PathOf(fixture), TestContext.Current.CancellationToken);

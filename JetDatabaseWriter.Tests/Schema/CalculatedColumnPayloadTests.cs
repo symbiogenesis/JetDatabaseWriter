@@ -322,7 +322,7 @@ public sealed class CalculatedColumnPayloadTests(DatabaseCache db) : IClassFixtu
         return payload;
     }
 
-    private static byte[] TextPayload(string value) => JetTypeInfo.EncodeJet4Text(value, int.MaxValue, compress: true);
+    private static byte[] TextPayload(string value) => JetFormat.EncodeJet4Text(value, int.MaxValue, compress: true);
 
     private static byte[] BooleanPayload(bool value) => [value ? (byte)0xFF : (byte)0x00];
 

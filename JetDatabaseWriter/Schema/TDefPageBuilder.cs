@@ -2,11 +2,9 @@ namespace JetDatabaseWriter.Schema;
 
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -141,7 +139,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 descriptors.Add(preserved);
                 if (source.IsFixed)
                 {
-                    fixedOffset += source.Type is TextType or BinaryType or BigBinaryType ? source.Size : GetFixedSize(source.Type);
+                    fixedOffset += GetFixedStorageSize(source.Type, source.Size);
                 }
                 else
                 {
@@ -233,7 +231,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             }
             else
             {
-                fixedOffset += type is TextType or BinaryType or BigBinaryType ? size : GetFixedSize(type);
+                fixedOffset += GetFixedStorageSize(type, size);
             }
         }
 
@@ -271,7 +269,6 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
         int colStart = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
         int namePos = colStart + (numCols * format.ColumnDescriptor.Size);
-        int nameLenSize = jet4 ? 2 : 1;
 
         page[0] = Constants.PageTypes.TableDefinition;
         page[1] = 0x01;
@@ -304,14 +301,14 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             if (jet4)
             {
                 // Native identities need not equal the row-layout column number.
-                Wu16(page, o + 9, col.NativeIdentity);
+                Wu16(page, o + format.ColumnDescriptor.NativeIdentityOff, col.NativeIdentity);
             }
 
             if (!jet4)
             {
-                Wu16(page, o + 5, col.ColNum);
-                Wu16(page, o + 9, 0x0409);
-                Wu16(page, o + 11, format.CodePage);
+                Wu16(page, o + format.ColumnDescriptor.NativeIdentityOff, col.ColNum);
+                Wu16(page, o + format.ColumnDescriptor.SortOrderOff, 0x0409);
+                Wu16(page, o + format.ColumnDescriptor.CodePageOff, format.CodePage);
             }
 
             page[o + format.ColumnDescriptor.FlagsOff] = col.Flags;
@@ -332,7 +329,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 }
                 else
                 {
-                    page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                    page[o + format.ColumnDescriptor.ExtraFlagsOff] = col.ExtraFlags;
                 }
             }
             else if (col.Type is TextType or MemoType)
@@ -353,24 +350,24 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 //                     here through ColumnInfo.ExtraFlags. The reader
                 //                     decodes the FF FE compressed marker regardless of
                 //                     the bit.
-                Wu16(page, o + (jet4 ? 11 : 9), col.TextSortOrder.Value);
+                Wu16(page, o + format.ColumnDescriptor.SortOrderOff, col.TextSortOrder.Value);
                 if (jet4)
                 {
-                    page[o + 14] = col.TextSortOrder.Version;
+                    page[o + format.ColumnDescriptor.SortVersionOff] = col.TextSortOrder.Version;
                 }
                 else
                 {
-                    Wu16(page, o + 11, format.CodePage);
+                    Wu16(page, o + format.ColumnDescriptor.CodePageOff, format.CodePage);
                 }
 
                 if (jet4)
                 {
-                    page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                    page[o + format.ColumnDescriptor.ExtraFlagsOff] = col.ExtraFlags;
                 }
             }
             else if (jet4 && col.IsCalculated)
             {
-                page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                page[o + format.ColumnDescriptor.ExtraFlagsOff] = col.ExtraFlags;
             }
             else if (jet4)
             {
@@ -381,7 +378,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
                 if (col.ExtraFlags != 0)
                 {
-                    page[o + format.ColumnDescriptor.FlagsOff + 1] = col.ExtraFlags;
+                    page[o + format.ColumnDescriptor.ExtraFlagsOff] = col.ExtraFlags;
                 }
             }
 
@@ -400,29 +397,19 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                 Wu16(page, o + format.ColumnDescriptor.NumOff, col.ColNum);
                 Wu16(page, o + format.ColumnDescriptor.VarOff, col.VarIdx);
                 Wu16(page, o + format.ColumnDescriptor.FixedOff, col.FixedOff);
-                Wu16(page, o + (jet4 ? 9 : 5), jet4 ? col.NativeIdentity : col.ColNum);
+                Wu16(page, o + format.ColumnDescriptor.NativeIdentityOff, jet4 ? col.NativeIdentity : col.ColNum);
             }
 
-            byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(col.Name) : format.EncodeAnsiText(col.Name);
-            if (namePos + nameLenSize + nameBytes.Length > page.Length)
+            byte[] nameRecord = format.EncodeTDefNameRecord(col.Name);
+            if (namePos + nameRecord.Length > page.Length)
             {
                 throw new NotSupportedException(
                     "Table definition exceeds the TDEF logical-buffer capacity. Increase "
-                    + "BuildTDefPagesWithIndexOffsets's logicalCapacity or reduce the column count.");
+                    + "the logical capacity or reduce column-name lengths.");
             }
 
-            if (jet4)
-            {
-                Wu16(page, namePos, nameBytes.Length);
-            }
-            else
-            {
-                page[namePos] = (byte)nameBytes.Length;
-            }
-
-            namePos += nameLenSize;
-            Buffer.BlockCopy(nameBytes, 0, page, namePos, nameBytes.Length);
-            namePos += nameBytes.Length;
+            Buffer.BlockCopy(nameRecord, 0, page, namePos, nameRecord.Length);
+            namePos += nameRecord.Length;
         }
 
         Wu16(page, format.TDef.NumVarCols, numVarCols);
@@ -515,26 +502,16 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             int npos = anchors.LogIdxNamesStart;
             for (int i = 0; i < numIdx; i++)
             {
-                byte[] nameBytes = jet4 ? Encoding.Unicode.GetBytes(indexes[i].Name) : format.EncodeAnsiText(indexes[i].Name);
-                if (npos + nameLenSize + nameBytes.Length > page.Length)
+                byte[] nameRecord = format.EncodeTDefNameRecord(indexes[i].Name);
+                if (npos + nameRecord.Length > page.Length)
                 {
                     throw new NotSupportedException(
-                        "Table definition (with indexes) exceeds the TDEF logical-buffer capacity. Increase "
-                        + "BuildTDefPagesWithIndexOffsets's logicalCapacity or reduce the index count.");
+                        "Table definition exceeds the TDEF logical-buffer capacity. Increase "
+                        + "the logical capacity or reduce index-name lengths.");
                 }
 
-                if (jet4)
-                {
-                    Wu16(page, npos, nameBytes.Length);
-                }
-                else
-                {
-                    page[npos] = (byte)nameBytes.Length;
-                }
-
-                npos += nameLenSize;
-                Buffer.BlockCopy(nameBytes, 0, page, npos, nameBytes.Length);
-                npos += nameBytes.Length;
+                Buffer.BlockCopy(nameRecord, 0, page, npos, nameRecord.Length);
+                npos += nameRecord.Length;
             }
 
             namePos = npos;
@@ -725,89 +702,10 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         int pgSz = profile.PageSize;
         byte[] db = new byte[pgSz * 3];
 
-        db[0] = 0x00;
-        db[1] = 0x01;
-        db[2] = 0x00;
-        db[3] = 0x00;
-
-        profile.HeaderSignature.CopyTo(db.AsSpan(4));
-        db[0x14] = profile.NewDatabaseVersion;
-
         BuildGlobalUsageMapPage(db, pgSz, profile);
         BuildMSysObjectsTDef(db, pgSz * 2, profile);
-
-        if (profile.IsJet3)
-        {
-            WriteJet3HeaderDefaults(db);
-        }
-        else
-        {
-            WriteJet4AceHeaderDefaults(db);
-        }
-
-        if (!profile.IsJet3)
-        {
-            // Jet4 and ACE page zero have 256 two-byte user slots. The second byte marks
-            // an available slot; zeroing every slot makes DAO report all users active.
-            for (int offset = 0xE01; offset < pgSz; offset += 2)
-            {
-                db[offset] = 1;
-            }
-        }
-
-        EncryptionManager.TransformHeaderMask(db, format);
+        profile.InitializeNewHeader(db);
         return db;
-    }
-
-    /// <summary>
-    /// Writes the unmasked page-0 fields Access 97 writes in a new database,
-    /// as found in the Access 97 fixtures: code page 1252 and sort order 0x0409.
-    /// The encoding key and the 20-byte password area stay zero, so the file
-    /// is unencrypted and has no password. The 2 bytes at 0x56, which vary from
-    /// file to file and whose meaning is unknown, stay zero.
-    /// </summary>
-    /// <param name="db">The database bytes whose header is initialized.</param>
-    private static void WriteJet3HeaderDefaults(byte[] db)
-    {
-        db[0x19] = 0x01;
-        db[0x1C] = 0x01;
-        db[0x1D] = 0x01;
-        Wi32(db, 0x20, 2);
-        Wi32(db, 0x24, 3);
-        Wi32(db, 0x28, 4);
-        Wi32(db, 0x2C, 5);
-        db[0x38] = 0x01;
-        Wu16(db, Constants.DatabaseHeader.Jet3SortOrder, 0x0409);
-        Wu16(db, Constants.DatabaseHeader.CodePage, 1252);
-    }
-
-    private static void WriteJet4AceHeaderDefaults(byte[] db)
-    {
-        db[0x19] = 0x01;
-        db[0x1C] = 0x01;
-        db[0x1D] = 0x01;
-        Wi32(db, 0x20, 2);
-        Wi32(db, 0x24, 3);
-        Wi32(db, 0x28, 4);
-        Wi32(db, 0x2C, 5);
-        Wu16(db, 0x3C, 1252);
-
-        for (int offset = 0x42; offset < 0x6A; offset += 4)
-        {
-            db[offset] = 0x53;
-            db[offset + 1] = 0xB4;
-        }
-
-        Wu16(db, 0x6A, 0x11A6);
-        Wu16(db, 0x6E, 0x0409);
-
-        ReadOnlySpan<byte> creationDate = [0x08, 0x6E, 0x41, 0x1D, 0x7C, 0x8A, 0xE6, 0x40];
-        creationDate.CopyTo(db.AsSpan(0x72));
-
-        Wi32(db, 0x98, 0x0654);
-        db[0x9C] = (byte)'4';
-        db[0x9D] = (byte)'.';
-        db[0x9E] = (byte)'0';
     }
 
     private static void BuildGlobalUsageMapPage(byte[] db, int pgSz, JetFormat format)
@@ -832,34 +730,18 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     }
 
     private static int GetDeclaredSize(ColumnType type, int maxLength, JetFormat format)
-        => type switch
-        {
-            BooleanType => 0,
-            ByteType => 1,
-            IntegerType => 2,
-            LongIntegerType => 4,
-            MoneyType => 8,
-            FloatType => 4,
-            DoubleType => 8,
-            DateTimeType => 8,
-            BigIntType => 8,
-            GuidType => 16,
-            NumericType => 17,
-            TextType => GetTextDeclaredSize(maxLength, format),
-            BinaryType => maxLength > 0 ? maxLength : 255,
-            BigBinaryType => GetFixedSize(BigBinaryType),
-            ComplexType => 4,
-            DateTimeExtendedType => GetFixedSize(DateTimeExtendedType),
-            OleType or
-            MemoType or
-            _ => 0,
-        };
-
-    private static int GetTextDeclaredSize(int maxLength, JetFormat format)
     {
-        // Jet3 stores a character per byte in the code page, Jet4 and ACE two (UTF-16).
-        int effectiveLength = maxLength > 0 ? maxLength : 255;
-        return format.IsJet3 ? effectiveLength : Math.Max(2, effectiveLength * 2);
+        if (type == TextType)
+        {
+            return format.GetTextDeclaredSize(maxLength);
+        }
+
+        if (type == BinaryType)
+        {
+            return maxLength > 0 ? maxLength : 255;
+        }
+
+        return GetFixedSize(type);
     }
 
     private static int GetCalculatedDeclaredSize(ColumnType type, int declaredSize)
@@ -884,7 +766,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             return Constants.CalculatedColumn.ExtFlagMask;
         }
 
-        return (!format.IsJet3 && (type == TextType || type == MemoType) && definition.IsCompressedUnicode)
+        return (format.ColumnDescriptor.ExtraFlagsOff >= 0 && (type == TextType || type == MemoType) && definition.IsCompressedUnicode)
             ? Constants.CompressedUnicodeExtFlagMask
             : (byte)0;
     }
@@ -894,7 +776,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         bool isJet3 = format.IsJet3;
         TDefHeaderLayout tdef = format.TDef;
         ColumnDescriptorLayout descriptor = format.ColumnDescriptor;
-        int textColSize = isJet3 ? 255 : 510;
+        int textColSize = format.GetTextDeclaredSize(255);
 
         BootstrapColumnDescriptor[] columns = BuildFullCatalogColumns(textColSize);
 
@@ -937,34 +819,23 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             {
                 // Jet4/ACE: new descriptors initialize offset 9-10 from col_num (see
                 // the user-table path and its descriptor initialization tests).
-                Wu16(db, o + 9, col.ColNum);
+                Wu16(db, o + descriptor.NativeIdentityOff, col.ColNum);
             }
 
             if (isJet3)
             {
-                Wu16(db, o + 5, col.ColNum);
-                Wu16(db, o + 9, 0x0409);
-                Wu16(db, o + 11, 1252);
+                Wu16(db, o + format.ColumnDescriptor.NativeIdentityOff, col.ColNum);
+                Wu16(db, o + format.ColumnDescriptor.SortOrderOff, 0x0409);
+                Wu16(db, o + descriptor.CodePageOff, format.CodePage);
             }
 
             db[o + descriptor.FlagsOff] = col.Flags;
             Wu16(db, o + descriptor.FixedOff, col.FixedOff);
             Wu16(db, o + descriptor.SzOff, col.Size);
 
-            byte[] nameBytes = isJet3 ? Encoding.ASCII.GetBytes(col.Name) : Encoding.Unicode.GetBytes(col.Name);
-            if (isJet3)
-            {
-                db[namePos] = (byte)nameBytes.Length;
-                namePos++;
-            }
-            else
-            {
-                Wu16(db, namePos, nameBytes.Length);
-                namePos += 2;
-            }
-
-            Buffer.BlockCopy(nameBytes, 0, db, namePos, nameBytes.Length);
-            namePos += nameBytes.Length;
+            byte[] nameRecord = format.EncodeTDefNameRecord(col.Name);
+            Buffer.BlockCopy(nameRecord, 0, db, namePos, nameRecord.Length);
+            namePos += nameRecord.Length;
         }
 
         Wi32(db, offset + 8, Math.Max(0, namePos - offset - 8));

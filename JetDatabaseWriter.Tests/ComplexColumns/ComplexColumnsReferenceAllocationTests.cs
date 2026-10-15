@@ -779,11 +779,11 @@ public sealed class ComplexColumnsReferenceAllocationTests
             {
                 RowLocation location = row.Location;
                 byte[] page = await harness.Pager.ReadPageCopyAsync(location.DataPageNumber, Ct);
-                int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(db.Format.ReadRowColumnCount(page, location.RowStart));
+                int nullMaskSize = JetFormat.GetNullMaskSizeBytes(db.Format.ReadRowColumnCount(page, location.RowStart));
                 foreach (ColumnInfo column in table.Definition.Columns.Where(c => c.Type is ColumnType.ComplexType))
                 {
                     int? reference = slotFor(row.Values, column.Name);
-                    JetTypeInfo.SetNullMaskBit(page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize), column.ColNum, reference.HasValue);
+                    JetFormat.SetNullMaskBit(page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize), column.ColNum, reference.HasValue);
                     BinaryPrimitives.WriteInt32LittleEndian(page.AsSpan(location.RowStart + db.Format.RowFields.NumCols + column.FixedOff, 4), reference ?? 0);
                 }
 
@@ -842,7 +842,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
             byte[] page = await harness.Pager.ReadPageCopyAsync(location.DataPageNumber, Ct);
             int columnCount = format.ReadRowColumnCount(page, location.RowStart);
             Assert.Equal(table.Definition.Columns.Count, columnCount);
-            int nullMaskSize = JetTypeInfo.GetNullMaskSizeBytes(columnCount);
+            int nullMaskSize = JetFormat.GetNullMaskSizeBytes(columnCount);
             ReadOnlySpan<byte> nullMask = page.AsSpan(location.RowStart + location.RowSize - nullMaskSize, nullMaskSize);
             object[] values = new object[columnCount];
             for (int index = 0; index < columnCount; index++)
@@ -851,7 +851,7 @@ public sealed class ComplexColumnsReferenceAllocationTests
                 Assert.True(column.IsFixed);
                 Assert.True(column.Type is ColumnType.LongIntegerType or ColumnType.ComplexType);
                 Assert.InRange(column.FixedOff, 0, location.RowSize - format.RowFields.NumCols - nullMaskSize - 4);
-                if (!JetTypeInfo.IsNullMaskBitSet(nullMask, column.ColNum))
+                if (!JetFormat.IsNullMaskBitSet(nullMask, column.ColNum))
                 {
                     values[index] = DBNull.Value;
                     continue;

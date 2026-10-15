@@ -356,7 +356,7 @@ internal sealed class RowEncoder(JetFormat format)
             numCols = Math.Max(numCols, col.ColNum + 1);
             if (col.IsFixed && col.Type != BooleanType)
             {
-                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + (col.Type is TextType or BinaryType or BigBinaryType ? col.Size : JetTypeInfo.GetFixedSize(col.Type)));
+                maxFixedEnd = Math.Max(maxFixedEnd, col.FixedOff + JetTypeInfo.GetFixedStorageSize(col.Type, col.Size));
             }
             else if (!col.IsFixed)
             {
@@ -364,9 +364,9 @@ internal sealed class RowEncoder(JetFormat format)
             }
         }
 
-        int nullMaskLen = JetTypeInfo.GetNullMaskSizeBytes(numCols);
+        int nullMaskLen = JetFormat.GetNullMaskSizeBytes(numCols);
         int varLen = maxDefinedVarIdx + 1;
-        bool jet3 = format.IsJet3;
+        bool jet3 = format.RowFields.HasJumpTable;
         if (jet3 && (numCols > Constants.TableDefinition.MaxJet3Columns || varLen > Constants.TableDefinition.MaxJet3Columns))
         {
             throw new JetLimitationException(
@@ -427,7 +427,7 @@ internal sealed class RowEncoder(JetFormat format)
             {
                 if (value is not DBNull && Convert.ToBoolean(value, CultureInfo.InvariantCulture))
                 {
-                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
+                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 
                 continue;
@@ -439,7 +439,7 @@ internal sealed class RowEncoder(JetFormat format)
                 if (value is not DBNull && this.EncodeBinaryValue(value, maxSize: 0) is { } bytes)
                 {
                     bytes.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
-                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
+                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 
                 continue;
@@ -456,7 +456,7 @@ internal sealed class RowEncoder(JetFormat format)
                     }
 
                     stored.AsSpan().CopyTo(fixedArea.AsSpan(column.FixedOff, column.Size));
-                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, value is not DBNull);
+                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, value is not DBNull);
                 }
                 else if (value is not DBNull)
                 {
@@ -469,7 +469,7 @@ internal sealed class RowEncoder(JetFormat format)
                         space.AsSpan().CopyTo(destination.Slice(offset, space.Length));
                     }
 
-                    JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
+                    JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
                 }
 
                 continue;
@@ -505,7 +505,7 @@ internal sealed class RowEncoder(JetFormat format)
                 }
 
                 fixedAreaSize = Math.Max(fixedAreaSize, column.FixedOff + written);
-                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
+                JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
             }
             else
             {
@@ -517,7 +517,7 @@ internal sealed class RowEncoder(JetFormat format)
 
                 varEntries[column.VarIdx] = variableValue;
                 varPayloadSize += variableValue.Length;
-                JetTypeInfo.SetNullMaskBit(nullMask, column.ColNum, true);
+                JetFormat.SetNullMaskBit(nullMask, column.ColNum, true);
             }
         }
 

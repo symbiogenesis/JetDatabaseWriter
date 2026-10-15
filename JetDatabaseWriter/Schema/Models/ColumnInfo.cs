@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes.Collation;
+using JetDatabaseWriter.Pages;
 using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed record ColumnInfo
@@ -37,8 +38,8 @@ internal sealed record ColumnInfo
     /// </summary>
     internal int NativeIdentity
     {
-        get => this.nativeIdentity ?? (this.rawDescriptor.Count == 25
-            ? this.rawDescriptor[9] | (this.rawDescriptor[10] << 8)
+        get => this.nativeIdentity ?? (this.rawDescriptor.Count == ColumnDescriptorLayout.Jet4.Size
+            ? this.rawDescriptor[ColumnDescriptorLayout.Jet4.NativeIdentityOff] | (this.rawDescriptor[ColumnDescriptorLayout.Jet4.NativeIdentityOff + 1] << 8)
             : this.ColNum);
         init => this.nativeIdentity = value;
     }
@@ -164,20 +165,20 @@ internal sealed record ColumnInfo
     /// For most "inherently fixed" types (BOOL, LONG, DOUBLE, etc.) the bit is set,
     /// but Access system tables (e.g. complex-field flat tables) may store these
     /// types in the variable area with FLAG_FIXED cleared.
-    /// Text may be fixed-length; Binary, Memo and OLE remain variable.
+    /// Text and Binary honor the fixed flag; Memo and OLE remain variable.
     /// </summary>
     public bool IsFixed
     {
         get
         {
             // BOOL stores its value in the null mask, never in fixed area.
-            if (this.Type == BooleanType && !this.IsCalculated)
+            if (JetTypeInfo.GetMetadata(this.Type)?.UsesNullMaskValue == true && !this.IsCalculated)
             {
                 return true;
             }
 
             // Text and Binary honor FLAG_FIXED, including native CHAR/BINARY columns.
-            if (this.Type is not TextType and not BinaryType && JetTypeInfo.IsAlwaysVariableLength(this.Type))
+            if (JetTypeInfo.GetMetadata(this.Type)?.IsLongValue == true)
             {
                 return false;
             }
