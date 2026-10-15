@@ -293,7 +293,7 @@ public sealed class DuplicateSchemaPropertyTests
             }
         }
 
-        await harness.Services.CatalogArtifacts.ExecutePlanAsync(new CatalogArtifactPlan([], []) { CatalogReplacements = [new UserTableCatalogReplacementArtifact("T", "T", entry.TDefPage, builder.ToBytes(Format))] }, Ct);
+        await harness.Services.CatalogWriter.UpdateTablePropertiesAsync("T", entry.TDefPage, builder.ToBytes(Format), cancellationToken: Ct);
     }
 
     private static async Task<ColumnPropertyBlock> ReadBlockAsync(MemoryStream stream)

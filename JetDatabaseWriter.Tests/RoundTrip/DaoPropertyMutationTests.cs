@@ -257,12 +257,7 @@ public sealed class DaoPropertyMutationTests
             WriteChunk(writer, target.ChunkType, payload.ToArray());
         }
 
-        await harness.Services.CatalogArtifacts.ExecutePlanAsync(
-            new CatalogArtifactPlan([], [])
-            {
-                CatalogReplacements = [new UserTableCatalogReplacementArtifact("PropertyVariants", "PropertyVariants", entry.TDefPage, stream.ToArray())],
-            },
-            Ct);
+        await harness.Services.CatalogWriter.UpdateTablePropertiesAsync("PropertyVariants", entry.TDefPage, stream.ToArray(), cancellationToken: Ct);
     }
 
     private static void AssertPreservedLayout(ColumnPropertyBlock before, ColumnPropertyBlock after, bool renamed = false, bool dropped = false, bool removedRule = false)

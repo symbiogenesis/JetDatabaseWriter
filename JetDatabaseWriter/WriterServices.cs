@@ -99,6 +99,7 @@ internal sealed class WriterServices
 
         this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
         var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, this.CatalogRows, pager, snapshots);
+        this.CatalogWriter = catalogWriter;
         this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
         this.SystemCatalog = new SystemCatalogBootstrapper(db.Format, db.TableDefs, pager, this.Indexes, this.CatalogArtifacts);
         var uniqueIndexes = new UniqueIndexChecker(db.Format, db.Pages, db.TableDefs, snapshots);
@@ -133,18 +134,14 @@ internal sealed class WriterServices
             this.PageAllocator,
             longValueEncoder,
             catalogWriter,
-            this.CatalogArtifacts,
             this.ComplexColumns,
             constraints,
             this.Relationships,
             autoNumbers);
         this.Schema = new TableSchemaEditor(
             db.Format,
-            db.TableDefs,
             pager,
             catalog,
-            tableRows,
-            this.Indexes,
             catalogWriter,
             this.CatalogArtifacts,
             this.ComplexColumns,
@@ -172,6 +169,9 @@ internal sealed class WriterServices
 
     /// <summary>Gets the Attachment / MultiValue subsystem.</summary>
     internal ComplexColumnManager ComplexColumns { get; }
+
+    /// <summary>Gets catalog property, identity and permission mutations.</summary>
+    internal CatalogWriter CatalogWriter { get; }
 
     /// <summary>Gets the catalog-plan executor and fresh-catalog bootstrap.</summary>
     internal CatalogArtifactWriter CatalogArtifacts { get; }

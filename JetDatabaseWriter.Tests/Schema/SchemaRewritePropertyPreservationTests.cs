@@ -615,12 +615,7 @@ public sealed class SchemaRewritePropertyPreservationTests
         ColumnPropertyBlock? stored = await harness.Services.Snapshots.ReadLvPropBlockAsync(entry.TDefPage, Ct);
         ColumnPropertyBlockBuilder builder = stored is null ? new ColumnPropertyBlockBuilder() : ColumnPropertyBlockBuilder.FromBlock(stored);
         edit(builder);
-        await harness.Services.CatalogArtifacts.ExecutePlanAsync(
-            new CatalogArtifactPlan([], [])
-            {
-                CatalogReplacements = [new UserTableCatalogReplacementArtifact(table, table, entry.TDefPage, builder.ToBytes(harness.Database.Format))],
-            },
-            Ct);
+        await harness.Services.CatalogWriter.UpdateTablePropertiesAsync(table, entry.TDefPage, builder.ToBytes(harness.Database.Format), cancellationToken: Ct);
     }
 
     private static List<TargetView> WithoutNameMap(List<TargetView> targets)

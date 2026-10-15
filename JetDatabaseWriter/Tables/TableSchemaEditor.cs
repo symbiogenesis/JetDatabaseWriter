@@ -42,13 +42,10 @@ using JetDatabaseWriter.Schema.Models;
 /// auto-commit scope around each call.
 /// </summary>
 /// <param name="format">The database's immutable format profile.</param>
-/// <param name="tableDefs">The table-definition reader.</param>
 /// <param name="pager">The writer's page file, through which a transplanted TDEF and re-owned data pages are written.</param>
 /// <param name="catalog">Resolves table names and is invalidated after a rename.</param>
-/// <param name="tableRows">Copies rows into the rebuilt table.</param>
-/// <param name="indexMaintainer">Rebuilds forwarded indexes after a row copy.</param>
 /// <param name="catalogWriter">Renames and deletes <c>MSysObjects</c> / <c>MSysACEs</c> rows.</param>
-/// <param name="catalogArtifacts">Creates tables and applies catalog replacement plans.</param>
+/// <param name="catalogArtifacts">Creates tables and their catalog artifacts.</param>
 /// <param name="complexColumns">Allocates, emits, re-parents, drops, and renames complex-column artifacts.</param>
 /// <param name="constraints">Carries client-side column constraints across schema changes.</param>
 /// <param name="relationships">Carries foreign-key index entries and relationship links across a rebuild, and refuses or unlinks a dropped table's relationships.</param>
@@ -57,11 +54,8 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="tableStorage">Copies, transfers and reclaims table storage.</param>
 internal sealed class TableSchemaEditor(
     JetFormat format,
-    TableDefReader tableDefs,
     Pager pager,
     TableCatalog catalog,
-    TableRowStore tableRows,
-    IndexMaintainer indexMaintainer,
     CatalogWriter catalogWriter,
     CatalogArtifactWriter catalogArtifacts,
     ComplexColumnManager complexColumns,
@@ -126,33 +120,7 @@ internal sealed class TableSchemaEditor(
             }
         }
 
-        byte[]? blob = builder.ToBytes(format);
-        TableDef objects = await tableDefs.ReadRequiredTableDefAsync(2, Constants.SystemTableNames.Objects, cancellationToken).ConfigureAwait(false);
-        int nameIndex = objects.FindColumnIndex("Name");
-        int idIndex = objects.FindColumnIndex("Id");
-        int propertyIndex = objects.FindColumnIndex("LvProp");
-        if (nameIndex < 0 || idIndex < 0 || propertyIndex < 0)
-        {
-            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, "MSysObjects lacks table property fields.");
-        }
-
-        List<LocatedRow> matches = (await snapshots.ReadRowsAsync(2, cancellationToken).ConfigureAwait(false)).FindAll(row =>
-            string.Equals(row.Values[nameIndex] as string, tableName, StringComparison.OrdinalIgnoreCase)
-            && Convert.ToInt64(row.Values[idIndex], System.Globalization.CultureInfo.InvariantCulture) == table.Entry.TDefPage);
-        if (matches.Count != 1)
-        {
-            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, $"Table '{tableName}' has {matches.Count} matching catalog rows.");
-        }
-
-        LocatedRow original = matches[0];
-        object[] replacement = (object[])original.Values.Clone();
-        replacement[propertyIndex] = blob ?? (object)DBNull.Value;
-        _ = tableRows.EncodeRow(objects, replacement);
-        await catalogWriter.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
-        await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, objects, CancellationToken.None).ConfigureAwait(false);
-        await tableRows.InsertRowDataAsync(2, objects, replacement, updateTDefRowCount: false, cancellationToken: CancellationToken.None).ConfigureAwait(false);
-        await indexMaintainer.MaintainIndexesAsync(2, objects, Constants.SystemTableNames.Objects, CancellationToken.None).ConfigureAwait(false);
-        catalog.Invalidate();
+        await catalogWriter.UpdateTablePropertiesAsync(tableName, table.Entry.TDefPage, builder.ToBytes(format), cancellationToken: cancellationToken).ConfigureAwait(false);
         constraints.InvalidateTableRule(tableName);
     }
 

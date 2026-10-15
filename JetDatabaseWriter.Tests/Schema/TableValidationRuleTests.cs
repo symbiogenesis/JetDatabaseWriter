@@ -154,12 +154,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
             target.AddText(Constants.ColumnPropertyNames.Description, "unchanged", harness.Database.Format);
             byte[] bytes = Assert.IsType<byte[]>(builder.ToBytes(harness.Database.Format));
             before = Assert.IsType<ColumnPropertyTarget>(ColumnPropertyBlock.Parse(bytes, harness.Database.Format)?.FindTableTarget());
-            await harness.Services.CatalogArtifacts.ExecutePlanAsync(
-                new CatalogArtifactPlan([], [])
-                {
-                    CatalogReplacements = [new UserTableCatalogReplacementArtifact("Rules", "Rules", entry.TDefPage, bytes)],
-                },
-                Ct);
+            await harness.Services.CatalogWriter.UpdateTablePropertiesAsync("Rules", entry.TDefPage, bytes, cancellationToken: Ct);
         }
 
         await using (AccessWriter writer = await ForeignKeyTestDatabase.OpenWriterAsync(stream, mode))
@@ -290,12 +285,7 @@ public sealed class TableValidationRuleTests(DatabaseCache db) : IClassFixture<D
         empty.AddText(Constants.ColumnPropertyNames.Description, "unchanged", harness.Database.Format);
         builder.Targets.Add(empty);
         byte[] bytes = Assert.IsType<byte[]>(builder.ToBytes(harness.Database.Format));
-        await harness.Services.CatalogArtifacts.ExecutePlanAsync(
-            new CatalogArtifactPlan([], [])
-            {
-                CatalogReplacements = [new UserTableCatalogReplacementArtifact("Rules", "Rules", entry.TDefPage, bytes)],
-            },
-            Ct);
+        await harness.Services.CatalogWriter.UpdateTablePropertiesAsync("Rules", entry.TDefPage, bytes, cancellationToken: Ct);
         return Assert.IsType<ColumnPropertyBlock>(ColumnPropertyBlock.Parse(bytes, harness.Database.Format));
     }
 

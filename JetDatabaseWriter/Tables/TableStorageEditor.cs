@@ -32,7 +32,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="pageAllocator">The pageAllocator service.</param>
 /// <param name="longValueEncoder">The longValueEncoder service.</param>
 /// <param name="catalogWriter">The catalogWriter service.</param>
-/// <param name="catalogArtifacts">The catalogArtifacts service.</param>
 /// <param name="complexColumns">The complexColumns service.</param>
 /// <param name="constraints">The constraints service.</param>
 /// <param name="relationships">The relationships service.</param>
@@ -48,7 +47,6 @@ internal sealed class TableStorageEditor(
     PageAllocator pageAllocator,
     LongValueEncoder longValueEncoder,
     CatalogWriter catalogWriter,
-    CatalogArtifactWriter catalogArtifacts,
     ComplexColumnManager complexColumns,
     ConstraintRegistry constraints,
     RelationshipManager relationships,
@@ -234,30 +232,19 @@ internal sealed class TableStorageEditor(
             PageBuffers.Return(tempTdef);
         }
 
-        await catalogArtifacts.ExecutePlanAsync(
-            new CatalogArtifactPlan([], [])
-            {
-                CatalogReplacements =
-                [
-                    new UserTableCatalogReplacementArtifact(
-                        plan.TableName,
-                        plan.TableName,
-                        originalTdefPage,
-                        plan.PropertyBytes,
-                        Operation: $"replacing catalog row for '{plan.TableName}'",
-                        MissingMessage: $"Catalog row for '{plan.TableName}' was not found during schema rewrite.")
-                    {
-                        HasComplexColumns = copy.Definition.HasComplexColumns,
-                    },
-                ],
-                CatalogDeletions =
-                [
-                    new UserTableCatalogDeletionArtifact(
-                        copy.Name,
-                        tempTdefPage,
-                        Operation: $"deleting catalog row for '{copy.Name}'"),
-                ],
-            },
+        await catalogWriter.UpdateTablePropertiesAsync(
+            plan.TableName,
+            originalTdefPage,
+            plan.PropertyBytes,
+            copy.Definition.HasComplexColumns,
+            cancellationToken).ConfigureAwait(false);
+        _ = await catalogWriter.DeleteUserTableCatalogRowsAsync(
+            copy.Name,
+            tempTdefPage,
+            includeSystemTables: true,
+            throwIfNotFound: false,
+            operation: $"deleting catalog row for '{copy.Name}'",
+            missingMessage: null,
             cancellationToken).ConfigureAwait(false);
         await catalogWriter.DeleteAceRowsForObjectIdsAsync([tempTdefPage], cancellationToken).ConfigureAwait(false);
         await pageAllocator.DeallocatePageAsync(tempTdefPage, cancellationToken).ConfigureAwait(false);

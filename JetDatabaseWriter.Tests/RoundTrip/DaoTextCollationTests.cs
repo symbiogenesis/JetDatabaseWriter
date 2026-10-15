@@ -51,12 +51,7 @@ public sealed class DaoTextCollationTests(ITestOutputHelper output)
             ColumnPropertyTargetBuilder table = builder.GetOrAddTableTarget();
             ColumnPropertyEntryBuilder rule = Assert.Single(table.Entries, property => property.Name == Constants.ColumnPropertyNames.ValidationRule);
             rule.DataType = ColumnType.TextType;
-            await harness.Services.CatalogArtifacts.ExecutePlanAsync(
-                new CatalogArtifactPlan([], [])
-                {
-                    CatalogReplacements = [new UserTableCatalogReplacementArtifact("Rules", "Rules", entry.TDefPage, builder.ToBytes(harness.Database.Format))],
-                },
-                TestContext.Current.CancellationToken);
+            await harness.Services.CatalogWriter.UpdateTablePropertiesAsync("Rules", entry.TDefPage, builder.ToBytes(harness.Database.Format), cancellationToken: TestContext.Current.CancellationToken);
         }
 
         await using (AccessReader reader = await AccessReader.OpenAsync(session.SourcePath, new AccessReaderOptions { UseLockFile = false }, TestContext.Current.CancellationToken))

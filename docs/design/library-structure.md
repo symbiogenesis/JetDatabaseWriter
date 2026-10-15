@@ -103,9 +103,7 @@ JetDatabaseWriter/
 │       ├── CatalogRow.cs
 │       ├── CatalogScanSummary.cs          (what the last user-table scan saw; rendered as LastDiagnostics)
 │       ├── ResolvedTable.cs
-│       ├── TableDef.cs
-│       ├── UserTableCatalogDeletionArtifact.cs
-│       └── UserTableCatalogReplacementArtifact.cs
+│       └── TableDef.cs
 │
 ├── DelimitedText/                         (internal CSV/delimited text parsing for linked text tables)
 │   ├── DelimitedTextReader.cs             (buffered record parser with quote, CR/LF, and limit handling)
@@ -509,12 +507,12 @@ AccessReader → ReaderServices
 AccessWriter → WriterServices
   TableDataWriter     → TableCatalog, TableRowStore, IndexMaintainer, UniqueIndexChecker, AutoNumberMaintainer,
                         ConstraintRegistry, RelationshipEnforcer, ComplexColumnManager, TableSnapshotReader
-  TableSchemaEditor   → TableCatalog, TableRowStore, IndexMaintainer, CatalogWriter, CatalogArtifactWriter,
+  TableSchemaEditor   → TableCatalog, CatalogWriter, CatalogArtifactWriter,
                         ComplexColumnManager, ConstraintRegistry, RelationshipManager, TableSnapshotReader, TableRewritePlanner, TableStorageEditor
   TableRewritePlanner → TableCatalog, IndexMaintainer, CatalogArtifactWriter, ConstraintRegistry, RelationshipManager,
                         TableSnapshotReader, AutoNumberMaintainer
   TableStorageEditor  → TableCatalog, TableRowStore, IndexMaintainer, PageAllocator, LongValueEncoder, CatalogWriter,
-                        CatalogArtifactWriter, ComplexColumnManager, ConstraintRegistry, RelationshipManager, AutoNumberMaintainer
+                        ComplexColumnManager, ConstraintRegistry, RelationshipManager, AutoNumberMaintainer
   RelationshipManager → TableCatalog, IndexMaintainer, ForeignKeyMetadataEditor, CatalogArtifactWriter, CatalogRowReader, RelationshipCatalogStore
   ForeignKeyMetadataEditor → Pager, TableDefReader, PageAllocator
   SystemCatalogBootstrapper → Pager, TableDefReader, IndexMaintainer, CatalogArtifactWriter

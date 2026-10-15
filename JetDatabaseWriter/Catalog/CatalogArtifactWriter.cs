@@ -208,7 +208,7 @@ internal sealed class CatalogArtifactWriter(
 
     /// <summary>
     /// Creates every table artifact in <paramref name="plan"/>, then applies its
-    /// catalog object inserts, replacements, and deletions in that order.
+    /// catalog object inserts.
     /// Returns the TDEF page number of each table artifact, in plan order.
     /// </summary>
     /// <param name="plan">The catalog artifact plan.</param>
@@ -239,11 +239,6 @@ internal sealed class CatalogArtifactWriter(
             }
         }
 
-        if (plan.CatalogReplacements.Count > 0 || plan.CatalogDeletions.Count > 0)
-        {
-            await catalogWriter.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
-        }
-
         long[] tablePages = new long[plan.TableArtifacts.Count];
         for (int artifactIndex = 0; artifactIndex < plan.TableArtifacts.Count; artifactIndex++)
         {
@@ -257,35 +252,7 @@ internal sealed class CatalogArtifactWriter(
             _ = await catalogWriter.InsertCatalogObjectAsync(catalogObject, cancellationToken).ConfigureAwait(false);
         }
 
-        for (int artifactIndex = 0; artifactIndex < plan.CatalogReplacements.Count; artifactIndex++)
-        {
-            UserTableCatalogReplacementArtifact replacement = plan.CatalogReplacements[artifactIndex];
-            _ = await catalogWriter.ReplaceUserTableCatalogEntryAsync(
-                replacement.ExistingName,
-                replacement.ReplacementName,
-                replacement.TDefPage,
-                replacement.LvProp,
-                replacement.IncludeSystemTables,
-                replacement.Operation ?? $"replacing catalog row for '{replacement.ExistingName}'",
-                replacement.MissingMessage,
-                replacement.HasComplexColumns,
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        for (int artifactIndex = 0; artifactIndex < plan.CatalogDeletions.Count; artifactIndex++)
-        {
-            UserTableCatalogDeletionArtifact deletion = plan.CatalogDeletions[artifactIndex];
-            _ = await catalogWriter.DeleteUserTableCatalogRowsAsync(
-                deletion.TableName,
-                deletion.TDefPage,
-                deletion.IncludeSystemTables,
-                deletion.ThrowIfNotFound,
-                deletion.Operation ?? $"deleting catalog row for '{deletion.TableName}'",
-                deletion.MissingMessage,
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        if (plan.CatalogObjects.Count > 0 || plan.CatalogReplacements.Count > 0 || plan.CatalogDeletions.Count > 0)
+        if (plan.CatalogObjects.Count > 0)
         {
             catalog.Invalidate();
         }

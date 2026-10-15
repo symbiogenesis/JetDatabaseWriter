@@ -789,16 +789,12 @@ internal sealed class CatalogWriter(
         return sid;
     }
 
-    internal async ValueTask<long> ReplaceUserTableCatalogEntryAsync(
-        string existingName,
-        string replacementName,
-        long? tdefPage,
-        byte[]? lvProp,
-        bool includeSystemTables,
-        string operation,
-        string? missingMessage,
-        bool? hasComplexColumns,
-        CancellationToken cancellationToken)
+    internal async ValueTask UpdateTablePropertiesAsync(
+        string tableName,
+        long tdefPage,
+        byte[]? properties,
+        bool? hasComplexColumns = null,
+        CancellationToken cancellationToken = default)
     {
         await this.ThrowIfNativeSecurityUnmaintainableAsync(relationships: false, cancellationToken).ConfigureAwait(false);
 
@@ -814,21 +810,17 @@ internal sealed class CatalogWriter(
         }
 
         List<LocatedRow> matches = (await snapshots.ReadRowsAsync(2, cancellationToken).ConfigureAwait(false)).FindAll(row =>
-            string.Equals(row.Values[nameIndex] as string, existingName, StringComparison.OrdinalIgnoreCase)
+            string.Equals(row.Values[nameIndex] as string, tableName, StringComparison.OrdinalIgnoreCase)
             && Convert.ToInt32(row.Values[typeIndex], System.Globalization.CultureInfo.InvariantCulture) == Constants.SystemObjects.UserTableType
-            && (includeSystemTables || (unchecked((uint)Convert.ToInt32(row.Values[flagsIndex], System.Globalization.CultureInfo.InvariantCulture)) & Constants.SystemObjects.SystemTableMask) == 0)
-            && (tdefPage is null || CatalogValueReader.TdefPageFromId(Convert.ToInt64(row.Values[idIndex], System.Globalization.CultureInfo.InvariantCulture)) == tdefPage));
+            && CatalogValueReader.TdefPageFromId(Convert.ToInt64(row.Values[idIndex], System.Globalization.CultureInfo.InvariantCulture)) == tdefPage);
         if (matches.Count != 1)
         {
-            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, missingMessage ?? $"Table '{existingName}' has {matches.Count} matching catalog rows.", new JetErrorInfo { ObjectName = existingName });
+            throw new JetOperationException(JetErrorCode.CatalogObjectNotFound, $"Table '{tableName}' has {matches.Count} matching catalog rows.", new JetErrorInfo { ObjectName = tableName });
         }
 
         LocatedRow original = matches[0];
-        long originalTdefPage = CatalogValueReader.TdefPageFromId(Convert.ToInt64(original.Values[idIndex], System.Globalization.CultureInfo.InvariantCulture));
-        await this.EnsureCatalogContainerNameAvailableAsync(objects, Constants.SystemObjects.TablesParentId, replacementName, excludedTdefPage: originalTdefPage, cancellationToken: cancellationToken).ConfigureAwait(false);
         object[] replacement = (object[])original.Values.Clone();
-        replacement[nameIndex] = replacementName;
-        replacement[propertyIndex] = lvProp ?? (object)DBNull.Value;
+        replacement[propertyIndex] = properties ?? (object)DBNull.Value;
         if (hasComplexColumns is bool complex)
         {
             uint flags = unchecked((uint)Convert.ToInt32(original.Values[flagsIndex], System.Globalization.CultureInfo.InvariantCulture));
@@ -836,31 +828,18 @@ internal sealed class CatalogWriter(
         }
 
         UnreadableLongValue.ThrowIfAny(replacement, Constants.SystemTableNames.Objects);
-        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [nameIndex, propertyIndex, flagsIndex]);
+        IReadOnlyDictionary<int, byte[]>? fixedTextBytes = original.GetPreservedFixedText(replacement, [propertyIndex, flagsIndex]);
         _ = tableRows.EncodeRow(objects, replacement, fixedTextBytes);
         await this.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken).ConfigureAwait(false);
         await tableRows.MarkRowDeletedAsync(original.Location.PageNumber, original.Location.RowIndex, objects, DeletedRowDataMode.Clear, cancellationToken).ConfigureAwait(false);
         RowLocation inserted = await tableRows.InsertRowDataLocAsync(2, objects, replacement, updateTDefRowCount: false, fixedTextBytes: fixedTextBytes, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (string.Equals(existingName, replacementName, StringComparison.Ordinal))
+        bool maintained = await indexes.TryRelocateCatalogRowAsync(objects, original, new LocatedRow(inserted, replacement), cancellationToken).ConfigureAwait(false);
+        if (!maintained)
         {
-            bool maintained = await indexes.TryRelocateCatalogRowAsync(objects, original, new LocatedRow(inserted, replacement), cancellationToken).ConfigureAwait(false);
-            if (!maintained)
-            {
-                throw new JetCorruptDataException($"The native catalog indexes for '{existingName}' could not retain their stored keys.");
-            }
-        }
-        else
-        {
-            await this.RequireMsysObjectsIndexMaintenanceAsync(
-                objects,
-                [(inserted, replacement)],
-                [(original.Location, original.Values)],
-                operation,
-                cancellationToken).ConfigureAwait(false);
+            throw new JetCorruptDataException($"The native catalog indexes for '{tableName}' could not retain their stored keys.");
         }
 
         catalog.Invalidate();
-        return originalTdefPage;
     }
 
     internal async ValueTask<IReadOnlyList<long>> DeleteUserTableCatalogRowsAsync(
