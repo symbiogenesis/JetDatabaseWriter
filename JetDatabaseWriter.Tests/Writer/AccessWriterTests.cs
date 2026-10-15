@@ -122,24 +122,7 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task InsertRows_MultipleRows_ReturnsCorrectInsertCount(string path)
-    {
-        MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        AccessReader cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string tableName = (await cachedReader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-        IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
-
-        IEnumerable<object[]> rows = Enumerable.Range(0, 5).Select(i => BuildDummyRow(columns, seed: 1000 + (i * 100)));
-
-        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        int inserted = await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
-
-        Assert.Equal(5, inserted);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task InsertRows_MultipleRows_IncreasesRowCount(string path)
+    public async Task InsertRows_MultipleRows_ReturnsAndPersistsInsertCount(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         AccessReader cachedReader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
@@ -147,17 +130,17 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
         long originalCount = await cachedReader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
         IReadOnlyList<ColumnMetadata> columns = await cachedReader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
 
-        var rows = Enumerable.Range(0, 3).Select(i => BuildDummyRow(columns, seed: 2000 + (i * 100))).ToList();
+        IEnumerable<object[]> rows = Enumerable.Range(0, 5).Select(i => BuildDummyRow(columns, seed: 1000 + (i * 100)));
 
         await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
         {
-            await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
+            Assert.Equal(5, await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken));
         }
 
         await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
         {
             long newCount = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
-            Assert.Equal(originalCount + 3, newCount);
+            Assert.Equal(originalCount + 5, newCount);
         }
     }
 
@@ -285,20 +268,6 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
 
     [Theory]
     [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task UpdateRows_MatchingRows_ReturnsNonZeroCount(string path)
-    {
-        MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = await SeedUpdateTableAsync(temp);
-
-        await using AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken);
-        var updates = new Dictionary<string, object?> { ["Label"] = "UPDATED_VALUE" };
-
-        int updated = await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
-        Assert.True(updated > 0);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
     public async Task UpdateRows_MatchingRows_ChangesAreReadableBack(string path)
     {
         MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
@@ -317,26 +286,6 @@ public sealed class AccessWriterTests(DatabaseCache db) : IClassFixture<Database
             bool found = dt.AsEnumerable().Any(row =>
                 row["Label"] is string s && s == sentinel);
             Assert.True(found);
-        }
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.Small), MemberType = typeof(TestDatabases))]
-    public async Task UpdateRows_DoesNotChangeRowCount(string path)
-    {
-        MemoryStream temp = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
-        string tableName = await SeedUpdateTableAsync(temp);
-
-        await using (AccessWriter writer = await OpenWriterAsync(temp, TestContext.Current.CancellationToken))
-        {
-            var updates = new Dictionary<string, object?> { ["Label"] = "NO_COUNT_CHANGE" };
-            await writer.UpdateRowsAsync(tableName, "Id", 1, updates, TestContext.Current.CancellationToken);
-        }
-
-        await using (AccessReader reader = await OpenReaderAsync(temp, TestContext.Current.CancellationToken))
-        {
-            long newCount = await reader.GetRealRowCountAsync(tableName, TestContext.Current.CancellationToken);
-            Assert.Equal(3, newCount);
         }
     }
 

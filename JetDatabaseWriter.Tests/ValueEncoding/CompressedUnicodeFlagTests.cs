@@ -26,19 +26,18 @@ using Xunit;
 /// </summary>
 public sealed class CompressedUnicodeFlagTests
 {
-    // ═══════════════════════════════════════════════════════════════
-    // §1  Writer: user-created TEXT columns compress Latin-1
-    // ═══════════════════════════════════════════════════════════════
-
     /// <summary>
-    /// A writer-created Text column (ExtraFlags bit 0x01 set by
-    /// TDefPageBuilder) stores an ASCII-range value in compressed
-    /// form — the FF FE marker must appear on disk.
+    /// Writer-created Text and Memo columns store Latin-1 values in compressed
+    /// form rather than plain UCS-2.
     /// </summary>
-    [Fact]
-    public async Task Writer_TextColumn_CompressesLatin1()
+    /// <param name="maxLength">The Text width, or zero for Memo storage.</param>
+    /// <param name="sentinel">The value whose on-disk encoding is checked.</param>
+    [Theory]
+    [InlineData(100, "CompressMe_SENTINEL")]
+    [InlineData(0, "MemoCompressSentinel_ABC")]
+    public async Task Writer_TextAndMemoColumns_CompressLatin1(int maxLength, string sentinel)
     {
-        const string sentinel = "CompressMe_SENTINEL";
+        ArgumentException.ThrowIfNullOrEmpty(sentinel);
 
         var ms = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
@@ -49,64 +48,23 @@ public sealed class CompressedUnicodeFlagTests
             cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
-                "CmpText",
+                "Compressed",
                 [
                     new("Id", typeof(int)),
-                    new("Val", typeof(string), maxLength: 100),
+                    new("Val", typeof(string), maxLength: maxLength),
                 ],
                 TestContext.Current.CancellationToken);
 
-            await writer.InsertRowAsync("CmpText", [1, sentinel], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Compressed", [1, sentinel], TestContext.Current.CancellationToken);
         }
 
         byte[] disk = ms.ToArray();
-
-        // Compressed form: FF FE + ASCII bytes
-        byte[] compressed = BuildCompressed(sentinel);
         Assert.True(
-            IndexOf(disk, compressed) >= 0,
-            "Writer-created TEXT column should store Latin-1 value in compressed form (FF FE + 1-byte/char).");
-
-        // Plain UCS-2 must NOT appear
-        byte[] ucs2 = Encoding.Unicode.GetBytes(sentinel);
+            disk.AsSpan().IndexOf(BuildCompressed(sentinel)) >= 0,
+            "Writer-created Text and Memo columns should store Latin-1 values in compressed form.");
         Assert.True(
-            IndexOf(disk, ucs2) < 0,
-            "Compressed column must NOT store value in plain UCS-2.");
-    }
-
-    /// <summary>
-    /// A writer-created Memo column (ExtraFlags bit 0x01 set)
-    /// compresses inline Latin-1 MEMO values.
-    /// </summary>
-    [Fact]
-    public async Task Writer_MemoColumn_CompressesLatin1()
-    {
-        const string sentinel = "MemoCompressSentinel_ABC";
-
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            cancellationToken: TestContext.Current.CancellationToken))
-        {
-            await writer.CreateTableAsync(
-                "CmpMemo",
-                [
-                    new("Id", typeof(int)),
-                    new("Notes", typeof(string)),
-                ],
-                TestContext.Current.CancellationToken);
-
-            await writer.InsertRowAsync("CmpMemo", [1, sentinel], TestContext.Current.CancellationToken);
-        }
-
-        byte[] disk = ms.ToArray();
-        byte[] compressed = BuildCompressed(sentinel);
-        Assert.True(
-            IndexOf(disk, compressed) >= 0,
-            "Writer-created MEMO column should compress Latin-1 inline values.");
+            disk.AsSpan().IndexOf(Encoding.Unicode.GetBytes(sentinel)) < 0,
+            "Compressed columns must not store values in plain UCS-2.");
     }
 
     /// <summary>
@@ -140,148 +98,61 @@ public sealed class CompressedUnicodeFlagTests
         byte[] disk = ms.ToArray();
         byte[] ucs2 = Encoding.Unicode.GetBytes(value);
         Assert.True(
-            IndexOf(disk, ucs2) >= 0,
+            disk.AsSpan().IndexOf(ucs2) >= 0,
             "Non-Latin-1 text must be stored as plain UCS-2 LE.");
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // §2  Writer: catalog rows respect the system table's
-    //     ExtraFlags (no compression flag on MSysObjects.Name)
-    // ═══════════════════════════════════════════════════════════════
-
     /// <summary>
-    /// When a writer creates a table, the catalog row in MSysObjects
-    /// stores the table name. MSysObjects columns in DAO-authored
-    /// databases do NOT have the COMPRESSED_UNICODE bit set, so the
-    /// writer must NOT compress the Name column value. Verify by
-    /// creating a table in an existing NorthwindTraders copy and
-    /// checking that the table name appears in UCS-2 form only.
+    /// The compression option selects the exact byte representation, and both
+    /// representations decode to the original value.
     /// </summary>
-    [Fact]
-    public void Writer_CatalogRow_RespectsSystemTableExtraFlags()
+    /// <param name="value">The Latin-1 value to encode.</param>
+    /// <param name="compress">Whether to use compressed storage.</param>
+    [Theory]
+    [InlineData("A", false)]
+    [InlineData("AB", false)]
+    [InlineData("ABC", false)]
+    [InlineData("HelloWorld_Test_12345", false)]
+    [InlineData("TestTable", false)]
+    [InlineData("ABC", true)]
+    [InlineData("HelloWorld_Test_12345", true)]
+    [InlineData("TestTable", true)]
+    [InlineData("ShortText", false)]
+    [InlineData("ShortText", true)]
+    [InlineData("A medium-length string for round-tripping", false)]
+    [InlineData("A medium-length string for round-tripping", true)]
+    public void EncodeJet4Text_CompressionMode_UsesExpectedBytesAndRoundTrips(string value, bool compress)
     {
-        // Use a fresh in-memory database created by the writer itself.
-        // Writer-created MSysObjects columns DO have ExtraFlags=0x01,
-        // so in writer-created databases, catalog names ARE compressed.
-        // The critical scenario is opening an existing DAO-authored
-        // database — tested indirectly by the DaoValidationTests.
-        // Here we just verify the internal plumbing: the writer's
-        // EncodeJet4Text respects the compress=false path.
-        byte[] plain = JetTypeInfo.EncodeJet4Text("TestTable", compress: false);
-        byte[] compressed = JetTypeInfo.EncodeJet4Text("TestTable", compress: true);
+        ArgumentException.ThrowIfNullOrEmpty(value);
 
-        // Plain must be UCS-2 LE (no FF FE marker)
-        Assert.True(plain.Length > 0);
-        Assert.False(
-            plain[0] == 0xFF && plain[1] == 0xFE,
-            "EncodeJet4Text(compress: false) must NOT emit the FF FE compressed marker.");
+        byte[] expected = compress ? BuildCompressed(value) : Encoding.Unicode.GetBytes(value);
+        byte[] actual = JetTypeInfo.EncodeJet4Text(value, compress);
 
-        // Compressed must have FF FE marker
-        Assert.True(compressed.Length >= 2);
-        Assert.Equal(0xFF, compressed[0]);
-        Assert.Equal(0xFE, compressed[1]);
-
-        // UCS-2 form should be 2× the string length
-        Assert.Equal("TestTable".Length * 2, plain.Length);
-
-        // Compressed form: 2-byte marker + 1 byte/char
-        Assert.Equal("TestTable".Length + 2, compressed.Length);
+        Assert.Equal(expected, actual);
+        Assert.Equal(value, JetTypeInfo.DecodeJet4Text(actual, 0, actual.Length));
     }
 
     /// <summary>
-    /// Verifies that EncodeJet4Text with compress=false always produces
-    /// plain UCS-2 for any Latin-1 string, even if it would be
-    /// compressible.
+    /// Independently constructed compressed and plain UCS-2 payloads decode
+    /// without relying on the writer's encoder.
     /// </summary>
-    /// <param name="value">The value.</param>
+    /// <param name="expected">The decoded value.</param>
+    /// <param name="compressed">Whether the input carries the compression marker.</param>
     [Theory]
-    [InlineData("A")]
-    [InlineData("AB")]
-    [InlineData("ABC")]
-    [InlineData("HelloWorld_Test_12345")] // longer string
-    public void EncodeJet4Text_CompressFalse_NeverEmitsMarker(string value)
-    {
-        byte[] result = JetTypeInfo.EncodeJet4Text(value, compress: false);
-        if (result.Length >= 2)
-        {
-            Assert.False(
-                result[0] == 0xFF && result[1] == 0xFE,
-                $"compress=false must never produce FF FE marker for '{value}'.");
-        }
-    }
-
-    /// <summary>
-    /// Verifies that EncodeJet4Text with compress=true produces the
-    /// compressed form for Latin-1 strings ≥ 3 characters.
-    /// </summary>
-    /// <param name="value">The value.</param>
-    [Theory]
-    [InlineData("ABC")]
-    [InlineData("HelloWorld_Test_12345")]
-    public void EncodeJet4Text_CompressTrue_EmitsMarkerForLatin1(string value)
-    {
-        byte[] result = JetTypeInfo.EncodeJet4Text(value, compress: true);
-        Assert.True(result.Length >= 2);
-        Assert.Equal(0xFF, result[0]);
-        Assert.Equal(0xFE, result[1]);
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // §3  Reader: decodes both compressed and plain UCS-2 correctly
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// The reader's DecodeJet4Text correctly decompresses FF FE
-    /// marker data.
-    /// </summary>
-    /// <param name="expected">The expected.</param>
-    [Theory]
-    [InlineData("Hello")]
-    [InlineData("TestTable")]
-    [InlineData("A longer string with spaces and CAPS 123")]
-    [InlineData("Caf\u00E9\u00FF")]
-    public void Reader_DecodeJet4Text_DecompressesMarkedData(string expected)
+    [InlineData("Hello", true)]
+    [InlineData("TestTable", true)]
+    [InlineData("A longer string with spaces and CAPS 123", true)]
+    [InlineData("Caf\u00E9\u00FF", true)]
+    [InlineData("Hello", false)]
+    [InlineData("TestTable", false)]
+    [InlineData("A", false)]
+    public void Reader_DecodeJet4Text_ReadsCompressedAndPlainPayloads(string expected, bool compressed)
     {
         ArgumentException.ThrowIfNullOrEmpty(expected);
 
-        byte[] compressed = BuildCompressed(expected);
-        string actual = JetTypeInfo.DecodeJet4Text(compressed, 0, compressed.Length);
+        byte[] bytes = compressed ? BuildCompressed(expected) : Encoding.Unicode.GetBytes(expected);
+        string actual = JetTypeInfo.DecodeJet4Text(bytes, 0, bytes.Length);
         Assert.Equal(expected, actual);
-    }
-
-    /// <summary>
-    /// The reader's DecodeJet4Text correctly reads plain UCS-2 LE
-    /// data (no FF FE marker).
-    /// </summary>
-    /// <param name="expected">The expected.</param>
-    [Theory]
-    [InlineData("Hello")]
-    [InlineData("TestTable")]
-    [InlineData("A")]
-    public void Reader_DecodeJet4Text_ReadsPlainUcs2(string expected)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(expected);
-
-        byte[] ucs2 = Encoding.Unicode.GetBytes(expected);
-        string actual = JetTypeInfo.DecodeJet4Text(ucs2, 0, ucs2.Length);
-        Assert.Equal(expected, actual);
-    }
-
-    /// <summary>
-    /// Round-trip: compress=true → decode, compress=false → decode
-    /// both yield the original string.
-    /// </summary>
-    /// <param name="original">The original.</param>
-    [Theory]
-    [InlineData("ShortText")]
-    [InlineData("A medium-length string for round-tripping")]
-    public void RoundTrip_BothCompressionModes_DecodeCorrectly(string original)
-    {
-        byte[] compressed = JetTypeInfo.EncodeJet4Text(original, compress: true);
-        byte[] plain = JetTypeInfo.EncodeJet4Text(original, compress: false);
-
-        Assert.Equal(original, JetTypeInfo.DecodeJet4Text(compressed, 0, compressed.Length));
-        Assert.Equal(original, JetTypeInfo.DecodeJet4Text(plain, 0, plain.Length));
     }
 
     /// <summary>
@@ -418,33 +289,5 @@ public sealed class CompressedUnicodeFlagTests
         }
 
         return result;
-    }
-
-    private static int IndexOf(byte[] haystack, byte[] needle)
-    {
-        if (needle.Length == 0 || haystack.Length < needle.Length)
-        {
-            return -1;
-        }
-
-        for (int i = 0; i <= haystack.Length - needle.Length; i++)
-        {
-            bool found = true;
-            for (int j = 0; j < needle.Length; j++)
-            {
-                if (haystack[i + j] != needle[j])
-                {
-                    found = false;
-                    break;
-                }
-            }
-
-            if (found)
-            {
-                return i;
-            }
-        }
-
-        return -1;
     }
 }

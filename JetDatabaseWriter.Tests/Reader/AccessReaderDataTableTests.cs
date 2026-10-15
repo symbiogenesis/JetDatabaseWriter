@@ -20,19 +20,6 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadDataTable_ReturnsNonNullWithColumns(string path)
-    {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-
-        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-
-        Assert.NotNull(dt);
-        Assert.True(dt.Columns.Count > 0);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
     public async Task ReadDataTable_MaxRows_LimitsRowCount(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
@@ -56,6 +43,7 @@ public class AccessReaderDataTableTests(DatabaseCache db) : IClassFixture<Databa
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
+        Assert.NotEmpty(meta);
         Assert.Equal(meta.Count, dt.Columns.Count);
         for (int i = 0; i < meta.Count; i++)
         {

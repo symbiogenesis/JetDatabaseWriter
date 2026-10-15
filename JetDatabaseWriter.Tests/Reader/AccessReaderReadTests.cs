@@ -25,51 +25,18 @@ public class AccessReaderReadTests(DatabaseCache db) : IClassFixture<DatabaseCac
 
     [Theory]
     [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsync_ReturnsNonNullDataTable(string path)
+    public async Task ReadTableAsync_TableNameAndColumnMetadata_MatchRequest(string path)
     {
         AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
         string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
 
         DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
+
+        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
 
         Assert.NotNull(dt);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsync_TableNameMatchesRequest(string path)
-    {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-
-        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-
         Assert.Equal(table, dt.TableName);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsync_ColumnCount_MatchesGetColumnMetadata(string path)
-    {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-
-        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
-
         Assert.Equal(meta.Count, dt.Columns.Count);
-    }
-
-    [Theory]
-    [MemberData(nameof(TestDatabases.All), MemberType = typeof(TestDatabases))]
-    public async Task ReadTableAsync_ColumnTypes_MatchGetColumnMetadataClrTypes(string path)
-    {
-        AccessReader reader = await db.GetReaderAsync(path, TestContext.Current.CancellationToken);
-        string table = (await reader.ListTablesAsync(TestContext.Current.CancellationToken))[0];
-
-        DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
-        IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(table, TestContext.Current.CancellationToken);
-
         for (int i = 0; i < meta.Count; i++)
         {
             Assert.Equal(meta[i].ClrType, dt.Columns[i].DataType);

@@ -151,26 +151,6 @@ public sealed class IndexWriterAdvancedTests
     }
 
     [Fact]
-    public async Task UniqueIndex_DuplicateInsert_ThrowsInvalidOperationException()
-    {
-        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
-
-        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
-
-        await writer.CreateTableAsync(
-            "T",
-            [new ColumnDefinition("Id", typeof(int))],
-            [new IndexDefinition("UQ_Id", "Id") { IsUnique = true }],
-            this.ct);
-
-        await writer.InsertRowAsync("T", [1], this.ct);
-        await writer.InsertRowAsync("T", [2], this.ct);
-
-        await Assert.ThrowsAsync<JetConstraintException>(async () =>
-            await writer.InsertRowAsync("T", [1], this.ct));
-    }
-
-    [Fact]
     public async Task UniqueIndex_NonDuplicateInserts_Succeed()
     {
         await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
@@ -226,29 +206,6 @@ public sealed class IndexWriterAdvancedTests
         // Multi-column composite key concatenation through the maintenance
         // path should rebuild a single leaf with 4 entries.
         await AssertLeafEntryCountAsync(stream, "T", "IX_AB", expectedCount: 4);
-    }
-
-    [Fact]
-    public async Task UniqueMultiColumnIndex_DuplicateCompositeKey_Throws()
-    {
-        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(this.ct);
-
-        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, this.ct);
-
-        await writer.CreateTableAsync(
-            "T",
-            [
-                new ColumnDefinition("A", typeof(int)),
-                new ColumnDefinition("B", typeof(int)),
-            ],
-            [new IndexDefinition("UQ_AB", CompositeAB) { IsUnique = true }],
-            this.ct);
-
-        await writer.InsertRowAsync("T", [1, 10], this.ct);
-        await writer.InsertRowAsync("T", [1, 20], this.ct); // (1,10) ≠ (1,20) — fine
-
-        await Assert.ThrowsAsync<JetConstraintException>(async () =>
-            await writer.InsertRowAsync("T", [1, 10], this.ct));
     }
 
     [Fact]

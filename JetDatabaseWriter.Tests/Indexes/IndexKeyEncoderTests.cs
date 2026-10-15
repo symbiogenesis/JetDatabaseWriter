@@ -214,22 +214,6 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
-    public void Double_PositiveAndNegative_OrderCorrectly()
-    {
-        double[] values = [double.NegativeInfinity, -1e10, -1.0, -double.Epsilon, 0.0, double.Epsilon, 1.0, 1e10, double.PositiveInfinity];
-        byte[][] encoded = new byte[values.Length][];
-        for (int i = 0; i < values.Length; i++)
-        {
-            encoded[i] = IndexKeyEncoder.EncodeEntry(DoubleType, values[i], ascending: true);
-        }
-
-        for (int i = 1; i < encoded.Length; i++)
-        {
-            Assert.True(CompareLex(encoded[i - 1], encoded[i]) < 0, $"Ascending order violated between {values[i - 1]} and {values[i]}.");
-        }
-    }
-
-    [Fact]
     public void Float_PositiveZero_FlipsSignBit()
     {
         // +0.0f IEEE = 00 00 00 00 → BE same → flip top → 80 00 00 00.

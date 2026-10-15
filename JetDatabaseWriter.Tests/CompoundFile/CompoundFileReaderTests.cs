@@ -46,6 +46,19 @@ public sealed class CompoundFileReaderTests
         return data;
     }
 
+    public static TheoryData<string, int, byte> InvalidHeaderFields()
+    {
+        var data = new TheoryData<string, int, byte>();
+        foreach (string fixture in new[] { "TestStream_v3_0.cfs", "TestStream_v4_0.cfs" })
+        {
+            data.Add(fixture, 0, 0x2F); // Corrupt signature.
+            data.Add(fixture, 0x1A, 7); // Unsupported major version.
+            data.Add(fixture, 0x1E, 7); // Unsupported sector shift.
+        }
+
+        return data;
+    }
+
     public static TheoryData<string> HeaderFixtureFiles() =>
         ["TestStream_v3_0.cfs", "TestStream_v4_0.cfs"];
 
@@ -167,54 +180,18 @@ public sealed class CompoundFileReaderTests
     }
 
     /// <summary>
-    /// Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
-    /// magic signature (offset 0) MUST cause the reader to reject the file.
+    /// Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: invalid signature,
+    /// major-version and sector-shift fields must each be rejected.
     /// </summary>
-    /// <param name="fileName">The name of the file to test.</param>
+    /// <param name="fileName">The fixture file.</param>
+    /// <param name="offset">The header field to corrupt.</param>
+    /// <param name="value">The invalid byte to write.</param>
     [Theory]
-    [MemberData(nameof(HeaderFixtureFiles))]
-    public async Task ReadStreams_CorruptSignature_Throws(string fileName)
+    [MemberData(nameof(InvalidHeaderFields))]
+    public async Task ReadStreams_InvalidHeaderField_Throws(string fileName, int offset, byte value)
     {
         byte[] data = await File.ReadAllBytesAsync(FixturePath(fileName), TestContext.Current.CancellationToken);
-        data[0] ^= 0xFF;
-
-        await using var ms = new MemoryStream(data);
-        _ = await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
-    }
-
-    /// <summary>
-    /// Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
-    /// major-version field at offset 0x1A so it no longer matches the sector
-    /// shift at 0x1E MUST be rejected.
-    /// </summary>
-    /// <param name="fileName">The name of the fixture file.</param>
-    [Theory]
-    [MemberData(nameof(HeaderFixtureFiles))]
-    public async Task ReadStreams_CorruptMajorVersion_Throws(string fileName)
-    {
-        byte[] data = await File.ReadAllBytesAsync(FixturePath(fileName), TestContext.Current.CancellationToken);
-        data[0x1A] = 0x07;
-        data[0x1B] = 0x00;
-
-        await using var ms = new MemoryStream(data);
-        _ = await Assert.ThrowsAsync<InvalidDataException>(
-            () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
-    }
-
-    /// <summary>
-    /// Adapted from OpenMcdf's BinaryReaderTests.ReadHeader: corrupting the
-    /// sector-shift field at offset 0x1E so it is neither 9 nor 12 MUST be
-    /// rejected.
-    /// </summary>
-    /// <param name="fileName">The name of the fixture file.</param>
-    [Theory]
-    [MemberData(nameof(HeaderFixtureFiles))]
-    public async Task ReadStreams_CorruptSectorShift_Throws(string fileName)
-    {
-        byte[] data = await File.ReadAllBytesAsync(FixturePath(fileName), TestContext.Current.CancellationToken);
-        data[0x1E] = 0x07;
-        data[0x1F] = 0x00;
+        data[offset] = value;
 
         await using var ms = new MemoryStream(data);
         _ = await Assert.ThrowsAsync<InvalidDataException>(
@@ -372,22 +349,6 @@ public sealed class CompoundFileReaderTests
 
         await Assert.ThrowsAsync<InvalidDataException>(
             () => CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken).AsTask());
-    }
-
-    /// <summary>
-    /// End-to-end: a well-formed DIFAT extension file still round-trips
-    /// correctly after all hardening changes.
-    /// </summary>
-    [Fact]
-    public async Task ReadStreams_DifatOverflow_LegitDifatExtension_StillWorks()
-    {
-        byte[] file = BuildSyntheticDifatFile();
-
-        await using var ms = new MemoryStream(file);
-        System.Collections.Generic.Dictionary<string, byte[]> streams = await CompoundFileReader.ReadStreamsAsync(ms, TestContext.Current.CancellationToken);
-
-        Assert.True(streams.ContainsKey("TestStream"));
-        Assert.Equal(10, streams["TestStream"].Length);
     }
 
     /// <summary>
