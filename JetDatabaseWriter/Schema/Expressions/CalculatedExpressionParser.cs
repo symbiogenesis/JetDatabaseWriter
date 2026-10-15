@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
+using static JetDatabaseWriter.Schema.Expressions.AccessExpressionText;
 using static JetDatabaseWriter.Schema.Expressions.CalculatedExpressionLimits;
 
 /// <summary>
@@ -60,18 +61,6 @@ internal sealed class CalculatedExpressionParser
         return previous.Kind == TokenKind.Word
             ? !AccessExpressionKeywords.IsValueWord(previous.Text)
             : previous.Kind is TokenKind.Operator or TokenKind.OpenParen or TokenKind.Comma;
-    }
-
-    private static bool TryGetDigit(char ch, int radix, out int digit)
-    {
-        digit = ch switch
-        {
-            >= '0' and <= '9' => ch - '0',
-            >= 'A' and <= 'F' => ch - 'A' + 10,
-            >= 'a' and <= 'f' => ch - 'a' + 10,
-            _ => radix,
-        };
-        return digit < radix;
     }
 
     private static BinaryOperatorInfo? GetBinaryOperator(Token token)
@@ -345,7 +334,7 @@ internal sealed class CalculatedExpressionParser
         public List<Token> Tokenize(bool skipLeadingEquals)
         {
             var result = new List<Token>();
-            int index = AccessExpressionText.SkipWhiteSpace(expression, 0);
+            int index = SkipWhiteSpace(expression, 0);
             if (skipLeadingEquals && index < expression.Length && expression[index] == '=')
             {
                 index++;
@@ -380,7 +369,7 @@ internal sealed class CalculatedExpressionParser
                     // A date literal is permitted where an explicit CDate call is not.
                     result.Add(new Token(TokenKind.Value, expression[start..index], Function("CDATE", new CalculatedExpressionValueNode(value))));
                 }
-                else if (current == '[' || char.IsLetter(current) || current == '_')
+                else if (current == '[' || IsNameStart(current))
                 {
                     result.Add(this.ReadName(ref index));
                 }
@@ -453,38 +442,26 @@ internal sealed class CalculatedExpressionParser
         private string ReadReferenceSegment(ref int index, out bool bracketed)
         {
             bracketed = index < expression.Length && expression[index] == '[';
-            if (bracketed)
-            {
-                int start = ++index;
-                int end = expression.IndexOf(']', start);
-                if (end < 0 || end == start)
-                {
-                    throw this.SyntaxError("empty or unterminated field reference");
-                }
-
-                index = end + 1;
-                return expression[start..end];
-            }
-
-            if (index >= expression.Length || !(char.IsLetter(expression[index]) || expression[index] == '_'))
+            if (!bracketed && (index >= expression.Length || !IsNameStart(expression[index])))
             {
                 throw this.SyntaxError("a qualified reference has no valid name after its separator");
             }
 
-            int nameStart = index++;
-            while (index < expression.Length && (char.IsLetterOrDigit(expression[index]) || expression[index] == '_'))
+            int start = index;
+            index = SkipNameSegment(expression, index);
+            if (index < 0 || (bracketed && index == start + 2))
             {
-                index++;
+                throw this.SyntaxError("empty or unterminated field reference");
             }
 
-            return expression[nameStart..index];
+            return bracketed ? expression[(start + 1)..(index - 1)] : expression[start..index];
         }
 
         private string ReadQuotedText(ref int index)
         {
             char quote = expression[index];
             int start = index + 1;
-            index = AccessExpressionText.SkipQuoted(expression, index);
+            index = SkipQuoted(expression, index);
             return index < 0
                 ? throw this.SyntaxError("unterminated text literal")
                 : expression[start..(index - 1)].Replace(new string(quote, 2), quote.ToString(), StringComparison.Ordinal);
@@ -493,34 +470,7 @@ internal sealed class CalculatedExpressionParser
         private Token ReadNumber(ref int index)
         {
             int start = index;
-            while (index < expression.Length && char.IsDigit(expression[index]))
-            {
-                index++;
-            }
-
-            if (index < expression.Length && expression[index] == '.')
-            {
-                index++;
-                while (index < expression.Length && char.IsDigit(expression[index]))
-                {
-                    index++;
-                }
-            }
-
-            if (index < expression.Length && (expression[index] is 'E' or 'e'))
-            {
-                index++;
-                if (index < expression.Length && (expression[index] is '+' or '-'))
-                {
-                    index++;
-                }
-
-                while (index < expression.Length && char.IsDigit(expression[index]))
-                {
-                    index++;
-                }
-            }
-
+            index = SkipNumber(expression, index);
             string text = expression[start..index];
             if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || double.IsInfinity(value))
             {
@@ -533,24 +483,9 @@ internal sealed class CalculatedExpressionParser
         private bool TryReadRadixLiteral(ref int index, out object? literal)
         {
             literal = null;
-            int cursor = index + 1;
-            if (cursor >= expression.Length)
-            {
-                return false;
-            }
-
-            char marker = expression[cursor];
-            int radix;
-            if (marker is 'H' or 'h' or 'O' or 'o')
-            {
-                radix = marker is 'H' or 'h' ? 16 : 8;
-                cursor++;
-            }
-            else if (marker is >= '0' and <= '7')
-            {
-                radix = 8;
-            }
-            else
+            int cursor = index;
+            int radix = ReadRadixPrefix(expression, ref cursor);
+            if (radix == 0)
             {
                 return false;
             }

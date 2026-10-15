@@ -41,10 +41,10 @@ internal static class CalculatedExpressionLimits
                         $"{description} references more than {MaxColumnReferences} columns.");
                 }
 
-                int endBracket = expression.IndexOf(']', charIndex + 1);
+                int endBracket = AccessExpressionText.SkipNameSegment(expression, charIndex);
                 if (endBracket >= 0)
                 {
-                    charIndex = endBracket;
+                    charIndex = endBracket - 1;
                 }
 
                 continue;

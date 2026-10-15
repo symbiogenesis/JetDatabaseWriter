@@ -54,6 +54,7 @@ public sealed class CalculatedExpressionParserTests
     [InlineData("Abs(1;2)")]
     [InlineData("1 In (1,,2)")]
     [InlineData("1 Is 1")]
+    [InlineData("[]")]
     [InlineData("[Missing")]
     [InlineData("[T].")]
     [InlineData("[T].[A].[B]")]

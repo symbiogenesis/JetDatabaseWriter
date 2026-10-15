@@ -56,6 +56,13 @@ public sealed class ExpressionFieldReferencesTests(DatabaseCache db) : IClassFix
         { "{guid {6F9619FF-8B86-D011-B42D-00C04FC964FF}}", "guid", "Tag", "T", "{guid {6F9619FF-8B86-D011-B42D-00C04FC964FF}}" },
         { "{guid {6F9619FF-8B86-D011-B42D-00C04FC964FF}} & guid", "guid", "Tag", "T", "{guid {6F9619FF-8B86-D011-B42D-00C04FC964FF}} & [Tag]" },
         { "Between 1 And Price", "Price", "Cost", "T", "Between 1 And [Cost]" },
+        { "1e+&HFF + HFF", "HFF", "Hex", "T", "1e+&HFF + [Hex]" },
+        { "1.2.3Price + Price", "Price", "Cost", "T", "1.2.3Price + [Cost]" },
+        { "&HG1 + HG1", "HG1", "Hex", "T", "&[Hex] + [Hex]" },
+        { "&H100000000 + H100000000", "H100000000", "Hex", "T", "&H100000000 + [Hex]" },
+        { "[] + Price", "Price", "Cost", "T", "[] + [Cost]" },
+        { "'''Price", "Price", "Cost", "T", "'''Price" },
+        { "'''' & Price", "Price", "Cost", "T", "'''' & [Cost]" },
     };
 
     [Theory]

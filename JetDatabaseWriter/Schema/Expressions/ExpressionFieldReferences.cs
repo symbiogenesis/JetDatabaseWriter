@@ -144,7 +144,13 @@ internal static class ExpressionFieldReferences
             }
             else if (char.IsDigit(current) || (current == '.' && index + 1 < text.Length && char.IsDigit(text[index + 1])))
             {
+                // Letters attached to numeric text belong to the literal, not a field name.
                 index = SkipNumber(text, index);
+                while (index < text.Length && IsNamePart(text[index]))
+                {
+                    index++;
+                }
+
                 operandExpected = false;
             }
             else if (current == '&' && operandExpected && TrySkipRadixLiteral(text, ref index))
@@ -198,34 +204,18 @@ internal static class ExpressionFieldReferences
         while (true)
         {
             int start = index;
-            if (text[index] == '[')
+            bool bracketed = text[index] == '[';
+            int end = SkipNameSegment(text, index);
+            if (end < 0)
             {
-                int close = text.IndexOf(']', index + 1);
-                if (close < 0)
-                {
-                    return -1;
-                }
-
-                segments.Add(new Segment(start, close + 1, text.Substring(index + 1, close - index - 1), Bracketed: true, HasDollarSuffix: false));
-                index = close + 1;
+                return -1;
             }
-            else
-            {
-                index++;
-                while (index < text.Length && IsNamePart(text[index]))
-                {
-                    index++;
-                }
 
-                int nameEnd = index;
-                bool dollar = index < text.Length && text[index] == '$';
-                if (dollar)
-                {
-                    index++;
-                }
-
-                segments.Add(new Segment(start, index, text[start..nameEnd], Bracketed: false, HasDollarSuffix: dollar));
-            }
+            int nameStart = bracketed ? start + 1 : start;
+            int nameEnd = bracketed ? end - 1 : end;
+            bool dollar = !bracketed && end < text.Length && text[end] == '$';
+            index = dollar ? end + 1 : end;
+            segments.Add(new Segment(start, index, text[nameStart..nameEnd], bracketed, dollar));
 
             int separator = SkipWhiteSpace(text, index);
             if (separator < text.Length && text[separator] is '.' or '!')
@@ -302,40 +292,6 @@ internal static class ExpressionFieldReferences
         return -1;
     }
 
-    private static int SkipNumber(string text, int index)
-    {
-        while (index < text.Length && (char.IsDigit(text[index]) || text[index] == '.'))
-        {
-            index++;
-        }
-
-        if (index < text.Length && text[index] is 'E' or 'e')
-        {
-            int exponent = index + 1;
-            if (exponent < text.Length && text[exponent] is '+' or '-')
-            {
-                exponent++;
-            }
-
-            if (exponent < text.Length && char.IsDigit(text[exponent]))
-            {
-                index = exponent;
-                while (index < text.Length && char.IsDigit(text[index]))
-                {
-                    index++;
-                }
-            }
-        }
-
-        // Letters run on after the digits belong to the literal, not to a name.
-        while (index < text.Length && IsNamePart(text[index]))
-        {
-            index++;
-        }
-
-        return index;
-    }
-
     /// <summary>
     /// Skips a VBA radix literal at <paramref name="index"/> (<c>&amp;H</c> and
     /// hex digits, <c>&amp;O</c> or <c>&amp;</c> and octal digits, with an
@@ -347,30 +303,15 @@ internal static class ExpressionFieldReferences
     /// <returns><see langword="false"/> when no radix literal starts here.</returns>
     private static bool TrySkipRadixLiteral(string text, ref int index)
     {
-        int digits = index + 1;
-        if (digits >= text.Length)
-        {
-            return false;
-        }
-
-        bool hex;
-        char marker = text[digits];
-        if (marker is 'H' or 'h' or 'O' or 'o')
-        {
-            hex = marker is 'H' or 'h';
-            digits++;
-        }
-        else if (marker is >= '0' and <= '7')
-        {
-            hex = false;
-        }
-        else
+        int digits = index;
+        int radix = ReadRadixPrefix(text, ref digits);
+        if (radix == 0)
         {
             return false;
         }
 
         int end = digits;
-        while (end < text.Length && (hex ? IsHexDigit(text[end]) : text[end] is >= '0' and <= '7'))
+        while (end < text.Length && TryGetDigit(text[end], radix, out _))
         {
             end++;
         }
@@ -389,12 +330,6 @@ internal static class ExpressionFieldReferences
         index = SkipWhiteSpace(text, index);
         return index < text.Length ? text[index] : '\0';
     }
-
-    private static bool IsNameStart(char c) => char.IsLetter(c) || c == '_';
-
-    private static bool IsNamePart(char c) => char.IsLetterOrDigit(c) || c == '_';
-
-    private static bool IsHexDigit(char c) => c is (>= '0' and <= '9') or (>= 'A' and <= 'F') or (>= 'a' and <= 'f');
 
     /// <summary>One segment of a name chain.</summary>
     /// <param name="Start">The index of the segment's first character (its <c>[</c> when bracketed).</param>

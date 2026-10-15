@@ -257,7 +257,7 @@ JetDatabaseWriter/
 │   ├── TDefWriter.cs                      (the writer's in-place TDEF write-backs: patched chains and 32-bit fields, through the Pager)
 │   ├── Expressions/
 │   │   ├── AccessExpressionKeywords.cs             (Access word operators and literal words, shared by the parser and ExpressionFieldReferences)
-│   │   ├── AccessExpressionText.cs                 (shared quote and whitespace scanning)
+│   │   ├── AccessExpressionText.cs                 (shared lexical boundaries for names, numbers and literals)
 │   │   ├── CalculatedExpressionBinaryNode.cs       (binary operator AST node)
 │   │   ├── CalculatedExpressionCoercion.cs         (central Access null/date/number/text coercion semantics)
 │   │   ├── CalculatedExpressionDateTimeFunctions.cs (date/time function catalog)
