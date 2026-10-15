@@ -291,9 +291,9 @@ internal sealed class TransactionLifecycle(
     /// journal from the writer and replays each buffered page (in ascending
     /// page-number order) in place through the normal page-write pipeline, so
     /// that per-page encryption and cooperative byte-range locks are honoured,
-    /// then flushes. The pager captures raw before-images and restores them
-    /// after a write or flush failure. Raw undo images may spill to a temporary file; replay
-    /// is not crash-atomic.
+    /// then flushes. File-backed replay uses the persistent raw snapshot for
+    /// live rollback and crash recovery. Other stores retain raw before-images
+    /// for in-process rollback after a write or flush failure.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -382,7 +382,7 @@ internal sealed class TransactionLifecycle(
             // without cancellation so no partial batch is left behind.
             cancellationToken.ThrowIfCancellationRequested();
 
-            // The pager captures raw undo images before beginning replay.
+            // The pager prepares physical rollback before beginning replay.
             await pager.CommitAsync(journal, () => { }, cancellationToken, durable).ConfigureAwait(false);
             transaction.MarkCommitted();
         }

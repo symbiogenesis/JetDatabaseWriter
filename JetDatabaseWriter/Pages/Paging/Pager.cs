@@ -280,17 +280,34 @@ internal sealed class Pager : PageFile
     internal async ValueTask ShrinkTailAsync(long length, bool secure, CancellationToken cancellationToken)
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        StatementUndoLog? undo = null;
+        try
+        {
+            await this.ShrinkTailCoreAsync(length, secure, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            this.InvalidateAll();
+            _ = this.frameGate.Release();
+        }
+    }
+
+    private async ValueTask ShrinkTailCoreAsync(long length, bool secure, CancellationToken cancellationToken)
+    {
+        await this.DrainDirtyPagesAsync().ConfigureAwait(false);
+        long originalLength = this.Store.Length;
+        await using StatementUndoLog? undo = this.Store is StreamPageStore { Stream: FileStream }
+            ? null
+            : new StatementUndoLog(originalLength, fileBacked: true, Math.Max(64, this.cacheSize / 2));
         PersistentRollbackJournal? journal = null;
         bool recordingDecision = false;
         try
         {
-            await this.DrainDirtyPagesAsync().ConfigureAwait(false);
-            long originalLength = this.Store.Length;
-            undo = new StatementUndoLog(originalLength, fileBacked: true, Math.Max(64, this.cacheSize / 2));
-            for (long offset = length; offset < originalLength; offset += this.PageSize)
+            if (undo is not null)
             {
-                await undo.CaptureAsync(this.Store, offset, this.PageSize, cancellationToken).ConfigureAwait(false);
+                for (long offset = length; offset < originalLength; offset += this.PageSize)
+                {
+                    await undo.CaptureAsync(this.Store, offset, this.PageSize, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -309,8 +326,13 @@ internal sealed class Pager : PageFile
                 store.RollbackJournal = journal;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             this.InvalidateAll();
-            undo.HasWrites = true;
+            if (undo is { } pendingUndo)
+            {
+                pendingUndo.HasWrites = true;
+            }
+
             if (secure)
             {
                 byte[] freed = new byte[this.PageSize];
@@ -330,7 +352,11 @@ internal sealed class Pager : PageFile
             await this.Store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
             recordingDecision = journal is not null;
             journal?.MarkCommitted();
-            undo.HasWrites = false;
+            if (undo is { } completedUndo)
+            {
+                completedUndo.HasWrites = false;
+            }
+
             this.zeroReservations.RemoveWhere(pageNumber => pageNumber >= length / this.PageSize);
             this.bufferedPageCount = this.zeroReservations.Count == 0 ? this.PhysicalPageCount : Math.Max(this.PhysicalPageCount, checked(this.zeroReservations.Max + 1));
         }
@@ -342,15 +368,19 @@ internal sealed class Pager : PageFile
                 throw;
             }
 
-            if (undo?.HasWrites == true)
+            if (journal is not null || undo?.HasWrites == true)
             {
                 try
                 {
                     this.DetachRecoveryJournal();
-                    journal?.RecordRecoveryStart();
-
-                    await undo.RestoreAsync(this.Store, durable: true).ConfigureAwait(false);
-                    journal?.CompleteRollback();
+                    if (journal is not null)
+                    {
+                        await journal.RestoreAsync(this.Store).ConfigureAwait(false);
+                    }
+                    else if (undo is { } streamUndo)
+                    {
+                        await streamUndo.RestoreAsync(this.Store, durable: true).ConfigureAwait(false);
+                    }
                 }
                 catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
                 {
@@ -363,26 +393,8 @@ internal sealed class Pager : PageFile
         }
         finally
         {
-            try
-            {
-                if (undo is not null)
-                {
-                    await undo.DisposeAsync().ConfigureAwait(false);
-                }
-            }
-            finally
-            {
-                try
-                {
-                    this.DetachRecoveryJournal();
-                    journal?.Dispose();
-                }
-                finally
-                {
-                    this.InvalidateAll();
-                    _ = this.frameGate.Release();
-                }
-            }
+            this.DetachRecoveryJournal();
+            journal?.Dispose();
         }
     }
 
@@ -743,20 +755,19 @@ internal sealed class Pager : PageFile
     internal async ValueTask CommitAsync(PagerTransaction transaction, Action beforeFirstWrite, CancellationToken cancellationToken, bool durable = true)
     {
         await this.frameGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        StatementUndoLog? image = null;
         bool recordingCommitDecision = false;
         try
         {
-            image = transaction.UndoLog ??= new StatementUndoLog(transaction.BaseFileLengthBytes, this.Store.Capabilities.IsFileBacked && this.Store.Capabilities.InPlacePages, Math.Max(64, this.cacheSize / 2));
-            foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
-            {
-                await image.CaptureAsync(this.Store, checked(entry.Key * this.PageSize), this.PageSize, cancellationToken).ConfigureAwait(false);
-            }
+            await this.CaptureStreamUndoAsync(transaction, cancellationToken).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
             beforeFirstWrite();
             this.EnsureRecoveryJournal(transaction);
-            image.HasWrites = true;
+            if (transaction.UndoLog is { } undo)
+            {
+                undo.HasWrites = true;
+            }
+
             foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
             {
                 byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
@@ -766,7 +777,10 @@ internal sealed class Pager : PageFile
             await this.Store.FlushAsync(durable || transaction.RecoveryJournal is not null, CancellationToken.None).ConfigureAwait(false);
             recordingCommitDecision = transaction.RecoveryJournal is not null;
             transaction.RecoveryJournal?.MarkCommitted();
-            image.HasWrites = false;
+            if (transaction.UndoLog is { } completedUndo)
+            {
+                completedUndo.HasWrites = false;
+            }
         }
         catch (Exception failure)
         {
@@ -781,12 +795,7 @@ internal sealed class Pager : PageFile
 
             try
             {
-                if (image?.HasWrites == true)
-                {
-                    this.DetachRecoveryJournal();
-                    await image.RestoreAsync(this.Store, durable || transaction.RecoveryJournal is not null).ConfigureAwait(false);
-                    transaction.RecoveryJournal?.CompleteRollback();
-                }
+                await this.RestorePhysicalWritesAsync(transaction, durable).ConfigureAwait(false);
             }
             catch (Exception undoFailure) when (undoFailure is IOException or UnauthorizedAccessException or ObjectDisposedException or NotSupportedException)
             {
@@ -804,9 +813,9 @@ internal sealed class Pager : PageFile
         {
             try
             {
-                if (image is not null)
+                if (transaction.UndoLog is { } undo)
                 {
-                    await image.DisposeAsync().ConfigureAwait(false);
+                    await undo.DisposeAsync().ConfigureAwait(false);
                 }
             }
             finally
@@ -829,7 +838,7 @@ internal sealed class Pager : PageFile
     /// <returns>The asynchronous restoration.</returns>
     internal async ValueTask RollbackStatementAsync(PagerTransaction transaction)
     {
-        if (transaction.UndoLog is not { } undo)
+        if (transaction.UndoLog is null && transaction.RecoveryJournal is null)
         {
             return;
         }
@@ -837,12 +846,7 @@ internal sealed class Pager : PageFile
         await this.frameGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            if (undo.HasWrites)
-            {
-                this.DetachRecoveryJournal();
-                await undo.RestoreAsync(this.Store, transaction.RecoveryJournal is not null).ConfigureAwait(false);
-                transaction.RecoveryJournal?.CompleteRollback();
-            }
+            await this.RestorePhysicalWritesAsync(transaction, durable: false).ConfigureAwait(false);
         }
         catch
         {
@@ -853,7 +857,10 @@ internal sealed class Pager : PageFile
         {
             try
             {
-                await undo.DisposeAsync().ConfigureAwait(false);
+                if (transaction.UndoLog is { } undo)
+                {
+                    await undo.DisposeAsync().ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -878,11 +885,7 @@ internal sealed class Pager : PageFile
             return;
         }
 
-        StatementUndoLog undo = transaction.UndoLog ??= new StatementUndoLog(transaction.BaseFileLengthBytes, this.Store.Capabilities.IsFileBacked && this.Store.Capabilities.InPlacePages, Math.Max(64, this.cacheSize / 2));
-        foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
-        {
-            await undo.CaptureAsync(this.Store, checked(entry.Key * this.PageSize), this.PageSize, cancellationToken).ConfigureAwait(false);
-        }
+        await this.CaptureStreamUndoAsync(transaction, cancellationToken).ConfigureAwait(false);
 
         if (!transaction.SpillCommitLockAcquired)
         {
@@ -892,7 +895,11 @@ internal sealed class Pager : PageFile
 
         cancellationToken.ThrowIfCancellationRequested();
         this.EnsureRecoveryJournal(transaction);
-        undo.HasWrites = true;
+        if (transaction.UndoLog is { } undo)
+        {
+            undo.HasWrites = true;
+        }
+
         foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
         {
             byte[] encoded = this.PrepareEncryptedPageForWrite(entry.Key, entry.Value);
@@ -900,6 +907,33 @@ internal sealed class Pager : PageFile
         }
 
         transaction.DiscardReplayImages();
+    }
+
+    private async ValueTask CaptureStreamUndoAsync(PagerTransaction transaction, CancellationToken cancellationToken)
+    {
+        if (this.Store is StreamPageStore { Stream: FileStream })
+        {
+            return;
+        }
+
+        StatementUndoLog undo = transaction.UndoLog ??= new StatementUndoLog(transaction.BaseFileLengthBytes, this.Store.Capabilities.IsFileBacked && this.Store.Capabilities.InPlacePages, Math.Max(64, this.cacheSize / 2));
+        foreach (KeyValuePair<long, byte[]> entry in transaction.EnumerateInOrder())
+        {
+            await undo.CaptureAsync(this.Store, checked(entry.Key * this.PageSize), this.PageSize, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask RestorePhysicalWritesAsync(PagerTransaction transaction, bool durable)
+    {
+        this.DetachRecoveryJournal();
+        if (transaction.RecoveryJournal is { } recovery)
+        {
+            await recovery.RestoreAsync(this.Store).ConfigureAwait(false);
+        }
+        else if (transaction.UndoLog is { HasWrites: true } undo)
+        {
+            await undo.RestoreAsync(this.Store, durable).ConfigureAwait(false);
+        }
     }
 
     private void EnsureRecoveryJournal(PagerTransaction transaction)

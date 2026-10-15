@@ -15,11 +15,11 @@ using JetDatabaseWriter.Infrastructure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Savepoint prior images rewind the in-memory journal. Commit captures raw
-/// before-images separately and restores them after a write or flush failure.
-/// File-backed stores additionally persist raw recovery images beside the database,
-/// flushed before physical writes. A subsequent writer open restores interrupted
-/// transactions before parsing the database header.
+/// Savepoint prior images rewind the in-memory journal. File-backed stores use
+/// one persistent raw snapshot for live rollback and crash recovery, flushed
+/// before physical writes. Other stores retain raw before-images for in-process
+/// undo. A subsequent writer open restores interrupted file transactions before
+/// parsing the database header.
 /// </para>
 /// <para>
 /// The journal stores **plaintext** page bytes. Page-level encryption is applied
@@ -60,10 +60,10 @@ internal sealed class PagerTransaction
     /// <summary>Gets a value indicating whether dirty frames may spill during a private statement.</summary>
     internal bool IsStatement { get; }
 
-    /// <summary>Gets or sets first raw images retained across statement spills.</summary>
+    /// <summary>Gets or sets first raw images retained for non-file stores across statement spills.</summary>
     internal StatementUndoLog? UndoLog { get; set; }
 
-    /// <summary>Gets or sets the persistent raw crash recovery journal.</summary>
+    /// <summary>Gets or sets the file snapshot used for live rollback and crash recovery.</summary>
     internal PersistentRollbackJournal? RecoveryJournal { get; set; }
 
     /// <summary>Gets or sets the commit lock address for early statement writes.</summary>

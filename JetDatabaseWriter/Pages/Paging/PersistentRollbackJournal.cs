@@ -2,9 +2,12 @@ namespace JetDatabaseWriter.Pages.Paging;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 #pragma warning disable CA1849 // Journal ordering requires synchronous device flushes before physical database writes.
 
@@ -19,17 +22,22 @@ internal sealed class PersistentRollbackJournal : IDisposable
     private readonly FileStream database;
     private readonly FileStream journal;
     private readonly int pageSize;
+    private readonly long originalLength;
+    private readonly HashSet<long> overwrittenPages = [];
+    private long minimumLength;
     private bool completed;
     private bool cleanupAttempted;
 
     /// <summary>Gets a value indicating whether the commit decision is durably recorded.</summary>
     internal bool IsCommitted { get; private set; }
 
-    private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize)
+    private PersistentRollbackJournal(FileStream database, FileStream journal, int pageSize, long originalLength)
     {
         this.database = database;
         this.journal = journal;
         this.pageSize = pageSize;
+        this.originalLength = originalLength;
+        this.minimumLength = originalLength;
     }
 
     /// <summary>Gets the sidecar name associated with a database.</summary>
@@ -89,7 +97,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
             File.Move(stagingPath, finalPath);
             promoted = true;
             journal = new FileStream(finalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            return new PersistentRollbackJournal(database, journal, pageSize);
+            return new PersistentRollbackJournal(database, journal, pageSize, length);
         }
         catch
         {
@@ -135,39 +143,8 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         using (var journal = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            if (journal.Length is < HeaderLength or > MaximumJournalLength)
-            {
-                throw new IOException("The recovery journal length is invalid.");
-            }
-
-            byte[] header = new byte[HeaderLength];
-            Read(journal, 0, header, header.Length);
-            int pageSize = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(8));
-            long originalLength = BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(16));
-            ValidatePageSize(pageSize);
-            ValidateLength(originalLength);
+            (int pageSize, long originalLength) = ValidateSnapshot(database.Name, journal);
             ValidateLength(database.Length);
-            if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header.AsSpan(0, 96).ToArray())) || !header.AsSpan(24, 32).SequenceEqual(Identity(database.Name)) || journal.Length < HeaderLength + originalLength)
-            {
-                throw new IOException("The recovery journal identity or header is invalid.");
-            }
-
-            using (var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
-            {
-                byte[] buffer = new byte[8192];
-                for (long offset = 0; offset < originalLength;)
-                {
-                    int count = checked((int)Math.Min(buffer.Length, originalLength - offset));
-                    Read(journal, HeaderLength + offset, buffer, count);
-                    hash.AppendData(buffer, 0, count);
-                    offset += count;
-                }
-
-                if (!header.AsSpan(56, 32).SequenceEqual(hash.GetHashAndReset()))
-                {
-                    throw new IOException("The recovery snapshot checksum is invalid.");
-                }
-            }
 
             long start = HeaderLength + originalLength;
             int recordSize = checked(8 + Math.Max(pageSize, 32) + 32);
@@ -301,6 +278,42 @@ internal sealed class PersistentRollbackJournal : IDisposable
         File.Delete(path);
     }
 
+    private static (int PageSize, long OriginalLength) ValidateSnapshot(string databasePath, FileStream journal)
+    {
+        if (journal.Length is < HeaderLength or > MaximumJournalLength)
+        {
+            throw new IOException("The recovery journal length is invalid.");
+        }
+
+        byte[] header = new byte[HeaderLength];
+        Read(journal, 0, header, header.Length);
+        int pageSize = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(8));
+        long originalLength = BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(16));
+        ValidatePageSize(pageSize);
+        ValidateLength(originalLength);
+        if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header.AsSpan(0, 96).ToArray())) || !header.AsSpan(24, 32).SequenceEqual(Identity(databasePath)) || journal.Length < HeaderLength + originalLength)
+        {
+            throw new IOException("The recovery journal identity or header is invalid.");
+        }
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] buffer = new byte[8192];
+        for (long offset = 0; offset < originalLength;)
+        {
+            int count = checked((int)Math.Min(buffer.Length, originalLength - offset));
+            Read(journal, HeaderLength + offset, buffer, count);
+            hash.AppendData(buffer, 0, count);
+            offset += count;
+        }
+
+        if (!header.AsSpan(56, 32).SequenceEqual(hash.GetHashAndReset()))
+        {
+            throw new IOException("The recovery snapshot checksum is invalid.");
+        }
+
+        return (pageSize, originalLength);
+    }
+
     private static void AppendRecord(FileStream journal, int pageSize, long offset, ReadOnlySpan<byte> bytes)
     {
         int payloadLength = Math.Max(pageSize, 32);
@@ -416,6 +429,10 @@ internal sealed class PersistentRollbackJournal : IDisposable
         }
 
         this.AppendRecord(offset, after);
+        if (offset < this.originalLength)
+        {
+            _ = this.overwrittenPages.Add(offset);
+        }
     }
 
     /// <summary>Records that restoration may re-extend an authorized truncated tail.</summary>
@@ -443,6 +460,55 @@ internal sealed class PersistentRollbackJournal : IDisposable
         byte[] payload = new byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(payload, length);
         this.AppendRecord(-2, payload);
+        this.minimumLength = Math.Min(this.minimumLength, length);
+    }
+
+    /// <summary>Restores overwritten pages and removed tail bytes directly from the prepared raw snapshot.</summary>
+    /// <param name="store">The physical store with intent recording detached.</param>
+    /// <returns>The restoration and durable cleanup completion.</returns>
+    /// <exception cref="IOException">The original snapshot is invalid or the journal is completed.</exception>
+    internal async ValueTask RestoreAsync(IPageStore store)
+    {
+        if (this.completed)
+        {
+            throw new IOException("A completed rollback journal cannot restore database bytes.");
+        }
+
+        (int snapshotPageSize, long snapshotLength) = ValidateSnapshot(this.database.Name, this.journal);
+        if (snapshotPageSize != this.pageSize || snapshotLength != this.originalLength)
+        {
+            throw new IOException("The recovery snapshot differs from the prepared database image.");
+        }
+
+        if (this.minimumLength < this.originalLength)
+        {
+            this.RecordRecoveryStart();
+        }
+
+        byte[] page = new byte[this.pageSize];
+        foreach (long offset in this.overwrittenPages)
+        {
+            if (offset < this.minimumLength)
+            {
+                await this.RestorePageAsync(store, offset, page).ConfigureAwait(false);
+            }
+        }
+
+        for (long offset = this.minimumLength; offset < this.originalLength; offset += this.pageSize)
+        {
+            await this.RestorePageAsync(store, offset, page).ConfigureAwait(false);
+        }
+
+        await store.SetLengthAsync(this.originalLength, CancellationToken.None).ConfigureAwait(false);
+        await store.FlushAsync(true, CancellationToken.None).ConfigureAwait(false);
+        this.CompleteRollback();
+    }
+
+    private async ValueTask RestorePageAsync(IPageStore store, long offset, byte[] page)
+    {
+        int count = checked((int)Math.Min(this.pageSize, this.originalLength - offset));
+        Read(this.journal, HeaderLength + offset, page, count);
+        await store.WriteAsync(offset, page.AsMemory(0, count), CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>Durably records a commit decision after the database has been durably flushed.</summary>
