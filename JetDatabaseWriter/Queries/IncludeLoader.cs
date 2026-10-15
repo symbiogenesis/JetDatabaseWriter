@@ -7,6 +7,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -263,33 +264,19 @@ internal static class IncludeLoader
         Dictionary<string, object?[]> distinctKeys,
         CancellationToken cancellationToken)
     {
-        // No root has a key, so no parent can match: read nothing.
-        if (distinctKeys.Count == 0)
-        {
-            return new Dictionary<string, object>(StringComparer.Ordinal);
-        }
-
-        // One parent per key: seek the parent key index when one covers the key
-        // columns and the keys are few relative to the table, otherwise scan once.
-        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
-        if (plan is not SeekPlan seek)
-        {
-            return await IndexRelatedAsync(metadata, table, type, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
-        }
-
         var map = new Dictionary<string, object>(StringComparer.Ordinal);
-        int[] keyIndices = ResolveKeyIndices(seek.Headers, keyColumns);
-        foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
+        await foreach ((string key, string[] headers, object[] row) in ReadMatchesAsync(
+            metadata, table, keyColumns, distinctKeys, firstPerKey: true, cancellationToken).ConfigureAwait(false))
         {
-            IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
-            await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            // A scan can encounter duplicate keys: keep and map only the first parent.
+            if (map.ContainsKey(key))
             {
-                if (!string.Equals(BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder), entry.Key, StringComparison.Ordinal))
-                {
-                    continue;
-                }
+                continue;
+            }
 
-                map[entry.Key] = RuntimeRowMapper.Map(type, seek.Headers, row);
+            map.Add(key, RuntimeRowMapper.Map(type, headers, row));
+            if (map.Count == distinctKeys.Count)
+            {
                 break;
             }
         }
@@ -305,43 +292,71 @@ internal static class IncludeLoader
         Dictionary<string, object?[]> distinctKeys,
         CancellationToken cancellationToken)
     {
-        // No root has a key, so no child can match: read nothing.
-        if (distinctKeys.Count == 0)
-        {
-            return new Dictionary<string, List<object>>(StringComparer.Ordinal);
-        }
-
-        // Many children per key: seek the foreign-key index when one covers the key
-        // columns and the keys are few relative to the table, otherwise scan once.
-        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
-        if (plan is not SeekPlan seek)
-        {
-            return await GroupRelatedAsync(metadata, table, type, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
-        }
-
         var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
-        int[] keyIndices = ResolveKeyIndices(seek.Headers, keyColumns);
-        foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
+        await foreach ((string key, string[] headers, object[] row) in ReadMatchesAsync(
+            metadata, table, keyColumns, distinctKeys, firstPerKey: false, cancellationToken).ConfigureAwait(false))
         {
-            var list = new List<object>();
-            IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
-            await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+            if (!map.TryGetValue(key, out List<object>? list))
             {
-                if (!string.Equals(BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder), entry.Key, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                list.Add(RuntimeRowMapper.Map(type, seek.Headers, row));
+                list = [];
+                map[key] = list;
             }
 
-            if (list.Count > 0)
-            {
-                map[entry.Key] = list;
-            }
+            list.Add(RuntimeRowMapper.Map(type, headers, row));
         }
 
         return map;
+    }
+
+    private static async IAsyncEnumerable<(string Key, string[] Headers, object[] Row)> ReadMatchesAsync(
+        IncludeMetadataCache metadata,
+        string table,
+        IReadOnlyList<string> keyColumns,
+        Dictionary<string, object?[]> distinctKeys,
+        bool firstPerKey,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        // No root has a key, so read nothing. Filter all other rows before mapping them:
+        // an unrelated row must neither fail conversion nor reach a ThenInclude.
+        if (distinctKeys.Count == 0)
+        {
+            yield break;
+        }
+
+        SeekPlan? plan = await ResolveSeekPlanAsync(metadata, table, keyColumns, distinctKeys, cancellationToken).ConfigureAwait(false);
+        if (plan is SeekPlan seek)
+        {
+            int[] keyIndices = ResolveKeyIndices(seek.Headers, keyColumns);
+            foreach (KeyValuePair<string, object?[]> entry in distinctKeys)
+            {
+                IndexQueryCriteria criteria = BuildSeekCriteria(seek.IndexColumnCount, keyColumns.Count, entry.Value);
+                await foreach (object[] row in metadata.Indexes.ReadIndexRowsAsObjectsAsync(table, seek.IndexName, criteria, cancellationToken).ConfigureAwait(false))
+                {
+                    if (!string.Equals(BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder), entry.Key, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    yield return (entry.Key, seek.Headers, row);
+                    if (firstPerKey)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            yield break;
+        }
+
+        (string[] headers, int[] scanKeyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
+        await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
+        {
+            string? key = BuildKeyFromRow(row, scanKeyIndices, metadata.TextSortOrder);
+            if (key is not null && distinctKeys.ContainsKey(key))
+            {
+                yield return (key, headers, row);
+            }
+        }
     }
 
     private static async ValueTask<SeekPlan?> ResolveSeekPlanAsync(
@@ -466,89 +481,6 @@ internal static class IncludeLoader
         }
 
         return (string.Join("|", parts), values);
-    }
-
-    /// <summary>
-    /// Scans <paramref name="table"/> for the parent of each key in <paramref name="distinctKeys"/>,
-    /// keeping the first row per key. Only those rows are mapped, so a row no root references can
-    /// neither fail the conversion to <paramref name="type"/> nor reach a <c>ThenInclude</c>, and
-    /// the scan stops once every key has its parent.
-    /// </summary>
-    /// <param name="metadata">The per-call metadata cache.</param>
-    /// <param name="table">The parent table.</param>
-    /// <param name="type">The parent entity type.</param>
-    /// <param name="keyColumns">The parent's key columns.</param>
-    /// <param name="distinctKeys">The keys the roots reference, by normalized key.</param>
-    /// <param name="cancellationToken">A token used to cancel the scan.</param>
-    /// <returns>The parents by normalized key.</returns>
-    private static async ValueTask<Dictionary<string, object>> IndexRelatedAsync(
-        IncludeMetadataCache metadata,
-        string table,
-        Type type,
-        IReadOnlyList<string> keyColumns,
-        Dictionary<string, object?[]> distinctKeys,
-        CancellationToken cancellationToken)
-    {
-        (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
-        var map = new Dictionary<string, object>(StringComparer.Ordinal);
-        await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
-        {
-            string? key = BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder);
-            if (key is null || !distinctKeys.ContainsKey(key) || map.ContainsKey(key))
-            {
-                continue;
-            }
-
-            map.Add(key, RuntimeRowMapper.Map(type, headers, row));
-            if (map.Count == distinctKeys.Count)
-            {
-                break;
-            }
-        }
-
-        return map;
-    }
-
-    /// <summary>
-    /// Scans <paramref name="table"/> for the children of each key in
-    /// <paramref name="distinctKeys"/> and groups them by key. Only those rows are mapped, so a
-    /// row no root references cannot fail the conversion to <paramref name="type"/>.
-    /// </summary>
-    /// <param name="metadata">The per-call metadata cache.</param>
-    /// <param name="table">The child table.</param>
-    /// <param name="type">The child entity type.</param>
-    /// <param name="keyColumns">The child's foreign-key columns.</param>
-    /// <param name="distinctKeys">The keys the roots hold, by normalized key.</param>
-    /// <param name="cancellationToken">A token used to cancel the scan.</param>
-    /// <returns>The children by normalized key.</returns>
-    private static async ValueTask<Dictionary<string, List<object>>> GroupRelatedAsync(
-        IncludeMetadataCache metadata,
-        string table,
-        Type type,
-        IReadOnlyList<string> keyColumns,
-        Dictionary<string, object?[]> distinctKeys,
-        CancellationToken cancellationToken)
-    {
-        (string[] headers, int[] keyIndices) = await ReadHeadersAsync(metadata, table, keyColumns, cancellationToken).ConfigureAwait(false);
-        var map = new Dictionary<string, List<object>>(StringComparer.Ordinal);
-        await foreach (object[] row in metadata.Tables.Rows(table, progress: null, cancellationToken).ConfigureAwait(false))
-        {
-            string? key = BuildKeyFromRow(row, keyIndices, metadata.TextSortOrder);
-            if (key is null || !distinctKeys.ContainsKey(key))
-            {
-                continue;
-            }
-
-            if (!map.TryGetValue(key, out List<object>? list))
-            {
-                list = [];
-                map[key] = list;
-            }
-
-            list.Add(RuntimeRowMapper.Map(type, headers, row));
-        }
-
-        return map;
     }
 
     private static async ValueTask<(string[] Headers, int[] KeyIndices)> ReadHeadersAsync(
