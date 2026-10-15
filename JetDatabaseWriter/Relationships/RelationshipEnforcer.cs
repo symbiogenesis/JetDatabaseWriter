@@ -457,7 +457,7 @@ internal sealed class RelationshipEnforcer(
         var ownRowChanges = new List<(object[] NewRow, int[] ForeignColumnIndexes, object[] NewPkSubset)>();
         var keyAssignments = new Dictionary<object[], (string TableName, TableDef Definition, HashSet<int> Columns)>();
         var originalRows = new Dictionary<(long PageNumber, int RowIndex), object[]>();
-        var assignmentSources = new Dictionary<(object[] Row, int Column), string>();
+        var assignmentSources = new Dictionary<(object[] Row, int Column), Dictionary<string, int>>();
         int depth = 0;
         while (true)
         {
@@ -562,9 +562,12 @@ internal sealed class RelationshipEnforcer(
                         object replacement = newPkSubset[column] ?? DBNull.Value;
                         if (!SameKeyValue(newRow[fkIdx[column]], replacement, fkIdx[column], change.ChildTable.Definition))
                         {
-                            newRow[fkIdx[column]] = replacement;
                             changed = true;
                         }
+
+                        // A moving composite key copies every component, including
+                        // text whose spelling changes without changing its sort key.
+                        newRow[fkIdx[column]] = replacement;
                     }
 
                     RecordKeyAssignments(newRow, fkIdx, rel.ForeignTable, change.ChildTable.Definition);
@@ -582,9 +585,10 @@ internal sealed class RelationshipEnforcer(
                     object replacement = newPkSubset[column] ?? DBNull.Value;
                     if (!SameKeyValue(newRow[fkIdx[column]], replacement, fkIdx[column], primaryDef))
                     {
-                        newRow[fkIdx[column]] = replacement;
                         changed = true;
                     }
+
+                    newRow[fkIdx[column]] = replacement;
                 }
             }
 
@@ -597,15 +601,26 @@ internal sealed class RelationshipEnforcer(
                     object replacement = values[index] ?? DBNull.Value;
                     (object[] Row, int Column) target = (row, columns[index]);
 
-                    // DAO refuses a shared child key reached from different
-                    // parent tables even when the final assignments agree.
-                    if (assignmentSources.TryGetValue(target, out string? source)
-                        && !string.Equals(source, relationship.PrimaryTable, StringComparison.OrdinalIgnoreCase))
+                    if (!assignmentSources.TryGetValue(target, out Dictionary<string, int>? sources))
                     {
-                        throw new JetConstraintException(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' cannot cascade overlapping foreign keys from distinct parent tables into '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
+                        sources = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                        assignmentSources.Add(target, sources);
                     }
 
-                    assignmentSources[target] = relationship.PrimaryTable;
+                    // DAO refuses equal-depth converging parents, but accepts
+                    // agreeing unequal paths. Each generation replays earlier
+                    // changes, so retain each parent's first arrival at the slot.
+                    if (sources.TryAdd(relationship.PrimaryTable, depth))
+                    {
+                        foreach ((string source, int arrival) in sources)
+                        {
+                            if (arrival == depth && !string.Equals(source, relationship.PrimaryTable, StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new JetConstraintException(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' cannot cascade equal-depth overlapping foreign keys from distinct parent tables into '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });
+                            }
+                        }
+                    }
+
                     if (generationAssignments.TryGetValue(target, out object? previous) && !SameKeyValue(previous, replacement, columns[index], definition))
                     {
                         throw new JetConstraintException(JetErrorCode.ForeignKeyRestrictUpdate, $"UPDATE on '{primaryTable}' has contradictory cascade assignments through relationship '{relationship.Name}' to '{relationship.ForeignTable}'.", new JetErrorInfo { TableName = primaryTable, RelationshipName = relationship.Name });

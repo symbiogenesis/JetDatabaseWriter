@@ -22,7 +22,28 @@
 
 Non-primary unique indexes allow multiple all-Null keys; partly Null composite keys still participate in uniqueness. IgnoreNulls omits all-Null keys in rebuilds, incremental changes and catalog splices. Required and primary indexes reject a Null component before mutation. Northwind Employees supplies real-file evidence for repeated Null WindowsUserName keys; the format/write-mode regression matrix covers batch inserts, updates and reopen behavior.
 
-Cascade updates plan the transitive relationship graph against stored old rows and merged new rows before mutation, with cancellation and a depth limit. Foreign-key checks use the composed parent rows so a simple stable cycle can establish its new keys within the statement. Moves from distinct parent tables to the same child column are refused, including agreeing diamond paths; DAO120 refuses the characterized diamond before changing its rows. Paths from the same parent table must agree on each assigned column, using relationship key normalization including fixed binary padding rather than object identity. Contradictory assignments are deliberately refused: the characterized DAO update of two distinct parent keys accepted the update but left the child matching only one relationship. Restricted deletes count seek locations without loading child MEMO/OLE payloads; unsupported seeks retain the snapshot fallback. Broader graph/DAO characterization remains explicit in the TODO.
+Cascade updates plan the transitive relationship graph against stored old rows and merged new rows before mutation, with cancellation and a depth limit. Foreign-key checks use the composed parent rows so a simple stable cycle can establish its new keys within the statement. Distinct parent tables reaching the same child column at equal depths are refused, including agreeing diamonds and a diamond with an additional earlier direct path. Agreeing unequal-depth paths are accepted. The planner retains each source parent's first arrival generation because later planning generations replay earlier changes. Every generation still checks agreement on each assigned column, using relationship key normalization including fixed binary padding rather than object identity. Contradictory assignments are deliberately refused: DAO accepts the characterized update of two distinct parent keys but leaves the child matching only one relationship. Restricted deletes count seek locations without loading child MEMO/OLE payloads; unsupported seeks retain the snapshot fallback.
+
+A moving composite key copies every physical component to its dependents, even
+when a text component's new spelling compares equal. Updating `(Alpha, 1)` to
+`(ALPHA, 5)` copies `ALPHA` as well as `5` through the graph. Key equivalence
+controls convergence and conflict checks; it does not suppress the physical
+assignment. Native composite chain, cycle and diamond checks verify General97
+and the version-0 General Legacy and version-1 General sort orders at LCID
+`0x0409`, including mixed-case dependent keys, unaffected composite neighbors,
+update/delete, rollback and compact/readback. This establishes those graph
+cases rather than a complete collation inventory.
+
+The writer's 64-edge cascade bound is an independent resource policy, not a
+Microsoft engine limit. `DaoCascadeDepthTests` characterizes simple chains:
+DAO3.6 on Jet3 and DAO120 on Jet4/ACE accept 50 update edges, but refuse 51
+with error 3000 (reserved error `-1623`), while deleting 65 edges succeeds.
+On DAO-authored ACE chains, the writer accepts 64 edges and refuses 65 before
+mutation, for both updates and deletes. Native reopen and compact accept that
+64-edge output;
+native update execution limits do not imply that its stored graph is invalid.
+Caller rollback restores bytes, and direct, automatic and caller-transaction
+refusals preserve bytes at the writer bound.
 
 For a simultaneous self-referencing update, DAO3.6 and DAO120 preserve the caller's
 entire foreign key when any component is explicitly assigned, including an
@@ -51,8 +72,10 @@ clearing only one component of a self-reference is refused when no matching
 parent exists, while clearing the entire key succeeds. Unrelated updates still
 leave an already orphaned unchanged key alone. DAO3.6 checks on native Jet3
 files cover scalar/composite self-key assignments and two-/three-table cascade
-cycles, including caller rollback, native readback and compact. Broader graph
-characterization remains under R1.
+cycles, including caller rollback, native readback and compact.
+`DaoCompositeCascadeGraphTests` and `DaoCascadePathTests` extend the native
+comparisons to composite graphs, unequal-depth convergence, overlapping
+diamonds and caller assignments merged with downstream cascades.
 
 Unenforced relationships persist catalog metadata without physical foreign-key
 indexes. Native DAO emits only the existing primary indexes for a relationship
