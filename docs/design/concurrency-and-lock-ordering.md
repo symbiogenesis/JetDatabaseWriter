@@ -2,7 +2,7 @@
 
 Status: active reference
 Date: 2026-06-16
-Last updated: 2026-10-07
+Last updated: 2026-10-15
 
 This note is the single, canonical description of the synchronization model used
 by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
@@ -41,6 +41,39 @@ its transaction journal and plaintext frame cache.
 | Owned-page index initializer | `AsyncLazyInitializer` in `OwnedDataPages` | One reader whole-file discovery pass |
 | `AsyncReentrantOperationGate.stateLock` | Reader operation gate | Drain bookkeeping; memory only |
 | Lock-file slot | `LockFileCoordinator` | `.ldb` / `.laccdb` slot held until disposal finishes |
+
+## Constraint identity during schema changes
+
+Constraint identity follows the writer's serialized schema lifecycle. TDEF page
+numbers and physical column descriptors are reusable storage locations, not
+object generation identifiers. Drop unregisters the table's column constraints
+and table rule; create registers a new list even when the allocator returns the
+same page and writes an identical TDEF. Dropping and readding a column builds
+its new constraints from the new declaration. A schema rewrite carries only
+surviving columns' CLR defaults and delegates, registers its replacement, and
+explicitly rebinds it after a physical transplant. Rename transfers the existing
+registry entry. Statement and caller-transaction rollback restore the previous
+registry snapshot, including bindings, table rules and AutoNumber counters.
+
+`ConstraintReplacementTests` verifies TDEF root and physical column descriptor reuse
+across Jet3, Jet4 and ACE, plus identical complete TDEF images for Jet4/ACE.
+Jet3 retains shared map storage and allocates different usage-map rows. The tests
+cover replacement defaults and rules, counter reseeding, column descriptor
+reuse (including an ACE complex-table transplant at the same TDEF root),
+reopen, unchanged bytes on refusal and usable caller
+transactions. `ConstraintReplacementIdentityTests` separately covers registry
+replacement and rollback with identical physical descriptors, including removal
+of all constraints. These are library lifecycle regressions; they do not infer a
+native schema-generation field.
+
+The physical comparison in `ConstraintRegistry` is a defensive check, not an
+external-change detector. Byte-identical replacement outside the writer cannot
+be distinguished by comparing those bytes. Exclusive ownership is required for
+the entire writer lifetime, including caller-supplied streams and intervals
+between calls. Dispose before an external edit and reopen afterwards so the new
+writer reads the current properties and counters. Neither cached reads nor
+constraint validation promise to detect an edit that violates that ownership
+contract.
 
 ## Acquisition order
 

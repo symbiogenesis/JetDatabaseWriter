@@ -84,6 +84,9 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
     /// Asynchronously opens a JET database from a caller-supplied <see cref="Stream"/> and returns a new <see cref="AccessWriter"/> instance.
     /// The stream must be readable, writable, and seekable. The caller retains ownership unless <paramref name="leaveOpen"/> is false (the default),
     /// in which case the stream will be disposed when the writer is disposed.
+    /// Give the writer exclusive access for its entire lifetime, including between calls.
+    /// Do not edit or replace the underlying bytes externally until the writer is disposed;
+    /// reopen after external edits to load the current schema, constraints and counters.
     /// </summary>
     /// <param name="stream">A readable, writable, seekable stream containing the database bytes.</param>
     /// <param name="options">Optional configuration options.</param>
