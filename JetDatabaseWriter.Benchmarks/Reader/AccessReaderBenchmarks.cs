@@ -70,20 +70,6 @@ public class AccessReaderBenchmarks
         return await reader.ReadTableAsStringsAsync(this.tableName, 100);
     }
 
-    [Benchmark]
-    public async Task<int> StreamRows_All()
-    {
-        await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.Rows(this.tableName).CountAsync();
-    }
-
-    [Benchmark]
-    public async Task<int> StreamRowsAsStrings_All()
-    {
-        await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.RowsAsStrings(this.tableName).CountAsync();
-    }
-
     /// <summary>
     /// Baseline untyped row stream over a numeric/date-heavy table. Compare with
     /// <see cref="StreamRowsTyped_All_Numeric"/> to measure typed mapper overhead.
@@ -127,20 +113,6 @@ public class AccessReaderBenchmarks
     {
         await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
         return await reader.GetStatisticsAsync();
-    }
-
-    [Benchmark]
-    public async Task<DataTable?> ReadTable_AsDataTable()
-    {
-        await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.ReadTableAsync(this.tableName, 100);
-    }
-
-    [Benchmark]
-    public async Task<int> Query_Where_Count()
-    {
-        await using AccessReader reader = await AccessReader.OpenAsync(DbPath);
-        return await reader.Rows(this.tableName).Where(_ => true).CountAsync();
     }
 
     [Benchmark]

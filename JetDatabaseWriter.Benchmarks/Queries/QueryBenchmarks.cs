@@ -12,9 +12,10 @@ using JetDatabaseWriter.Linq;
 /// The per-call cost of typed reads and <c>Query&lt;T&gt;()</c> over the synthetic query
 /// database: a 6-row table for the fixed cost of one call (materializer and predicate
 /// compiles, translation, the in-memory tail), and a 25,000-row table with a primary key
-/// and a non-unique Score index for index-ordered reads, range seeks and aggregates.
+/// and a non-unique Score index for index-ordered reads and range seeks.
 /// Setup runs each benchmark once and throws unless it returns the expected result.
-/// The eager-loading baseline is <see cref="QueryIncludeBenchmarks"/>.
+/// Eager loading is covered by <see cref="QueryIncludeBenchmarks"/> and aggregate
+/// scaling by <see cref="QueryAggregateAllocationBenchmarks"/>.
 /// </summary>
 [MemoryDiagnoser]
 public class QueryBenchmarks
@@ -44,7 +45,6 @@ public class QueryBenchmarks
         Expect(nameof(this.Query_OrderByPk_Take10_Large), 45, await this.Query_OrderByPk_Take10_Large().ConfigureAwait(false));
         Expect(nameof(this.RowsPredicate_RangeSeek_First10_Large), PageSize, await this.RowsPredicate_RangeSeek_First10_Large().ConfigureAwait(false));
         Expect(nameof(this.Query_Select_ToList_Small), SyntheticDatabases.QuerySmallRows, await this.Query_Select_ToList_Small().ConfigureAwait(false));
-        Expect(nameof(this.Query_SumAsync_Large), 12_487_500, await this.Query_SumAsync_Large().ConfigureAwait(false));
     }
 
     [GlobalCleanup]
@@ -142,14 +142,6 @@ public class QueryBenchmarks
             .ConfigureAwait(false);
         return names.Count;
     }
-
-    /// <summary>Sums Score over the 25,000-row table.</summary>
-    /// <returns>The sum.</returns>
-    [Benchmark]
-    public async Task<int> Query_SumAsync_Large() =>
-        await this.Reader.Query<ScoreRow>(SyntheticDatabases.QueryLargeTable)
-            .SumAsync(r => r.Score)
-            .ConfigureAwait(false);
 
     private static void Expect(string benchmark, int expected, int actual)
     {

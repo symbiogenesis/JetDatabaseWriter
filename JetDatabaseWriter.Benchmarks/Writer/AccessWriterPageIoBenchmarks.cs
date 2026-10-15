@@ -9,7 +9,7 @@ using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.TestSupport;
 
-/// <summary>Compares physical page traffic with and without the writer frame cache.</summary>
+/// <summary>Measures physical page traffic with the default writer frame cache.</summary>
 [MemoryDiagnoser]
 public class AccessWriterPageIoBenchmarks : IAsyncDisposable
 {
@@ -22,10 +22,6 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     private long writes;
     private long flushes;
     private int distinctReads;
-
-    /// <summary>Gets or sets the frame-cache capacity.</summary>
-    [Params(0, 256)]
-    public int PageCacheSize { get; set; }
 
     /// <summary>Gets or sets a value indicating whether calls use private transactions.</summary>
     [Params(false, true)]
@@ -62,7 +58,7 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     /// <summary>Reports physical page counts beside BenchmarkDotNet's timing report.</summary>
     [GlobalCleanup]
     public void Report()
-        => Console.WriteLine($"Page IO: reads={this.reads}, distinct-reads={this.distinctReads}, writes={this.writes}, flushes={this.flushes}, cache={this.PageCacheSize}, transactional={this.Transactional}");
+        => Console.WriteLine($"Page IO: reads={this.reads}, distinct-reads={this.distinctReads}, writes={this.writes}, flushes={this.flushes}, transactional={this.Transactional}");
 
     /// <summary>Inserts 999 rows into a newly created ACCDB.</summary>
     /// <returns>The mutation completion.</returns>
@@ -162,7 +158,6 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
 
     private AccessWriterOptions Options() => new()
     {
-        PageCacheSize = this.PageCacheSize,
         UseTransactionalWrites = this.Transactional,
         UseLockFile = false,
         UseByteRangeLocks = false,

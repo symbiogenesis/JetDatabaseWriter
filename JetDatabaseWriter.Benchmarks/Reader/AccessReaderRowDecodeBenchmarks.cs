@@ -5,13 +5,13 @@ using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Benchmarks.Infrastructure;
 using JetDatabaseWriter.Benchmarks.Models;
-using JetDatabaseWriter.Enums;
 
 /// <summary>
 /// Per-row decode benchmarks: isolate per-row decode cost from the
 /// <c>OpenAsync</c> floor by pre-opening the reader once in
-/// <c>[GlobalSetup]</c>. The legacy <see cref="AccessReaderBenchmarks"/>
-/// class is left unchanged so historical numbers remain comparable.
+/// <c>[GlobalSetup]</c>. Default untyped scans and read-mode comparisons live in
+/// <see cref="AccessReaderTableScanReadAheadBenchmarks"/>; this class covers the
+/// additional materializers, cache configurations and long-value decoder paths.
 /// </summary>
 [MemoryDiagnoser]
 public class AccessReaderRowDecodeBenchmarks
@@ -52,19 +52,6 @@ public class AccessReaderRowDecodeBenchmarks
     // ── Numeric / date-heavy ──────────────────────────────────────────
 
     [Benchmark]
-    public async Task<int> Decode_Numeric_Untyped()
-    {
-        int count = 0;
-        await foreach (object[] row in this.numericReader.Rows(SyntheticDatabases.NumericTable).ConfigureAwait(false))
-        {
-            _ = row;
-            count++;
-        }
-
-        return count;
-    }
-
-    [Benchmark]
     public async Task<int> Decode_Numeric_Typed()
     {
         int count = 0;
@@ -98,19 +85,6 @@ public class AccessReaderRowDecodeBenchmarks
     }
 
     // ── Text-heavy ────────────────────────────────────────────────────
-
-    [Benchmark]
-    public async Task<int> Decode_Text_Untyped()
-    {
-        int count = 0;
-        await foreach (object[] row in this.textReader.Rows(SyntheticDatabases.TextTable).ConfigureAwait(false))
-        {
-            _ = row;
-            count++;
-        }
-
-        return count;
-    }
 
     [Benchmark]
     public async Task<int> Decode_Text_Typed()
@@ -148,19 +122,6 @@ public class AccessReaderRowDecodeBenchmarks
     // ── Wide (40 cols, narrow DTO binds 4) ────────────────────────────
 
     [Benchmark]
-    public async Task<int> Decode_Wide_Untyped()
-    {
-        int count = 0;
-        await foreach (object[] row in this.wideReader.Rows(SyntheticDatabases.WideTable).ConfigureAwait(false))
-        {
-            _ = row;
-            count++;
-        }
-
-        return count;
-    }
-
-    [Benchmark]
     public async Task<int> Decode_Wide_Typed_NarrowProjection()
     {
         int count = 0;
@@ -196,12 +157,6 @@ public class AccessReaderRowDecodeBenchmarks
     }
 
     [Benchmark]
-    public async Task<int> Decode_Numeric_ColdOpen_FirstScan() => await CountColdUntypedRowsAsync(
-            SyntheticDatabases.NumericDbPath,
-            SyntheticDatabases.NumericTable,
-            options: null).ConfigureAwait(false);
-
-    [Benchmark]
     public async Task<int> Decode_Numeric_ColdOpen_FirstScan_CacheDisabled() => await CountColdUntypedRowsAsync(
             SyntheticDatabases.NumericDbPath,
             SyntheticDatabases.NumericTable,
@@ -212,12 +167,6 @@ public class AccessReaderRowDecodeBenchmarks
             SyntheticDatabases.NumericDbPath,
             SyntheticDatabases.NumericTable,
             new AccessReaderOptions { PageCacheSize = 2048 }).ConfigureAwait(false);
-
-    [Benchmark]
-    public async Task<int> Decode_Numeric_ColdOpen_FirstScan_PageReadOptimization() => await CountColdUntypedRowsAsync(
-            SyntheticDatabases.NumericDbPath,
-            SyntheticDatabases.NumericTable,
-            new AccessReaderOptions { PageReadOptimizationMode = PageReadOptimizationMode.Enabled }).ConfigureAwait(false);
 
     // ── Memo (LVAL) decode ────────────────────────────────────────────
     // Mixes inline (32 B), single-LVAL-page (~2 KB), and chained-LVAL

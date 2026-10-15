@@ -86,7 +86,6 @@ public class AccessWriterBenchmarks
     }
 
     [Benchmark]
-    [Arguments(10)]
     [Arguments(100)]
     public async Task<int> InsertRows_Batch(int count)
     {

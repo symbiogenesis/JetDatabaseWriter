@@ -10,30 +10,19 @@ using BenchmarkDotNet.Attributes;
 using JetDatabaseWriter.Enums;
 
 /// <summary>
-/// End-to-end linked text table benchmarks over headered and headerless CSV sources.
+/// End-to-end linked text table benchmarks over a headered CSV source.
 /// </summary>
 [MemoryDiagnoser]
 public class LinkedTextReadBenchmarks
 {
-    private const string HeaderedKind = "Headered";
-    private const string HeaderlessKind = "Headerless";
     private const string HeaderedTable = "LinkedHeaderedCsv";
-    private const string HeaderlessTable = "LinkedHeaderlessCsv";
     private const int RowCount = 25_000;
     private const int ColumnCount = 5;
 
     private AccessReader reader = null!;
     private string rootDirectory = string.Empty;
 
-    /// <summary>Gets or sets whether the benchmark uses a linked CSV source with a header row.</summary>
-    [Params(HeaderedKind, HeaderlessKind)]
-    public string TableKind { get; set; } = HeaderedKind;
-
-    /// <summary>Gets the linked table name selected by <see cref="TableKind"/>.</summary>
-    /// <value>The linked table name selected by <see cref="TableKind"/>.</value>
-    private string CurrentTableName => this.TableKind == HeaderedKind ? HeaderedTable : HeaderlessTable;
-
-    /// <summary>Creates a temporary front-end database and linked CSV sources.</summary>
+    /// <summary>Creates a temporary front-end database and linked CSV source.</summary>
     /// <returns>A task representing setup work.</returns>
     [GlobalSetup]
     public async Task Setup()
@@ -43,15 +32,10 @@ public class LinkedTextReadBenchmarks
 
         string databasePath = Path.Combine(this.rootDirectory, "LinkedText.accdb");
         const string headeredFileName = "headered.csv";
-        const string headerlessFileName = "headerless.csv";
 
         await File.WriteAllTextAsync(
             Path.Combine(this.rootDirectory, headeredFileName),
-            BuildCsvSource(hasHeader: true),
-            Encoding.UTF8).ConfigureAwait(false);
-        await File.WriteAllTextAsync(
-            Path.Combine(this.rootDirectory, headerlessFileName),
-            BuildCsvSource(hasHeader: false),
+            BuildCsvSource(),
             Encoding.UTF8).ConfigureAwait(false);
 
         var writerOptions = new AccessWriterOptions { UseLockFile = false };
@@ -62,11 +46,6 @@ public class LinkedTextReadBenchmarks
                 this.rootDirectory,
                 headeredFileName,
                 "Text;HDR=YES;FMT=Delimited").ConfigureAwait(false);
-            await writer.CreateLinkedTextTableAsync(
-                HeaderlessTable,
-                this.rootDirectory,
-                headerlessFileName,
-                "Text;HDR=NO;FMT=Delimited").ConfigureAwait(false);
         }
 
         this.reader = await AccessReader.OpenAsync(
@@ -103,7 +82,7 @@ public class LinkedTextReadBenchmarks
     /// <returns>The linked text row count.</returns>
     [Benchmark]
     public async Task<long> GetRealRowCount()
-        => await this.reader.GetRealRowCountAsync(this.CurrentTableName).ConfigureAwait(false);
+        => await this.reader.GetRealRowCountAsync(HeaderedTable).ConfigureAwait(false);
 
     /// <summary>Measures streaming linked text rows as strings.</summary>
     /// <returns>The streamed row count.</returns>
@@ -111,7 +90,7 @@ public class LinkedTextReadBenchmarks
     public async Task<int> RowsAsStrings_Streaming()
     {
         int rowCount = 0;
-        await foreach (string[] row in this.reader.RowsAsStrings(this.CurrentTableName).ConfigureAwait(false))
+        await foreach (string[] row in this.reader.RowsAsStrings(HeaderedTable).ConfigureAwait(false))
         {
             _ = row;
             rowCount++;
@@ -125,17 +104,14 @@ public class LinkedTextReadBenchmarks
     [Benchmark]
     public async Task<int> ReadDataTable()
     {
-        using DataTable table = await this.reader.ReadTableAsync(this.CurrentTableName).ConfigureAwait(false);
+        using DataTable table = await this.reader.ReadTableAsync(HeaderedTable).ConfigureAwait(false);
         return table.Rows.Count;
     }
 
-    private static string BuildCsvSource(bool hasHeader)
+    private static string BuildCsvSource()
     {
         var builder = new StringBuilder(RowCount * ColumnCount * 16);
-        if (hasHeader)
-        {
-            builder.Append("Id,Customer,Status,Note,Amount\r\n");
-        }
+        builder.Append("Id,Customer,Status,Note,Amount\r\n");
 
         for (int rowIndex = 0; rowIndex < RowCount; rowIndex++)
         {

@@ -3,7 +3,7 @@
 Status: closed; retained as archived baseline and caller guidance
 Date: 2026-05-20
 Closed: 2026-05-31
-Last updated: 2026-10-07
+Last updated: 2026-10-15
 
 This note is closed. It records the read-performance baseline for
 `AccessReader`, the caller guidance that falls out of the measurements, and the
@@ -29,14 +29,13 @@ guidance below to produce new evidence before changing the core reader.
 
 - Row decode results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.Reader.AccessReaderRowDecodeBenchmarks-report-github.md`
 - Open-floor results: `BenchmarkDotNet.Artifacts/results/JetDatabaseWriter.Benchmarks.AccessReaderOpenBenchmarks-report-github.md`
-- DataTable strategy benchmarks: `JetDatabaseWriter.Benchmarks/Reader/DataTableMaterializationBenchmarks.cs`
 - Owned-page discovery benchmarks: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderOwnedPageDiscoveryBenchmarks.cs`
 - Table-scan read-ahead benchmarks: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderTableScanReadAheadBenchmarks.cs`
 - Read-ahead eligibility benchmarks (long-value tables, small or disabled caches): `JetDatabaseWriter.Benchmarks/Reader/AccessReaderReadAheadEligibilityBenchmarks.cs`
 - Long values longer than the page cache: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderLargeLongValueBenchmarks.cs`
 - Concurrent scans on one shared reader versus one reader per scan, plain and AES-encrypted, in `Disabled` (page reads through the reader's I/O gate) and `Auto`: `JetDatabaseWriter.Benchmarks/Reader/AccessReaderConcurrentScanBenchmarks.cs`
 - `Query<T>().Include(...)` over a related customer/order pair: `JetDatabaseWriter.Benchmarks/Queries/QueryIncludeBenchmarks.cs`
-- The per-call cost of typed reads and `Query<T>()` (materializer cache lookup and predicate compilation, translation, the in-memory tail, index-ordered reads, inferred range seeks and aggregates): `JetDatabaseWriter.Benchmarks/Queries/QueryBenchmarks.cs`
+- The per-call cost of typed reads and `Query<T>()` (materializer cache lookup and predicate compilation, translation, the in-memory tail, index-ordered reads and inferred range seeks): `JetDatabaseWriter.Benchmarks/Queries/QueryBenchmarks.cs`
 - Aggregate allocation scaling at 1,000 and 25,000 rows: `JetDatabaseWriter.Benchmarks/Queries/QueryAggregateAllocationBenchmarks.cs` compares `Query_SumAsync_Large` with a direct `Rows<T>` sum over the same entities. Total allocations include one materialized entity per row on both paths; compare the difference between those paths to check that the query aggregate adds constant overhead and no growing row buffer.
 - Attachment reads (`GetAttachmentsAsync`, `Rows()`, `Rows<T>()` with `ComplexCellValue.ReadAttachments`), writer-authored and Access-authored: `JetDatabaseWriter.Benchmarks/Reader/ComplexColumnReadBenchmarks.cs`
 - Public seek APIs (`SeekRowsAsync`, `FromIndex`, inferred `Rows<T>(predicate)`) against a client-side scan: `JetDatabaseWriter.Benchmarks/Indexes/PublicSeekBenchmarks.cs`
@@ -45,6 +44,45 @@ guidance below to produce new evidence before changing the core reader.
 - Main read path: `JetDatabaseWriter/Tables/TableReader.cs` (table scans), `JetDatabaseWriter/ValueDecoding/RowDecoder.cs` (row decode), and `JetDatabaseWriter/Pages/ReaderPageCache.cs` (page and row-bound caches)
 - Page I/O: `JetDatabaseWriter/Pages/Paging/PageFile.cs` (the writer's `Pager.cs` beside it); owned pages and row directories: `JetDatabaseWriter/Pages/OwnedDataPages.cs` and `DataPageRows.cs`; text decode helpers: `JetDatabaseWriter/Schema/JetTypeInfo.cs`
 - Long-value decode path: `JetDatabaseWriter/ValueDecoding/LongValueDecoder.cs` plus shared LVAL chain traversal in `JetDatabaseWriter/LongValues/LongValueStore.cs`
+
+## Benchmark workload selection
+
+The benchmark suite has 214 expanded cases. Keep one canonical workload for each
+operation, shape and cache regime, and retain separate cases when they isolate a
+specific decoder, public API, startup cost or contention behavior.
+
+- `AccessReaderTableScanReadAheadBenchmarks` owns default untyped numeric, text and
+  wide scans, including warm scans and cold-open first scans. RowDecode adds
+  typed/string/DataTable materializers, nondefault caches and isolated long-value
+  branches. The legacy reader class retains the explicit Access-authored numeric
+  typed/untyped pair and catalog, metadata, statistics and bounded-read APIs.
+- DataTable materialization uses the production API cases in RowDecode. The
+  alternative application-side insertion algorithms were a completed experiment;
+  their measurements and the production strategy decision remain below.
+- Query aggregate benchmarks live in `QueryAggregateAllocationBenchmarks`, with
+  direct streaming controls at both 1,000 and 25,000 rows.
+- The column-layout microbenchmark visits all column branches in one operation.
+  Cache microbenchmarks use the default 256-entry capacity for hit, miss, update
+  and sustained eviction; setup verifies eviction beyond a full working-set cycle.
+- Writer file benchmarks retain single-row and 100-row batches. The measured
+  single and 10-row cases were dominated by the same open/commit/close cost;
+  the 100-row case retains a larger workload and allocation contrast. The
+  [hosted comparison](https://github.com/symbiogenesis/JetDatabaseWriter/actions/runs/38759907617)
+  measured 610, 615 and 635 ms respectively, with overlapping error intervals.
+- Writer page-I/O benchmarks use the default frame cache and retain direct versus
+  transactional writes, each mutation API and first versus second Northwind
+  inserts. Cache-disabled I/O comparisons remain in `WriterPageIoTests`; the
+  original timing comparison is retained below. Use paired revision measurements
+  for future frame-cache changes.
+- Delimited-text benchmarks retain plain, quoted/multiline and empty-field
+  shapes, each with count, row-only and field-materialization operations.
+  Repeated field contents follow the plain parser path. Linked-text API
+  benchmarks use a headered source; headerless behavior remains in ordinary tests.
+
+Cold OS-cache scans, read-ahead first-row latency, small-cache eligibility,
+concurrency scaling, encryption and each isolated MEMO/OLE branch remain distinct
+workloads. Case-count reduction alone does not establish a wall-clock speedup;
+compare hosted runs with the same filters and BenchmarkDotNet job.
 
 ## Current architecture
 
@@ -820,7 +858,6 @@ benchmark acceptance.
 
 ```powershell
 gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderRowDecodeBenchmarks*" -f job=short
-gh workflow run benchmarks.yml --ref main -f filter="*DataTableMaterializationBenchmarks*" -f job=short
 gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderOwnedPageDiscoveryBenchmarks*" -f job=short
 gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderTableScanReadAheadBenchmarks*" -f job=short
 gh workflow run benchmarks.yml --ref main -f filter="*AccessReaderReadAheadEligibilityBenchmarks*" -f job=short

@@ -19,7 +19,6 @@ public class DelimitedTextReaderBenchmarks
     private const string PlainScenario = "Plain";
     private const string QuotedMultilineScenario = "QuotedMultiline";
     private const string EmptyFieldsScenario = "EmptyFields";
-    private const string RepetitiveValuesScenario = "RepetitiveValues";
     private const int RowCount = 25_000;
     private const int ColumnCount = 10;
 
@@ -35,7 +34,7 @@ public class DelimitedTextReaderBenchmarks
     private string source = string.Empty;
 
     /// <summary>Gets or sets the generated text shape to parse.</summary>
-    [Params(PlainScenario, QuotedMultilineScenario, EmptyFieldsScenario, RepetitiveValuesScenario)]
+    [Params(PlainScenario, QuotedMultilineScenario, EmptyFieldsScenario)]
     public string Scenario { get; set; } = PlainScenario;
 
     /// <summary>Generates the source text for the selected scenario.</summary>
@@ -46,7 +45,6 @@ public class DelimitedTextReaderBenchmarks
         PlainScenario => BuildPlainSource(),
         QuotedMultilineScenario => BuildQuotedMultilineSource(),
         EmptyFieldsScenario => BuildEmptyFieldsSource(),
-        RepetitiveValuesScenario => BuildRepetitiveValuesSource(),
         _ => throw new InvalidOperationException("Unknown delimited text benchmark scenario."),
     };
 
@@ -150,39 +148,6 @@ public class DelimitedTextReaderBenchmarks
         for (int rowIndex = 0; rowIndex < RowCount; rowIndex++)
         {
             builder.Append(row);
-        }
-
-        return builder.ToString();
-    }
-
-    private static string BuildRepetitiveValuesSource()
-    {
-        var builder = new StringBuilder(RowCount * ColumnCount * 8);
-        for (int rowIndex = 0; rowIndex < RowCount; rowIndex++)
-        {
-            for (int columnIndex = 0; columnIndex < ColumnCount; columnIndex++)
-            {
-                if (columnIndex > 0)
-                {
-                    builder.Append(',');
-                }
-
-                builder.Append(columnIndex switch
-                {
-                    0 => "Active",
-                    1 => "North",
-                    2 => "Retail",
-                    3 => "Standard",
-                    4 => (rowIndex % 100).ToString(CultureInfo.InvariantCulture),
-                    5 => "Pending",
-                    6 => "Small",
-                    7 => "Online",
-                    8 => (rowIndex % 7).ToString(CultureInfo.InvariantCulture),
-                    _ => "Complete",
-                });
-            }
-
-            builder.Append('\n');
         }
 
         return builder.ToString();

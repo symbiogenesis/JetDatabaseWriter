@@ -14,11 +14,11 @@ public class ColumnInfoBenchmarks
     public void Setup() => this.columns =
         [
             new() { Type = BooleanType, Flags = 0x00, Name = "Bool" },       // Boolean → fixed
-            new() { Type = LongIntegerType, Flags = 0x00, Name = "Long" },       // LongInteger → fixed
-            new() { Type = DoubleType, Flags = 0x00, Name = "Double" },     // Double → fixed
-            new() { Type = DateTimeType, Flags = 0x00, Name = "DateTime" },   // DateTime → fixed
-            new() { Type = GuidType, Flags = 0x00, Name = "Guid" },       // Guid → fixed
-            new() { Type = TextType, Flags = 0x01, Name = "Text" },       // Text → variable
+            new() { Type = LongIntegerType, Flags = 0x00, Name = "Long" },       // FLAG_FIXED clear
+            new() { Type = DoubleType, Flags = 0x00, Name = "Double" },     // FLAG_FIXED clear
+            new() { Type = DateTimeType, Flags = 0x00, Name = "DateTime" },   // FLAG_FIXED clear
+            new() { Type = GuidType, Flags = 0x00, Name = "Guid" },       // FLAG_FIXED clear
+            new() { Type = TextType, Flags = 0x01, Name = "Text" },       // FLAG_FIXED set
             new() { Type = MemoType, Flags = 0x01, Name = "Memo" },       // Memo → variable
             new() { Type = OleType, Flags = 0x00, Name = "OLE" },        // Ole → variable
             new() { Type = BinaryType, Flags = 0x00, Name = "Binary" },     // Binary → variable
@@ -40,13 +40,4 @@ public class ColumnInfoBenchmarks
 
         return fixedCount;
     }
-
-    [Benchmark]
-    public bool IsFixed_FixedType() => this.columns[0].IsFixed;
-
-    [Benchmark]
-    public bool IsFixed_VariableType() => this.columns[5].IsFixed;
-
-    [Benchmark]
-    public bool IsFixed_FallbackFlag() => this.columns[9].IsFixed;
 }
