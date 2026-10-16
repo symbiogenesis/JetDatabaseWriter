@@ -110,7 +110,7 @@ internal sealed class FuzzRandom : Random
         _ when type == typeof(byte) => (byte)this.Next(byte.MinValue, byte.MaxValue),
         _ when type == typeof(bool) => this.NextDouble() < 0.5,
         _ when type == typeof(string) => this.RandomString(this.Next(0, 20)),
-        _ when type == typeof(DateTime) => DateTime.UtcNow.AddDays(this.Next(-10000, 10000)),
+        _ when type == typeof(DateTime) => new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddDays(this.Next(-10000, 10000)),
         _ when type == typeof(double) => this.NextDouble() * this.Next(),
         _ when type == typeof(float) => (float)(this.NextDouble() * this.Next()),
         _ when type == typeof(byte[]) => this.RandomBytes(),

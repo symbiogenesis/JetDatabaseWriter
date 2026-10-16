@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using Xunit;
 
 #pragma warning disable CA5394 // System.Random is fine — no security context here, just deterministic fuzz seeds.
@@ -40,7 +39,7 @@ public sealed class AccessReaderFuzzRobustnessTests
     {
         await using var ms = new MemoryStream(data, writable: false);
 
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        Exception? exception = await Record.ExceptionAsync(async () =>
         {
             await using AccessReader reader = await AccessReader.OpenAsync(
                 ms,
@@ -48,6 +47,9 @@ public sealed class AccessReaderFuzzRobustnessTests
                 leaveOpen: true,
                 cancellationToken: TestContext.Current.CancellationToken);
         });
+
+        Assert.NotNull(exception);
+        Assert.True(AccessReaderFuzzExercise.IsExpectedInputException(exception), exception.ToString());
     }
 
     [Fact]
@@ -182,39 +184,12 @@ public sealed class AccessReaderFuzzRobustnessTests
                         _ = row;
                     }
                 }
-                catch (InvalidDataException)
-                {
-                }
-                catch (EndOfStreamException)
-                {
-                }
-                catch (JetLimitationException)
-                {
-                }
-                catch (NotSupportedException)
+                catch (Exception exception) when (AccessReaderFuzzExercise.IsExpectedInputException(exception))
                 {
                 }
             }
         }
-        catch (InvalidDataException)
-        {
-        }
-        catch (EndOfStreamException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
-        catch (NotSupportedException)
-        {
-        }
-        catch (ArgumentException)
-        {
-        }
-        catch (IOException)
-        {
-        }
-        catch (JetLimitationException)
+        catch (Exception exception) when (AccessReaderFuzzExercise.IsExpectedInputException(exception))
         {
         }
     }

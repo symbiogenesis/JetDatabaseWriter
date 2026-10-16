@@ -6,15 +6,13 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
-using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
-/// Fuzz test for AccessWriter. This test awaits one process-isolated input driving database mutations.
-/// It is NOT required for full code coverage and should be run as an explicit <c>Category=Fuzz</c> test because it performs a complete mutation iteration.
-/// For full coverage, prefer targeted unit tests that systematically exercise each feature and branch.
+/// Fuzz test for AccessWriter. One process-isolated input drives bounded database mutations.
+/// Run intentionally on hosted CI; ordinary tests verify the refusal and output oracles.
 /// </summary>
 /// <param name="output">The output.</param>
 public class AccessWriterFuzzTests(ITestOutputHelper output)
@@ -26,283 +24,162 @@ public class AccessWriterFuzzTests(ITestOutputHelper output)
     public async Task FuzzAccessWriter()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        await using var inputStream = new MemoryStream(await FuzzInput.ReadAsync(ct), writable: false);
-        await RunIterationAsync(inputStream);
-
-        async Task RunIterationAsync(Stream stream)
-        {
-            output.WriteLine($"--- Fuzzing iteration started at {DateTime.UtcNow:O} ---");
-            byte[]? fuzzedBytes = null;
-            try
-            {
-                fuzzedBytes = new byte[stream.Length];
-                await stream.ReadExactlyAsync(fuzzedBytes);
-                stream.Position = 0;
-
-                await FuzzIterationAsync(output, fuzzedBytes, ct);
-            }
-            catch (IOException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-            catch (InvalidDataException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-            catch (InvalidOperationException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-            catch (NotSupportedException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-            catch (ArgumentException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-            catch (FormatException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-            catch (JetLimitationException ex)
-            {
-                LogExpectedIterationException(output, ex);
-            }
-
-            output.WriteLine($"""
-                --- Fuzzing iteration completed at {DateTime.UtcNow:O} ---
-
-                """);
-        }
-    }
-
-    private static void LogExpectedIterationException(ITestOutputHelper output, Exception ex) =>
-        output.WriteLine($"""
-            [Fuzzing] Expected exception during fuzzing iteration: {ex.GetType().Name}
-            {ex}
-            """);
-
-    private static void LogExpectedOperationException(ITestOutputHelper output, string operation, Exception ex) =>
-        output.WriteLine($"[Fuzzing] Expected {operation} failure: {ex.GetType().Name}");
-
-    private static async Task FuzzIterationAsync(ITestOutputHelper output, byte[]? fuzzedBytes, CancellationToken ct)
-    {
-        await using var ms = new MemoryStream();
-        var random = FuzzRandom.Create(fuzzedBytes);
-
+        byte[] input = await FuzzInput.ReadAsync(ct);
+        await using var stream = new MemoryStream();
+        var random = FuzzRandom.Create(input);
         AccessWriterOptions options = RandomOptions(random);
         DatabaseFormat format = Formats[random.Next(Formats.Length)];
 
-        output.WriteLine($"Creating database with format: {format}, options: {{ UseLockFile={options.UseLockFile}, UseTransactionalWrites={options.UseTransactionalWrites} }}");
-        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(ms, format, options, leaveOpen: true, TestContext.Current.CancellationToken);
-
-        int tableCount = random.Next(1, 4);
-        for (int t = 0; t < tableCount; t++)
+        output.WriteLine($"Creating {format}; password protection: {!options.Password.IsEmpty}");
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, ct))
         {
-            await FuzzTableAsync(writer, output, random, t);
-        }
-
-        if (random.NextDouble() < 0.5)
-        {
-            await FuzzTransactionAsync(writer, output, random);
-        }
-
-        await VerifyRoundTripAsync(ms, output, ct);
-    }
-
-    private static async Task VerifyRoundTripAsync(MemoryStream ms, ITestOutputHelper output, CancellationToken ct)
-    {
-        try
-        {
-            ms.Position = 0;
-            await using AccessReader reader = await AccessReader.OpenAsync(ms, new AccessReaderOptions(), cancellationToken: ct);
-            IReadOnlyList<string> tableNames = await reader.ListTablesAsync(ct);
-            output.WriteLine($"[RoundTrip] Opened written DB with AccessReader. Tables: [{string.Join(", ", tableNames)}]");
-            foreach (string tableName in tableNames)
+            if (!options.Password.IsEmpty)
             {
-                output.WriteLine($"[RoundTrip] Reading table: {tableName}");
-                int count = 0;
-                await foreach (object[] dataRow in reader.Rows(tableName, cancellationToken: ct))
-                {
-                    if (++count > 10)
-                    {
-                        break;
-                    }
-                }
-
-                output.WriteLine($"[RoundTrip] Read {count} rows from {tableName}");
+                output.WriteLine("[FuzzCoverage] encryption.write");
             }
+
+            int tableCount = random.Next(1, 4);
+            for (int t = 0; t < tableCount; t++)
+            {
+                await FuzzTableAsync(writer, stream, output, random, t, ct);
+            }
+
+            await FuzzTransactionAsync(writer, stream, output, random, ct);
         }
-        catch (IOException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
-        catch (InvalidDataException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
-        catch (InvalidOperationException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
-        catch (NotSupportedException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
-        catch (ArgumentException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
-        catch (FormatException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
-        catch (JetLimitationException ex)
-        {
-            LogExpectedOperationException(output, "round-trip read", ex);
-        }
+
+        // This verifies library-authored output: any failure, including bad passwords or corrupt data, is a bug.
+        await WriterFuzzSafetyOracle.VerifyRoundTripAsync(stream, options.Password, ct);
+        output.WriteLine("[FuzzCoverage] writer.roundtrip");
     }
 
-    private static async Task FuzzTableAsync(AccessWriter writer, ITestOutputHelper output, FuzzRandom random, int tableIndex)
+    private static async Task FuzzTableAsync(AccessWriter writer, MemoryStream stream, ITestOutputHelper output, FuzzRandom random, int tableIndex, CancellationToken ct)
     {
         string tableName = $"FuzzTable_{tableIndex}_{random.RandomString(4)}";
-        int colCount = random.Next(1, 6);
-        ColumnDefinition[] columns = CreateRandomColumns(random, colCount);
+        ColumnDefinition[] columns = CreateRandomColumns(random, random.Next(1, 6));
+        if (!await ObserveAsync(stream, output, "schema.write", async () => await writer.CreateTableAsync(tableName, columns, ct)))
+        {
+            return;
+        }
 
-        output.WriteLine($"Creating table: {tableName} with {colCount} columns");
-        await writer.CreateTableAsync(tableName, columns, TestContext.Current.CancellationToken);
-
+        // Ensure later mutations encounter stored rows as well as generated refusals.
+        await ObserveAsync(stream, output, "writer.insert", async () => await writer.InsertRowAsync(tableName, CreateRandomRow(random, columns, 1, allowNull: false), ct));
         int rowCount = random.Next(1, 10);
         var rows = new List<object[]>(rowCount);
         for (int r = 0; r < rowCount; r++)
         {
-            rows.Add(CreateRandomRow(random, columns));
-            output.WriteLine($"Inserting row {r + 1}/{rowCount} into {tableName}");
+            int id = random.NextDouble() < 0.25 ? 1 : r + 2;
+            rows.Add(CreateRandomRow(random, columns, id, allowNull: true));
         }
 
-        await writer.InsertRowsAsync(tableName, rows, TestContext.Current.CancellationToken);
-
-        if (random.NextDouble() < 0.5)
-        {
-            await TryUpdateAndDeleteAsync(writer, output, random, tableName, columns);
-        }
+        await ObserveAsync(stream, output, "writer.insert", async () => _ = await writer.InsertRowsAsync(tableName, rows, ct));
+        await FuzzUpdateAndDeleteAsync(writer, stream, output, random, tableName, columns, ct);
+        await FuzzSchemaAsync(writer, stream, output, random, tableName, columns, ct);
     }
 
-    private static async Task TryUpdateAndDeleteAsync(AccessWriter writer, ITestOutputHelper output, FuzzRandom random, string tableName, ColumnDefinition[] columns)
+    private static async Task FuzzUpdateAndDeleteAsync(AccessWriter writer, MemoryStream stream, ITestOutputHelper output, FuzzRandom random, string tableName, ColumnDefinition[] columns, CancellationToken ct)
     {
-        string predicateColumn = columns[0].Name;
-        object? predicateValue = random.RandomValue(columns[0].ClrType);
         var updatedValues = new Dictionary<string, object?>(columns.Length);
-        foreach (ColumnDefinition col in columns)
+        foreach (ColumnDefinition column in columns)
         {
-            updatedValues[col.Name] = random.RandomValue(col.ClrType) ?? DBNull.Value;
+            updatedValues[column.Name] = random.NextDouble() < 0.25 ? DBNull.Value : random.RandomValue(column.ClrType);
         }
 
-        try
-        {
-            output.WriteLine($"Attempting update on {tableName} where {predicateColumn} = {predicateValue}");
-            await writer.UpdateRowsAsync(tableName, predicateColumn, predicateValue, updatedValues, TestContext.Current.CancellationToken);
-        }
-        catch (InvalidOperationException ex)
-        {
-            LogExpectedOperationException(output, "update", ex);
-        }
-        catch (ArgumentException ex)
-        {
-            LogExpectedOperationException(output, "update", ex);
-        }
-        catch (FormatException ex)
-        {
-            LogExpectedOperationException(output, "update", ex);
-        }
-        catch (JetLimitationException ex)
-        {
-            LogExpectedOperationException(output, "update", ex);
-        }
+        object predicate = random.NextDouble() < 0.5 ? 1 : random.Next();
+        await ObserveAsync(stream, output, "writer.update", async () =>
+            _ = await writer.UpdateRowsAsync(tableName, columns[0].Name, predicate, updatedValues, ct));
+        string deleteTable = random.NextDouble() < 0.25 ? $"Missing_{tableName}" : tableName;
+        await ObserveAsync(stream, output, "writer.delete", async () =>
+            _ = await writer.DeleteRowsAsync(deleteTable, columns[0].Name, predicate, ct));
+    }
 
-        try
+    private static async Task FuzzSchemaAsync(AccessWriter writer, MemoryStream stream, ITestOutputHelper output, FuzzRandom random, string tableName, ColumnDefinition[] columns, CancellationToken ct)
+    {
+        string extraColumn = random.NextDouble() < 0.25 ? columns[0].Name : "Extra";
+        await ObserveAsync(stream, output, "schema.write", async () =>
+            await writer.AddColumnAsync(tableName, new ColumnDefinition(extraColumn, random.RandomType()), ct));
+
+        string renamed = random.NextDouble() < 0.25 ? "Invalid.Name" : "Renamed";
+        await ObserveAsync(stream, output, "schema.rewrite", async () =>
+            await writer.RenameColumnAsync(tableName, columns[0].Name, renamed, ct));
+
+        // Dropping a missing column and dropping the sole column are documented schema refusals.
+        string dropped = random.NextDouble() < 0.5 ? columns[^1].Name : "Missing";
+        await ObserveAsync(stream, output, "schema.rewrite", async () => await writer.DropColumnAsync(tableName, dropped, ct));
+        if (random.NextDouble() < 0.25)
         {
-            output.WriteLine($"Attempting delete on {tableName} where {predicateColumn} = {predicateValue}");
-            await writer.DeleteRowsAsync(tableName, predicateColumn, predicateValue, TestContext.Current.CancellationToken);
-        }
-        catch (InvalidOperationException ex)
-        {
-            LogExpectedOperationException(output, "delete", ex);
-        }
-        catch (ArgumentException ex)
-        {
-            LogExpectedOperationException(output, "delete", ex);
-        }
-        catch (FormatException ex)
-        {
-            LogExpectedOperationException(output, "delete", ex);
-        }
-        catch (JetLimitationException ex)
-        {
-            LogExpectedOperationException(output, "delete", ex);
+            await ObserveAsync(stream, output, "schema.write", async () => await writer.DropTableAsync(tableName, ct));
         }
     }
 
-    private static async Task FuzzTransactionAsync(AccessWriter writer, ITestOutputHelper output, FuzzRandom random)
+    private static async Task FuzzTransactionAsync(AccessWriter writer, MemoryStream stream, ITestOutputHelper output, FuzzRandom random, CancellationToken ct)
     {
-        output.WriteLine("Starting transaction block");
-        await using JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-        string txTable = $"TxTable_{random.RandomString(4)}";
-        ColumnDefinition[] txColumns = [new ColumnDefinition("TxCol", typeof(int))];
-        await writer.CreateTableAsync(txTable, txColumns, TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync(txTable, [random.Next()], TestContext.Current.CancellationToken);
+        byte[] before = stream.ToArray();
+        await using JetTransaction transaction = await writer.BeginTransactionAsync(ct);
+        string tableName = $"TxTable_{random.RandomString(4)}";
+        ColumnDefinition[] columns = [new("TxCol", typeof(int)) { IsPrimaryKey = true }];
+        if (await ObserveAsync(stream, output, "schema.write", async () => await writer.CreateTableAsync(tableName, columns, ct)))
+        {
+            await ObserveAsync(stream, output, "writer.insert", async () => await writer.InsertRowAsync(tableName, [random.Next()], ct));
+        }
+
         if (random.NextDouble() < 0.5)
         {
-            output.WriteLine("Committing transaction");
-            await tx.CommitAsync(TestContext.Current.CancellationToken);
+            await ObserveAsync(stream, output, "transaction.commit", async () => await transaction.CommitAsync(ct));
         }
         else
         {
-            output.WriteLine("Rolling back transaction");
-            await tx.RollbackAsync(TestContext.Current.CancellationToken);
+            await transaction.RollbackAsync(ct);
+            WriterFuzzSafetyOracle.AssertUnchanged(stream, before);
+            output.WriteLine("[FuzzCoverage] transaction.rollback");
         }
     }
 
-    // --- Helper methods for randomization and construction ---
-
-    private static AccessWriterOptions RandomOptions(FuzzRandom random) =>
-        new()
+    private static async Task<bool> ObserveAsync(MemoryStream stream, ITestOutputHelper output, string operation, Func<Task> mutation)
+    {
+        output.WriteLine($"[FuzzCoverage] {operation}");
+        Exception? rejection = await WriterFuzzSafetyOracle.ExecuteAsync(stream, mutation);
+        if (rejection is not null)
         {
-            Password = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)).ToCharArray() : ReadOnlyMemory<char>.Empty,
-            UseLockFile = random.NextDouble() < 0.5,
-            RespectExistingLockFile = random.NextDouble() < 0.5,
-            LockFileUserName = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)) : null,
-            LockFileMachineName = random.NextDouble() < 0.2 ? random.RandomString(random.Next(4, 16)) : null,
-            UseByteRangeLocks = random.NextDouble() < 0.5,
-            LockTimeoutMilliseconds = random.Next(100, 10000),
-            MaxTransactionPageBudget = random.Next(1, 32768),
-            UseTransactionalWrites = random.NextDouble() < 0.5,
-        };
+            output.WriteLine($"[WriterRefusal] {operation}: {rejection.GetType().Name}: {rejection.Message}");
+            output.WriteLine($"[FuzzCoverage] {operation}.refused");
+        }
+        else
+        {
+            output.WriteLine($"[FuzzCoverage] {operation}.succeeded");
+        }
+
+        return rejection is null;
+    }
+
+    private static AccessWriterOptions RandomOptions(FuzzRandom random) => new()
+    {
+        Password = random.NextDouble() < 0.25 ? random.RandomString(random.Next(4, 16)).ToCharArray() : ReadOnlyMemory<char>.Empty,
+        UseLockFile = false,
+        UseByteRangeLocks = false,
+        PageCacheSize = random.Next(0, 16),
+        MaxTransactionPageBudget = random.NextDouble() < 0.25 ? random.Next(1, 8) : 128,
+        UseTransactionalWrites = true,
+    };
 
     private static ColumnDefinition[] CreateRandomColumns(FuzzRandom random, int count)
     {
         var columns = new ColumnDefinition[count];
-        for (int i = 0; i < count; i++)
+        columns[0] = new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true };
+        for (int i = 1; i < count; i++)
         {
-            columns[i] = new ColumnDefinition(
-                $"Col_{i}_{random.RandomString(3)}",
-                random.RandomType());
+            columns[i] = new ColumnDefinition($"Col_{i}_{random.RandomString(3)}", random.RandomType()) { IsNullable = random.NextDouble() < 0.5 };
         }
 
         return columns;
     }
 
-    private static object[] CreateRandomRow(FuzzRandom random, ColumnDefinition[] columns)
+    private static object[] CreateRandomRow(FuzzRandom random, ColumnDefinition[] columns, int id, bool allowNull)
     {
         object[] row = new object[columns.Length];
-        for (int i = 0; i < columns.Length; i++)
+        row[0] = id;
+        for (int i = 1; i < columns.Length; i++)
         {
-            row[i] = random.RandomValue(columns[i].ClrType) ?? DBNull.Value;
+            row[i] = allowNull && random.NextDouble() < 0.25 ? DBNull.Value : random.RandomValue(columns[i].ClrType) ?? DBNull.Value;
         }
 
         return row;
