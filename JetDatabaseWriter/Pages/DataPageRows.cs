@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Pages;
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.IO;
 using JetDatabaseWriter.Pages.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
 
@@ -15,6 +16,62 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// </summary>
 internal static class DataPageRows
 {
+    /// <summary>Removes one deleted payload while keeping all surviving slot identities and bytes.</summary>
+    /// <param name="format">The database row layout.</param>
+    /// <param name="page">The data page, whose deleted slot still bounds the removed payload.</param>
+    /// <param name="rowIndex">The newly deleted slot; existing deleted overflow targets are retained.</param>
+    /// <param name="clearFreedSpace">Whether the secure-erase policy also clears the newly unused gap.</param>
+    /// <exception cref="InvalidDataException">The row directory or deleted slot has invalid bounds.</exception>
+    internal static void ReclaimDeletedRowSpace(JetFormat format, byte[] page, int rowIndex, bool clearFreedSpace)
+    {
+        int rows = Ru16(page, format.DataPage.NumRows);
+        int directoryEnd = format.DataPage.RowsStart + (rows * 2);
+        if (rows > Constants.DataPage.MaxRowsPerPage || directoryEnd > format.PageSize
+            || !DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound removed))
+        {
+            throw new InvalidDataException("The deleted row has invalid page bounds.");
+        }
+
+        int first = format.PageSize;
+        for (int index = 0; index < rows; index++)
+        {
+            int start = Ru16(page, format.DataPage.RowsStart + (index * 2)) & Constants.DataPage.RowOffsetMask;
+            if (start > 0 && start < first)
+            {
+                first = start;
+            }
+        }
+
+        if (first < directoryEnd)
+        {
+            throw new InvalidDataException("The data page row directory overlaps its payload.");
+        }
+
+        int end = removed.RowStart + removed.RowSize;
+        Buffer.BlockCopy(page, first, page, first + removed.RowSize, removed.RowStart - first);
+        if (clearFreedSpace)
+        {
+            Array.Clear(page, first, removed.RowSize);
+        }
+
+        for (int index = 0; index < rows; index++)
+        {
+            int position = format.DataPage.RowsStart + (index * 2);
+            int raw = Ru16(page, position);
+            int start = raw & Constants.DataPage.RowOffsetMask;
+            if (index == rowIndex)
+            {
+                Wu16(page, position, Constants.DataPage.NonLiveRowFlags | end);
+            }
+            else if (start >= first && start <= removed.RowStart)
+            {
+                Wu16(page, position, (raw & ~Constants.DataPage.RowOffsetMask) | (start + removed.RowSize));
+            }
+        }
+
+        Wu16(page, 2, first + removed.RowSize - directoryEnd);
+    }
+
     /// <summary>
     /// Yields the bounds (row index, start offset, size) of every live (non-deleted, non-overflow)
     /// row on the given data <paramref name="page"/>. Overflow headers are left out, so

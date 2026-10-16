@@ -37,23 +37,18 @@ sort metadata has LCID 0x0409 and no version. Raw-key relocation adds no claim
 of a complete CP932 key encoder.
 
 Jet3 TDEF roots and continuations carry `VC`; the declared metadata includes
-`FF FF` and eight reserved bytes. Owned/free map rows use the native 133-byte
-width. Index map rows spill onto additional pages when necessary, and each
-physical descriptor receives its own row/page pointer at `first_dp - 4`.
-Jet3's 0x18 byte belongs to its variable-column count, so the Jet4 AutoNumber
-flag is not written there. MSysObjects and named user-table maps can grow after
-writer reopening. Other Jet3 system/index/LVAL map behavior remains open.
-Native map pages can serve multiple tables and long values, so reclamation
-requires separate ownership evidence.
+`FF FF` and eight reserved bytes. Owned/free and index map rows use the native
+133-byte width. Physical index pointers address their actual map rows, including
+new spill pages when existing storage is full. Jet3's 0x18 byte belongs to its
+variable-column count, so the Jet4 AutoNumber flag is not written there.
 
-Jet3 index-map rows emitted with a table remain frozen during index
-maintenance. An initial mapped leaf stays allocated after the live tree grows
-or merges; other unreachable replacement pages are reclaimed.
-`IndexTreeReclamationTests` checks the exact protected leaf and map bytes,
-refuses any additional unreachable pages, verifies detached unprotected pages
-are free after commit, and verifies whole-image rollback. Page parent zero
-cannot distinguish these rows from native shared maps. Safe index-map refresh
-remains part of I3.
+Table and index maps remain current after reopening. Shared rows and REFERENCE
+bitmap pages are isolated before mutation, and map storage is reclaimed only
+after checking every surviving table, index, LVAL and opaque reference.
+`IndexTreeReclamationTests` verifies live map membership, detached-page release
+and whole-image rollback. `Jet3SystemUsageMapDaoTests` verifies first relationship
+allocation, core REFERENCE maps and shared storage through native catalog growth,
+constraints, query creation and compact. See [usage-map maintenance](usage-map-maintenance.md).
 
 `NativeJet3SchemaRewriteTests` verifies native open, read, mutation and compact
 through x86 DAO3.6 for scalar/wide indexed tables and CP1252/CP932 fixed Text.

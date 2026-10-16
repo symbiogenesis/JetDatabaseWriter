@@ -15,6 +15,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Tables;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -232,8 +233,8 @@ public sealed class OverflowRowWriteTests
 
     /// <summary>
     /// With <see cref="SecureEraseMode.DeletedRowsAndFreedPages"/>, deleting an
-    /// overflow row zeroes the moved row's bytes and the header's pointer, not just
-    /// the header slot.
+    /// overflow row reclaims its payload and pointer slots, scrubs the newly free
+    /// bytes, and preserves every surviving row while packing the page.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The transaction mode.</param>
@@ -245,9 +246,14 @@ public sealed class OverflowRowWriteTests
         byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, SyntheticTable, 300, primaryKey: true, Ct);
         SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, SyntheticTable, layout, Ct);
         int movedId = await ReadOverflowIdAsync(bytes);
-        (int pageSize, int rowsStart) = await PageLayoutAsync(bytes);
-        int headerStart = SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.HeaderPage, moved.HeaderRow) & 0x1FFF;
+        (int pageSize, _) = await PageLayoutAsync(bytes);
         Assert.False(IsZero(bytes, moved.DataPage, pageSize, moved.DataStart, moved.DataSize));
+        (int Id, string Name)[] expected = [.. (await ReadSyntheticRowsAsync(bytes)).Where(row => row.Id != movedId)];
+        var clearedSlots = new List<(long Page, int Row)> { (moved.HeaderPage, moved.HeaderRow), (moved.DataPage, moved.DataRow) };
+        if (layout == OverflowRowLayout.TwoHop)
+        {
+            clearedSlots.Add((moved.DataPage, moved.DataRow + 1));
+        }
 
         await using var ms = new MemoryStream();
         await ms.WriteAsync(bytes, Ct);
@@ -262,16 +268,9 @@ public sealed class OverflowRowWriteTests
         }
 
         byte[] after = ms.ToArray();
-        if (layout == OverflowRowLayout.TwoHop)
-        {
-            int middleStart = SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.DataPage, moved.DataRow + 1) & 0x1FFF;
-            Assert.True(IsZero(after, moved.DataPage, pageSize, middleStart, 4), "The middle pointer was not erased.");
-        }
-
-        Assert.True(IsZero(after, moved.DataPage, pageSize, moved.DataStart, moved.DataSize), "The moved row's bytes were not erased.");
-        Assert.True(IsZero(after, moved.HeaderPage, pageSize, headerStart, 4), "The header's pointer was not erased.");
-        Assert.Equal(OverflowFlags, SyntheticOverflowRows.ReadSlot(after, pageSize, rowsStart, moved.HeaderPage, moved.HeaderRow) & OverflowFlags);
-        Assert.Equal(await CountRowsAsync(bytes, SyntheticTable) - 1, await CountRowsAsync(after, SyntheticTable));
+        await AssertClearedSlotsReclaimedAsync(bytes, after, clearedSlots);
+        Assert.Equal(expected, await ReadSyntheticRowsAsync(after));
+        Assert.Equal(expected.Length, await CountPrimaryKeyEntriesAsync(after, SyntheticTable));
     }
 
     /// <summary>Explicit row clearing scrubs a two-hop chain and rolls back with the transaction.</summary>
@@ -285,11 +284,17 @@ public sealed class OverflowRowWriteTests
     {
         byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(DatabaseFormat.Jet4Mdb, SyntheticTable, 300, primaryKey: true, Ct);
         SyntheticOverflowRow moved = await SyntheticOverflowRows.MoveRowAsync(bytes, SyntheticTable, layout, Ct);
-        (int pageSize, int rowsStart) = await PageLayoutAsync(bytes);
-        int headerStart = SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.HeaderPage, moved.HeaderRow) & 0x1FFF;
-        int middleStart = layout == OverflowRowLayout.TwoHop
-            ? SyntheticOverflowRows.ReadSlot(bytes, pageSize, rowsStart, moved.DataPage, moved.DataRow + 1) & 0x1FFF
-            : 0;
+        (int pageSize, _) = await PageLayoutAsync(bytes);
+        (int Id, string Name)[] expected = await ReadSyntheticRowsAsync(bytes);
+        var clearedSlots = new List<(long Page, int Row)> { (moved.HeaderPage, moved.HeaderRow) };
+        if (layout == OverflowRowLayout.TwoHop)
+        {
+            int movedId = await ReadOverflowIdAsync(bytes);
+            expected = [.. expected.Where(row => row.Id != movedId)];
+            clearedSlots.Add((moved.DataPage, moved.DataRow));
+            clearedSlots.Add((moved.DataPage, moved.DataRow + 1));
+        }
+
         await using var stream = new MemoryStream();
         await stream.WriteAsync(bytes, Ct);
         stream.Position = 0;
@@ -341,19 +346,19 @@ public sealed class OverflowRowWriteTests
         }
         else
         {
-            Assert.True(IsZero(after, moved.HeaderPage, pageSize, headerStart, 4));
-            if (layout == OverflowRowLayout.TwoHop)
+            await AssertClearedSlotsReclaimedAsync(bytes, after, clearedSlots);
+            Assert.Equal(expected, await ReadSyntheticRowsAsync(after));
+            if (layout == OverflowRowLayout.PointerToOtherTable)
             {
-                Assert.True(IsZero(after, moved.DataPage, pageSize, middleStart, 4));
-                Assert.True(IsZero(after, moved.DataPage, pageSize, moved.DataStart, moved.DataSize));
-            }
-            else
-            {
+                // Header-only clearing may publish this page as reusable, but
+                // must preserve the foreign target and every other data page.
+                byte[] expectedMaps = await WithHeaderFreeMapBitAsync(bytes, moved.HeaderPage);
+                Assert.Equal(bytes.Length, after.Length);
                 for (int pageNumber = 0; pageNumber < bytes.Length / pageSize; pageNumber++)
                 {
                     if (pageNumber != moved.HeaderPage)
                     {
-                        Assert.Equal(bytes.AsSpan(pageNumber * pageSize, pageSize).ToArray(), after.AsSpan(pageNumber * pageSize, pageSize).ToArray());
+                        Assert.Equal(expectedMaps.AsSpan(pageNumber * pageSize, pageSize).ToArray(), after.AsSpan(pageNumber * pageSize, pageSize).ToArray());
                     }
                 }
             }
@@ -971,6 +976,92 @@ public sealed class OverflowRowWriteTests
         await using var ms = new MemoryStream(bytes, writable: false);
         await using AccessReader harness = await TestDatabase.OpenReaderAsync(ms, cancellationToken: Ct);
         return (harness.Database.Format.PageSize, harness.Database.Format.DataPage.RowsStart);
+    }
+
+    /// <summary>Checks reclaimed capacity, stable empty slots, and erasure of the newly free payload region.</summary>
+    /// <param name="before">The original database image.</param>
+    /// <param name="after">The database image after clearing.</param>
+    /// <param name="slots">Every slot whose payload was cleared.</param>
+    private static async ValueTask AssertClearedSlotsReclaimedAsync(byte[] before, byte[] after, IReadOnlyList<(long Page, int Row)> slots)
+    {
+        await using var stream = new MemoryStream(before, writable: false);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
+        JetFormat format = harness.Database.Format;
+        foreach (IGrouping<long, (long Page, int Row)> group in slots.GroupBy(slot => slot.Page))
+        {
+            int pageOffset = checked((int)(group.Key * format.PageSize));
+            byte[] original = before.AsSpan(pageOffset, format.PageSize).ToArray();
+            byte[] packed = after.AsSpan(pageOffset, format.PageSize).ToArray();
+            int rows = BinaryPrimitives.ReadUInt16LittleEndian(original.AsSpan(format.DataPage.NumRows));
+            Assert.Equal(rows, BinaryPrimitives.ReadUInt16LittleEndian(packed.AsSpan(format.DataPage.NumRows)));
+            int reclaimed = 0;
+            foreach ((_, int rowIndex) in group)
+            {
+                Assert.True(DataPageRows.TryGetSlotBound(format, original, rowIndex, out RowBound bound));
+                reclaimed += bound.RowSize;
+                int raw = SyntheticOverflowRows.ReadSlot(after, format.PageSize, format.DataPage.RowsStart, group.Key, rowIndex);
+                Assert.Equal(OverflowFlags, raw & OverflowFlags);
+
+                // These fixtures use native descending slot order. An empty
+                // stable tombstone meets its preceding slot, or the page end.
+                int end = rowIndex == 0
+                    ? format.PageSize
+                    : SyntheticOverflowRows.ReadSlot(after, format.PageSize, format.DataPage.RowsStart, group.Key, rowIndex - 1) & Constants.DataPage.RowOffsetMask;
+                Assert.Equal(end, raw & Constants.DataPage.RowOffsetMask);
+            }
+
+            int originalFirst = LowestRowOffset(original, format, rows);
+            int packedFirst = LowestRowOffset(packed, format, rows);
+            Assert.True(reclaimed > 0);
+            Assert.Equal(originalFirst + reclaimed, packedFirst);
+            Assert.Equal(packedFirst - format.DataPage.RowsStart - (rows * 2), BinaryPrimitives.ReadUInt16LittleEndian(packed.AsSpan(2)));
+            Assert.False(IsZero(before, group.Key, format.PageSize, originalFirst, reclaimed));
+            Assert.True(IsZero(after, group.Key, format.PageSize, originalFirst, reclaimed), $"The newly free payload region on page {group.Key} was not erased.");
+        }
+    }
+
+    private static int LowestRowOffset(byte[] page, JetFormat format, int rows)
+    {
+        int lowest = format.PageSize;
+        for (int rowIndex = 0; rowIndex < rows; rowIndex++)
+        {
+            int offset = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.RowsStart + (rowIndex * 2))) & Constants.DataPage.RowOffsetMask;
+            if (offset > 0)
+            {
+                lowest = Math.Min(lowest, offset);
+            }
+        }
+
+        return lowest;
+    }
+
+    private static async ValueTask<(int Id, string Name)[]> ReadSyntheticRowsAsync(byte[] bytes)
+    {
+        await using AccessReader reader = await OpenReaderAsync(bytes);
+        using DataTable data = await reader.ReadTableAsync(SyntheticTable, cancellationToken: Ct);
+        return [.. data.Rows.Cast<DataRow>().Select(row => (Id: (int)row["Id"], Name: (string)row["Name"])).OrderBy(row => row.Id)];
+    }
+
+    /// <summary>Builds the exact allowed map change for reclaiming only an unresolved header.</summary>
+    /// <param name="bytes">The original database image.</param>
+    /// <param name="headerPage">The page that becomes reusable.</param>
+    private static async ValueTask<byte[]> WithHeaderFreeMapBitAsync(byte[] bytes, long headerPage)
+    {
+        await using var stream = new MemoryStream(bytes, writable: false);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
+        JetFormat format = harness.Database.Format;
+        CatalogEntry entry = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync(SyntheticTable, Ct));
+        byte[] tdef = Assert.IsType<byte[]>(await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct));
+        Assert.True(UsageMap.TryReadPointer(tdef, format.TDef.FreePages, out UsageMapPointer pointer));
+        Assert.NotEqual(headerPage, pointer.PageNumber);
+        byte[] expected = (byte[])bytes.Clone();
+        int mapOffset = checked(pointer.PageNumber * format.PageSize);
+        byte[] map = expected.AsSpan(mapOffset, format.PageSize).ToArray();
+        Assert.True(UsageMap.TryGetRowBound(map, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound row));
+        Assert.Equal(Constants.UsageMap.InlineMapType, map[row.RowStart]);
+        Assert.True(UsageMap.TrySetInlinePageState(map, row.RowStart, row.RowSize, headerPage, isMarked: true));
+        map.CopyTo(expected, mapOffset);
+        return expected;
     }
 
     private static bool IsZero(byte[] bytes, long pageNumber, int pageSize, int start, int length)

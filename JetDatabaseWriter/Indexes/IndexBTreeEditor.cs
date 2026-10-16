@@ -225,25 +225,29 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     }
 
     /// <summary>
-    /// Appends <paramref name="pages"/> to the end of the file in order,
-    /// verifying each lands at the next sequential page number. Returns
-    /// <see langword="false"/> if the stream was extended concurrently (a
-    /// partial append leaves only orphans, so the caller bails safely).
+    /// Reserves precomputed append addresses through the global allocator and writes their pages.
     /// </summary>
     /// <param name="pages">The pages to append, in order.</param>
+    /// <param name="runs">Tracks the reservations until their first publishing link.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<bool> TryAppendContiguousAsync(IReadOnlyList<byte[]> pages, CancellationToken cancellationToken)
+    private async ValueTask<bool> TryAppendContiguousAsync(IReadOnlyList<byte[]> pages, ReservedPageRuns runs, CancellationToken cancellationToken)
     {
+        if (pages.Count == 0)
+        {
+            return true;
+        }
+
         long expected = pager.PageCount;
+        long first = await pageAllocator.ReserveContiguousPagesAsync(pages.Count, cancellationToken, appendOnly: true).ConfigureAwait(false);
+        runs.Add(first, pages.Count);
+        if (first != expected)
+        {
+            return false;
+        }
+
         for (int i = 0; i < pages.Count; i++)
         {
-            long appended = await pager.AppendPageAsync(pages[i], cancellationToken).ConfigureAwait(false);
-            if (appended != expected)
-            {
-                return false;
-            }
-
-            expected++;
+            await pager.WritePageAsync(first + i, pages[i], cancellationToken).ConfigureAwait(false);
         }
 
         return true;
@@ -2096,23 +2100,32 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     private async ValueTask<bool> CommitLeafMutationPlanAsync(LeafMutationPlan plan, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!this.ValidateLeafMutationPlan(plan) || !await this.TryAppendContiguousAsync(plan.NewPages, cancellationToken).ConfigureAwait(false))
+        var runs = new ReservedPageRuns(pageAllocator);
+        try
         {
-            return false;
-        }
+            if (!this.ValidateLeafMutationPlan(plan) || !await this.TryAppendContiguousAsync(plan.NewPages, runs, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
 
-        foreach ((long page, byte[] bytes) in plan.NeighborWrites)
+            runs.MarkLinked();
+            foreach ((long page, byte[] bytes) in plan.NeighborWrites)
+            {
+                await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
+            }
+
+            await pager.WritePageAsync(plan.LeafPage, plan.LeafBytes, cancellationToken).ConfigureAwait(false);
+            foreach ((long page, byte[] bytes) in plan.AncestorWrites)
+            {
+                await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
+            }
+
+            return true;
+        }
+        finally
         {
-            await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
+            await runs.ReleaseAsync().ConfigureAwait(false);
         }
-
-        await pager.WritePageAsync(plan.LeafPage, plan.LeafBytes, cancellationToken).ConfigureAwait(false);
-        foreach ((long page, byte[] bytes) in plan.AncestorWrites)
-        {
-            await pager.WritePageAsync(page, bytes, cancellationToken).ConfigureAwait(false);
-        }
-
-        return true;
     }
 
     /// <summary>Stages every fallible sibling read before appending or linking pages.</summary>
@@ -2218,32 +2231,37 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         // safe order: append new pages first (so their numbers exist before
         // any in-place rewrite references them), patch sibling pointers, then
         // rewrite all in-place pages.
-        if (!await this.TryAppendContiguousAsync(newPageAppends, cancellationToken).ConfigureAwait(false))
+        var runs = new ReservedPageRuns(pageAllocator);
+        try
         {
-            return false;
-        }
+            if (!await this.TryAppendContiguousAsync(newPageAppends, runs, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
 
-        foreach ((long pageNum, byte[] bytes) in plan.NeighborWrites)
+            runs.MarkLinked();
+            foreach ((long pageNum, byte[] bytes) in plan.NeighborWrites)
+            {
+                await pager.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach ((long pageNum, byte[] bytes) in existingPageRewrites)
+            {
+                await pager.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
+            }
+
+            // firstDpOffset is logical and may name a TDEF continuation page.
+            if (plan.NewRootPage is long newRootPage)
+            {
+                await tdefWriter.WriteInt32Async(tdefPage, firstDpOffset, checked((int)newRootPage), cancellationToken).ConfigureAwait(false);
+            }
+
+            return true;
+        }
+        finally
         {
-            await pager.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
+            await runs.ReleaseAsync().ConfigureAwait(false);
         }
-
-        foreach ((long pageNum, byte[] bytes) in existingPageRewrites)
-        {
-            await pager.WritePageAsync(pageNum, bytes, cancellationToken).ConfigureAwait(false);
-        }
-
-        // If the root intermediate split, patch the real-idx first_dp slot
-        // in the TDEF to point at the freshly-allocated root. The new root
-        // page itself was already appended via newPageAppends above, so the
-        // page number is stable. firstDpOffset is a logical TDEF offset and
-        // may fall on a continuation page of a wide table's TDEF chain.
-        if (plan.NewRootPage is long newRootPage)
-        {
-            await tdefWriter.WriteInt32Async(tdefPage, firstDpOffset, checked((int)newRootPage), cancellationToken).ConfigureAwait(false);
-        }
-
-        return true;
     }
 
     /// <summary>Validated page bytes and links awaiting an ordered cross-leaf commit.</summary>

@@ -32,7 +32,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="pager">The writer's page file, through which released LVAL pages are written.</param>
 /// <param name="pageAllocator">The page allocator.</param>
 /// <param name="options">The writer options; supplies the secure-erase policy for released LVAL rows.</param>
-internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAllocator pageAllocator, AccessWriterOptions options)
+/// <param name="usageMaps">Maintains the owning column maps when the encoder belongs to a writer.</param>
+internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAllocator pageAllocator, AccessWriterOptions options, LongValueUsageMapMaintainer? usageMaps = null)
 {
     /// <summary>Validates an external payload before preparing its deferred allocation.</summary>
     /// <param name="data">The unchanged payload bytes.</param>
@@ -185,16 +186,21 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// header has the placeholder's size, so the row's length does not change.
     /// </summary>
     /// <param name="values">The values <see cref="PrepareLongValues"/> returned.</param>
+    /// <param name="tableTdefPage">The owning table identity.</param>
+    /// <param name="tableDef">The column layout assigning every value to its native column.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>Whether any value was written, in which case the row must be serialized again.</returns>
-    internal async ValueTask<bool> WriteLongValuesAsync(object[] values, CancellationToken cancellationToken)
+    internal async ValueTask<bool> WriteLongValuesAsync(object[] values, long tableTdefPage, TableDef tableDef, CancellationToken cancellationToken)
     {
         bool written = false;
         for (int i = 0; i < values.Length; i++)
         {
             if (values[i] is PreEncodedLongValue { PendingPayload: { } payload })
             {
-                byte[] header = await this.EncodeAsLvalChainAsync(payload, cancellationToken).ConfigureAwait(false);
+                (UsageMapPointer Owned, UsageMapPointer Free)? maps = usageMaps is not null && tableTdefPage > 0
+                    ? await usageMaps.PrepareColumnAsync(tableTdefPage, tableDef.Columns[i].ColNum, cancellationToken).ConfigureAwait(false)
+                    : null;
+                byte[] header = await this.EncodeAsLvalChainAsync(payload, cancellationToken, maps: maps).ConfigureAwait(false);
                 values[i] = new PreEncodedLongValue(header);
                 written = true;
             }
@@ -203,7 +209,7 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         return written;
     }
 
-    internal async ValueTask<PreEncodedLongValue?> ForceEncodeMemoAsLvalAsync(string? text, bool compress, CancellationToken cancellationToken)
+    internal async ValueTask<PreEncodedLongValue?> ForceEncodeMemoAsLvalAsync(string? text, bool compress, long tableTdefPage, int columnNumber, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -211,7 +217,10 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         }
 
         byte[] data = format.EncodeText(text, compress);
-        byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0).ConfigureAwait(false);
+        (UsageMapPointer Owned, UsageMapPointer Free)? maps = usageMaps is not null
+            ? await usageMaps.PrepareColumnAsync(tableTdefPage, columnNumber, cancellationToken).ConfigureAwait(false)
+            : null;
+        byte[] header = await this.EncodeAsLvalChainAsync(data, cancellationToken, lvalTokenOverride: 0, maps).ConfigureAwait(false);
         return new PreEncodedLongValue(header);
     }
 
@@ -225,11 +234,13 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// <param name="data">The data bytes or values.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="lvalTokenOverride">The token to store instead of the payload hash; ignored on Jet3, which stores none.</param>
+    /// <param name="maps">The owning column maps, when allocated through a writer.</param>
     /// <exception cref="JetLimitationException">Thrown when <paramref name="data"/> exceeds the supported writer LVAL payload limit.</exception>
     private async ValueTask<byte[]> EncodeAsLvalChainAsync(
         byte[] data,
         CancellationToken cancellationToken,
-        uint? lvalTokenOverride = null)
+        uint? lvalTokenOverride = null,
+        (UsageMapPointer Owned, UsageMapPointer Free)? maps = null)
     {
         ThrowIfLongerThanLvalLimit(data);
         int pgSz = format.PageSize;
@@ -239,9 +250,9 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
         // descriptor's token bytes zero.
         uint lvalToken = layout.WritesToken ? lvalTokenOverride ?? LongValueStore.ComputeToken(data) : 0u;
 
-        // One row per LVAL page; chained rows reserve their first four bytes
-        // for the next-page pointer. LvalPageLayout holds the per-format
-        // header area and row placement Access uses.
+        // Single-page values share pages through their column's free map.
+        // Chained rows use dedicated pages and reserve their first four bytes
+        // for the next-row pointer. The format supplies native row placement.
         int singleRowMax = layout.SinglePagePayloadCapacity(pgSz);
         int chainRowMax = layout.ChainedPagePayloadCapacity(pgSz);
 
@@ -250,7 +261,20 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             byte[] page = LongValueStore.BuildSinglePageBuffer(data, lvalToken, pgSz, layout);
             try
             {
+                uint reused = usageMaps is not null && maps is { } existingMaps
+                    ? await usageMaps.TryAppendRowAsync(existingMaps, page, cancellationToken).ConfigureAwait(false)
+                    : 0;
+                if (reused != 0)
+                {
+                    return LongValueDescriptor.SinglePage(data.Length, reused, lvalToken).ToHeaderBytes();
+                }
+
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+                if (usageMaps is not null && maps is { } columnMaps)
+                {
+                    await usageMaps.MarkPageAsync(columnMaps, pageNumber, Ru16(page, 2) >= 3, cancellationToken).ConfigureAwait(false);
+                }
+
                 uint lvalDp = LongValueStore.MakeRowPointer(pageNumber, rowIndex: 0);
                 return LongValueDescriptor.SinglePage(data.Length, lvalDp, lvalToken).ToHeaderBytes();
             }
@@ -274,6 +298,11 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             try
             {
                 long pageNumber = await pageAllocator.AllocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+                if (usageMaps is not null && maps is { } columnMaps)
+                {
+                    await usageMaps.MarkPageAsync(columnMaps, pageNumber, hasSpace: false, cancellationToken).ConfigureAwait(false);
+                }
+
                 nextDp = LongValueStore.MakeRowPointer(pageNumber, rowIndex: 0);
             }
             finally
@@ -336,24 +365,32 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// </summary>
     /// <param name="descriptor">The value's descriptor.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="tableTdefPage">The owning table identity, or zero for a standalone storage test.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    internal async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken)
-        => await LongValueStore.DeallocateExternalPagesAsync(descriptor, this.ReleaseLvalRowAsync, cancellationToken).ConfigureAwait(false);
+    internal async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken, long tableTdefPage = 0)
+    {
+        List<(UsageMapPointer Owned, UsageMapPointer Free)>? maps = usageMaps is not null && tableTdefPage > 0
+            ? await usageMaps.PrepareTableAsync(tableTdefPage, cancellationToken).ConfigureAwait(false)
+            : null;
+        await LongValueStore.DeallocateExternalPagesAsync(descriptor, (pointer, ct) => this.ReleaseLvalRowAsync(pointer, maps, ct), cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Releases the LVAL row <paramref name="lvalDp"/> names and returns the
     /// next-row pointer it starts with. Access packs several values onto one
     /// LVAL page, so while another live row is on the page only this row's
-    /// slot is marked deleted, and its bytes are zeroed under
+    /// slot is marked deleted and its payload is reclaimed while surviving
+    /// slot identities are retained. Reclaimed bytes are zeroed under
     /// <see cref="SecureEraseMode.DeletedRowsAndFreedPages"/>. The page is
     /// freed once no other live row is left on it. A pointer that does not
     /// name a live row of an LVAL page releases nothing and returns 0, so a
     /// damaged chain never frees a page of another kind.
     /// </summary>
     /// <param name="lvalDp">The row pointer (<c>page &lt;&lt; 8 | row</c>).</param>
+    /// <param name="maps">The independent column maps to update after releasing the last live row.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The next-row pointer stored at the start of the row, or 0.</returns>
-    private async ValueTask<uint> ReleaseLvalRowAsync(uint lvalDp, CancellationToken cancellationToken)
+    private async ValueTask<uint> ReleaseLvalRowAsync(uint lvalDp, IReadOnlyList<(UsageMapPointer Owned, UsageMapPointer Free)>? maps, CancellationToken cancellationToken)
     {
         long pageNumber = LongValueStore.PageNumber(lvalDp);
         int rowIndex = LongValueStore.RowIndex(lvalDp);
@@ -399,11 +436,20 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
 
                 int slotOffset = format.DataPage.RowsStart + (rowIndex * 2);
                 Wu16(lvalPage, slotOffset, Ru16(lvalPage, slotOffset) | Constants.DataPage.DeletedRowFlag);
+                DataPageRows.ReclaimDeletedRowSpace(format, lvalPage, rowIndex, options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages);
                 await pager.WritePageAsync(pageNumber, lvalPage, cancellationToken).ConfigureAwait(false);
+                if (usageMaps is not null && maps is not null)
+                {
+                    await usageMaps.RefreshFreeSpaceAsync(maps, pageNumber, Ru16(lvalPage, 2) >= 3 && Ru16(lvalPage, format.DataPage.NumRows) < Constants.DataPage.MaxRowsPerPage, cancellationToken).ConfigureAwait(false);
+                }
             }
             else
             {
                 await pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                if (usageMaps is not null && maps is not null)
+                {
+                    await usageMaps.ClearPageAsync(maps, pageNumber, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             return nextDp;

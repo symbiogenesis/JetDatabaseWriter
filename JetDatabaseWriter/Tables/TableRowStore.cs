@@ -78,7 +78,7 @@ internal sealed class TableRowStore(
         // anything is written. The real headers have the same size, so the
         // row serialized again with them has the measured length.
         (object[] prepared, byte[] rowBytes) = this.EncodeRow(tableDef, values, fixedTextBytes);
-        if (await longValueEncoder.WriteLongValuesAsync(prepared, cancellationToken).ConfigureAwait(false))
+        if (await longValueEncoder.WriteLongValuesAsync(prepared, tdefPage, tableDef, cancellationToken).ConfigureAwait(false))
         {
             rowBytes = rowEncoder.SerializeRow(tableDef, prepared, fixedTextBytes);
         }
@@ -227,7 +227,6 @@ internal sealed class TableRowStore(
             return;
         }
 
-        if (dataMode == DeletedRowDataMode.Clear || options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
         {
             foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(format, page))
             {
@@ -236,19 +235,23 @@ internal sealed class TableRowStore(
                     continue;
                 }
 
-                if (options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+                longValueRoots = longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
+                if (dataMode == DeletedRowDataMode.Clear || options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
                 {
-                    longValueRoots = longValueEncoder.CollectLongValueRoots(page, rowBound, tableDef);
+                    Array.Clear(page, rowBound.RowStart, rowBound.RowSize);
                 }
 
-                Array.Clear(page, rowBound.RowStart, rowBound.RowSize);
                 break;
             }
         }
 
         Wu16(page, offsetPos, raw | Constants.DataPage.DeletedRowFlag);
+        DataPageRows.ReclaimDeletedRowSpace(format, page, rowIndex, dataMode == DeletedRowDataMode.Clear || options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages);
         await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+        long owner = Ri32(page, format.DataPage.TDefOff);
+        bool hasRoom = dataPages.CanInsertRow(page, rowLength: 1);
         PageBuffers.Return(page);
+        await dataPages.SetFreePageStateAsync(owner, pageNumber, hasRoom, cancellationToken).ConfigureAwait(false);
 
         if (longValueRoots is null)
         {
@@ -257,7 +260,7 @@ internal sealed class TableRowStore(
 
         foreach (LongValueDescriptor root in longValueRoots)
         {
-            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken, tableDef.TDefPageNumber ?? 0).ConfigureAwait(false);
         }
     }
 
@@ -271,88 +274,179 @@ internal sealed class TableRowStore(
     /// <param name="tableDef">The row's table, needed to free its long values under secure erase.</param>
     /// <param name="dataMode">Whether the row's bytes are cleared.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <exception cref="JetCorruptDataException">The overflow storage has invalid bounds, unresolved pointers or shared live targets.</exception>
     private async ValueTask MarkOverflowRowDeletedAsync(long pageNumber, byte[] page, int rowIndex, TableDef tableDef, DeletedRowDataMode dataMode, CancellationToken cancellationToken)
     {
-        List<LongValueDescriptor>? longValueRoots = null;
+        List<LongValueDescriptor> longValueRoots;
+        long owner = Ri32(page, format.DataPage.TDefOff);
         try
         {
-            bool secureErase = options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
-            if ((dataMode == DeletedRowDataMode.Clear || secureErase) && DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound header))
+            if (!DataPageRows.TryGetSlotBound(format, page, rowIndex, out RowBound header))
             {
-                bool resolved = false;
-                var intermediateSlots = new List<(long PageNumber, RowBound Bound)>();
-                if (await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, PageBuffers.Return, cancellationToken, intermediateSlots).ConfigureAwait(false) is { } target)
-                {
-                    resolved = true;
-                    try
-                    {
-                        if (secureErase)
-                        {
-                            longValueRoots = longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef);
-                        }
-
-                        // A target on the header's own page is cleared in the
-                        // header page's buffer, which is the one written below.
-                        byte[] dataPage = target.PageNumber == pageNumber ? page : target.Page;
-                        Array.Clear(dataPage, target.Bound.RowStart, target.Bound.RowSize);
-                        if (target.PageNumber != pageNumber)
-                        {
-                            await pager.WritePageAsync(target.PageNumber, target.Page, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-                    finally
-                    {
-                        PageBuffers.Return(target.Page);
-                    }
-                }
-
-                // Read after clearing the target: pointer slots can share its page.
-                // Only a fully resolved chain authorizes clearing its intermediate slots.
-                if (resolved)
-                {
-                    foreach ((long pointerPageNumber, RowBound pointerBound) in intermediateSlots)
-                    {
-                        byte[] pointerPage = pointerPageNumber == pageNumber
-                            ? page
-                            : await pager.ReadPageAsync(pointerPageNumber, cancellationToken).ConfigureAwait(false);
-                        try
-                        {
-                            Array.Clear(pointerPage, pointerBound.RowStart, pointerBound.RowSize);
-                            if (pointerPageNumber != pageNumber)
-                            {
-                                await pager.WritePageAsync(pointerPageNumber, pointerPage, cancellationToken).ConfigureAwait(false);
-                            }
-                        }
-                        finally
-                        {
-                            if (pointerPageNumber != pageNumber)
-                            {
-                                PageBuffers.Return(pointerPage);
-                            }
-                        }
-                    }
-                }
-
-                Array.Clear(page, header.RowStart, header.RowSize);
+                throw new JetCorruptDataException("The overflow header has invalid row bounds.");
             }
 
-            int offsetPos = format.DataPage.RowsStart + (rowIndex * 2);
-            Wu16(page, offsetPos, Ru16(page, offsetPos) | Constants.DataPage.DeletedRowFlag);
-            await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            var intermediateSlots = new List<(long PageNumber, RowBound Bound)>();
+            OverflowRowTarget? resolvedTarget = await ownedPages.TryResolveOverflowRowAsync(page, header, pager.ReadPageAsync, PageBuffers.Return, cancellationToken, intermediateSlots).ConfigureAwait(false);
+            if (resolvedTarget is null && dataMode != DeletedRowDataMode.Clear)
+            {
+                throw new JetCorruptDataException("The overflow row cannot be resolved before deleting its storage.");
+            }
+
+            var slots = new Dictionary<long, HashSet<int>>();
+            var spans = new Dictionary<long, List<RowBound>>();
+            try
+            {
+                longValueRoots = [];
+                if (resolvedTarget is { } target)
+                {
+                    longValueRoots = longValueEncoder.CollectLongValueRoots(target.Page, target.Bound, tableDef);
+                    AddSlot(target.PageNumber, target.Bound);
+                    foreach ((long number, RowBound bound) in intermediateSlots)
+                    {
+                        AddSlot(number, bound);
+                    }
+                }
+
+                AddSlot(pageNumber, header);
+                await ownedPages.ForEachLiveTableRowAsync(
+                    owner,
+                    async (row, token) =>
+                    {
+                        if (row.Location.PageNumber == pageNumber && row.Location.RowIndex == rowIndex)
+                        {
+                            return true;
+                        }
+
+                        CheckSpan(row.Location.DataPageNumber, row.Location.RowStart, row.Location.RowSize);
+                        if (row.Location.IsOverflow)
+                        {
+                            byte[] otherHeader = await pager.ReadPageAsync(row.Location.PageNumber, token).ConfigureAwait(false);
+                            try
+                            {
+                                if (!DataPageRows.TryGetSlotBound(format, otherHeader, row.Location.RowIndex, out RowBound bound))
+                                {
+                                    throw new JetCorruptDataException("Another overflow header has invalid row bounds.");
+                                }
+
+                                CheckSpan(row.Location.PageNumber, bound.RowStart, bound.RowSize);
+                                var otherSlots = new List<(long PageNumber, RowBound Bound)>();
+                                OverflowRowTarget? otherTarget = await ownedPages.TryResolveOverflowRowAsync(otherHeader, bound, pager.ReadPageAsync, PageBuffers.Return, token, otherSlots).ConfigureAwait(false);
+                                if (otherTarget is { } resolved)
+                                {
+                                    PageBuffers.Return(resolved.Page);
+                                }
+
+                                foreach ((long number, RowBound pointer) in otherSlots)
+                                {
+                                    CheckSpan(number, pointer.RowStart, pointer.RowSize);
+                                }
+                            }
+                            finally
+                            {
+                                PageBuffers.Return(otherHeader);
+                            }
+                        }
+
+                        return true;
+                    },
+                    cancellationToken,
+                    requireCompleteRows: resolvedTarget is not null).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (resolvedTarget is { } target)
+                {
+                    PageBuffers.Return(target.Page);
+                }
+            }
+
+            bool clear = dataMode == DeletedRowDataMode.Clear || options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages;
+            var freePages = new List<(long PageNumber, bool HasRoom)>();
+            foreach ((long number, HashSet<int> indexes) in slots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] current = number == pageNumber ? page : await pager.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    foreach (int index in indexes)
+                    {
+                        if (!DataPageRows.TryGetSlotBound(format, current, index, out RowBound bound))
+                        {
+                            throw new JetCorruptDataException("The overflow row slot has invalid bounds before reclamation.");
+                        }
+
+                        if (clear)
+                        {
+                            Array.Clear(current, bound.RowStart, bound.RowSize);
+                        }
+
+                        int offset = format.DataPage.RowsStart + (index * 2);
+                        Wu16(current, offset, Ru16(current, offset) | Constants.DataPage.DeletedRowFlag);
+                        DataPageRows.ReclaimDeletedRowSpace(format, current, index, clear);
+                    }
+
+                    await pager.WritePageAsync(number, current, cancellationToken).ConfigureAwait(false);
+                    freePages.Add((number, dataPages.CanInsertRow(current, rowLength: 1)));
+                }
+                finally
+                {
+                    if (number != pageNumber)
+                    {
+                        PageBuffers.Return(current);
+                    }
+                }
+            }
+
+            // Ownership checks may traverse the catalog. Publish the entire deletion
+            // before inspecting maps, so no live header points at reclaimed payload.
+            foreach ((long number, bool hasRoom) in freePages)
+            {
+                await dataPages.SetFreePageStateAsync(owner, number, hasRoom, cancellationToken).ConfigureAwait(false);
+            }
+
+            void AddSlot(long number, RowBound bound)
+            {
+                if (!slots.TryGetValue(number, out HashSet<int>? indexes))
+                {
+                    indexes = [];
+                    slots.Add(number, indexes);
+                }
+
+                if (indexes.Add(bound.RowIndex))
+                {
+                    if (!spans.TryGetValue(number, out List<RowBound>? ranges))
+                    {
+                        ranges = [];
+                        spans.Add(number, ranges);
+                    }
+
+                    ranges.Add(bound);
+                }
+            }
+
+            void CheckSpan(long number, int start, int length)
+            {
+                if (spans.TryGetValue(number, out List<RowBound>? ranges))
+                {
+                    foreach (RowBound bound in ranges)
+                    {
+                        if (start < bound.RowStart + bound.RowSize && bound.RowStart < start + length)
+                        {
+                            throw new JetCorruptDataException("The overflow payload overlaps storage referenced by another live row.");
+                        }
+                    }
+                }
+            }
         }
         finally
         {
             PageBuffers.Return(page);
         }
 
-        if (longValueRoots is null)
-        {
-            return;
-        }
-
         foreach (LongValueDescriptor root in longValueRoots)
         {
-            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken, owner).ConfigureAwait(false);
         }
     }
 }

@@ -5,14 +5,17 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Collation;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
@@ -30,11 +33,13 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="tableDefs">The bounded table-definition reader.</param>
 /// <param name="pager">The caller's transactional page store.</param>
 /// <param name="pageAllocator">Allocates and releases leaf and TDEF continuation pages.</param>
+/// <param name="catalogRows">Reads surviving definitions for usage-map storage reclamation.</param>
 internal sealed class ForeignKeyMetadataEditor(
     JetFormat format,
     TableDefReader tableDefs,
     Pager pager,
-    PageAllocator pageAllocator)
+    PageAllocator pageAllocator,
+    CatalogRowReader catalogRows)
 {
     private readonly JetFormat format = format;
     private readonly JetTextCollation indexNameCollation = new(format.DefaultTextSortOrder);
@@ -50,7 +55,7 @@ internal sealed class ForeignKeyMetadataEditor(
     // share a unique covering real index on the parent, and carry cascade
     // bytes on both sides. A new real index has flags 0x00 on Jet3 and 0x80
     // on Jet4 / ACE. The rebuild initializes usage maps for newly emitted
-    // indexes; existing native Jet3 map rows remain unchanged.
+    // indexes and keeps native Jet3 index map rows current.
 
     /// <summary>
     /// Pre-computed real-idx slot information for one side of a relationship.
@@ -1232,6 +1237,10 @@ internal sealed class ForeignKeyMetadataEditor(
             return;
         }
 
+        HashSet<long> oldMapStorage = this.format.IsJet3
+            ? await this.CollectTrailingIndexMapStorageAsync(td, layout, reclaim, cancellationToken).ConfigureAwait(false)
+            : [];
+
         // Step 1 — drop the trailing N entries (12 bytes each on Jet4, 8 on
         // Jet3) from the leading real-idx skip block. The skip block lives at
         // [TDef.BlockEnd, TDef.BlockEnd + numRealIdx * TDef.RealIdxEntrySz).
@@ -1264,6 +1273,62 @@ internal sealed class ForeignKeyMetadataEditor(
         Wi32(td, 8, finalEnd - 8);
 
         await this.WriteLogicalTDefChainAsync(chain, td, finalEnd, cancellationToken).ConfigureAwait(false);
+        if (oldMapStorage.Count > 0)
+        {
+            HashSet<long> releasable;
+            try
+            {
+                releasable = await UsageMapOwnership.FindUnreferencedStoragePagesAsync(this.format, this.tableDefs, catalogRows, this.pager, oldMapStorage, ignoredTdefPage: 0, cancellationToken).ConfigureAwait(false);
+            }
+            catch (JetCorruptDataException)
+            {
+                return;
+            }
+
+            foreach (long page in releasable)
+            {
+                await this.pageAllocator.DeallocatePageAsync(page, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>Collects map rows and bitmap storage named by physical descriptors about to be removed.</summary>
+    /// <param name="td">The old logical definition.</param>
+    /// <param name="layout">Its index layout.</param>
+    /// <param name="reclaim">The count of trailing physical descriptors being removed.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Potential storage pages, which still need a surviving-reference proof.</returns>
+    private async ValueTask<HashSet<long>> CollectTrailingIndexMapStorageAsync(byte[] td, FkTDefLayout layout, int reclaim, CancellationToken cancellationToken)
+    {
+        var storage = new HashSet<long>();
+        for (int realIndex = layout.NumRealIdx - reclaim; realIndex < layout.NumRealIdx; realIndex++)
+        {
+            if (!this.format.Index.TryReadRealIdxSlot(td, layout.RealIdxDescStart, realIndex, out RealIdxSlot slot)
+                || !UsageMap.TryReadPointer(td, slot.FirstDpOffset - 4, out UsageMapPointer pointer)
+                || pointer.PageNumber <= 2 || pointer.PageNumber >= this.pager.PageCount)
+            {
+                continue;
+            }
+
+            byte[] page = await this.pager.ReadPageAsync(pointer.PageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.Data || Ri32(page, this.format.DataPage.TDefOff) != 0
+                    || !UsageMap.TryGetRowBound(page, this.format.DataPage, this.format.PageSize, pointer.RowIndex, out RowBound row))
+                {
+                    continue;
+                }
+
+                _ = storage.Add(pointer.PageNumber);
+                await UsageMap.CollectReferenceBitmapPagesAsync(page, row, this.pager.PageCount, this.pager.ReadPageAsync, PageBuffers.Return, storage, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        return storage;
     }
 
     /// <summary>

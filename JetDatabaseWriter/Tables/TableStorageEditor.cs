@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -36,6 +37,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="constraints">The constraints service.</param>
 /// <param name="relationships">The relationships service.</param>
 /// <param name="autoNumbers">The autoNumbers service.</param>
+/// <param name="catalogRows">The catalog used to prove surviving map ownership.</param>
 internal sealed class TableStorageEditor(
     JetFormat format,
     TableDefReader tableDefs,
@@ -50,7 +52,8 @@ internal sealed class TableStorageEditor(
     ComplexColumnManager complexColumns,
     ConstraintRegistry constraints,
     RelationshipManager relationships,
-    AutoNumberMaintainer autoNumbers)
+    AutoNumberMaintainer autoNumbers,
+    CatalogRowReader catalogRows)
 {
     /// <summary>Copies prepared rows and transfers storage and metadata ownership to the replacement.</summary>
     /// <param name="plan">The validated rewrite projection.</param>
@@ -461,19 +464,14 @@ internal sealed class TableStorageEditor(
             }
         }
 
-        if (firstTdefPage is not null && !format.IsJet3)
-        {
-            int usageMapPage = UsageMap.ReadUInt24(firstTdefPage, format.TDef.UsedPagesPage);
-            if (usageMapPage > 0)
-            {
-                _ = pagesToFree.Add(usageMapPage);
-                await this.CollectIndexPagesFromUsageMapAsync(usageMapPage, pagesToFree, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
         foreach (LongValueDescriptor root in longValueRoots)
         {
-            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken).ConfigureAwait(false);
+            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken, tdefPage).ConfigureAwait(false);
+        }
+
+        if (firstTdefPage is not null)
+        {
+            await this.CollectUnreferencedMapStorageAsync(tdefPage, pagesToFree, cancellationToken).ConfigureAwait(false);
         }
 
         foreach (long pageNumber in pagesToFree)
@@ -485,57 +483,90 @@ internal sealed class TableStorageEditor(
         }
     }
 
-    private async ValueTask CollectIndexPagesFromUsageMapAsync(long usageMapPageNumber, SortedSet<long> pagesToFree, CancellationToken cancellationToken)
+    private async ValueTask CollectUnreferencedMapStorageAsync(long tdefPage, SortedSet<long> pagesToFree, CancellationToken cancellationToken)
     {
-        long totalPages = pager.PageCount;
-        if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
+        byte[] definition = await tableDefs.ReadTDefBytesAsync(tdefPage, cancellationToken).ConfigureAwait(false)
+            ?? throw new JetCorruptDataException("The removed table definition is unreadable.");
+        TDefImage image = TDefCodec.Parse(format, definition)
+            ?? throw new JetCorruptDataException("The removed table definition is malformed.");
+        var pointers = new HashSet<UsageMapPointer>();
+        _ = UsageMap.TryReadPointer(definition, format.TDef.UsedPages, out UsageMapPointer owned);
+        _ = UsageMap.TryReadPointer(definition, format.TDef.FreePages, out UsageMapPointer free);
+        pointers.Add(owned);
+        pointers.Add(free);
+        foreach (TDefIndexDescriptor index in image.RealIndexes)
         {
-            return;
-        }
-
-        byte[] page = await pager.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (page[0] != Constants.PageTypes.Data)
+            if (UsageMap.TryReadPointer(definition, index.Slot.FirstDpOffset - 4, out UsageMapPointer pointer))
             {
-                return;
+                pointers.Add(pointer);
             }
 
-            foreach (RowBound rowBound in DataPageRows.EnumerateLiveRowBounds(format, page))
+            // A map can share storage or members with another object. Only
+            // its independently owned index pages are candidates for release.
+            try
             {
-                // A REFERENCE row's bitmap pages go with the table, the owned
-                // and free-space rows' included.
-                await UsageMap.CollectReferenceBitmapPagesAsync(page, rowBound, totalPages, pager.ReadPageAsync, PageBuffers.Return, pagesToFree, cancellationToken).ConfigureAwait(false);
-                if (rowBound.RowIndex < 2)
+                UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, index.Slot.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
+                foreach (long number in proof.Pages)
                 {
-                    continue;
-                }
+                    if (proof.OtherMappedPages.Contains(number))
+                    {
+                        continue;
+                    }
 
-                var indexPages = new List<long>();
-                if (!await UsageMap.TryEnumeratePagesAsync(
-                    page,
-                    rowBound,
-                    format.PageSize,
-                    totalPages,
-                    minimumPageNumber: 3,
-                    strict: false,
-                    pager.ReadPageAsync,
-                    PageBuffers.Return,
-                    indexPages,
-                    cancellationToken).ConfigureAwait(false))
-                {
-                    continue;
-                }
-
-                foreach (long pageNumber in indexPages)
-                {
-                    _ = pagesToFree.Add(pageNumber);
+                    byte[] page = await pager.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        if (page[0] is Constants.PageTypes.IndexLeaf or Constants.PageTypes.IndexIntermediate && Ri32(page, 4) == tdefPage)
+                        {
+                            pagesToFree.Add(number);
+                        }
+                    }
+                    finally
+                    {
+                        PageBuffers.Return(page);
+                    }
                 }
             }
+            catch (JetCorruptDataException)
+            {
+                // Retain index storage when unrelated descriptors prevent a proof.
+            }
         }
-        finally
+
+        if (LongValueUsageMaps.TryRead(format, definition, out List<LongValueUsageMap> longValues, out _))
         {
-            PageBuffers.Return(page);
+            foreach (LongValueUsageMap maps in longValues)
+            {
+                pointers.Add(maps.Owned);
+                pointers.Add(maps.Free);
+            }
         }
+
+        var storage = new SortedSet<long>();
+        foreach (UsageMapPointer pointer in pointers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pointer.PageNumber <= 2 || pointer.PageNumber >= pager.PageCount)
+            {
+                continue;
+            }
+
+            byte[] page = await pager.ReadPageAsync(pointer.PageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] == Constants.PageTypes.Data && Ri32(page, format.DataPage.TDefOff) == 0
+                    && UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound bound))
+                {
+                    storage.Add(pointer.PageNumber);
+                    await UsageMap.CollectReferenceBitmapPagesAsync(page, bound, pager.PageCount, pager.ReadPageAsync, PageBuffers.Return, storage, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        pagesToFree.UnionWith(await UsageMapOwnership.FindUnreferencedStoragePagesAsync(format, tableDefs, catalogRows, pager, storage, tdefPage, cancellationToken).ConfigureAwait(false));
     }
 }

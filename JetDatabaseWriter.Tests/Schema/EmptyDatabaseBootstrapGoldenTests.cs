@@ -62,9 +62,9 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "157957AB25DD1DB3C35D4971DAA0D1D9BE64E57050A9A6E1626D877025D33355")]
-    [InlineData(DatabaseFormat.Jet4Mdb, "E4DB83C4364CFF3460610F75334C41080DE7555E16AAE7438D116FA18836087E")]
-    [InlineData(DatabaseFormat.AceAccdb, "7F867B5C2F89C4D3F3B64778CD4DF2D4D3BECB485F29201C9DF2E2018DCE3518")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "B93C5868AEEE35CA963F7A70A112A1448676D8ED4ED0DA5F9BFA7FC1C22BF9D9")]
+    [InlineData(DatabaseFormat.Jet4Mdb, "D322E9206FDF707564BE113F9DD9ABF578C3CE38A4CC0CA712E92FB70C04E390")]
+    [InlineData(DatabaseFormat.AceAccdb, "49E733B4BFCBAB47FDD479D1E8F8ADBE39A2B69B01453BD130ADBDDD5E0B0C43")]
     public async Task CreateTable_EveryAuthorableTypeAndTwoTextIndexes_TDefMatchesGoldenHash(DatabaseFormat format, string expectedSha256)
     {
         await using MemoryStream stream = await CreateGoldenTableAsync(format);
@@ -83,8 +83,8 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData("Files", "E335CCAA709DF497DA48CC7D2EE4321ABFA279408B94278F899C23EDF841EB27")]
-    [InlineData("Tags", "3121FC3C09CE998AD92B985FE8DC1D77743B35EFE73C2A9D3D6512710273CFE0")]
+    [InlineData("Files", "28D47360BC8A342316CE2EAFE3D541004B89A23363EEB53B10A510D52BA7DC89")]
+    [InlineData("Tags", "5EA6E8CB047698AA5896EF5B20D29453F33B60168EF5A9B832221B8D0794BD9D")]
     public async Task CreateTable_AccdbComplexColumn_FlatTableTDefMatchesGoldenHash(string column, string expectedSha256)
     {
         await using MemoryStream stream = await CreateGoldenTableAsync(DatabaseFormat.AceAccdb);

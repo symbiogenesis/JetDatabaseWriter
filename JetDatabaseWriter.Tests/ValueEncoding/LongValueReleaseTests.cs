@@ -57,12 +57,16 @@ public sealed class LongValueReleaseTests
         Assert.Equal(Constants.PageTypes.Data, after[0]);
         int firstSlot = Ru16(after, db.Format.DataPage.RowsStart);
         int secondSlot = Ru16(after, db.Format.DataPage.RowsStart + 2);
-        Assert.Equal(firstStart | Constants.DataPage.DeletedRowFlag, firstSlot);
-        Assert.Equal(secondStart, secondSlot);
+        Assert.Equal(Constants.DataPage.NonLiveRowFlags | pageSize, firstSlot);
+        int survivingStart = pageSize - SecondRowLength;
+        Assert.Equal(survivingStart, secondSlot);
         Assert.Equal(2, Ru16(after, db.Format.DataPage.NumRows));
-        Assert.True(after.AsSpan(secondStart, SecondRowLength).IndexOfAnyExcept((byte)'B') < 0, "The other value's row changed.");
-        byte expectedFirst = secureErase ? (byte)0 : (byte)'A';
-        Assert.True(after.AsSpan(firstStart, FirstRowLength).IndexOfAnyExcept(expectedFirst) < 0, secureErase ? "The released row was not scrubbed." : "The released row was changed.");
+        Assert.True(after.AsSpan(survivingStart, SecondRowLength).IndexOfAnyExcept((byte)'B') < 0, "The other value's row changed.");
+        if (secureErase)
+        {
+            Assert.True(after.AsSpan(secondStart, FirstRowLength).IndexOfAnyExcept((byte)0) < 0, "The reclaimed gap was not scrubbed.");
+        }
+
         Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(pageNumber, ct));
 
         // Releasing the last live row frees the page.

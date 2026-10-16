@@ -76,6 +76,13 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
             }
 
             PageBuffers.Return(cached);
+            await this.SetFreePageStateAsync(tdefPage, cachedPageNumber, free: false, cancellationToken).ConfigureAwait(false);
+        }
+
+        PageInsertTarget? mappedTarget = await this.TryFindMappedFreePageAsync(tdefPage, rowLength, cancellationToken).ConfigureAwait(false);
+        if (mappedTarget is not null)
+        {
+            return mappedTarget;
         }
 
         if (tdefPage <= 1024)
@@ -87,12 +94,9 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
             }
         }
 
-        // When the cached page is full, append a new data page directly
-        // instead of scanning every page in the file. The previous O(N)
-        // scan read + decrypted every page to find one with free space,
-        // which dominated insert time for large databases. Appending is
-        // O(1), and the owned-map update below keeps DAO sequential scans
-        // aware of the new page for tables whose maps the writer can maintain.
+        // Native free-space maps retain candidates until an attempted row
+        // does not fit. Once those candidates are exhausted, allocate a new
+        // page and register both its ownership and available space.
         long newPageNumber = await pageAllocator.AllocatePageAsync(this.CreateEmptyDataPage(tdefPage), cancellationToken).ConfigureAwait(false);
         this.SetCachedInsertPageNumber(tdefPage, newPageNumber);
 
@@ -181,6 +185,102 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         }
 
         return null;
+    }
+
+    private async ValueTask<PageInsertTarget?> TryFindMappedFreePageAsync(long tdefPage, int rowLength, CancellationToken cancellationToken)
+    {
+        if (!await ownedMaps.CanMaintainAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        byte[] tdef = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        var candidates = new List<long>();
+        try
+        {
+            int mapNumber = UsageMap.ReadUInt24(tdef, format.TDef.FreePagesPage);
+            if (mapNumber == 0)
+            {
+                return null;
+            }
+
+            byte[] map = await pager.ReadPageAsync(mapNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (!UsageMap.TryGetRowBound(map, format.DataPage, format.PageSize, tdef[format.TDef.FreePages], out RowBound bound)
+                    || !await UsageMap.TryEnumeratePagesAsync(map, bound, format.PageSize, pager.PageCount, 1, true, pager.ReadPageAsync, PageBuffers.Return, candidates, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new InvalidDataException("The table free-space map is malformed.");
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(map);
+            }
+        }
+        finally
+        {
+            PageBuffers.Return(tdef);
+        }
+
+        foreach (long number in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            byte[] page = await pager.ReadPageAsync(number, cancellationToken).ConfigureAwait(false);
+            if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != tdefPage)
+            {
+                PageBuffers.Return(page);
+                throw new InvalidDataException("The table free-space map names a page owned by another object.");
+            }
+
+            if (this.CanInsertRow(page, rowLength))
+            {
+                this.SetCachedInsertPageNumber(tdefPage, number);
+                return new PageInsertTarget { PageNumber = number, Page = page };
+            }
+
+            PageBuffers.Return(page);
+            await this.SetFreePageStateAsync(tdefPage, number, free: false, cancellationToken).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
+    /// <summary>Updates the native free-space hint after a failed fit or newly reclaimed payload.</summary>
+    /// <param name="tdefPage">The owning definition.</param>
+    /// <param name="pageNumber">The data page.</param>
+    /// <param name="free">Whether another insertion may use the page.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    internal async ValueTask SetFreePageStateAsync(long tdefPage, long pageNumber, bool free, CancellationToken cancellationToken)
+    {
+        if (!await ownedMaps.CanMaintainAsync(tdefPage, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        byte[] tdef = await pager.ReadPageAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            int mapNumber = UsageMap.ReadUInt24(tdef, format.TDef.FreePagesPage);
+            if (mapNumber == 0)
+            {
+                return;
+            }
+
+            int row = tdef[format.TDef.FreePages];
+            if (free)
+            {
+                await usageMaps.MarkPageAsync(mapNumber, [row], pageNumber, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await usageMaps.ClearPageAsync(mapNumber, row, pageNumber, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            PageBuffers.Return(tdef);
+        }
     }
 
     /// <summary>
@@ -387,6 +487,27 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         IReadOnlyList<long[]> indexPageGroups,
         CancellationToken cancellationToken)
     {
+        var reservations = new ReservedPageRuns(pageAllocator);
+        try
+        {
+            UsageMapPointer[] result = await this.UpdateTableIndexUsageMapRowsCoreAsync(fallbackUsageMapPageNumber, indexPointers, indexPageGroups, reservations, cancellationToken).ConfigureAwait(false);
+            reservations.MarkLinked();
+            return result;
+        }
+        catch
+        {
+            await reservations.ReleaseAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async ValueTask<UsageMapPointer[]> UpdateTableIndexUsageMapRowsCoreAsync(
+        long fallbackUsageMapPageNumber,
+        IReadOnlyList<UsageMapPointer> indexPointers,
+        IReadOnlyList<long[]> indexPageGroups,
+        ReservedPageRuns reservations,
+        CancellationToken cancellationToken)
+    {
         var result = new UsageMapPointer[indexPointers.Count];
         var groupsByPage = new Dictionary<long, List<int>>();
         var candidatePages = new List<long> { fallbackUsageMapPageNumber };
@@ -423,7 +544,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
 
         if (missingGroups.Count > 0)
         {
-            await this.AssignMissingIndexMapGroupsAsync(candidatePages, missingGroups, groupsByPage, cancellationToken).ConfigureAwait(false);
+            await this.AssignMissingIndexMapGroupsAsync(candidatePages, missingGroups, groupsByPage, reservations, cancellationToken).ConfigureAwait(false);
         }
 
         foreach ((long pageNumber, List<int> groups) in groupsByPage)
@@ -496,6 +617,7 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
         List<long> candidatePages,
         List<int> missingGroups,
         Dictionary<long, List<int>> groupsByPage,
+        ReservedPageRuns reservations,
         CancellationToken cancellationToken)
     {
         // The table map page can be full while another existing index-map page
@@ -547,6 +669,21 @@ internal sealed class DataPageInserter(JetFormat format, OwnedDataPages ownedPag
             }
         }
 
-        throw new InvalidDataException("The usage-map pages have no room for the index rows.");
+        int rowsPerPage = Math.Min(byte.MaxValue + 1, (format.PageSize - format.DataPage.RowsStart) / (format.UsageMapRowSize + 2));
+        while (nextGroup < missingGroups.Count)
+        {
+            byte[] page = new byte[format.PageSize];
+            page[0] = Constants.PageTypes.Data;
+            page[1] = 0x01;
+            Wu16(page, 2, format.PageSize - format.DataPage.RowsStart);
+            long pageNumber = await reservations.ReserveAsync(1, cancellationToken).ConfigureAwait(false);
+            await pager.WritePageAsync(pageNumber, page, cancellationToken).ConfigureAwait(false);
+            var groups = new List<int>();
+            groupsByPage.Add(pageNumber, groups);
+            for (int row = 0; row < rowsPerPage && nextGroup < missingGroups.Count; row++)
+            {
+                groups.Add(missingGroups[nextGroup++]);
+            }
+        }
     }
 }

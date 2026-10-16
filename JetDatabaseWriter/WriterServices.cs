@@ -5,6 +5,7 @@ using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Relationships;
@@ -60,8 +61,9 @@ internal sealed class WriterServices
             new CatalogReader(db.Format, db.TableDefs, catalog, this.CatalogRows, snapshotRows));
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db.Format, pager);
-        var longValueEncoder = new LongValueEncoder(db.Format, pager, this.PageAllocator, options);
-        this.OwnedMaps = new CatalogOwnedMapPolicy(db.Format, db.TableDefs, this.CatalogRows, db.Pages);
+        var longValueEncoder = new LongValueEncoder(db.Format, pager, this.PageAllocator, options, new LongValueUsageMapMaintainer(db.Format, pager, this.PageAllocator, db.TableDefs, this.CatalogRows));
+        this.OwnedMaps = new CatalogOwnedMapPolicy(db.Format, db.TableDefs, this.CatalogRows, db.Pages, pager, this.PageAllocator, this.TDefWriter);
+        pager.AddWriteObserver(this.OwnedMaps);
         var usageMaps = new UsageMapEditor(db.Format, pager, this.PageAllocator);
         var dataPages = new DataPageInserter(db.Format, db.OwnedPages, pager, this.PageAllocator, this.OwnedMaps, usageMaps);
         var tableRows = new TableRowStore(db.Format, db.OwnedPages, pager, options, longValueEncoder, new RowEncoder(db.Format), dataPages, tdefPageBuilder);
@@ -97,7 +99,7 @@ internal sealed class WriterServices
             },
             new JetDatabaseWriter.Indexes.Collation.JetTextCollation(db.Format.DefaultTextSortOrder));
 
-        this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots);
+        this.Indexes = new IndexMaintainer(db.Format, db.TableDefs, db.OwnedPages, pager, this.TDefWriter, this.PageAllocator, tableRows, dataPages, snapshots, catalogRows);
         var catalogWriter = new CatalogWriter(db.Format, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, longValueEncoder, this.CatalogRows, pager, snapshots);
         this.CatalogWriter = catalogWriter;
         this.CatalogArtifacts = new CatalogArtifactWriter(db.Format, pager, catalog, this.PageAllocator, tdefPageBuilder, dataPages, this.OwnedMaps, catalogWriter, constraints);
@@ -107,7 +109,7 @@ internal sealed class WriterServices
 
         var relationshipCatalog = new RelationshipCatalogStore(db.Format, db.TableDefs, db.OwnedPages, this.Indexes, this.CatalogRows, snapshots, catalog);
         var enforcer = new RelationshipEnforcer(db.Format, db.Pages, db.TableDefs, db.OwnedPages, catalog, tableRows, this.Indexes, relationshipCatalog, this.ComplexColumns, snapshots, constraints);
-        this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, new ForeignKeyMetadataEditor(db.Format, db.TableDefs, pager, this.PageAllocator), this.CatalogArtifacts, this.CatalogRows, relationshipCatalog, snapshots);
+        this.Relationships = new RelationshipManager(db.Format, db.TableDefs, pager, catalog, this.Indexes, new ForeignKeyMetadataEditor(db.Format, db.TableDefs, pager, this.PageAllocator, catalogRows), this.CatalogArtifacts, this.CatalogRows, relationshipCatalog, snapshots);
 
         this.Transactions = new TransactionLifecycle(db.Format, pager, options, byteRangeLock, catalog, dataPages, this.OwnedMaps, constraints);
         this.Data = new TableDataWriter(
@@ -137,7 +139,8 @@ internal sealed class WriterServices
             this.ComplexColumns,
             constraints,
             this.Relationships,
-            autoNumbers);
+            autoNumbers,
+            catalogRows);
         this.Schema = new TableSchemaEditor(
             db.Format,
             pager,

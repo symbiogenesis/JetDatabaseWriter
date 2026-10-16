@@ -27,6 +27,27 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
 {
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
+    [Fact]
+    public async Task Jet3IndexMap_AfterGrowthAndMerge_ListsOnlyLiveTreePages()
+    {
+        await using var stream = new MemoryStream();
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet3Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], this.ct);
+            await writer.InsertRowsAsync("T", Enumerable.Range(0, 4000).Select(static id => new object?[] { id }), this.ct);
+            Assert.Equal(3990, await writer.DeleteRowsAsync("T", RowCriteria.Where(ColumnPredicate.GreaterThanOrEqual("Id", 10)), this.ct));
+        }
+
+        stream.Position = 0;
+        await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
+        CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
+        (_, _, List<long> mappedPages) = await this.ReadSingleInlineIndexMapAsync(harness, table.TDefPage);
+        long root = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct));
+        HashSet<long> tree = await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct);
+        Assert.Equal(tree.Order(), mappedPages.Order());
+        Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -123,7 +144,6 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             }
         }
 
-        SortedSet<long>? retained = null;
         for (int i = 0; i <= 10; i++)
         {
             stream.Position = 0;
@@ -150,14 +170,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
             CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("Table1", this.ct))!;
             SortedSet<long> unreachable = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct);
-            if (retained is null)
-            {
-                Assert.NotEmpty(unreachable);
-                retained = unreachable;
-            }
-
-            Assert.Empty(unreachable.Except(retained));
-            Assert.Empty(retained.Except(unreachable));
+            Assert.Empty(unreachable);
         }
 
         stream.Position = 0;
@@ -176,33 +189,17 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
     public async Task IncrementalTreeMerge_ReclaimsUnreachablePagesAndRollsBack(DatabaseFormat format, bool rollback)
     {
         await using var stream = new MemoryStream();
-        var protectedPages = new SortedSet<long>();
         var replacedPages = new SortedSet<long>();
-        UsageMapPointer protectedPointer = default;
-        byte[]? protectedMapRow = null;
-        byte[]? protectedLeaf = null;
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
         {
             await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], this.ct);
-            if (format == DatabaseFormat.Jet3Mdb)
-            {
-                await using var initial = new MemoryStream(stream.ToArray());
-                await using AccessWriter initialHarness = await TestDatabase.OpenWriterAsync(initial, cancellationToken: this.ct);
-                CatalogEntry initialTable = (await initialHarness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
-                long initialRoot = Assert.Single(await IndexLeafChain.ReadRealIndexRootsAsync(initialHarness.Database, initialTable.TDefPage, this.ct));
-                (protectedPointer, protectedMapRow, List<long> mappedPages) = await this.ReadSingleInlineIndexMapAsync(initialHarness, initialTable.TDefPage);
-                Assert.Equal([initialRoot], mappedPages);
-                protectedLeaf = await initialHarness.Database.Pages.ReadPageCopyAsync(initialRoot, this.ct);
-                _ = protectedPages.Add(initialRoot);
-            }
-
             await writer.InsertRowsAsync("T", Enumerable.Range(0, 4000).Select(static id => new object?[] { id }), this.ct);
             byte[] before = stream.ToArray();
             await using (var grown = new MemoryStream(before))
             await using (AccessWriter grownHarness = await TestDatabase.OpenWriterAsync(grown, cancellationToken: this.ct))
             {
                 CatalogEntry grownTable = (await grownHarness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
-                Assert.Equal(protectedPages, await PageAudit.FindUnreachableIndexPagesAsync(grownHarness.Database, grownHarness.Services.PageAllocator, grownTable.TDefPage, this.ct));
+                Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(grownHarness.Database, grownHarness.Services.PageAllocator, grownTable.TDefPage, this.ct));
                 foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(grownHarness.Database, grownTable.TDefPage, this.ct))
                 {
                     replacedPages.UnionWith(await IndexLeafChain.ReadTreePagesAsync(grownHarness.Database, grownTable.TDefPage, root, this.ct));
@@ -225,20 +222,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
         stream.Position = 0;
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
         CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("T", this.ct))!;
-        Assert.Equal(protectedPages, await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
-        if (format == DatabaseFormat.Jet3Mdb)
-        {
-            (UsageMapPointer pointer, byte[] row, List<long> mappedPages) = await this.ReadSingleInlineIndexMapAsync(harness, table.TDefPage);
-            Assert.Equal(protectedPointer, pointer);
-            Assert.Equal(protectedMapRow, row);
-            Assert.Equal(protectedPages, mappedPages);
-            foreach (long protectedPage in protectedPages)
-            {
-                Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(protectedPage, this.ct));
-                Assert.Equal(protectedLeaf, await harness.Database.Pages.ReadPageCopyAsync(protectedPage, this.ct));
-            }
-        }
-
+        Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct));
         var currentPages = new SortedSet<long>();
         foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, table.TDefPage, this.ct))
         {
@@ -246,9 +230,15 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             currentPages.UnionWith(await IndexLeafChain.ReadTreePagesAsync(harness.Database, table.TDefPage, root, this.ct));
         }
 
+        if (format == DatabaseFormat.Jet3Mdb)
+        {
+            (_, _, List<long> mappedPages) = await this.ReadSingleInlineIndexMapAsync(harness, table.TDefPage);
+            Assert.Equal(currentPages, mappedPages);
+        }
+
         if (!rollback)
         {
-            long[] detachedPages = replacedPages.Except(currentPages).Except(protectedPages).ToArray();
+            long[] detachedPages = replacedPages.Except(currentPages).ToArray();
             Assert.NotEmpty(detachedPages);
             foreach (long detachedPage in detachedPages)
             {

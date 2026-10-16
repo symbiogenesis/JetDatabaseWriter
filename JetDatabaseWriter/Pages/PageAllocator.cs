@@ -48,10 +48,11 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
     /// </summary>
     /// <param name="pageCount">The number of pages to reserve.</param>
     /// <param name="cancellationToken">A token used to cancel the reservation.</param>
+    /// <param name="appendOnly">Whether precomputed page addresses require allocation at the end of the file.</param>
     /// <returns>The first page of the reserved run.</returns>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="pageCount"/> is not positive.</exception>
     /// <exception cref="IOException">Thrown when appended pages do not land contiguously.</exception>
-    internal async ValueTask<long> ReserveContiguousPagesAsync(int pageCount, CancellationToken cancellationToken)
+    internal async ValueTask<long> ReserveContiguousPagesAsync(int pageCount, CancellationToken cancellationToken, bool appendOnly = false)
     {
         if (pageCount <= 0)
         {
@@ -59,7 +60,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         }
 
         List<long> freePages = await this.EnumerateMappedFreePagesAsync(cancellationToken).ConfigureAwait(false);
-        long reusableStart = FindContiguousRun(freePages, pageCount);
+        long reusableStart = appendOnly ? -1 : FindContiguousRun(freePages, pageCount);
         if (reusableStart > 0)
         {
             await this.PreflightAllocationRangeAsync(reusableStart, pageCount, appending: false, cancellationToken).ConfigureAwait(false);

@@ -101,23 +101,26 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
     /// <returns>A task that completes when the usage-map page and any bitmap page the mark changed are written.</returns>
     internal async ValueTask MarkPageAsync(long usageMapPageNumber, IReadOnlyList<int> rowIndexes, long pageNumber, CancellationToken cancellationToken)
     {
+        var runs = new ReservedPageRuns(pageAllocator);
         byte[] usageMapPage = await pager.ReadPageAsync(usageMapPageNumber, cancellationToken).ConfigureAwait(false);
         try
         {
             bool changed = false;
             for (int i = 0; i < rowIndexes.Count; i++)
             {
-                changed |= await this.AddPageAsync(usageMapPage, rowIndexes[i], pageNumber, cancellationToken).ConfigureAwait(false);
+                changed |= await this.AddPageAsync(usageMapPage, rowIndexes[i], pageNumber, runs, cancellationToken).ConfigureAwait(false);
             }
 
             if (changed)
             {
+                runs.MarkLinked();
                 await pager.WritePageAsync(usageMapPageNumber, usageMapPage, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
         {
             PageBuffers.Return(usageMapPage);
+            await runs.ReleaseAsync().ConfigureAwait(false);
         }
     }
 
@@ -149,7 +152,18 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
             usageMapPage[rowStart] = Constants.UsageMap.ReferenceMapType;
         }
 
-        await this.WriteBitmapPagesAsync(usageMapPage, rowStart, rowSize, pageNumbers, cancellationToken).ConfigureAwait(false);
+        var runs = new ReservedPageRuns(pageAllocator);
+        try
+        {
+            await this.WriteBitmapPagesAsync(usageMapPage, rowStart, rowSize, pageNumbers, runs, cancellationToken).ConfigureAwait(false);
+
+            // A successfully returned row transfers its allocated storage to the caller.
+            runs.MarkLinked();
+        }
+        finally
+        {
+            await runs.ReleaseAsync().ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -159,9 +173,10 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
     /// <param name="usageMapPage">The usage-map page's bytes, changed in place.</param>
     /// <param name="rowIndex">The row's index on the page.</param>
     /// <param name="pageNumber">The page to mark.</param>
+    /// <param name="runs">Tracks newly allocated, unpublished bitmap pages.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns><see langword="true"/> when the row changed, so <paramref name="usageMapPage"/> must be written; a bitmap page the mark changed is written already.</returns>
-    private async ValueTask<bool> AddPageAsync(byte[] usageMapPage, int rowIndex, long pageNumber, CancellationToken cancellationToken)
+    private async ValueTask<bool> AddPageAsync(byte[] usageMapPage, int rowIndex, long pageNumber, ReservedPageRuns runs, CancellationToken cancellationToken)
     {
         if (!UsageMap.TryGetRowBound(usageMapPage, format.DataPage, format.PageSize, rowIndex, out RowBound rowBound))
         {
@@ -179,10 +194,10 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
                     return true;
                 }
 
-                return await this.PromoteAsync(usageMapPage, rowBound, pageNumber, cancellationToken).ConfigureAwait(false);
+                return await this.PromoteAsync(usageMapPage, rowBound, pageNumber, runs, cancellationToken).ConfigureAwait(false);
 
             case Constants.UsageMap.ReferenceMapType:
-                return await this.AddReferencePageAsync(usageMapPage, rowStart, rowSize, pageNumber, cancellationToken).ConfigureAwait(false);
+                return await this.AddReferencePageAsync(usageMapPage, rowStart, rowSize, pageNumber, runs, cancellationToken).ConfigureAwait(false);
 
             default:
                 return false;
@@ -197,9 +212,10 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
     /// <param name="usageMapPage">The usage-map page's bytes, changed in place.</param>
     /// <param name="rowBound">The row's bounds on the page.</param>
     /// <param name="pageNumber">The page being marked.</param>
+    /// <param name="runs">Tracks newly allocated, unpublished bitmap pages.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns><see langword="false"/> when the row is too short to hold a pointer and is left as it is.</returns>
-    private async ValueTask<bool> PromoteAsync(byte[] usageMapPage, RowBound rowBound, long pageNumber, CancellationToken cancellationToken)
+    private async ValueTask<bool> PromoteAsync(byte[] usageMapPage, RowBound rowBound, long pageNumber, ReservedPageRuns runs, CancellationToken cancellationToken)
     {
         if (UsageMap.ReferencePointerCount(rowBound.RowSize) == 0)
         {
@@ -212,7 +228,7 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
 
         Array.Clear(usageMapPage, rowBound.RowStart, rowBound.RowSize);
         usageMapPage[rowBound.RowStart] = Constants.UsageMap.ReferenceMapType;
-        await this.WriteBitmapPagesAsync(usageMapPage, rowBound.RowStart, rowBound.RowSize, pageNumbers, cancellationToken).ConfigureAwait(false);
+        await this.WriteBitmapPagesAsync(usageMapPage, rowBound.RowStart, rowBound.RowSize, pageNumbers, runs, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -225,9 +241,10 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
     /// <param name="rowStart">The row's offset on the page.</param>
     /// <param name="rowSize">The row's size in bytes.</param>
     /// <param name="pageNumber">The page to mark.</param>
+    /// <param name="runs">Tracks newly allocated, unpublished bitmap pages.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns><see langword="true"/> when the row's pointer changed.</returns>
-    private async ValueTask<bool> AddReferencePageAsync(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber, CancellationToken cancellationToken)
+    private async ValueTask<bool> AddReferencePageAsync(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber, ReservedPageRuns runs, CancellationToken cancellationToken)
     {
         long window = pageNumber / UsageMap.PagesPerReferenceMapPage(format.PageSize);
         if (pageNumber < 0 || window >= UsageMap.ReferencePointerCount(rowSize))
@@ -240,6 +257,7 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
         if (bitmapPageNumber == 0)
         {
             long allocated = await pageAllocator.AllocatePageAsync(this.CreateBitmapPage([pageNumber]), cancellationToken).ConfigureAwait(false);
+            runs.Add(allocated, 1);
             Wi32(usageMapPage, pointerOffset, checked((int)allocated));
             return true;
         }
@@ -280,9 +298,10 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
     /// <param name="rowStart">The row's offset on the page.</param>
     /// <param name="rowSize">The row's size in bytes.</param>
     /// <param name="pageNumbers">The pages the row lists.</param>
+    /// <param name="runs">Tracks newly allocated, unpublished bitmap pages.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the bitmap pages are written.</returns>
-    private async ValueTask WriteBitmapPagesAsync(byte[] usageMapPage, int rowStart, int rowSize, IReadOnlyList<long> pageNumbers, CancellationToken cancellationToken)
+    private async ValueTask WriteBitmapPagesAsync(byte[] usageMapPage, int rowStart, int rowSize, IReadOnlyList<long> pageNumbers, ReservedPageRuns runs, CancellationToken cancellationToken)
     {
         // 17 pointers of 32,736 pages each reach page 556,511, past the 2 GB
         // (524,288 pages of 4 KB) an Access file can hold.
@@ -308,6 +327,7 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
                 if (windows[window] is { } windowPages)
                 {
                     replacement = checked((int)await pageAllocator.AllocatePageAsync(this.CreateBitmapPage(windowPages), cancellationToken).ConfigureAwait(false));
+                    runs.Add(replacement, 1);
                 }
 
                 Wi32(usageMapPage, pointerOffset, replacement);

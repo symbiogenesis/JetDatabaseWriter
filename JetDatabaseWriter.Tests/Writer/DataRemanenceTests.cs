@@ -22,7 +22,7 @@ public sealed class DataRemanenceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task DeleteRows_MarksSlotDeletedWithoutScrubbingRowPayload(DatabaseFormat format)
+    public async Task DeleteRows_ReclaimsPayloadWithoutSecureEraseGuarantee(DatabaseFormat format)
     {
         byte[] deletedPayload = BuildPayload(64, 0x31);
         byte[] deletedMarker = MarkerOf(deletedPayload);
@@ -55,8 +55,7 @@ public sealed class DataRemanenceTests
         RowSnapshot deletedSlot = ReadRowSnapshot(afterDelete, format, originalSlot.PageNumber, originalSlot.RowIndex);
 
         Assert.True(deletedSlot.IsDeleted);
-        Assert.Equal(originalSlot.Start, deletedSlot.Start);
-        Assert.Equal(originalSlot.Bytes, deletedSlot.Bytes);
+        Assert.Empty(deletedSlot.Bytes);
         Assert.True(ContainsSequence(afterDelete, deletedMarker));
     }
 
@@ -64,7 +63,7 @@ public sealed class DataRemanenceTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task UpdateRows_PreservesOldRowPayloadInDeletedSlot(DatabaseFormat format)
+    public async Task UpdateRows_ReusesPayloadSpaceWithDistinctSlotIdentity(DatabaseFormat format)
     {
         byte[] originalPayload = BuildPayload(64, 0x41);
         byte[] replacementPayload = BuildPayload(64, 0x52);
@@ -101,17 +100,16 @@ public sealed class DataRemanenceTests
         RowSnapshot replacementSlot = AssertSingleLiveRowContaining(afterUpdate, format, replacementMarker);
 
         Assert.True(oldSlot.IsDeleted);
-        Assert.Equal(originalSlot.Start, oldSlot.Start);
-        Assert.Equal(originalSlot.Bytes, oldSlot.Bytes);
+        Assert.Empty(oldSlot.Bytes);
         Assert.NotEqual((originalSlot.PageNumber, originalSlot.RowIndex), (replacementSlot.PageNumber, replacementSlot.RowIndex));
-        Assert.True(ContainsSequence(afterUpdate, originalMarker));
+        Assert.Equal(originalSlot.PageNumber, replacementSlot.PageNumber);
     }
 
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task UpdateAndDelete_LongOleValues_RetainOldLvalPages(DatabaseFormat format)
+    public async Task UpdateAndDelete_LongOleValues_ReclaimLvalPages(DatabaseFormat format)
     {
         byte[] originalPayload = BuildPayload(9000, 0x61);
         byte[] replacementPayload = BuildPayload(9000, 0x72);
@@ -154,8 +152,7 @@ public sealed class DataRemanenceTests
 
         byte[] afterUpdate = stream.ToArray();
         int lvalPagesAfterUpdate = CountLvalPages(afterUpdate, format);
-        Assert.Equal(lvalPagesAfterInsert * 2, lvalPagesAfterUpdate);
-        Assert.True(ContainsSequence(afterUpdate, originalMarker));
+        Assert.Equal(lvalPagesAfterInsert, lvalPagesAfterUpdate);
         Assert.True(ContainsSequence(afterUpdate, replacementMarker));
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
@@ -181,9 +178,7 @@ public sealed class DataRemanenceTests
         }
 
         byte[] afterDelete = stream.ToArray();
-        Assert.Equal(lvalPagesAfterUpdate, CountLvalPages(afterDelete, format));
-        Assert.True(ContainsSequence(afterDelete, originalMarker));
-        Assert.True(ContainsSequence(afterDelete, replacementMarker));
+        Assert.Equal(0, CountLvalPages(afterDelete, format));
 
         await using (AccessReader reader = await OpenReaderAsync(stream))
         {

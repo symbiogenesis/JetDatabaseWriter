@@ -157,7 +157,7 @@ internal sealed class CatalogWriter(
         if (!string.IsNullOrEmpty(artifact.Database))
         {
             object databaseValue = artifact.EncodeDatabaseAsMemoLval
-                ? await this.EncodeLinkedMemoFieldAsync(artifact.Database, cancellationToken).ConfigureAwait(false)
+                ? await this.EncodeLinkedMemoFieldAsync(artifact.Database, msys.FindColumn("Database")!.ColNum, cancellationToken).ConfigureAwait(false)
                 : artifact.Database;
             msys.SetValueByName(values, "Database", databaseValue);
         }
@@ -469,9 +469,9 @@ internal sealed class CatalogWriter(
         return matches[0];
     }
 
-    private async ValueTask<object> EncodeLinkedMemoFieldAsync(string value, CancellationToken cancellationToken)
+    private async ValueTask<object> EncodeLinkedMemoFieldAsync(string value, int columnNumber, CancellationToken cancellationToken)
     {
-        object? encoded = await longValueEncoder.ForceEncodeMemoAsLvalAsync(value, compress: false, cancellationToken).ConfigureAwait(false);
+        object? encoded = await longValueEncoder.ForceEncodeMemoAsLvalAsync(value, compress: false, tableTdefPage: 2, columnNumber, cancellationToken).ConfigureAwait(false);
         return encoded ?? value;
     }
 

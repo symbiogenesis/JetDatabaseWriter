@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -38,6 +39,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="tableRows">Writes system-table rows ahead of their index splice.</param>
 /// <param name="dataPages">Owns usage-map rows and empty data pages.</param>
 /// <param name="snapshots">Reads decoded table rows for full index rebuilds.</param>
+/// <param name="catalogRows">Discovers surviving table definitions when proving usage-map ownership.</param>
 internal sealed class IndexMaintainer(
     JetFormat format,
     TableDefReader tableDefs,
@@ -47,7 +49,8 @@ internal sealed class IndexMaintainer(
     PageAllocator pageAllocator,
     TableRowStore tableRows,
     DataPageInserter dataPages,
-    TableSnapshotReader snapshots)
+    TableSnapshotReader snapshots,
+    CatalogRowReader catalogRows)
 {
     private readonly IndexBTreeEditor btreeEditor = new(format, pager, tdefWriter, pageAllocator);
 
@@ -529,9 +532,8 @@ internal sealed class IndexMaintainer(
     /// The new root page is patched into the real-index <c>first_dp</c> field on
     /// the TDEF. The pages of the tree it replaces then go back to the global
     /// usage map, except on system tables, complex flat tables and tables with
-    /// long or complex storage columns, and on Jet3 for an Access-authored
-    /// index, whose <c>used_pages</c> row still lists them; those stay
-    /// unreferenced until Access reclaims them on Compact &amp; Repair.
+    /// long or complex storage columns. Shared or uncertain Jet3 map storage
+    /// is retained, and its index gets a private map row before refreshing.
     /// </para>
     /// <para>
     /// All key column types accepted by <see cref="IndexHelpers.ResolveIndexes"/> have
@@ -623,9 +625,9 @@ internal sealed class IndexMaintainer(
         // The trees this rebuild replaces go back to the global usage map
         // after the TDEF write. System tables, complex flat tables and tables
         // with long or complex storage columns stay conservative and keep
-        // them. Jet4 / ACE find each old tree through its index usage-map row;
-        // Jet3 retains native map membership and walks each current tree from
-        // its first_dp, collecting only pages those preserved maps do not name.
+        // them. Jet4 / ACE find each old tree through its index usage-map row.
+        // Jet3 also walks current roots and proves ownership before reclaiming
+        // original map members that a previous writer left outside the tree.
         bool freeReplacedTrees = !HasLongOrComplexStorageColumns(tableDef)
             && !IsGeneratedComplexFlatTableName(tableName)
             && !tableName.StartsWith("MSys", StringComparison.OrdinalIgnoreCase);
@@ -743,20 +745,7 @@ internal sealed class IndexMaintainer(
         }
 
         long[][] mapPageGroups = rebuiltIndexPageGroups;
-        if (jet3)
-        {
-            // Imported Jet3 map rows can be shared and remain unchanged. A new
-            // descriptor with an all-zero pointer needs its own initialized row;
-            // DAO otherwise refuses even reads of the rebuilt table's indexes.
-            mapPageGroups = CreateEmptyPageGroups(numRealIdx);
-            for (int realIdxNum = 0; realIdxNum < numRealIdx; realIdxNum++)
-            {
-                if (indexPointers[realIdxNum] == default)
-                {
-                    mapPageGroups[realIdxNum] = rebuiltIndexPageGroups[realIdxNum];
-                }
-            }
-        }
+        await this.DetachAliasedIndexMapsAsync(tdefPage, realIdxByNum, indexPointers, cancellationToken).ConfigureAwait(false);
 
         if (HasAnyIndexPageGroup(mapPageGroups))
         {
@@ -1014,11 +1003,9 @@ internal sealed class IndexMaintainer(
 
     /// <summary>
     /// Collects every page of the current tree of each real index a Jet3 bulk
-    /// rebuild is about to replace, by walking it from its <c>first_dp</c>:
-    /// Access-authored usage-map rows remain unchanged: every page they name
-    /// stays allocated. Subsequent writer-built trees are collected even when
-    /// the descriptor retains that native map pointer. An unreadable map or
-    /// tree prevents reclamation rather than guessing page ownership.
+    /// rebuild is about to replace, and the original members of exclusively
+    /// owned map rows. Shared map members remain protected. An unreadable map
+    /// or tree prevents reclamation rather than guessing page ownership.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tdefBuffer">The logical TDEF bytes, before the rebuild patches them.</param>
@@ -1080,16 +1067,30 @@ internal sealed class IndexMaintainer(
             }
 
             long[] treePages = await this.TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false) ?? [];
-            var reclaimable = new List<long>();
-            foreach (long pageNumber in treePages)
+            var reclaimable = new HashSet<long>(treePages);
+            if (pointers[realIdxNum] != default)
             {
-                if (!mappedPages.Contains(pageNumber))
+                UsageMapOwnership.Proof proof;
+                try
                 {
-                    reclaimable.Add(pageNumber);
+                    proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, entry.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
+                }
+                catch (JetCorruptDataException)
+                {
+                    return CreateEmptyPageGroups(numRealIdx);
+                }
+
+                if (proof.IsExclusiveRow)
+                {
+                    reclaimable.UnionWith(mappedGroups[realIdxNum]);
+                }
+                else
+                {
+                    reclaimable.ExceptWith(mappedPages);
                 }
             }
 
-            groups[realIdxNum] = reclaimable.ToArray();
+            groups[realIdxNum] = [.. reclaimable];
         }
 
         return groups;
@@ -1138,6 +1139,21 @@ internal sealed class IndexMaintainer(
             }
 
             newPages.UnionWith(reachable);
+            if (format.IsJet3 && UsageMap.TryReadPointer(current.Buffer, slot.FirstDpOffset - 4, out UsageMapPointer pointer) && pointer != default)
+            {
+                UsageMapOwnership.Proof proof;
+                try
+                {
+                    proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, slot.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
+                }
+                catch (JetCorruptDataException)
+                {
+                    return;
+                }
+
+                newPages.UnionWith(proof.Pages);
+                newPages.UnionWith(proof.OtherMappedPages);
+            }
         }
 
         var deallocatedPages = new HashSet<long>();
@@ -1265,16 +1281,17 @@ internal sealed class IndexMaintainer(
     /// <summary>
     /// Writes the index usage-map rows collected by
     /// <see cref="TryCollectIncrementalIndexPageGroupsAsync"/>, as REFERENCE
-    /// rows where a tree spans more than one INLINE window. Does nothing for
-    /// Jet3, whose native maps are preserved, or an empty array.
+    /// rows where a tree spans more than one INLINE window. Aliased
+    /// storage is detached before the refreshed map is written.
     /// </summary>
+    /// <param name="tdefPage">The owning table definition.</param>
     /// <param name="tdefBuffer">The logical TDEF bytes, which name the table's usage-map page.</param>
     /// <param name="slots">The maintained real-index descriptors.</param>
     /// <param name="indexPageGroups">The pages of each real index's tree, by real-index number.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask WriteIncrementalIndexUsageMapsAsync(byte[] tdefBuffer, List<(int RealIdxNum, RealIdxEntry Entry)> slots, long[][] indexPageGroups, CancellationToken cancellationToken)
+    private async ValueTask WriteIncrementalIndexUsageMapsAsync(long tdefPage, byte[] tdefBuffer, List<(int RealIdxNum, RealIdxEntry Entry)> slots, long[][] indexPageGroups, CancellationToken cancellationToken)
     {
-        if (format.IsJet3 || indexPageGroups.Length == 0)
+        if (indexPageGroups.Length == 0)
         {
             return;
         }
@@ -1285,6 +1302,13 @@ internal sealed class IndexMaintainer(
             _ = UsageMap.TryReadPointer(tdefBuffer, entry.FirstDpOffset - 4, out indexPointers[realIdxNum]);
         }
 
+        var entriesByNumber = new Dictionary<int, RealIdxEntry>();
+        foreach ((int realIdxNum, RealIdxEntry entry) in slots)
+        {
+            entriesByNumber.Add(realIdxNum, entry);
+        }
+
+        await this.DetachAliasedIndexMapsAsync(tdefPage, entriesByNumber, indexPointers, cancellationToken).ConfigureAwait(false);
         indexPointers = await dataPages.UpdateTableIndexUsageMapRowsAsync(
             this.ReadTableUsageMapPage(tdefBuffer), indexPointers, indexPageGroups, cancellationToken).ConfigureAwait(false);
         foreach ((int realIdxNum, RealIdxEntry entry) in slots)
@@ -1293,6 +1317,37 @@ internal sealed class IndexMaintainer(
             {
                 UsageMapPointer pointer = indexPointers[realIdxNum];
                 WriteIndexUsageMapPointer(tdefBuffer, entry.FirstDpOffset - 4, pointer.RowIndex, pointer.PageNumber);
+            }
+        }
+    }
+
+    /// <summary>Gives a maintained index a private map row when another definition or bitmap aliases its storage.</summary>
+    /// <param name="tdefPage">The owning table definition.</param>
+    /// <param name="entries">The maintained index descriptors.</param>
+    /// <param name="pointers">Map pointers to retain or replace with a fresh row.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    private async ValueTask DetachAliasedIndexMapsAsync(long tdefPage, Dictionary<int, RealIdxEntry> entries, UsageMapPointer[] pointers, CancellationToken cancellationToken)
+    {
+        foreach ((int realIdxNum, RealIdxEntry entry) in entries)
+        {
+            if (pointers[realIdxNum] == default)
+            {
+                continue;
+            }
+
+            try
+            {
+                UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, entry.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
+                if (!proof.IsExclusiveRow || !proof.HasExclusiveBitmapPages)
+                {
+                    pointers[realIdxNum] = default;
+                }
+            }
+            catch (JetCorruptDataException)
+            {
+                // Rebuild privately when unrelated metadata prevents a proof;
+                // the reclamation path retains every uncertain original page.
+                pointers[realIdxNum] = default;
             }
         }
     }
@@ -1315,8 +1370,8 @@ internal sealed class IndexMaintainer(
             throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"The replacement table at page {tdefPage} has unreadable index definitions.", new JetErrorInfo { PageNumber = tdefPage });
         }
 
-        // Jet3 rebuilds retain existing map membership. Current trees can
-        // outgrow those maps, whose original leaves must retain the owner too.
+        // Older writer output can retain original map members outside the
+        // current tree; schema rewrites must collect those pages as well.
         var pages = new SortedSet<long>();
         for (int realIdxNum = 0; realIdxNum < preamble.NumRealIdx; realIdxNum++)
         {
@@ -1488,7 +1543,7 @@ internal sealed class IndexMaintainer(
     /// had not yet linked through the TDEF is given back to the global usage
     /// map before it returns, and a tree it had already linked (or replaced)
     /// is retained if the call bails. Successful maintenance releases replaced
-    /// pages after protecting current roots and preserved native usage maps.
+    /// pages after protecting current roots and surviving usage maps.
     /// <para>
     /// Two flavours of fast path are attempted per real-idx:
     /// </para>
@@ -2342,12 +2397,9 @@ internal sealed class IndexMaintainer(
         // The usage-map rows and the TDEF write below link every tree
         // rebuilt since the last TDEF write.
         runs.MarkLinked();
-        await this.WriteIncrementalIndexUsageMapsAsync(metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
+        await this.WriteIncrementalIndexUsageMapsAsync(tdefPage, metadata.Buffer, slots, indexPageGroups, cancellationToken).ConfigureAwait(false);
 
-        if (!format.IsJet3)
-        {
-            metadata.Dirty = true;
-        }
+        metadata.Dirty = true;
 
         if (metadata.Dirty)
         {

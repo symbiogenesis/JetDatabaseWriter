@@ -48,8 +48,8 @@ public sealed class OwnedUsageMapGrowthTests
     /// <summary>
     /// 700 rows that each fill a data page take the table past page 512. Its
     /// owned-pages row lists every one of its data pages, as REFERENCE bitmap
-    /// pages, where the INLINE row lost the pages outside its window, and so
-    /// does its free-space row; the reader takes the map instead of scanning
+    /// pages, where the INLINE row lost the pages outside its window. The
+    /// free-space map retains the final candidate; the reader takes the owned map instead of scanning
     /// the whole file.
     /// </summary>
     /// <param name="format">The database format.</param>
@@ -88,7 +88,7 @@ public sealed class OwnedUsageMapGrowthTests
         await AssertBitmapPagesAsync(db, owned);
 
         UsageMapRow free = await ReadTableMapRowAsync(db, tdefPage, freeSpace: true);
-        Assert.Equal(dataPages.Order(), free.Pages.Order());
+        Assert.Equal(dataPages.Max(), Assert.Single(free.Pages));
     }
 
     /// <summary>
@@ -358,10 +358,8 @@ public sealed class OwnedUsageMapGrowthTests
     }
 
     /// <summary>
-    /// Checks that <see cref="WideTable"/>'s owned-pages and free-space rows are
-    /// REFERENCE rows that list each of its <see cref="WideRowCount"/> data
-    /// pages, and that <see cref="PageAudit.FindAllocatedPagesAsync"/> counts
-    /// their bitmap pages as allocated; returns those bitmap pages.
+    /// Checks the complete REFERENCE owned map and the final free-space candidate,
+    /// returning the allocated bitmap pages.
     /// </summary>
     /// <param name="stream">The database.</param>
     private static async Task<SortedSet<long>> ReadWideTableBitmapPagesAsync(MemoryStream stream)
@@ -373,7 +371,10 @@ public sealed class OwnedUsageMapGrowthTests
         HashSet<long> dataPages = await ReadDataPagesOfAsync(db, entry.TDefPage);
         Assert.Equal(WideRowCount, dataPages.Count);
 
-        UsageMapRow[] rows = [await ReadTableMapRowAsync(db, entry.TDefPage, freeSpace: false), await ReadTableMapRowAsync(db, entry.TDefPage, freeSpace: true)];
+        UsageMapRow owned = await ReadTableMapRowAsync(db, entry.TDefPage, freeSpace: false);
+        UsageMapRow free = await ReadTableMapRowAsync(db, entry.TDefPage, freeSpace: true);
+        Assert.Equal(dataPages.Max(), Assert.Single(free.Pages));
+        UsageMapRow[] rows = [owned];
         var bitmapPages = new SortedSet<long>();
         foreach (UsageMapRow row in rows)
         {

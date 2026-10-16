@@ -17,3 +17,22 @@ The table changes descriptor byte 7 from zero to one for its 17 new columns,
 and changes the two physical index flags from `80`/`81` to `00`/`01`.
 Complete byte differences were reviewed against the native descriptor, header
 and index tests before updating these specimens and their hashes.
+
+The column usage-map correction leaves all three bootstrap specimens unchanged.
+The table specimens add native ten-byte LVAL records for column numbers 3, 4
+and 6 at offsets `0x250` (Jet3), `0x37A` (Jet4) and `0x57F` (ACE), followed by
+the preserved `FFFF` sentinel and eight zero bytes. The ACE Files specimen adds
+records for columns 1 and 6 at `0x313`; Tags has no LVAL records. Definition
+lengths grow by 30 bytes for the tables and 20 for Files; Jet4/ACE free-space
+words decrease accordingly. All other changes are physical map/index pointers:
+uniform shifts of +1 (Jet3), +3 (Jet4), +6 (ACE table) and +10 (Files/Tags).
+These account for native column-map allocations and private copies protecting
+shared system maps. Column descriptors, row ordinals and index flags are intact.
+
+Complete byte differences and allocation inventories were independently
+reviewed before updating the five binaries and hashes. Native authority comes
+from DAO3.6/DAO120-authored column trailers and the mutation, constraint and
+compact/reopen checks in `LongValueUsageMapTests`, `Jet3SystemUsageMapDaoTests`
+and the native free-space tests. The generated specimens remain writer byte
+contracts rather than Microsoft-authored fixtures; see
+[usage-map maintenance](../../../docs/design/usage-map-maintenance.md).

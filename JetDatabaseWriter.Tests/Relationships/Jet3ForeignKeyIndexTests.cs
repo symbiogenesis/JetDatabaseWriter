@@ -252,9 +252,8 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     /// A table with a foreign-key entry takes the full index rebuild on every
     /// insert, update and delete (bail C1c), and each rebuild places its
     /// multi-page trees on new pages. Replaced pages must return to the global
-    /// usage map, except pages named by preserved Jet3 index maps. Those map
-    /// rows and their pages must remain intact; later rebuilds must not leave
-    /// any additional unreachable pages allocated.
+    /// usage map. The live index maps follow every rebuilt tree, and no
+    /// replaced page remains allocated outside a live tree.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">The write mode.</param>
@@ -285,14 +284,6 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         }
 
         long childPage = await this.GetTDefPageAsync(stream, Child);
-        var preservedMapPages = new HashSet<long>();
-        Dictionary<UsageMapPointer, byte[]> preservedMapRows = jet3
-            ? await this.ReadIndexMapRowsAsync(stream, Child, preservedMapPages)
-            : [];
-        if (jet3)
-        {
-            Assert.NotEmpty(preservedMapPages);
-        }
 
         SortedSet<long> unreachableBefore;
         await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct))
@@ -327,27 +318,16 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
             }
         }
 
-        if (jet3)
-        {
-            var mappedPagesAfter = new HashSet<long>();
-            Dictionary<UsageMapPointer, byte[]> mapRowsAfter = await this.ReadIndexMapRowsAsync(stream, Child, mappedPagesAfter);
-            Assert.Equal(preservedMapRows.Count, mapRowsAfter.Count);
-            foreach ((UsageMapPointer pointer, byte[] row) in preservedMapRows)
-            {
-                Assert.Equal(row, mapRowsAfter[pointer]);
-            }
-
-            Assert.True(preservedMapPages.SetEquals(mappedPagesAfter));
-        }
-
         await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct))
         {
             SortedSet<long> unreachableAfter = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, childPage, this.ct);
-            long[] leaked = [.. unreachableAfter.Except(unreachableBefore).Except(preservedMapPages)];
-            Assert.True(leaked.Length == 0, $"{leaked.Length} replaced index pages of the child stayed allocated: {string.Join(", ", leaked)}.");
-            foreach (long mappedPage in preservedMapPages)
+            if (jet3)
             {
-                Assert.False(await harness.Services.PageAllocator.IsPageFreeAsync(mappedPage, this.ct));
+                Assert.Empty(unreachableAfter);
+            }
+            else
+            {
+                Assert.Empty(unreachableAfter.Except(unreachableBefore));
             }
 
             foreach (long root in await IndexLeafChain.ReadRealIndexRootsAsync(harness.Database, childPage, this.ct))
@@ -669,7 +649,7 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     [InlineData(WriteMode.Direct)]
     [InlineData(WriteMode.AutoCommit)]
     [InlineData(WriteMode.ExplicitCommit)]
-    public async Task CreateRelationship_Jet3_FullMapPage_RefusesWithoutChangingBytes(WriteMode mode)
+    public async Task CreateRelationship_Jet3_FullMapPage_AllocatesAdditionalStorage(WriteMode mode)
     {
         await using MemoryStream stream = await this.CopyFixtureAsync();
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -700,20 +680,25 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         Wu16(map, 2, 8);
         stream.Position = (long)mapPage * Constants.PageSizes.Jet3;
         await stream.WriteAsync(map, this.ct);
-        byte[] before = stream.ToArray();
         await using (AccessWriter writer = await OpenWriterAsync(stream, mode))
         {
             await using JetTransaction? transaction = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
-            _ = await Assert.ThrowsAsync<InvalidDataException>(async () =>
-                await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct));
+            await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, Parent, ParentKey, Child, "ParentId"), this.ct);
             if (transaction is not null)
             {
-                Assert.Equal(0, transaction.JournaledPageCount);
                 await transaction.CommitAsync(this.ct);
             }
+
+            await this.AssertIndexesCoverRowsAsync(writer, Child);
         }
 
-        Assert.Equal(before, stream.ToArray());
+        TDefIndexSection after = await this.ReadIndexSectionAsync(stream, Child);
+        int physical = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).Index.RealIdxPhysOffset(after.RealIdxDescStart, child.NumRealIdx);
+        Assert.True(UsageMap.TryReadPointer(after.Td, physical + 30, out UsageMapPointer pointer));
+        Assert.NotEqual(mapPage, pointer.PageNumber);
+        Assert.Equal(0, pointer.RowIndex);
+        await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, ReaderOptions, cancellationToken: this.ct);
+        Assert.Equal(map, await reader.ReadPageCopyAsync(mapPage, this.ct));
     }
 
     [Theory]

@@ -322,9 +322,10 @@ number: `used_pages`, the table's data pages, and `free_pages`, those with room
 for a row. Each real index's descriptor names a third (`used_pages`, its
 tree's pages). The rows sit on a usage-map page, a data page whose rows are
 maps. New writer-created Jet4 and ACE tables have one, with the owned-pages
-and free-space rows at rows 0 and 1 and real index `n` at row `n + 2`, 69
-bytes each (`CatalogArtifactWriter`, `DataPageInserter`); the writer keeps
-no Jet3 table or index usage maps.
+and free-space rows at rows 0 and 1 and initial real index `n` at row `n + 2`,
+69 bytes each (`CatalogArtifactWriter`, `DataPageInserter`). Jet3 uses native
+133-byte rows. Additional index rows can spill onto new map pages. Column LVAL
+maps have their own pointers in the native TDEF trailer.
 
 Existing Access-authored maps can use larger rows and different index row
 numbers. Index maintenance follows each descriptor's page and row pointer,
@@ -376,14 +377,15 @@ table, although indexed lookup and the reader's ownership-scan fallback find
 it. The policy permits catalogued local system tables and the fixed catalog
 root; map edits follow the stored pointers and participate in rollback.
 
-After insertion, the writer clears the free-space bit when the page cannot
-fit even one nonempty row or has exhausted its 255 row slots. It preserves
-the owned-pages bit and edits existing INLINE or REFERENCE maps without
-allocating bitmap pages. The map writes participate in transaction rollback.
-A page that merely rejects a particular large row stays marked: it may still
-fit a smaller row. Access's exact free-space threshold and deletion/reuse
-behavior need further evidence (binIdxTestV2010's free-space row lists only
-the last of its table's four pages).
+DAO retains the free-space candidate until an attempted row fails to fit;
+the writer follows that rule and also clears a page with no remaining slot
+or room for a nonempty row. Deletion packs the removed payload without
+renumbering surviving slots, restores the free hint and allows reuse after
+reopening. This includes overflow headers, intermediate pointers and moved
+payloads, while retaining unrelated moved targets. Empty deleted slots can
+point at the page end. Insertion appends a slot and retains the 255-slot cap.
+The map and payload writes participate in transaction rollback. Native Jet3,
+Jet4 and ACE checks are described in [usage-map maintenance](usage-map-maintenance.md).
 
 ### What Access writes
 
@@ -402,7 +404,7 @@ The owned-pages rows of the Access-authored fixtures, read raw with PowerShell
   owner field names that table. None of the 7,953 LVAL pages in those files is
   listed: Access keeps a table's LVAL pages out of its owned-pages map, and so
   does the writer. Access lists them in each long-value column's own usage maps
-  (calculated-columns-format-notes.md), which the writer does not keep.
+  (calculated-columns-format-notes.md), which the writer maintains separately.
 - INLINE rows run to the next row, and the bitmap takes the whole row: 1,507 of
   the 1,525 Jet4 and ACE ones are 69 bytes, the rest 85 to 381; the Jet3 ones
   are 133 bytes or more (a 128-byte bitmap, 1,024 pages).
@@ -410,9 +412,9 @@ The owned-pages rows of the Access-authored fixtures, read raw with PowerShell
 `OwnedUsageMapGrowthTests.Dao_RecordCount_SeesRowsOnPagesPastInlineWindow`
 checks DAO read and compact of a writer-created ACE table whose owned-pages
 map grows to REFERENCE. Successful native runs are recorded in the
-[validation matrix](writer-disk-format-validation-matrix.md). Other map types,
-Jet3 maintenance, free-space thresholds and column-owned LVAL maps remain
-under I3 in the TODO.
+[validation matrix](writer-disk-format-validation-matrix.md). Native system,
+index, free-space and column LVAL checks and the shared-storage policy are
+described in [usage-map maintenance](usage-map-maintenance.md).
 
 Writer snapshots require complete row traversal and use a write-back decode
 plan. The declared directory must fit its page, and every live slot must start

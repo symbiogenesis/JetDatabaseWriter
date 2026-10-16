@@ -10,6 +10,7 @@ using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Helpers;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -381,6 +382,8 @@ internal sealed class CatalogArtifactWriter(
                 await pager.WritePageAsync(tdefPageNumber + pageIndex, tdefPages[pageIndex], cancellationToken).ConfigureAwait(false);
             }
         }
+
+        await LongValueUsageMapMaintainer.InitializeAsync(format, pager, pageAllocator, tdefPageNumber, cancellationToken).ConfigureAwait(false);
 
         // A schema rewrite hands over the original table's properties projected
         // onto the rebuilt columns; a new table's come from its column definitions.
