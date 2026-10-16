@@ -257,10 +257,8 @@ internal static class Constants
         public const int TdefPageMask = 0x00FF_FFFF;
 
         /// <summary>
-        /// Fallback owner for the incomplete minimal Jet3 bootstrap, which has
-        /// no native permissions table. Native catalog mutations read the
-        /// database's own owner and inherit its container permissions; this
-        /// fixed Jet4/ACE fixture token must not be used to synthesize grants.
+        /// Known owner token in the fixed Jet4 test header. Catalog mutation
+        /// reads the database owner and never synthesizes grants from this token.
         /// </summary>
         public static readonly byte[] DefaultOwnerBlob = [0x71, 0x10];
     }

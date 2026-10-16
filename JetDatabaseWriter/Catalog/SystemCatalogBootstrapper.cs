@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages.Paging;
@@ -40,11 +39,6 @@ internal sealed class SystemCatalogBootstrapper(
     /// <param name="cancellationToken">Cancels creation within the caller's transaction.</param>
     internal async ValueTask CreateCoreSystemTablesAsync(long coreSystemTableStartPage, CancellationToken cancellationToken)
     {
-        if (!this.format.SupportsCoreCatalogTables)
-        {
-            return;
-        }
-
         const uint systemTableFlags = Constants.SystemObjects.SystemTableMask & Constants.SystemObjects.SystemObjectFlag;
         var plan = new CatalogArtifactPlan(
             [
@@ -54,7 +48,7 @@ internal sealed class SystemCatalogBootstrapper(
                         new ColumnDefinition("ObjectId", typeof(int)),
                         new ColumnDefinition("SID", typeof(byte[]), maxLength: 255) { DescriptorFlagsOverride = 0x32 },
                         new ColumnDefinition("ACM", typeof(int)),
-                        new ColumnDefinition("FInheritable", typeof(bool)),
+                        new ColumnDefinition("FInheritable", typeof(bool)) { DescriptorSizeOverride = this.format.IsJet3 ? 1 : null },
                     ],
                     [new IndexDefinition("ObjectId", "ObjectId") { IsRequired = true }],
                     systemTableFlags,
@@ -70,7 +64,7 @@ internal sealed class SystemCatalogBootstrapper(
                         new ColumnDefinition("Name2", typeof(string), maxLength: 255),
                         new ColumnDefinition("Expression", typeof(string)),
                         new ColumnDefinition("Flag", typeof(short)),
-                        new ColumnDefinition("LvExtra", typeof(int)),
+                        .. this.format.IsJet3 ? Array.Empty<ColumnDefinition>() : [new ColumnDefinition("LvExtra", typeof(int))],
                     ],
                     [new IndexDefinition("ObjectIdAttribute", ["ObjectId", "Attribute", "Order"]) { IsPrimaryKey = true }],
                     systemTableFlags,
@@ -100,46 +94,48 @@ internal sealed class SystemCatalogBootstrapper(
             []);
 
         CatalogObjectArtifact[] objects = BuildCoreCatalogObjectArtifacts();
-        byte[]? header = null;
-        if (this.format.InheritsCatalogPermissions)
+        byte[] header;
+        byte[] borrowed = await this.pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
+        try
         {
-            byte[] borrowed = await this.pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                header = borrowed.AsSpan(0, this.format.PageSize).ToArray();
-            }
-            finally
-            {
-                PageBuffers.Return(borrowed);
-            }
-
-            objects = objects.Select(artifact => artifact with
-            {
-                Owner = Jet4SecuritySid.Encode(this.format, header, artifact.ObjectName == "MSysDb" ? [0x03, 0x01] : [0x02, 0x03]),
-            }).ToArray();
+            header = borrowed.AsSpan(0, this.format.PageSize).ToArray();
+        }
+        finally
+        {
+            PageBuffers.Return(borrowed);
         }
 
-        if (header is not null)
+        objects = objects.Select(artifact => artifact with
         {
-            _ = await catalogArtifacts.ExecutePlanAsync(new CatalogArtifactPlan([], objects), cancellationToken).ConfigureAwait(false);
-            byte[] systemOwner = Jet4SecuritySid.Encode(this.format, header, [0x02, 0x03]);
-            plan = plan with { TableArtifacts = plan.TableArtifacts.Select(table => table with { Owner = systemOwner }).ToArray() };
-        }
-        else
+            Owner = this.EncodeIdentity(header, artifact.ObjectName == "MSysDb" ? [0x03, 0x01] : [0x02, 0x03]),
+        }).ToArray();
+        _ = await catalogArtifacts.ExecutePlanAsync(new CatalogArtifactPlan([], objects), cancellationToken).ConfigureAwait(false);
+        byte[] systemOwner = this.EncodeIdentity(header, [0x02, 0x03]);
+        plan = plan with
         {
-            plan = plan with { CatalogObjects = objects };
-        }
+            TableArtifacts = plan.TableArtifacts.Select(table => table with
+            {
+                Owner = systemOwner,
+                Columns = this.format.IsJet3
+                    ? table.Columns.Select(column => column with
+                    {
+                        DescriptorFlagsOverride = column.DescriptorFlagsOverride
+                            ?? (column.ClrType == typeof(string) || column.ClrType == typeof(byte[]) ? (byte)0x12 : (byte)0x13),
+                    }).ToArray()
+                    : table.Columns,
+            }).ToArray(),
+        };
 
         long[] tablePages = await catalogArtifacts.ExecutePlanAsync(plan, cancellationToken).ConfigureAwait(false);
         long acesTdefPage = tablePages[0];
         long queriesTdefPage = tablePages[1];
         long relationshipsTdefPage = tablePages[2];
         await this.PatchHeaderSystemTablePagesAsync(acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
-        if (header is not null)
-        {
-            await this.InitializePermissionsAsync(header, acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
-        }
+        await this.InitializePermissionsAsync(header, acesTdefPage, queriesTdefPage, relationshipsTdefPage, cancellationToken).ConfigureAwait(false);
     }
+
+    private byte[] EncodeIdentity(byte[] header, ReadOnlySpan<byte> identity)
+        => this.format.IsJet3 ? identity.ToArray() : Jet4SecuritySid.Encode(this.format, header, identity);
 
     private static CatalogObjectArtifact[] BuildCoreCatalogObjectArtifacts()
         =>
@@ -184,9 +180,9 @@ internal sealed class SystemCatalogBootstrapper(
         CancellationToken cancellationToken)
     {
         TableDef definition = await this.tableDefs.ReadRequiredTableDefAsync(acesPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
-        byte[] owner = Jet4SecuritySid.Encode(this.format, header, [0x03, 0x01]);
-        byte[] users = Jet4SecuritySid.Encode(this.format, header, [0x02, 0x01]);
-        byte[] inheritedOwner = Jet4SecuritySid.GetOwnerPlaceholder(this.format, header);
+        byte[] owner = this.EncodeIdentity(header, [0x03, 0x01]);
+        byte[] users = this.EncodeIdentity(header, [0x02, 0x01]);
+        byte[] inheritedOwner = this.EncodeIdentity(header, [0x02, 0x04]);
         (int ObjectId, byte[] Sid, int Acm, bool Inheritable)[] permissions =
         [
             (2, owner, 0x60000, false),
@@ -226,12 +222,12 @@ internal sealed class SystemCatalogBootstrapper(
         byte[] header = await this.pager.ReadPageAsync(0, cancellationToken).ConfigureAwait(false);
         try
         {
-            EncryptionManager.TransformHeaderMask(header);
+            this.format.TransformHeaderMask(header);
             Wi32(header, 0x20, 2);
             Wi32(header, 0x24, checked((int)acesTdefPage));
             Wi32(header, 0x28, checked((int)queriesTdefPage));
             Wi32(header, 0x2C, checked((int)relationshipsTdefPage));
-            EncryptionManager.TransformHeaderMask(header);
+            this.format.TransformHeaderMask(header);
             await this.pager.WritePageAsync(0, header, cancellationToken).ConfigureAwait(false);
         }
         finally

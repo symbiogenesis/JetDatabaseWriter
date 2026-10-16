@@ -117,31 +117,23 @@ internal sealed class CatalogArtifactWriter(
         => catalogWriter.ThrowIfCatalogIndexesUnmaintainableAsync(cancellationToken);
 
     /// <summary>
-    /// Reserves the contiguous TDEF slots for the core Jet4/ACE system tables
+    /// Reserves the contiguous TDEF slots for the core system tables
     /// (<c>MSysACEs</c>, <c>MSysQueries</c>, <c>MSysRelationships</c>) of a
-    /// freshly created database. Returns 0 when no slots are needed:
-    /// Jet3 does not use this core catalog scaffold.
+    /// freshly created database.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal ValueTask<long> ReserveFreshCoreSystemTablePagesAsync(CancellationToken cancellationToken)
-        => format.SupportsCoreCatalogTables
-            ? pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken)
-            : new ValueTask<long>(0L);
+        => pageAllocator.ReserveContiguousPagesAsync(3, cancellationToken);
 
     /// <summary>
     /// Rewrites the freshly created <c>MSysObjects</c> TDEF (page 2) with its
     /// <c>Id</c> primary key and <c>ParentIdName</c> unique index, empty leaf
-    /// pages, and a writer-owned usage map. No-op for Jet3.
+    /// pages, and a writer-owned usage map.
     /// </summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidDataException">Thrown when the bootstrap TDEF unexpectedly spans multiple pages.</exception>
     internal async ValueTask InitializeFreshCatalogIndexesAsync(CancellationToken cancellationToken)
     {
-        if (format.IsJet3)
-        {
-            return;
-        }
-
         IReadOnlyList<ColumnDefinition> columns = BuildFullCatalogColumnDefinitions();
         TableDef tableDef = TDefPageBuilder.BuildTableDefinition(columns, format);
         var indexes = new IndexDefinition[]
@@ -181,7 +173,11 @@ internal sealed class CatalogArtifactWriter(
         }
 
         DataPageInserter.PatchUsageMapPointers(tdefPages[0], format.TDef, checked((int)usageMapPageNumber));
-        DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
+        if (!format.IsJet3)
+        {
+            DataPageInserter.PatchAutoNumFlag(tdefPages[0], tableDef);
+        }
+
         await pager.WritePageAsync(2, tdefPages[0], cancellationToken).ConfigureAwait(false);
         ownedMaps.RegisterWritable(2);
         catalog.Invalidate();

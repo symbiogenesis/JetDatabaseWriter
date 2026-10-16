@@ -2,8 +2,8 @@
 
 The byte checks here use Microsoft DAO 3.6 through an x86 host. They distinguish
 native-authored metadata, writer output compared with that metadata, and native
-acceptance of changes to an existing native-owned table. They do not establish
-the separate fresh Jet3 system-catalog bootstrap or usage-map requirements.
+acceptance of changes to existing native-owned tables and fresh databases. Wider
+usage-map and storage variants remain separate requirements.
 
 ## Physical indexes and statistics
 
@@ -92,7 +92,7 @@ inheritable container permissions. The owner placeholder is the unmasked
 Permission masks are copied unchanged and non-inheritable entries are excluded.
 `NativeJet3CatalogSecurityTests` checks exact inheritance, restrictive masks,
 malformed-owner/duplicate-identity refusal and preservation of caller work.
-The separate minimal Jet3 bootstrap still lacks the complete native catalog.
+Fresh databases use the same native owner and permission inheritance.
 
 Jet3 catalog `LvProp` values use external LVAL storage even for a small property
 block. Independently setting `Field.Required = true` in DAO produces the same
@@ -110,4 +110,35 @@ across creation, Add/Drop/Rename, table-rule edits, refusal and rollback in ever
 write mode. The native index matrix then verifies new primary, unique, normal,
 descending, IgnoreNulls and Required indexes through native seek, mutation,
 constraint errors and compact. These checks establish definition and property
-storage compatibility on native hosts, not fresh Jet3 database bootstrap.
+storage compatibility on native hosts.
+
+## Fresh database bootstrap
+
+New Jet3 databases create `MSysObjects`, `MSysACEs`, `MSysQueries` and
+`MSysRelationships`, their indexes and owned/free/index usage maps. Page zero
+names the actual core TDEF pages. Jet3 header masking is used when patching
+those pointers. The query catalog has seven columns; Jet4/ACE additionally
+have `LvExtra`.
+
+The database owner is the literal `03 01` SID, the system owner is `02 03`,
+the users group is `02 01`, and the inherited owner placeholder is `02 04`.
+Jet4's header-key SID transform does not apply. The native core catalog objects,
+permission masks and inheritance flags match the frozen DAO3.6 fixture and an
+independently created DAO3.6 database. Core scalar descriptors use `0x13` flags;
+variable fields retain their native Text/Memo/Order and SID flags. Existing
+native ownership, restricted permission masks and unknown metadata remain
+preserved by the catalog and schema mutation paths.
+
+After reopening, adding a core system data page requires a conservative proof
+that its owned/free INLINE rows are distinct, readable, nonoverlapping and not
+referenced elsewhere in any live catalog TDEF chain. The scan includes opaque
+bytes so an unknown map reference cannot silently authorize shared storage.
+Ambiguous, unsupported or shared storage refuses the mutation and rolls back its
+allocation. REFERENCE and shared system-map support remain open storage work.
+
+`Jet3NativeBootstrapTests` compares core schema, objects and permissions with
+Microsoft-authored metadata. On an activated x86 DAO3.6 host it opens a fresh
+writer file, reads and mutates rows, rejects an orphan, enforces cascades and
+compacts/reopens the result. The first relationship is created after disposing
+and reopening the writer. `Jet3SystemOwnedMapTests` covers native empty
+relationship storage, fresh reopened files and synthetic map-alias refusals.

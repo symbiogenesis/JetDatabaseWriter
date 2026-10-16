@@ -580,7 +580,7 @@ public sealed class AccessWriter : AccessBase, IAccessWriter, IAccessSchema
         => this.Services.Transactions.RunAutoCommitAsync(work, cancellationToken);
 
     /// <summary>
-    /// Completes a freshly written empty database: reserves the core Jet4/ACE
+    /// Completes a freshly written empty database: reserves the core
     /// system-table TDEF slots, bootstraps the <c>MSysObjects</c> indexes, and
     /// scaffolds native catalog system tables and security metadata.
     /// </summary>

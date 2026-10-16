@@ -62,7 +62,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "23032A11A89800D40A7025C3F51F7E6B117A00CDC35AA8FDA58E2BBFD87DF320")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "157957AB25DD1DB3C35D4971DAA0D1D9BE64E57050A9A6E1626D877025D33355")]
     [InlineData(DatabaseFormat.Jet4Mdb, "E4DB83C4364CFF3460610F75334C41080DE7555E16AAE7438D116FA18836087E")]
     [InlineData(DatabaseFormat.AceAccdb, "7F867B5C2F89C4D3F3B64778CD4DF2D4D3BECB485F29201C9DF2E2018DCE3518")]
     public async Task CreateTable_EveryAuthorableTypeAndTwoTextIndexes_TDefMatchesGoldenHash(DatabaseFormat format, string expectedSha256)

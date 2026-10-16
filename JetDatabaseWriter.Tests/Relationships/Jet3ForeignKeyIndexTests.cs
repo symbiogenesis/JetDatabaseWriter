@@ -802,9 +802,8 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
     }
 
     [Fact]
-    public async Task CreateRelationship_Jet3WriterCreatedFile_StillThrowsNotSupported()
+    public async Task CreateRelationship_Jet3WriterCreatedFile_EnforcesForeignKey()
     {
-        // A writer-created Jet3 file has no MSysRelationships table.
         await using var stream = new MemoryStream();
         await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
             stream,
@@ -815,8 +814,11 @@ public sealed class Jet3ForeignKeyIndexTests(DatabaseCache cache) : IClassFixtur
         await writer.CreateTableAsync("P", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], this.ct);
         await CreateChildAsync(writer, this.ct);
 
-        await Assert.ThrowsAsync<JetNotSupportedException>(async () =>
-            await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, "P", "Id", Child, "ParentId"), this.ct));
+        await writer.CreateRelationshipAsync(new RelationshipDefinition(Relationship, "P", "Id", Child, "ParentId"), this.ct);
+        await writer.InsertRowAsync("P", [1], this.ct);
+        await writer.InsertRowAsync(Child, [1, 1], this.ct);
+        await Assert.ThrowsAsync<JetConstraintException>(async () =>
+            await writer.InsertRowAsync(Child, [2, 999], this.ct));
     }
 
     private static async Task<MemoryStream> CreateAccdbAsync(CancellationToken cancellationToken)

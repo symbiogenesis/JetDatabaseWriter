@@ -111,7 +111,7 @@ public sealed class NativeJet3CatalogSecurityTests
     }
 
     [Fact]
-    public async Task MinimalJet3Bootstrap_RemainsWithoutNativePermissions()
+    public async Task FreshJet3Bootstrap_InheritsNativePermissions()
     {
         await using var stream = new MemoryStream();
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet3Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
@@ -122,8 +122,10 @@ public sealed class NativeJet3CatalogSecurityTests
         stream.Position = 0;
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct);
         using DataTable objects = await reader.ReadTableAsync("MSysObjects", cancellationToken: Ct);
-        Assert.DoesNotContain(objects.AsEnumerable(), row => Equals(row["Name"], "MSysACEs"));
-        Assert.Equal(Constants.SystemObjects.DefaultOwnerBlob, Assert.IsType<byte[]>(Assert.Single(objects.AsEnumerable(), row => Equals(row["Name"], "Added"))["Owner"]));
+        Assert.Contains(objects.AsEnumerable(), row => Equals(row["Name"], "MSysACEs"));
+        Assert.Equal(new byte[] { 3, 1 }, Assert.IsType<byte[]>(Assert.Single(objects.AsEnumerable(), row => Equals(row["Name"], "Added"))["Owner"]));
+        SecuritySnapshot security = await ReadSecurityAsync(stream);
+        Assert.Equal(security.Expected, security.Actual);
     }
 
     private static async Task<MemoryStream> CopyFixtureAsync()

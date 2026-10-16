@@ -29,8 +29,7 @@ internal sealed record CatalogObjectArtifact(
             Constants.SystemObjects.RelationshipsParentId,
             relationshipName,
             Constants.SystemObjects.RelationshipType,
-            0,
-            Owner: Constants.SystemObjects.DefaultOwnerBlob)
+            0)
         {
             ObjectIdPolicy = CatalogObjectIdPolicy.AllocateNonTable,
             AcePolicy = acePolicy,
@@ -51,7 +50,6 @@ internal sealed record CatalogObjectArtifact(
             linkedTableName,
             objectType,
             GetLinkedTableFlags(objectType, connectString),
-            Owner: Constants.SystemObjects.DefaultOwnerBlob,
             LvProp: cachedSchemaLvProp)
         {
             ObjectIdPolicy = CatalogObjectIdPolicy.AllocateNonTable,

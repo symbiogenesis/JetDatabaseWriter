@@ -92,8 +92,7 @@ internal sealed class CatalogWriter(
         msys.SetValueByName(values, "DateCreate", now);
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)catalogFlags));
-        bool inheritPermissions = await this.UsesNativeCatalogPermissionsAsync(cancellationToken).ConfigureAwait(false);
-        msys.SetValueByName(values, "Owner", owner ?? (inheritPermissions ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false) : Constants.SystemObjects.DefaultOwnerBlob));
+        msys.SetValueByName(values, "Owner", owner ?? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false));
         if (lvProp is not null)
         {
             msys.SetValueByName(values, "LvProp", this.PrepareCatalogProperties(lvProp));
@@ -137,11 +136,11 @@ internal sealed class CatalogWriter(
         msys.SetValueByName(values, "DateUpdate", now);
         msys.SetValueByName(values, "Flags", unchecked((int)artifact.CatalogFlags));
 
-        if (artifact.Owner is not null && msys.FindColumn("Owner") is not null)
+        if (artifact.AcePolicy != CatalogObjectAcePolicy.None || artifact.Owner is not null)
         {
-            byte[] owner = artifact.AcePolicy != CatalogObjectAcePolicy.None && await this.UsesNativeCatalogPermissionsAsync(cancellationToken).ConfigureAwait(false)
+            byte[] owner = artifact.AcePolicy != CatalogObjectAcePolicy.None
                 ? await this.ReadDatabaseOwnerAsync(cancellationToken).ConfigureAwait(false)
-                : artifact.Owner;
+                : artifact.Owner!;
             msys.SetValueByName(values, "Owner", owner);
         }
 
@@ -669,11 +668,6 @@ internal sealed class CatalogWriter(
     /// <exception cref="JetCorruptDataException">The native permissions table is absent or malformed.</exception>
     internal async ValueTask ThrowIfNativeSecurityUnmaintainableAsync(bool relationships, CancellationToken cancellationToken)
     {
-        if (!await this.UsesNativeCatalogPermissionsAsync(cancellationToken).ConfigureAwait(false))
-        {
-            return;
-        }
-
         long page = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (page <= 0)
         {
@@ -698,12 +692,7 @@ internal sealed class CatalogWriter(
         long acesTdefPage = await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
         if (acesTdefPage <= 0)
         {
-            if (format.InheritsCatalogPermissions)
-            {
-                throw new JetCorruptDataException("The native permissions table is absent.");
-            }
-
-            return;
+            throw new JetCorruptDataException("The native permissions table is absent.");
         }
 
         TableDef acesDef = await tableDefs.ReadRequiredTableDefAsync(acesTdefPage, Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false);
@@ -732,13 +721,6 @@ internal sealed class CatalogWriter(
             throw new InvalidOperationException($"Could not maintain MSysObjects catalog indexes for '{objectName}'.");
         }
     }
-
-    /// <summary>Uses existing Jet3 security metadata while allowing its minimal bootstrap without a permissions table.</summary>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>Whether native owner and container permissions are available or required.</returns>
-    private async ValueTask<bool> UsesNativeCatalogPermissionsAsync(CancellationToken cancellationToken)
-        => format.InheritsCatalogPermissions
-            || await catalogRows.FindSystemTableTdefPageAsync(Constants.SystemTableNames.Aces, cancellationToken).ConfigureAwait(false) > 0;
 
     internal async ValueTask UpdateTablePropertiesAsync(
         string tableName,
