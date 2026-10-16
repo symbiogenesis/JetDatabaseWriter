@@ -98,10 +98,9 @@ internal static class LinkedTableManager
     /// </summary>
     /// <param name="catalog">Reads the <c>MSysObjects</c> rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <param name="includeSystem">Whether system identities are required for execution policy.</param>
     /// <exception cref="InvalidDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
     /// <exception cref="JetCorruptDataException">Required linked catalog structure is missing or invalid.</exception>
-    internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CatalogReader catalog, CancellationToken cancellationToken, bool includeSystem = false)
+    internal static async ValueTask<LinkedCatalog> GetLinkedTablesAsync(CatalogReader catalog, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -122,6 +121,7 @@ internal static class LinkedTableManager
         }
 
         var result = new List<LinkedTableInfo>();
+        var visible = new List<LinkedTableInfo>();
 
         await foreach (string[] row in catalog.EnumerateMSysObjectsRowsAsync(msys, LinkedTableCatalogColumns, cancellationToken).ConfigureAwait(false))
         {
@@ -141,11 +141,8 @@ internal static class LinkedTableManager
                 continue;
             }
 
-            if (!includeSystem && CatalogValueReader.TryParseInt64(row, idxFlags, out long flagsLong) &&
-                (unchecked((uint)flagsLong) & Constants.SystemObjects.SystemTableMask) != 0)
-            {
-                continue;
-            }
+            bool isSystem = CatalogValueReader.TryParseInt64(row, idxFlags, out long flagsLong)
+                && (unchecked((uint)flagsLong) & Constants.SystemObjects.SystemTableMask) != 0;
 
             string connectStr = CatalogValueReader.GetStringOrEmpty(row, idxConnect);
             string foreignName = CatalogValueReader.GetStringOrEmpty(row, idxForeignName);
@@ -177,17 +174,22 @@ internal static class LinkedTableManager
                     $"Linked-table metadata exceeds the per-reader limit of {MaxLinkedTableMetadataRows} entries.");
             }
 
-            result.Add(new LinkedTableInfo
+            var linkedTable = new LinkedTableInfo
             {
                 Name = nameStr,
                 Kind = kind,
                 SourceObjectName = kind == LinkedTableKind.Text ? DecodeTextForeignName(foreignName) : foreignName,
                 SourcePath = kind == LinkedTableKind.Odbc || string.IsNullOrEmpty(sourcePath) ? null : sourcePath,
                 ConnectString = string.IsNullOrEmpty(connectStr) ? null : connectStr,
-            });
+            };
+            result.Add(linkedTable);
+            if (!isSystem)
+            {
+                visible.Add(linkedTable);
+            }
         }
 
-        return result;
+        return new LinkedCatalog(visible, result);
     }
 
     /// <summary>
@@ -1001,6 +1003,11 @@ internal static class LinkedTableManager
 
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
+
+    /// <summary>One fully scanned catalog image shared by listings and execution policy.</summary>
+    /// <param name="VisibleLinks">Non-system links exposed by public listings.</param>
+    /// <param name="ExecutionLinks">All links, including system identities needed for authorization.</param>
+    internal sealed record LinkedCatalog(List<LinkedTableInfo> VisibleLinks, List<LinkedTableInfo> ExecutionLinks);
 
     private readonly record struct LinkedTextDataSource(Stream Source, DelimitedTextFormat Format, LinkedTextLimits Limits, string TableName);
 

@@ -23,36 +23,16 @@ using JetDatabaseWriter.ValueDecoding;
 /// <param name="policy">How link source paths are resolved and opened.</param>
 internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolicy policy)
 {
-    /// <summary>
-    /// The cached link list. A single reference: a volatile write of a fully
-    /// built list is atomic, so readers never see a torn value.
-    /// </summary>
-    private volatile List<LinkedTableInfo>? links;
-
-    /// <summary>All linked identities, including system links omitted from public listings.</summary>
-    private volatile List<LinkedTableInfo>? executionLinks;
+    /// <summary>One fully scanned snapshot shared by public listings and execution policy.</summary>
+    private volatile LinkedTableManager.LinkedCatalog? links;
 
     /// <summary>Returns non-system linked tables, scanning <c>MSysObjects</c> on first use.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CancellationToken cancellationToken)
-    {
-        List<LinkedTableInfo>? cached = this.links;
-        if (cached != null)
-        {
-            return cached;
-        }
+        => (await this.GetLinkedCatalogAsync(cancellationToken).ConfigureAwait(false)).VisibleLinks;
 
-        List<LinkedTableInfo> scanned = await LinkedTableManager.GetLinkedTablesAsync(catalog, cancellationToken).ConfigureAwait(false);
-        this.links = scanned;
-        return scanned;
-    }
-
-    /// <summary>Discards the cached link list.</summary>
-    internal void ClearCache()
-    {
-        this.links = null;
-        this.executionLinks = null;
-    }
+    /// <summary>Discards the catalog snapshot used by listings and execution.</summary>
+    internal void ClearCache() => this.links = null;
 
     /// <summary>Refuses unavailable linked execution even when a local cached TDEF exists.</summary>
     /// <param name="tableName">The requested table.</param>
@@ -212,6 +192,19 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
             (source, link) => source.GetColumnMetadataAsync(link.SourceObjectName, cancellationToken),
             cancellationToken);
 
+    private async ValueTask<LinkedTableManager.LinkedCatalog> GetLinkedCatalogAsync(CancellationToken cancellationToken)
+    {
+        LinkedTableManager.LinkedCatalog? cached = this.links;
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        LinkedTableManager.LinkedCatalog scanned = await LinkedTableManager.GetLinkedTablesAsync(catalog, cancellationToken).ConfigureAwait(false);
+        this.links = scanned;
+        return scanned;
+    }
+
     /// <summary>
     /// Locates the linked-table entry matching <paramref name="tableName"/>
     /// (case-insensitive) or returns <see langword="null"/> when the name does
@@ -221,13 +214,7 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(string tableName, CancellationToken cancellationToken)
     {
-        List<LinkedTableInfo>? linkedTables = this.executionLinks;
-        if (linkedTables is null)
-        {
-            linkedTables = await LinkedTableManager.GetLinkedTablesAsync(catalog, cancellationToken, includeSystem: true).ConfigureAwait(false);
-            this.executionLinks = linkedTables;
-        }
-
+        List<LinkedTableInfo> linkedTables = (await this.GetLinkedCatalogAsync(cancellationToken).ConfigureAwait(false)).ExecutionLinks;
         LinkedTableInfo? link = linkedTables.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
         return link is null ? null : link with { };
     }
