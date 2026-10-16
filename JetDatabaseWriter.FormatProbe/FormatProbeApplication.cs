@@ -25,6 +25,11 @@ internal static class FormatProbeApplication
 {
     public static async Task<int> RunAsync(string[] args)
     {
+        if (args.Length > 0 && args[0].Equals("storage-audit", StringComparison.OrdinalIgnoreCase))
+        {
+            return await StorageAuditProbe.RunCliAsync(args[1..]);
+        }
+
         string repoRoot = FindRepoRoot();
         string fixtures = Path.Combine(repoRoot, "JetDatabaseWriter.Tests", "Databases");
         string probeDir = FormatProbeArtifacts.GetOutputDirectory(repoRoot);
@@ -207,6 +212,11 @@ internal static class FormatProbeApplication
       long-row-crc-sweep  Run the slow V2010 long-row CRC-16 suffix sweep
     linked-odbc-lvprop  Dump linked ODBC LvProp schema-cache structure
       memo-readback       Run the memo readback diagnostic
+
+    Read-only storage inventory:
+      storage-audit --input <absolute database path> --output <absolute new NDJSON path>
+    Run storage-audit --help for traversal and report limits. This command requires
+    no repository working directory and does not validate row values or repair files.
 
     Positional modes and --mode/-m values both accept comma-separated lists.
     Legacy DIAG_* environment variables still select the matching mode when no CLI mode is supplied.

@@ -68,6 +68,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
 
         this.format = format;
         this.cacheResults = cacheResults;
+        this.StrictParsing = pages is Pager;
     }
 
     /// <summary>Visits one row; returns <see langword="false"/> to stop the walk.</summary>
@@ -85,6 +86,9 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
 
     /// <summary>Gets or sets a value indicating whether corrupt row skips are traced.</summary>
     internal bool DiagnosticsEnabled { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether unreadable mapped owned content refuses reads.</summary>
+    internal bool StrictParsing { get; set; }
 
     /// <inheritdoc/>
     public void Dispose()
@@ -111,8 +115,12 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     /// <param name="tdefPage">The table's TDEF page.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The owned data pages; empty for a non-positive page number.</returns>
-    internal async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
+    internal ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, CancellationToken cancellationToken)
+        => this.GetOwnedDataPagesAsync(tdefPage, this.StrictParsing, cancellationToken);
+
+    private async ValueTask<IReadOnlyList<long>> GetOwnedDataPagesAsync(long tdefPage, bool requireCompletePages, CancellationToken cancellationToken)
     {
+        this.pages.ThrowIfDisposedOrCancelled(cancellationToken);
         if (tdefPage <= 0)
         {
             return [];
@@ -134,9 +142,11 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         }
 
         Dictionary<long, int>? dependencies = this.pages is Pager ? [] : null;
-        long[]? mappedPages = await this.TryGetOwnedDataPagesFromUsageMapAsync(tdefPage, dependencies, cancellationToken).ConfigureAwait(false);
+        var discovery = new DiscoveryState();
+        long[]? mappedPages = await this.TryGetOwnedDataPagesFromUsageMapAsync(tdefPage, dependencies, discovery, cancellationToken).ConfigureAwait(false);
         if (mappedPages is not null)
         {
+            ReportDiscovery(tdefPage, discovery, requireCompletePages);
             if (canUseCache)
             {
                 this.CacheOwnedDataPages(tdefPage, mappedPages, dependencies, loadedEpoch);
@@ -146,7 +156,8 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         }
 
         long[] indexedPages = await this.ownerIndex.GetAsync(tdefPage, cancellationToken).ConfigureAwait(false);
-        if (canUseCache)
+        ReportDiscovery(tdefPage, discovery, requireCompletePages);
+        if (canUseCache && discovery.UnreadablePage is null)
         {
             // The map was rejected: remember the index's answer too, so the
             // next call does not read and validate the map again.
@@ -177,6 +188,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         await this.ForEachOwnedDataPageAsync(
             tdefPage,
             (pageNumber, page, token) => this.ForEachRowOnPageAsync(pageNumber, page, visitRowAsync, token, requireCompleteRows),
+            requireCompleteRows || this.StrictParsing,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -372,14 +384,21 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     /// <param name="visitPageAsync">Called for each data page; returns <see langword="false"/> to stop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>A task that completes when the walk ends.</returns>
-    internal async ValueTask ForEachOwnedDataPageAsync(
+    internal ValueTask ForEachOwnedDataPageAsync(
         long tdefPage,
         DataPageVisitor visitPageAsync,
+        CancellationToken cancellationToken)
+        => this.ForEachOwnedDataPageAsync(tdefPage, visitPageAsync, this.StrictParsing, cancellationToken);
+
+    private async ValueTask ForEachOwnedDataPageAsync(
+        long tdefPage,
+        DataPageVisitor visitPageAsync,
+        bool requireCompletePages,
         CancellationToken cancellationToken)
     {
         Guard.NotNull(visitPageAsync, nameof(visitPageAsync));
 
-        IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> pageNumbers = await this.GetOwnedDataPagesAsync(tdefPage, requireCompletePages, cancellationToken).ConfigureAwait(false);
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -430,13 +449,24 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
             this.cacheEpoch++;
             List<long>? invalidated = null;
 
+            // An unknown type cannot be dropped from an already cached data-page
+            // answer: its matching owner must be checked against the owned map again.
+            if (IsUnrecognizedPageType(after[0]))
+            {
+                long unreadableOwner = Ri32(after, this.format.DataPage.TDefOff);
+                if (unreadableOwner > 0 && this.ownedDataPagesByTdef.ContainsKey(unreadableOwner))
+                {
+                    invalidated = [unreadableOwner];
+                }
+            }
+
             // A TDEF write affects its own result; row counts can change during
             // rewrites, so only its type and owned-map pointer invalidate it.
             if (this.ownedDataPagesByTdef.ContainsKey(pageNumber)
                 && (before.IsEmpty || before[0] != after[0]
                     || !before.Slice(this.format.TDef.UsedPages, 4).SequenceEqual(after.Slice(this.format.TDef.UsedPages, 4))))
             {
-                invalidated = [pageNumber];
+                (invalidated ??= []).Add(pageNumber);
             }
 
             if (this.mapDependencies.ByPage.TryGetValue(pageNumber, out Dictionary<long, int>? dependents))
@@ -485,6 +515,28 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
 
                 this.ownedDataPagesByTdef[newOwner] = [.. updated];
             }
+        }
+    }
+
+    private static bool IsUnrecognizedPageType(byte pageType)
+        => pageType is not (0 or Constants.PageTypes.Data or Constants.PageTypes.TableDefinition or Constants.PageTypes.IndexIntermediate
+            or Constants.PageTypes.IndexLeaf or Constants.PageTypes.UsageMap or Constants.PageTypes.Freed);
+
+    private static void ReportDiscovery(long owner, DiscoveryState discovery, bool requireCompletePages)
+    {
+        if (discovery.UnreadablePage is { } page)
+        {
+            string reason = $"The owned-pages map of table definition page {owner} references page {page} with unrecognized type 0x{discovery.UnreadablePageType:X2} and matching ownership; complete content cannot be established.";
+            if (requireCompletePages)
+            {
+                throw new JetCorruptDataException(JetErrorCode.MalformedValue, "The table's owned pages cannot be traversed completely.", new JetErrorInfo { PageNumber = page, Reason = reason });
+            }
+
+            DiagnosticTrace.WriteLine($"[AccessReader] The table read is incomplete. {reason}");
+        }
+        else if (discovery.RowCountHintMismatch)
+        {
+            DiagnosticTrace.WriteLine($"[AccessReader] The stored row-count hint of table definition page {owner} differs from its readable mapped rows; the hint is not treated as authoritative.");
         }
     }
 
@@ -579,7 +631,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         }
     }
 
-    private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, Dictionary<long, int>? dependencies, CancellationToken cancellationToken)
+    private async ValueTask<long[]?> TryGetOwnedDataPagesFromUsageMapAsync(long tdefPage, Dictionary<long, int>? dependencies, DiscoveryState discovery, CancellationToken cancellationToken)
     {
         // Journal-aware: a table created or grown inside a transaction owns
         // pages appended past the physical end of the file.
@@ -607,6 +659,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
                 declaredRows,
                 totalPages,
                 dependencies,
+                discovery,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -622,6 +675,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         uint declaredRows,
         long totalPages,
         Dictionary<long, int>? dependencies,
+        DiscoveryState discovery,
         CancellationToken cancellationToken)
     {
         if (usageMapPageNumber <= 0 || usageMapPageNumber >= totalPages)
@@ -663,10 +717,11 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
 
             if (mappedPages.Count == 0)
             {
+                discovery.RowCountHintMismatch = declaredRows != 0;
                 return declaredRows == 0 ? [] : null;
             }
 
-            return await this.ValidateOwnedDataPagesAsync(tdefPage, mappedPages, declaredRows, cancellationToken).ConfigureAwait(false)
+            return await this.ValidateOwnedDataPagesAsync(tdefPage, mappedPages, declaredRows, discovery, cancellationToken).ConfigureAwait(false)
                 ? [.. mappedPages]
                 : null;
         }
@@ -690,9 +745,11 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         long tdefPage,
         List<long> pageNumbers,
         uint declaredRows,
+        DiscoveryState discovery,
         CancellationToken cancellationToken)
     {
         long liveRows = 0;
+        bool valid = true;
         foreach (long pageNumber in pageNumbers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -702,14 +759,18 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
             {
                 if (page[0] != Constants.PageTypes.Data || Ri32(page, this.format.DataPage.TDefOff) != tdefPage)
                 {
-                    return false;
+                    if (IsUnrecognizedPageType(page[0]) && Ri32(page, this.format.DataPage.TDefOff) == tdefPage && discovery.UnreadablePage is null)
+                    {
+                        discovery.UnreadablePage = pageNumber;
+                        discovery.UnreadablePageType = page[0];
+                    }
+
+                    valid = false;
+                    continue;
                 }
 
-                if (declaredRows > 0)
-                {
-                    // Each overflow header counts once, as Access counts the row in num_rows.
-                    liveRows += DataPageRows.ComputeRowDirectory(this.format, page).Length;
-                }
+                // Each overflow header counts once, as Access counts the row in num_rows.
+                liveRows += DataPageRows.ComputeRowDirectory(this.format, page).Length;
             }
             finally
             {
@@ -717,7 +778,17 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
             }
         }
 
-        return declaredRows == 0 || liveRows >= declaredRows;
+        discovery.RowCountHintMismatch = liveRows != declaredRows;
+        return valid && (declaredRows == 0 || liveRows >= declaredRows);
+    }
+
+    private sealed class DiscoveryState
+    {
+        internal long? UnreadablePage { get; set; }
+
+        internal byte UnreadablePageType { get; set; }
+
+        internal bool RowCountHintMismatch { get; set; }
     }
 
     /// <summary>Writer-only forward and reverse usage-map dependencies.</summary>

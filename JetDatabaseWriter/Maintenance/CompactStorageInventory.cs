@@ -1,0 +1,448 @@
+namespace JetDatabaseWriter.Maintenance;
+
+using System;
+using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog;
+using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
+using JetDatabaseWriter.LongValues;
+using JetDatabaseWriter.LongValues.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
+using static JetDatabaseWriter.Schema.JetTypeInfo;
+
+/// <summary>Inventories known structural references while pinning every physical page.</summary>
+internal static class CompactStorageInventory
+{
+    /// <summary>Streams physical, catalog, TDEF and map observations, without claiming complete incoming-reference coverage.</summary>
+    /// <param name="pages">The immutable decrypted page source.</param>
+    /// <param name="format">The source's verified format.</param>
+    /// <param name="tableDefs">A definition reader bounded by the schema budget.</param>
+    /// <param name="catalogRows">The corresponding strict catalog scanner.</param>
+    /// <param name="budget">The traversal limits.</param>
+    /// <param name="visitor">Consumes each observation before traversal continues.</param>
+    /// <param name="cancellationToken">Cancels traversal.</param>
+    /// <returns>A task that completes only when this inventory phase succeeds.</returns>
+    /// <exception cref="JetLimitationException">A traversal or schema-reader limit is exceeded.</exception>
+    /// <exception cref="JetCorruptDataException">A known structural reference is malformed.</exception>
+    internal static ValueTask ScanAsync(IPageSource pages, JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(pages, nameof(pages));
+        Guard.NotNull(tableDefs, nameof(tableDefs));
+        Guard.NotNull(catalogRows, nameof(catalogRows));
+        Guard.NotNull(budget, nameof(budget));
+        Guard.NotNull(visitor, nameof(visitor));
+        Guard.InRange(budget.MaxPages, 1L, long.MaxValue, nameof(budget));
+        Guard.Positive(budget.MaxObjects, nameof(budget));
+        Guard.InRange(budget.MaxReferences, 1L, long.MaxValue, nameof(budget));
+        Guard.Positive(budget.MaxDiagnostics, nameof(budget));
+        Guard.Positive(budget.MaxSchemaBytes, nameof(budget));
+        pages.ThrowIfDisposedOrCancelled(cancellationToken);
+        if (pages.PageCount > budget.MaxPages)
+        {
+            throw Limit("The physical page count exceeds MaxPages.");
+        }
+
+        if (tableDefs.MaxSchemaTraversalBytes > budget.MaxSchemaBytes)
+        {
+            throw Limit("The definition reader must be bounded by MaxSchemaBytes before inventory.");
+        }
+
+        if (pages.PageSize != format.PageSize || pages.PageCount < 3)
+        {
+            throw Corrupt(0, "The physical database size or page layout is invalid.");
+        }
+
+        return new Scanner(pages, format, tableDefs, catalogRows, budget, visitor).RunAsync(cancellationToken);
+    }
+
+    private static JetLimitationException Limit(string reason, long? page = null)
+        => new(JetErrorCode.ValueTooLarge, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
+
+    private static JetCorruptDataException Corrupt(long page, string reason)
+        => new(JetErrorCode.CorruptTableDefinition, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
+
+    private sealed class Scanner(IPageSource pages, JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor)
+    {
+        private long references;
+        private int diagnostics;
+
+        internal async ValueTask RunAsync(CancellationToken cancellationToken)
+        {
+            await this.EmitAsync(
+                new CompactStorageRecord
+                {
+                    Kind = "coverage",
+                    Role = "physical-catalog-tdef-maps",
+                    Detail = "Known physical headers, catalog identities, TDEF chains and allocation maps only; in-file map bits are observations, not ownership proofs. Row fields, LVAL chains, index trees and opaque incoming references are not covered. All storage is pinned; this is not relocation permission. Hashes cover decrypted physical pages.",
+                },
+                cancellationToken).ConfigureAwait(false);
+            await this.ScanPhysicalPagesAsync(cancellationToken).ConfigureAwait(false);
+            await this.ScanMapAsync(1, 0, 1, "global-free", cancellationToken).ConfigureAwait(false);
+
+            _ = await this.ValidateDefinitionChainAsync(2, budget.MaxSchemaBytes, cancellationToken).ConfigureAwait(false);
+            TDefImage catalog = await tableDefs.ReadImageAsync(2, budget.MaxSchemaBytes, cancellationToken).ConfigureAwait(false)
+                ?? throw Corrupt(2, "The catalog definition cannot be read.");
+            List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(catalog.Definition, cancellationToken, budget.MaxObjects).ConfigureAwait(false);
+            var roots = new HashSet<long> { 2 };
+            foreach (CatalogRow row in rows)
+            {
+                if (row.Name.Length > 64)
+                {
+                    throw Corrupt(row.PageNumber, "A catalog object name exceeds the native name limit.");
+                }
+
+                bool local = row.ObjectType == Constants.SystemObjects.UserTableType
+                    || (row.ObjectType == Constants.SystemObjects.LinkedOdbcType && row.Id > 0);
+                await this.EmitAsync(
+                new CompactStorageRecord
+                {
+                    Kind = "catalog-object",
+                    Role = local ? "local-table" : "opaque-catalog-object",
+                    PageNumber = row.PageNumber,
+                    TargetRowIndex = row.RowIndex,
+                    OwnerTDefPage = local ? row.TDefPage : null,
+                    Name = row.Name,
+                    ObjectType = row.ObjectType,
+                    ObjectId = row.Id,
+                    Flags = row.Flags,
+                    Detail = "Catalog identity only; application, security and replication payloads remain uninterpreted and pinned.",
+                },
+                cancellationToken).ConfigureAwait(false);
+                if (local)
+                {
+                    _ = roots.Add(row.TDefPage);
+                }
+            }
+
+            int remainingBytes = budget.MaxSchemaBytes;
+            foreach (long root in roots)
+            {
+                remainingBytes -= await this.ValidateDefinitionChainAsync(root, remainingBytes, cancellationToken).ConfigureAwait(false);
+            }
+
+            await catalogRows.ValidateTableReferencesAsync(rows, cancellationToken).ConfigureAwait(false);
+            remainingBytes = budget.MaxSchemaBytes;
+            foreach (long root in roots)
+            {
+                TDefImage image = await tableDefs.ReadImageAsync(root, remainingBytes, cancellationToken).ConfigureAwait(false)
+                    ?? throw Corrupt(root, "A local table definition cannot be read.");
+                remainingBytes -= image.LogicalByteLength;
+                await this.ScanDefinitionAsync(root, image, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private async ValueTask<int> ValidateDefinitionChainAsync(long root, int remainingBytes, CancellationToken cancellationToken)
+        {
+            var seen = new HashSet<long>();
+            int capacity = 0;
+            int limit = Math.Min(remainingBytes, tableDefs.MaxLogicalBytes);
+            long current = root;
+            while (current != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (current < 2 || current >= pages.PageCount || seen.Contains(current))
+                {
+                    throw Corrupt(root, "A definition chain has an invalid or cyclic page reference.");
+                }
+
+                int length = capacity == 0 ? format.PageSize : format.PageSize - 8;
+                if (capacity > limit - length)
+                {
+                    throw Limit("The definition chain exceeds its per-table or aggregate schema byte limit.", root);
+                }
+
+                _ = seen.Add(current);
+                byte[] page = await pages.ReadPageAsync(current, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page.Length < format.PageSize || page[0] != Constants.PageTypes.TableDefinition)
+                    {
+                        throw Corrupt(root, "A definition chain has a truncated page or invalid page type.");
+                    }
+
+                    capacity += length;
+                    current = Ru32(page, 4);
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+
+            return capacity;
+        }
+
+        private async ValueTask ScanPhysicalPagesAsync(CancellationToken cancellationToken)
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            for (long pageNumber = 0; pageNumber < pages.PageCount; pageNumber++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    hash.AppendData(page, 0, format.PageSize);
+                    string role = pageNumber == 0 ? "database-header" : page[0] switch
+                    {
+                        Constants.PageTypes.Data => "data-or-map-or-lval",
+                        Constants.PageTypes.TableDefinition => "table-definition-page",
+                        Constants.PageTypes.IndexIntermediate => "index-intermediate-page",
+                        Constants.PageTypes.IndexLeaf => "index-leaf-page",
+                        Constants.PageTypes.UsageMap => "usage-bitmap-page",
+                        Constants.PageTypes.Freed => "freed-marker-page",
+                        _ => "opaque-page",
+                    };
+                    await this.EmitAsync(
+                new CompactStorageRecord
+                {
+                    Kind = "page",
+                    Role = role,
+                    PageNumber = pageNumber,
+                    ByteLength = format.PageSize,
+                    Sha256 = ToHexStringNoSeparator(hash.GetHashAndReset()),
+                },
+                cancellationToken).ConfigureAwait(false);
+                    if (role == "opaque-page")
+                    {
+                        await this.DiagnosticAsync(pageNumber, "An unrecognized page type remains opaque and pinned.", cancellationToken).ConfigureAwait(false);
+                    }
+
+                    if (pageNumber != 0 && page[0] == Constants.PageTypes.TableDefinition)
+                    {
+                        long next = Ru32(page, 4);
+                        if (next != 0)
+                        {
+                            await this.ReferenceAsync(pageNumber, 4, "tdef-continuation", "uint32-le", next, null, null, null, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                    else if (pageNumber > 1 && page[0] is Constants.PageTypes.Data or Constants.PageTypes.IndexIntermediate or Constants.PageTypes.IndexLeaf)
+                    {
+                        long owner = Ru32(page, 4);
+                        if (owner is > 1 and not 0x4C41564C)
+                        {
+                            await this.ReferenceAsync(pageNumber, 4, "page-owner-tdef", "uint32-le", owner, null, owner, null, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+        }
+
+        private async ValueTask ScanDefinitionAsync(long root, TDefImage image, CancellationToken cancellationToken)
+        {
+            if (image.Issues != TDefParseIssues.None)
+            {
+                throw Corrupt(root, "A local definition has uncertain structural boundaries.");
+            }
+
+            LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(root, cancellationToken).ConfigureAwait(false);
+            await this.EmitAsync(
+                new CompactStorageRecord
+                {
+                    Kind = "table-definition",
+                    Role = "raw-definition-pinned",
+                    PageNumber = root,
+                    OwnerTDefPage = root,
+                    ByteLength = image.LogicalByteLength,
+                    Detail = "Unknown header, descriptor, trailer and padding bytes are retained by the physical page hashes.",
+                },
+                cancellationToken).ConfigureAwait(false);
+            await this.DefinitionMapAsync(root, chain, format.TDef.UsedPages, "table-owned", cancellationToken).ConfigureAwait(false);
+            await this.DefinitionMapAsync(root, chain, format.TDef.FreePages, "table-free", cancellationToken).ConfigureAwait(false);
+            foreach (TDefIndexDescriptor index in image.RealIndexes)
+            {
+                await this.DefinitionMapAsync(root, chain, index.Slot.FirstDpOffset - 4, "index-owned", cancellationToken).ConfigureAwait(false);
+                if (index.RootPage != 0)
+                {
+                    await this.DefinitionReferenceAsync(root, chain, index.Slot.FirstDpOffset, "index-root", "uint32-le", index.RootPage, null, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            if (!LongValueUsageMaps.TryRead(format, chain.Bytes, out List<LongValueUsageMap> maps, out _))
+            {
+                await this.DiagnosticAsync(root, "The definition trailer is opaque; no additional LVAL map references are inferred.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            foreach (LongValueUsageMap map in maps)
+            {
+                await this.DefinitionMapAsync(root, chain, map.OwnedOffset, "lval-owned", cancellationToken).ConfigureAwait(false);
+                await this.DefinitionMapAsync(root, chain, map.FreeOffset, "lval-free", cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private async ValueTask DefinitionMapAsync(long root, LogicalTDefChain chain, int offset, string role, CancellationToken cancellationToken)
+        {
+            if (!UsageMap.TryReadPointer(chain.Bytes, offset, out UsageMapPointer pointer))
+            {
+                throw Corrupt(root, "A definition map pointer is truncated.");
+            }
+
+            if (pointer.PageNumber == 0 && pointer.RowIndex == 0)
+            {
+                return;
+            }
+
+            await this.DefinitionReferenceAsync(root, chain, offset, role + "-map", "row8-page24-le", pointer.PageNumber, pointer.RowIndex, cancellationToken).ConfigureAwait(false);
+            await this.ScanMapAsync(pointer.PageNumber, pointer.RowIndex, root, role, cancellationToken).ConfigureAwait(false);
+        }
+
+        private ValueTask DefinitionReferenceAsync(long root, LogicalTDefChain chain, int offset, string role, string encoding, long target, int? row, CancellationToken cancellationToken)
+        {
+            (int pageIndex, int pageOffset) = LogicalTDefChain.LogicalToPhysicalOffset(format.PageSize, offset);
+            return this.ReferenceAsync(chain.PageNumbers[pageIndex], pageOffset, role, encoding, target, row, root, offset, cancellationToken);
+        }
+
+        private async ValueTask ScanMapAsync(long pageNumber, int rowIndex, long owner, string role, CancellationToken cancellationToken)
+        {
+            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.Data
+                    || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, rowIndex, out RowBound row)
+                    || row.RowSize < Constants.UsageMap.InlineMapHeaderSize)
+                {
+                    throw Corrupt(owner, "A known usage-map row has invalid bounds or page type.");
+                }
+
+                if (page[row.RowStart] == Constants.UsageMap.InlineMapType)
+                {
+                    int first = Ri32(page, row.RowStart + 1);
+                    if (first < 0 || (owner == 1 && first != 0))
+                    {
+                        throw Corrupt(owner, "A known inline usage map has an invalid base page.");
+                    }
+
+                    await this.ScanBitsAsync(pageNumber, page, row.RowStart + Constants.UsageMap.InlineBitmapOffset, row.RowStart + row.RowSize, first, owner, role, cancellationToken).ConfigureAwait(false);
+                }
+                else if (page[row.RowStart] == Constants.UsageMap.ReferenceMapType)
+                {
+                    var seen = new HashSet<long>();
+                    int count = UsageMap.ReferencePointerCount(row.RowSize);
+                    for (int index = 0; index < count; index++)
+                    {
+                        int offset = row.RowStart + 1 + (index * 4);
+                        long bitmapNumber = Ru32(page, offset);
+                        if (bitmapNumber == 0)
+                        {
+                            continue;
+                        }
+
+                        if (bitmapNumber <= 1 || !seen.Add(bitmapNumber))
+                        {
+                            throw Corrupt(owner, "A usage map has a repeated or reserved bitmap reference.");
+                        }
+
+                        await this.ReferenceAsync(pageNumber, offset, role + "-bitmap", "uint32-le", bitmapNumber, null, owner, null, cancellationToken).ConfigureAwait(false);
+                        byte[] bitmap = await pages.ReadPageAsync(bitmapNumber, cancellationToken).ConfigureAwait(false);
+                        try
+                        {
+                            if (bitmap[0] != Constants.PageTypes.UsageMap || bitmap[1] != 1)
+                            {
+                                throw Corrupt(owner, "A usage-map bitmap has an invalid page type.");
+                            }
+
+                            await this.ScanBitsAsync(bitmapNumber, bitmap, Constants.UsageMap.ReferenceMapBitmapOffset, format.PageSize, (long)index * UsageMap.PagesPerReferenceMapPage(format.PageSize), owner, role, cancellationToken).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            PageBuffers.Return(bitmap);
+                        }
+                    }
+                }
+                else
+                {
+                    throw Corrupt(owner, "A known usage map has an unrecognized map type.");
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        private async ValueTask ScanBitsAsync(long source, byte[] page, int firstOffset, int endOffset, long firstPage, long owner, string role, CancellationToken cancellationToken)
+        {
+            for (int offset = firstOffset; offset < endOffset; offset++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                for (int bit = 0; bit < 8; bit++)
+                {
+                    if ((page[offset] & (1 << bit)) == 0)
+                    {
+                        continue;
+                    }
+
+                    long target = firstPage + ((offset - firstOffset) * 8L) + bit;
+                    if (owner == 1 && target >= pages.PageCount)
+                    {
+                        // Native global maps can mark unused capacity past EOF free.
+                        continue;
+                    }
+
+                    await this.ReferenceAsync(source, offset, role + "-member", "bitmap-bit-" + bit, target, null, owner, null, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+
+        private ValueTask ReferenceAsync(long source, int offset, string role, string encoding, long target, int? row, long? owner, int? logicalOffset, CancellationToken cancellationToken)
+        {
+            if (target < 0 || target >= pages.PageCount || (row.HasValue && target <= 0))
+            {
+                throw Corrupt(owner ?? source, "A known reference points outside the physical database.");
+            }
+
+            if (this.references >= budget.MaxReferences)
+            {
+                throw Limit("The known-reference count exceeds MaxReferences.", source);
+            }
+
+            this.references++;
+            return this.EmitAsync(
+                new CompactStorageRecord
+                {
+                    Kind = "reference",
+                    Role = role,
+                    PageNumber = source,
+                    ByteOffset = offset,
+                    ByteLength = encoding.StartsWith("bitmap-", StringComparison.Ordinal) ? 1 : 4,
+                    LogicalOffset = logicalOffset,
+                    Encoding = encoding,
+                    TargetPageNumber = target,
+                    TargetRowIndex = row,
+                    OwnerTDefPage = owner,
+                },
+                cancellationToken);
+        }
+
+        private ValueTask DiagnosticAsync(long page, string reason, CancellationToken cancellationToken)
+        {
+            if (this.diagnostics >= budget.MaxDiagnostics)
+            {
+                throw Limit("The uncertainty diagnostic count exceeds MaxDiagnostics.", page);
+            }
+
+            this.diagnostics++;
+            return this.EmitAsync(
+                new CompactStorageRecord { Kind = "diagnostic", Role = "opaque-pinned", PageNumber = page, Detail = reason },
+                cancellationToken);
+        }
+
+        private ValueTask EmitAsync(CompactStorageRecord record, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return visitor(record, cancellationToken);
+        }
+    }
+}

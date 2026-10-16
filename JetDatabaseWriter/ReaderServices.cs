@@ -57,6 +57,7 @@ internal sealed class ReaderServices : IDisposable
         }
 
         db.OwnedPages.DiagnosticsEnabled = options.DiagnosticsEnabled;
+        db.OwnedPages.StrictParsing = options.StrictParsing;
 
         var linkedSources = new LinkedSourcePolicy(
             LinkedTableManager.CreateLinkedSourceOpenOptions(options),

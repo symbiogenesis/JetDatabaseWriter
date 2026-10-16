@@ -21,6 +21,43 @@ acknowledges partial repairs and records unrepaired objects in
 decision explicit. Partial recovery must never authorize automatic source
 replacement.
 
+The [native damage controls](compact-and-repair-evidence.md) show why successful
+compaction, reopen and row counts cannot establish lossless recovery. The repair
+validator must compare actual surviving content and constraint behavior.
+
+## Read-only inventory probe
+
+`JetDatabaseWriter.FormatProbe storage-audit` streams bounded NDJSON observations
+for physical pages, catalog objects, TDEF chains and known usage-map references.
+It hashes one decrypted physical page at a time and marks every region pinned.
+It does not validate row values, LVAL chains, index trees, opaque incoming
+references or native constraints, and it does not authorize relocation or repair.
+
+For example, run the built probe with an absolute input and a new absolute output
+outside the checkout:
+
+```powershell
+$report = Join-Path ([IO.Path]::GetTempPath()) ("jdw-storage-audit-" + [Guid]::NewGuid().ToString('N') + '.ndjson')
+dotnet run --project JetDatabaseWriter.FormatProbe -c Release -- storage-audit --input C:\data\source.accdb --output $report
+```
+
+The command opens the source read-only, refuses pending recovery journals and
+existing output files, and never follows linked-table references or executes database content.
+Windows sharing excludes cooperating writers; Unix access still requires
+cooperation. The source is not called an immutable snapshot on an unqualified
+filesystem. Native page-encrypted inputs can use `--password-environment NAME`;
+compound encrypted packages are outside this probe's native-file contract.
+
+Page, catalog-object, reference, diagnostic, schema and UTF-8 output limits apply.
+The CLI exposes `--max-pages`, `--max-objects`, `--max-references`,
+`--max-diagnostics`, `--max-schema-bytes` and `--max-report-bytes`;
+`storage-audit --help` lists defaults. Cancellation,
+corruption, I/O failure or a budget refusal returns nonzero and retains any
+partial report. A final `audit-terminal` with `InventoryCompleted: true` describes
+only the stated inventory coverage; it is never a value-completeness,
+relocation, repair or power-loss verdict. A successful process exit also requires
+report flush and close to succeed.
+
 ## Prerequisites
 
 Dependencies apply to the named requirements, not every unrelated requirement
@@ -28,8 +65,8 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition limits; aggregate logical-definition and entry-count limits per catalog validation; bounded usage-map ownership inspection | S1: collection overhead, cache lifetime, remaining traversal and output budgets; cancellation throughout |
-| Preserve stored values | Strict write-back scans; unreadable-LVAL refusal | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned bytes; stream rows and large LVALs |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; streaming pinned physical/catalog/TDEF/map inventory | S1: collection overhead, cache lifetime, remaining traversal and output budgets; cancellation throughout |
+| Preserve stored values | Strict write-back scans; refusal for unreadable mapped content; unreadable-LVAL refusal | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned bytes; stream rows and large LVALs |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation | S7/S9: complete raw descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
 | Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs | I2: verified tree ownership, shared roots, cross-TDEF index numbers and native key ordering; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
@@ -38,6 +75,12 @@ in the corresponding TODO item.
 The compact-copy engine must avoid the existing table rewrite snapshots; it can
 implement the required bounded raw copy without completing I6's separate
 in-place-update and seek optimizations.
+
+Index prefix compression can include row bookmarks and intermediate child-page
+pointers. Changing page numbers can change compressed entry lengths, so a
+same-page pointer patch can overflow. The compact-copy engine needs a bounded
+raw-key tree builder and disk-backed relocation/fence records, preserving stored
+canonical keys when possible instead of regenerating collation-sensitive keys.
 
 Individual attachment editing/history (R8), query planning, cache performance,
 benchmarks and the custom-stream recovery contract are not prerequisites for a
@@ -102,6 +145,16 @@ updates are lost, its provisioning preconditions, and a durable commit decision.
 Verify actual power interruption during preparation, publication, recovery and
 cleanup on every filesystem for which the guarantee is claimed. macOS process
 coordination also needs E4 evidence.
+
+An EOF-footer-only journal inside the original file does not establish a durable
+replacement protocol either. Its first interrupted append can persist a changed
+file length without any valid locator for the original EOF. A design needs a
+qualified bootstrap/anchor and recoverable decision/cleanup ordering; neither
+page alignment nor a hashed footer resolves those assumptions automatically.
+Windows, WSL and ordinary GitHub Actions can supply development, modeled faults,
+process termination and cross-platform checks. They do not, by themselves,
+provide physical device/controller power-interruption evidence. Keep that boundary
+explicit until a qualified rig and storage profile exist.
 
 Remove I17 only after all six packages meet their contracts, the validation
 matrix records the native and durability evidence with exact revisions, and

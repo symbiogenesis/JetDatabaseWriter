@@ -30,6 +30,15 @@ this check reads the catalog without opening a linked source and returns
 `false` only for an absent name. An unusable catalog entry reports
 `CorruptCatalog`; an existing empty table still returns an empty result.
 
+A structurally readable owned-pages map that references an unrecognized page type
+with matching table ownership prevents strict table reads and write-back, with
+`MalformedValue` and page context. Lenient reads emit an incomplete-table trace
+and return only independently readable rows; they do not invent rows or Null
+values for missing content. Stale row-count hints alone remain advisory and can
+trigger ownership fallback. This does not establish completeness when the map or
+ownership itself is damaged; Compact & Repair requires an independent storage
+audit beyond a successful ordinary read.
+
 ### Generic POCO mapping — recommended
 
 ```csharp

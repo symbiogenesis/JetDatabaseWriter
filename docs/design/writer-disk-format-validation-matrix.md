@@ -250,3 +250,19 @@ Native coverage uses `NativeSchemaDaoTests`, `NativeJet3SchemaRewriteTests`, `Co
 - Byte-for-byte DAO/Access comparisons stay diagnostic unless exact byte parity becomes a release requirement for the specific area.
 - ODBC OpenRecordset remains source- and DSN-dependent; current automated coverage validates metadata generation, cached-schema preservation, and CompactDatabase compatibility.
 - Manual Access UI workflows remain supplemental for cases DAO cannot expose, such as saving an attachment back to disk through the UI.
+
+`OwnedDataCompletenessTests` verifies strict typed/string/count refusal for a
+mapped unknown page with matching ownership, lenient faithful survivors with an
+incomplete-table trace, strict write-back with unchanged bytes, warm writer-cache
+invalidation and cancellation. Stale row counts remain advisory. The native
+[damage controls](compact-and-repair-evidence.md) independently reproduce the
+mapped DATA-page fault and distinguish it from primary/secondary index damage;
+the Microsoft-authored inputs retain their hashes. This does not prove traversal
+completeness for missing/contradictory maps or damaged ownership.
+
+`CompactInventoryTests` checks bounded physical/catalog/TDEF/map observations,
+complete per-page hashes, pinned opaque content, cancellation, real I/O propagation
+and structured refusal. `storage-audit` consumes the stream into a bounded partial
+or completed NDJSON inventory. Every region remains pinned; neither this phase
+nor its completion marker proves full row/LVAL/index reachability or permits
+relocation, reclamation, repair or replacement.
