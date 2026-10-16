@@ -60,6 +60,14 @@ internal sealed partial class JetFormat
         db[0x38] = 0x01;
         Wu16(db, Constants.DatabaseHeader.Jet3SortOrder, 0x0409);
         Wu16(db, Constants.DatabaseHeader.CodePage, 1252);
+
+        // Native Jet3 reserves 256 two-byte user slots at the end of page zero.
+        // Keep their uninterpreted low bytes zero and initialize the available
+        // high bytes as DAO3.6 does. Existing headers are never regenerated.
+        for (int offset = 0x601; offset < Constants.PageSizes.Jet3; offset += 2)
+        {
+            db[offset] = 1;
+        }
     }
 
     private static void WriteJet4AceHeaderDefaults(byte[] db)

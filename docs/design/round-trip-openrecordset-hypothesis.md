@@ -121,8 +121,10 @@ Durable fixes and facts from that phase:
 	The N2 two-table failure was a split-path bug: `TryBuildSplitLeafPages` was
 	recomputing unconstrained prefixes, producing `pref_len` 4/16 where the
 	original tree expected 1. Passing the original `maxPrefixLength` fixed N2+.
-- Real-index `num_idx_rows` counters track the table `row_count`; they are not
-	independent sparse counts.
+- The Jet4/ACE real-index `num_idx_rows` policy tracks the table `row_count`.
+	Jet3's eight-byte optimizer statistics are independent and remain preserved
+	across DML and schema edits; native compact recalculates them. See
+	[Jet3 definition metadata](jet3-definition-metadata.md).
 - Jet4/ACE indexed TDEFs count 8 trailing zero bytes after the `0xFFFF`
 	no-usage-map sentinel inside `tdef_len`.
 - Jet4/ACE leaf pages carry an extra `unknown(0)` word at offset 8 compared with

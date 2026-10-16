@@ -70,7 +70,7 @@ public sealed class TableCountersTests
         await builder.SetTDefRowCountAsync(entry.TDefPage, 3, ct);
         Assert.Equal(3u, (await harness.Database.TableDefs.ReadTableCountersAsync(entry.TDefPage, ct))?.RowCount);
         byte[] bytes = (await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, ct))!;
-        Assert.Equal(3u, JetTypeInfo.Ru32(bytes, statistic));
+        Assert.Equal(format == DatabaseFormat.Jet3Mdb ? 17u : 3u, JetTypeInfo.Ru32(bytes, statistic));
         await transaction.RollbackAsync(ct);
         Assert.Equal(99u, (await harness.Database.TableDefs.ReadTableCountersAsync(entry.TDefPage, ct))?.RowCount);
         bytes = (await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, ct))!;

@@ -240,6 +240,7 @@ internal sealed class TableRewritePlanner(
             tableName,
             entry,
             tableDef,
+            table.Schema.Image,
             newDefs,
             projectedIndexes,
             persistedProperties,

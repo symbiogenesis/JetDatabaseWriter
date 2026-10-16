@@ -59,6 +59,7 @@ internal sealed class TableStorageEditor(
     internal async ValueTask ApplyAsync(TableRewritePlan plan, string tempName, CancellationToken cancellationToken)
     {
         TableRewriteCopy copy = await this.CopyRowsAndIndexesAsync(plan, tempName, cancellationToken).ConfigureAwait(false);
+        await this.PreserveJet3IndexMetadataAsync(plan, copy, cancellationToken).ConfigureAwait(false);
         await this.ValidateCopyAsync(copy, cancellationToken).ConfigureAwait(false);
         await this.ReplaceOriginalAsync(plan, copy, cancellationToken).ConfigureAwait(false);
     }
@@ -144,6 +145,41 @@ internal sealed class TableStorageEditor(
         }
 
         return new TableRewriteCopy(tempName, tempEntry, tempDef, [.. storagePages], fkIndexNumbers);
+    }
+
+    private async ValueTask PreserveJet3IndexMetadataAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
+    {
+        if (!format.IsJet3 || plan.SourceImage.RealIndexes.Count == 0)
+        {
+            return;
+        }
+
+        byte[] original = plan.SourceImage.CopyBytes();
+        var originalIndexes = new Dictionary<string, IndexMetadata>(StringComparer.OrdinalIgnoreCase);
+        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(format, original, plan.Definition.Columns))
+        {
+            originalIndexes.Add(index.Name, index);
+        }
+
+        LogicalTDefChain replacement = await tableDefs.ReadTDefChainAsync(copy.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
+        TDefCounts counts = TDefCodec.ReadCounts(format, replacement.Bytes);
+        int descriptorStart = IndexCatalogReader.LocateRealIdxDescStart(format, replacement.Bytes, counts.ColumnCount, counts.RealIndexCount);
+        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(format, replacement.Bytes, copy.Definition.Columns))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!originalIndexes.TryGetValue(index.Name, out IndexMetadata? source))
+            {
+                continue;
+            }
+
+            int sourceSlot = format.TDef.BlockEnd + (source.RealIndexNumber * format.TDef.RealIdxEntrySz);
+            int targetSlot = format.TDef.BlockEnd + (index.RealIndexNumber * format.TDef.RealIdxEntrySz);
+            original.AsSpan(sourceSlot, format.TDef.RealIdxEntrySz).CopyTo(replacement.Bytes.AsSpan(targetSlot));
+            int descriptor = format.Index.RealIdxPhysOffset(descriptorStart, index.RealIndexNumber);
+            replacement.Bytes[format.Index.FlagsAbsoluteOffset(descriptor)] = plan.SourceImage.RealIndexes[source.RealIndexNumber].Slot.Flags;
+        }
+
+        await replacement.WriteInPlaceAsync(pager.ReadPageAsync, PageBuffers.Return, pager.WritePageAsync, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ValidateCopyAsync(TableRewriteCopy copy, CancellationToken cancellationToken)

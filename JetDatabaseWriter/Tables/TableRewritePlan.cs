@@ -11,6 +11,7 @@ using JetDatabaseWriter.Schema.Models;
 /// <param name="TableName">The original table name.</param>
 /// <param name="Entry">The original catalog identity.</param>
 /// <param name="Definition">The original schema including persisted calculated result types.</param>
+/// <param name="SourceImage">The original immutable table-definition bytes.</param>
 /// <param name="Columns">The projected schema retaining raw source descriptors.</param>
 /// <param name="Indexes">The surviving ordinary indexes.</param>
 /// <param name="Properties">The projected persisted property block.</param>
@@ -27,6 +28,7 @@ internal sealed record TableRewritePlan(
     string TableName,
     CatalogEntry Entry,
     TableDef Definition,
+    TDefImage SourceImage,
     List<ColumnDefinition> Columns,
     List<IndexDefinition> Indexes,
     ColumnPropertyBlock Properties,

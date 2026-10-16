@@ -179,7 +179,7 @@ Key deltas vs. Jet4:
 - No leading 4-byte magic, so `col_map`, `used_pages` and `first_dp` sit 4 bytes earlier (`IndexLayout.RealIdxFieldsOffset` is 0).
 - No 4-byte gap between `first_dp` and `flags`, and no 5 trailing bytes after `flags` — the descriptor terminates at byte 38.
 - The same `index_type = 0x01` PK discriminator on the matching logical-idx (§3.2) signals uniqueness; `flags` byte 38 carries the same bit semantics as Jet4.
-- The leading skip block has 8 bytes per real index (Jet4: 12). In `indexTestV1997.mdb` bytes `[0..3]` are 0 for the `id` and primary-key slots and 4 for the FK slots (meaning unknown); bytes `[4..7]` look like a key count (4 for the 4-row table's `id`/PK slots, 3 for the FK slots over 3 distinct values). The writer treats `[4..7]` as `num_idx_rows` and starts a new FK slot at 8 zero bytes.
+- The leading statistics block has 8 bytes per real index (Jet4: 12). In `indexTestV1997.mdb` bytes `[0..3]` are 0 for the `id` and primary-key slots and 4 for the FK slots; bytes `[4..7]` are 4 for the `id`/PK slots and 3 for the FK slots over 3 distinct values. DAO3.6 insertion/deletion probes establish that `[4..7]` is not a live row count. The writer preserves existing Jet3 slots across DML and schema edits and starts new slots at zero; native compact recalculates them. See [Jet3 definition metadata](jet3-definition-metadata.md).
 
 `IndexLayout.WriteRealIdxDescriptor` writes this descriptor for either format.
 
@@ -685,11 +685,12 @@ What W17a confirmed (carried into §3.1, §3.2, §4.2):
 - **§4.2 Jet3 leaf bitmask** at offset `0x16` and first entry at `0xF8` confirmed: a `LongInteger` PK leaf's first entries occupy bytes `0xF8`, `0x101`, `0x10A`, … with 9-byte stride (1B flag + 4B BE int + 3B page + 1B row), and the bitmask LSB-first pattern `00 02 04 08 10 20 40 80 …` matches that stride exactly.
 - **§4.1 page header is identical between Jet3 and Jet4** (page_type, unknown, free_space, parent_page, prev_page, next_page, tail_page, pref_len at canonical offsets).
 
-What W17a deliberately did **not** confirm (open questions for the W17b–c implementer):
+The read-only W17a probe left the following questions, now characterized by
+`Jet3IndexDefinitionTests` against DAO3.6:
 
-- Exact field map of the 8-byte leading real-idx skip entry on Jet3. The probe shows `[0..3]` is sometimes 0 / sometimes a small-cardinality value, and `[4..7]` resolves to a data page when nonzero — likely `unknown(4) + used_pages(4)` but not byte-confirmed. (§3.1 now records what `indexTestV1997.mdb` shows: `[0..3]` unknown, `[4..7]` apparently a key count; `used_pages` is in the descriptor.)
-- Whether the Jet3 `flags` byte at phys-desc offset `38` carries the same `0x01 = Unique`, `0x02 = IgnoreNulls`, `0x08 = Required` semantics as Jet4. PK entries observed in the probe corpus carry `flags = 0x00` (matching Jet4's empirical `flags = 0x00 + index_type = 0x01` PK convention from §3.1), but no non-PK unique index was observed in any fixture.
-- Whether Jet3 descending indexes use the same cleared ascending-flag convention as Jet4/ACE. No fixture in the V1997 corpus carries one.
+- The leading eight bytes are optimizer statistics, not page pointers or a live row count. Preserve unexplained values and let native compact recalculate them (§3.1).
+- Flags at physical-descriptor offset 38 use `0x01 = Unique`, `0x02 = IgnoreNulls`, and `0x08 = Required`; ordinary new primary keys use `0x09`, while preserved native logical primary keys can promote a differently flagged covering index.
+- Descending Jet3 index columns clear the column-map ascending flag, as on Jet4/ACE.
 
 W17a validation gap: the probe is read-only on real Access-authored bytes, so there is no Microsoft Access compact-and-repair concern at this phase. The §8 standing gap applies again starting at W17b.
 
@@ -1086,7 +1087,6 @@ The W-table in §7 records both historical shipped phases and current behavior. 
 - **W14 `DropRelationshipAsync` mid-array real-idx compaction.** Trailing real-idx physical-descriptor slots that are unreferenced by any logical-idx after a drop are reclaimed in place (`TryReclaimTrailingRealIdxAsync`; see §7.16). Mid-array orphans, such as dropping the older of two relationships on the same TDEF, are still left for Access to reclaim because compaction would require renumbering `index_num2` / cross-TDEF `rel_idx_num` references on every other table that points at the slot.
 - **Hosted Access validation.** The matrix records DAO tests that pass on Access-equipped hosts, but ordinary CI may still skip them when Access/DAO is unavailable. A Windows runner with Access installed would promote the guarded DAO tests into CI; manual UI checks remain supplemental evidence only.
 - **Jet3 usage maps.** Newly emitted user-table storage has native-width owned/free rows and index-map pointers; MSysObjects and named user-table owned maps grow across writer reopening. New FK index maps are initialized during rebuild. Refreshing existing index maps and other system/LVAL map maintenance remain open. A full rebuild can retain native map references to replaced trees (§7.19). Native map pages can be shared, so old map pages remain allocated until dedicated ownership can be proven.
-- **Jet3 TDEFs the writer creates.** `TDefPageBuilder` stamps `0x80` on every real-idx `flags` byte, which Access 97 never sets (a primary key gets `0x89` where Access writes `0x09`); roots and continuations now carry `VC`, with the `FF FF` + 8 zero-byte trailer (§3.2). Its 18-byte Jet3 column descriptors stamp the col_num copy at bytes 5-6, sort order at bytes 9-10 and code page at bytes 11-12. Bytes 7-8 still need Access-host validation. Access 97 writes sort order `0x0409` at bytes 9-10 and code page `0x04E4` (1252) at bytes 11-12 of every column descriptor, on every column type and on system tables too (Jet3Test.mdb, all 160 descriptors of nwind.mdb and all 147 of testV1997.mdb); Jet3Test.mdb's Currency column `UnitPrice` is `05 02 00 01 00 02 00 01 00 09 04 E4 04 03 04 00 08 00`. Access also fills bytes 5-8: in most user tables bytes 5-6 repeat col_num (`02 00` for `UnitPrice`; one nwind.mdb table holds col_num + 1), while the system tables and a few user tables hold `00 00` there, and bytes 7-8 are `01 00` in every descriptor of Jet3Test.mdb and testV1997.mdb and `00 00` in all but 17 of nwind.mdb's.
 
 ## 10. References
 

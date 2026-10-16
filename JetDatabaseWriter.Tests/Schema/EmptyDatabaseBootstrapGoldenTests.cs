@@ -51,7 +51,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "D99ABF7F931CEFCCA40A76D2D7E341593992E0F1809F92D31AFA4D821E7A06BD")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "7D8BFC1F383166959C39F660206C13822B7F01A22395A110479BEFEA9E9FA9D1")]
     [InlineData(DatabaseFormat.Jet4Mdb, "942B0938E09313C3D0E24DE79D1944201D9AAD875CA0ED5C2BE6AE3383A0FBB5")]
     [InlineData(DatabaseFormat.AceAccdb, "547D452B37ECFD21A5B6922C5C6110E241B51C5843B55471D06A7E3DCE6EE5FA")]
     public void BuildEmptyDatabase_MatchesGoldenHash(DatabaseFormat format, string expectedSha256)
@@ -62,7 +62,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb, "C21C588707B89F75911D048830C8EE0D976FA90B886AD5210A005CD0EED84782")]
+    [InlineData(DatabaseFormat.Jet3Mdb, "23032A11A89800D40A7025C3F51F7E6B117A00CDC35AA8FDA58E2BBFD87DF320")]
     [InlineData(DatabaseFormat.Jet4Mdb, "E4DB83C4364CFF3460610F75334C41080DE7555E16AAE7438D116FA18836087E")]
     [InlineData(DatabaseFormat.AceAccdb, "7F867B5C2F89C4D3F3B64778CD4DF2D4D3BECB485F29201C9DF2E2018DCE3518")]
     public async Task CreateTable_EveryAuthorableTypeAndTwoTextIndexes_TDefMatchesGoldenHash(DatabaseFormat format, string expectedSha256)

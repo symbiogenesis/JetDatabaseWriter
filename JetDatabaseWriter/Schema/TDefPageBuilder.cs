@@ -311,6 +311,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             if (!jet4)
             {
                 Wu16(page, o + format.ColumnDescriptor.NativeIdentityOff, col.ColNum);
+                Wu16(page, o + format.ColumnDescriptor.MiscOff, 1);
                 Wu16(page, o + format.ColumnDescriptor.SortOrderOff, 0x0409);
                 Wu16(page, o + format.ColumnDescriptor.CodePageOff, format.CodePage);
             }
@@ -458,7 +459,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
                     }
                 }
 
-                byte flagsByte = Constants.TableDefinition.UnknownIndexFlag;
+                byte flagsByte = jet4 ? Constants.TableDefinition.UnknownIndexFlag : (byte)0;
                 if (ri.IsPrimaryKey)
                 {
                     flagsByte |= Constants.TableDefinition.UniqueIndexFlag | Constants.TableDefinition.RequiredIndexFlag;
@@ -627,7 +628,10 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             updated = Math.Clamp(current + delta, 0L, uint.MaxValue);
             Wi32(page, format.TDef.NumRows, unchecked((int)(uint)updated));
 
-            // Mirror the change into the per-real-idx `num_idx_rows` counter
+            // Jet3 slots contain optimizer statistics, including an insertion-time
+            // distinct-key estimate at +4. Native deletion leaves it stale and
+            // Compact recalculates it; preserve it rather than applying row deltas.
+            // Mirror Jet4/ACE changes into the per-real-idx `num_idx_rows` counter
             // (offset +4 of each 12-byte/8-byte slot in the leading real-idx
             // skip block at [_tdef.BlockEnd, _tdef.BlockEnd + numRealIdx *
             // _tdef.RealIdxEntrySz)). Per mdbtools HACKING.md the slot is laid
@@ -637,7 +641,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
             // "could not find the object 'MSysDb'" — see
             // docs/design/round-trip-openrecordset-hypothesis.md.
             int numRealIdx = TDefCodec.ReadCounts(format, page).RealIndexCount;
-            if (numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
+            if (!format.IsJet3 && numRealIdx is > 0 and <= Constants.TableDefinition.MaxIndexes)
             {
                 int slotEnd = format.TDef.BlockEnd + (numRealIdx * format.TDef.RealIdxEntrySz);
                 if (slotEnd <= page.Length)
@@ -660,7 +664,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         }
     }
 
-    /// <summary>Sets the live row count and every real-index row statistic absolutely.</summary>
+    /// <summary>Sets the live row count and the Jet4/ACE real-index row statistics.</summary>
     /// <param name="tdefPage">The TDEF root page.</param>
     /// <param name="rowCount">The rewritten row count.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -671,7 +675,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
         {
             Wi32(page, format.TDef.NumRows, unchecked((int)rowCount));
             int count = TDefCodec.ReadCounts(format, page).RealIndexCount;
-            if (count is > 0 and <= Constants.TableDefinition.MaxIndexes
+            if (!format.IsJet3 && count is > 0 and <= Constants.TableDefinition.MaxIndexes
                 && format.TDef.BlockEnd + (count * format.TDef.RealIdxEntrySz) <= page.Length)
             {
                 for (int i = 0; i < count; i++)

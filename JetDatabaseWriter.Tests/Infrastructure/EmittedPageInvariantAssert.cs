@@ -289,7 +289,7 @@ internal static class EmittedPageInvariantAssert
             Assert.Equal(Math.Max(0, pageSize - tdefLen - 8), ReadUInt16(page, 2));
         }
 
-        for (int realIndex = 0; realIndex < numRealIdx; realIndex++)
+        for (int realIndex = 0; format != DatabaseFormat.Jet3Mdb && realIndex < numRealIdx; realIndex++)
         {
             int countOffset = layout.BlockEnd + (realIndex * layout.RealIdxEntrySz) + 4;
             if (countOffset + 4 > pageSize)

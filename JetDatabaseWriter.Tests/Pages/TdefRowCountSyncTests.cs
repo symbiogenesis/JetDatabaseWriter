@@ -13,7 +13,7 @@ using Xunit;
 
 /// <summary>
 /// <para>
-/// Verifies the TDEF-page invariant that every per-real-idx
+/// Verifies the Jet4/ACE TDEF-page invariant that every per-real-idx
 /// <c>num_idx_rows</c> counter (4-byte LE u32 at offset
 /// <c>BlockEnd + i*RealIdxEntrySz + 4</c>) tracks the table-level
 /// <c>row_count</c> field at <see cref="TDefHeaderLayout.NumRows"/>.
@@ -25,6 +25,7 @@ using Xunit;
 /// for the historical per-real-idx row-count fix
 /// and the corresponding fix in <c>AccessWriter.UpdateRowCountAsync</c>.
 /// </para>
+/// <para>Jet3 optimizer statistics are preserved independently of live row counts.</para>
 /// <para>The invariant is exercised in two paths:</para>
 /// <list type="bullet">
 ///   <item><c>CreateTableAsync</c> writes a new <c>MSysObjects</c> row → the
@@ -42,7 +43,7 @@ public sealed class TdefRowCountSyncTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task CreateTable_BumpsMSysObjectsPerRealIdxCounters_InLockStepWithRowCount(DatabaseFormat format)
+    public async Task CreateTable_UpdatesRowCountersAndPreservesJet3Statistics(DatabaseFormat format)
     {
         var ms = new MemoryStream();
 
@@ -64,7 +65,7 @@ public sealed class TdefRowCountSyncTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task InsertRows_BumpUserTablePerRealIdxCounters_InLockStepWithRowCount(DatabaseFormat format)
+    public async Task InsertRows_UpdateRowCountersAndPreserveJet3Statistics(DatabaseFormat format)
     {
         var ms = new MemoryStream();
 
@@ -93,8 +94,7 @@ public sealed class TdefRowCountSyncTests
     /// Walks every head-of-chain TDEF page in <paramref name="fileBytes"/>
     /// (page-type 0x02 with <c>tdef_id @ 4 == 0</c>) and asserts the
     /// per-real-idx <c>num_idx_rows</c> field equals <c>row_count</c> for
-    /// every real-idx slot. Indexes contain every live row, so the two
-    /// counters must always agree.
+    /// every Jet4/ACE real-idx slot. Newly emitted Jet3 optimizer slots stay zero.
     /// </summary>
     /// <param name="fileBytes">The file bytes.</param>
     /// <param name="format">The format.</param>
@@ -134,10 +134,11 @@ public sealed class TdefRowCountSyncTests
                 uint perIdxCount = BinaryPrimitives.ReadUInt32LittleEndian(
                     fileBytes.AsSpan(countOff, 4));
 
+                uint expected = format == DatabaseFormat.Jet3Mdb ? 0u : rowCount;
                 Assert.True(
-                    perIdxCount == rowCount,
+                    perIdxCount == expected,
                     FormattableString.Invariant(
-                        $"TDEF page {p}, real-idx {i}: num_idx_rows={perIdxCount} but row_count={rowCount} (format={format}). Indexes always cover every live row, so per-real-idx counters must track row_count exactly. See AccessWriter.UpdateRowCountAsync and docs/design/round-trip-openrecordset-hypothesis.md#7-historical-root-cause-rollup."));
+                        $"TDEF page {p}, real-idx {i}: statistic={perIdxCount}, expected={expected}, row_count={rowCount} (format={format}). Jet3 optimizer statistics are independent of live row counts."));
             }
 
             tdefsChecked++;
