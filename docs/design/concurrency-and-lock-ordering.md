@@ -311,9 +311,11 @@ on the assumption that the file does not change while it is open:
 
 Nothing writes through the reader, so its own work never makes its caches stale.
 `AccessReaderOptions.FileShare` defaults to `Read`, and path-based readers
-exclude write/delete sharing. A caller-supplied `FileStream` needs a compatible
-read-only lease. Windows enforces sharing; other platforms require cooperating
-access, and custom streams require caller-managed isolation. Keep the source
+exclude write/delete sharing. A `FileStream` passed directly to `OpenAsync` needs
+a compatible read-only lease. Linked-source resolver streams instead require
+caller-managed isolation and a committed snapshot: the library does not reopen
+their filenames or access sidecars. Windows enforces sharing; other platforms
+require cooperating access, and custom streams require caller-managed isolation. Keep the source
 unchanged for the reader lifetime: its caches do not refresh. If external
 access bypasses that coordination, cached and newly read pages can disagree.
 

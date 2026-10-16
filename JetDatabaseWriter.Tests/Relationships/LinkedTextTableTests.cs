@@ -229,7 +229,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(ct);
 
         LinkedTableInfo entry = Assert.Single(linked, table =>
@@ -305,7 +305,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         long realRowCount = await reader.GetRealRowCountAsync("LinkedCustomersCsv", ct);
         Assert.Equal(2, realRowCount);
 
@@ -339,7 +339,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         DataTable table = await reader.ReadTableAsync("LinkedSemicolonCsv", cancellationToken: ct);
 
         Assert.Equal(3, table.Columns.Count);
@@ -374,7 +374,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         DataTable table = await reader.ReadTableAsync("LinkedFormatCsv", cancellationToken: ct);
 
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
@@ -403,7 +403,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         DataTable table = await reader.ReadTableAsync("LinkedCarriageReturnCsv", cancellationToken: ct);
 
         Assert.Equal(2, table.Rows.Count);
@@ -432,7 +432,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         DataTable table = await reader.ReadTableAsync("LinkedEmptyFieldsCsv", cancellationToken: ct);
 
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
@@ -463,7 +463,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
 
         IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedRaggedRowsCsv", ct);
         Assert.Equal(["A", "B", "C"], metadata.Select(column => column.Name).ToArray());
@@ -524,7 +524,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedEncodingCsv", ct);
 
         Assert.Equal(["Name", "City", "Note"], metadata.Select(column => column.Name).ToArray());
@@ -563,7 +563,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
         DataTable table = await reader.ReadTableAsync("LinkedValueWhitespaceCsv", cancellationToken: ct);
 
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
@@ -594,7 +594,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxFieldLength = 4 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxFieldLength = 4 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(async () =>
@@ -623,7 +623,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxRecordLength = 10 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxRecordLength = 10 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
@@ -656,7 +656,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
 
         InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await reader.GetRealRowCountAsync("LinkedMissingQuoteCsv", ct));
@@ -688,7 +688,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxColumnCount = 3 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxColumnCount = 3 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
@@ -723,7 +723,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxColumnCount = 128 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxColumnCount = 128 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
         IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("LinkedDuplicateHeadersCsv", ct);
 
@@ -755,7 +755,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxFieldLength = 8 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxFieldLength = 8 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         DataTable preview = await reader.ReadTableAsync("LinkedPreviewBudgetCsv", maxRows: 1, cancellationToken: ct);
@@ -768,7 +768,7 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTextTable_FinalFileRejectedByValidator_IsNotRead()
+    public async Task LinkedTextTable_SourceResolverRefusal_IsNotRead()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string host = await this.CreateTempAccdbDatabaseAsync("FinalTextAuthorization");
@@ -784,7 +784,7 @@ public sealed class LinkedTextTableTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            LinkedSourcePathValidator = (_, candidate) => !string.Equals(candidate, path, StringComparison.Ordinal),
+            LinkedSourceResolver = static (_, _, _) => throw new UnauthorizedAccessException("Denied by the source resolver."),
         };
         await using AccessReader reader = await AccessReader.OpenAsync(host, options, ct);
         _ = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await reader.GetRealRowCountAsync("Denied", ct));
@@ -813,7 +813,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxSourceFileBytes = 8 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxSourceFileBytes = 8 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         InvalidDataException countException = await Assert.ThrowsAsync<InvalidDataException>(async () =>
@@ -846,7 +846,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxMaterializedRows = 1 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxMaterializedRows = 1 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         DataTable preview = await reader.ReadTableAsync("LinkedMaterializedRowsCsv", maxRows: 1, cancellationToken: ct);
@@ -878,7 +878,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedTextMaxMaterializedRows = 1 };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()), LinkedTextMaxMaterializedRows = 1 };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         IReadOnlyList<LinkedTextRow> preview = await reader.ReadTableAsync<LinkedTextRow>("LinkedTypedRowsCsv", maxRows: 1, ct);
@@ -923,11 +923,11 @@ public sealed class LinkedTextTableTests : IDisposable
 
         UnauthorizedAccessException exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
             await reader.ReadTableAsync("LinkedReparseCsv", cancellationToken: ct));
-        Assert.Contains("reparse", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("resolver", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task LinkedTextTable_CsvFile_PathValidatorMutation_DoesNotPoisonLinkedTableCache()
+    public async Task LinkedTextTable_CsvFile_ResolverMetadataMutation_DoesNotPoisonLinkedTableCache()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("TextLinkValidatorMutationFE");
@@ -949,12 +949,12 @@ public sealed class LinkedTextTableTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            LinkedSourcePathValidator = (link, _) =>
+            LinkedSourceResolver = (link, _, token) =>
             {
                 link.Name = "Poisoned";
                 link.SourcePath = @"C:\Blocked";
                 link.SourceObjectName = "blocked.csv";
-                return true;
+                return LinkedTestPaths.ResolverFor(csvPath)(link, csvPath, token);
             },
         };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
@@ -970,7 +970,7 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTextTable_CsvFile_WindowsSubfolderName_ReadsFileWithinApprovedDirectory()
+    public async Task LinkedTextTable_CsvFile_WindowsSubfolderName_ReadsExplicitlyAuthorizedFile()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string sourceDirectory = this.CreateTempDirectory("TextLinkSubfolder");
@@ -991,7 +991,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedSourcePathAllowlist = [sourceDirectory] };
+        var options = new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(csvPath) };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
         DataTable table = await reader.ReadTableAsync("LinkedSubfolderCsv", cancellationToken: ct);
         DataRow row = Assert.Single(table.Rows.Cast<DataRow>());
@@ -1019,7 +1019,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        var options = new AccessReaderOptions { LinkedSourcePathAllowlist = [hostDirectory] };
+        var options = new AccessReaderOptions { LinkedSourceResolver = static (_, _, _) => throw new InvalidOperationException("Unsafe text hints must be refused before resolution.") };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
@@ -1073,7 +1073,7 @@ public sealed class LinkedTextTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTextTable_CsvFile_StreamHostWithAllowlistedSourceDirectory_ReadsDelimitedRows()
+    public async Task LinkedTextTable_CsvFile_StreamHostWithExplicitSourceCapability_ReadsDelimitedRows()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string sourceDirectory = this.CreateTempDirectory("TextLinkStreamAllowedSource");
@@ -1111,7 +1111,7 @@ public sealed class LinkedTextTableTests : IDisposable
         var options = new AccessReaderOptions
         {
             UseLockFile = false,
-            LinkedSourcePathAllowlist = [sourceDirectory],
+            LinkedSourceResolver = LinkedTestPaths.ResolverFor(csvPath),
         };
         await using AccessReader reader = await AccessReader.OpenAsync(stream, options, leaveOpen: true, ct);
 
@@ -1143,7 +1143,7 @@ public sealed class LinkedTextTableTests : IDisposable
                 ct);
         }
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(this.tempFiles.ToArray()) }, cancellationToken: ct);
 
         NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await reader.ReadTableAsync("LinkedUnsupportedFormatText", cancellationToken: ct));

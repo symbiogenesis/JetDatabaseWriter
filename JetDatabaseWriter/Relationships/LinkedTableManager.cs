@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -21,9 +20,9 @@ using JetDatabaseWriter.Schema;
 using JetDatabaseWriter.Schema.Models;
 
 /// <summary>
-/// Centralises the linked-table (MSysObjects type 4 / 6) format and path
+/// Centralises the linked-table (MSysObjects type 4 / 6) format and source
 /// policy: the MSysObjects scan that produces <see cref="LinkedTableInfo"/>
-/// entries, source-path resolution under a <see cref="LinkedSourcePolicy"/>,
+/// entries, authorized-stream resolution under a <see cref="LinkedSourcePolicy"/>,
 /// the delimited-text read-through used by <see cref="LinkedTableReader"/>, and
 /// the writer-side creation of Access-file, ODBC, and text/CSV link catalog
 /// entries.
@@ -37,50 +36,16 @@ internal static class LinkedTableManager
     private static readonly string[] LinkedTableCatalogColumns = ["Name", "Type", "Flags", "Database", "ForeignName", "Connect"];
 
     /// <summary>
-    /// Normalises the caller-supplied allowlist of directories that linked-table
-    /// source paths must reside under. Relative entries are resolved against the
-    /// directory containing <paramref name="hostDatabasePath"/>.
-    /// </summary>
-    /// <param name="allowlist">Directory allowlist entries supplied by the caller.</param>
-    /// <param name="hostDatabasePath">Path to the database that owns the linked-table definitions.</param>
-    internal static string[] NormalizeAllowlist(IReadOnlyList<string> allowlist, string hostDatabasePath)
-    {
-        if (allowlist == null || allowlist.Count == 0)
-        {
-            return [];
-        }
-
-        string baseDirectory = Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory();
-        var normalized = new List<string>(allowlist.Count);
-
-        foreach (string path in allowlist)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                continue;
-            }
-
-            string fullPath = ResolvePath(path.Trim(), baseDirectory, "linked-source allowlist");
-            normalized.Add(fullPath);
-        }
-
-        return normalized.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-    }
-
-    /// <summary>
     /// Builds a derivative <see cref="AccessReaderOptions"/> instance suitable for
-    /// re-opening the source database referenced by a linked table. The allowlist
-    /// is normalised against the host database directory and the validator is
-    /// forwarded so transitively linked databases inherit the same security policy.
+    /// opening an explicitly authorized linked stream. The resolver is forwarded
+    /// so transitively linked databases inherit the same authorization policy.
     /// </summary>
     /// <param name="options">The options.</param>
-    /// <param name="hostDatabasePath">The host database path.</param>
     /// <param name="traversal">The ancestry of a linked read.</param>
     /// <param name="password">The explicitly resolved linked-source password.</param>
     /// <exception cref="ArgumentOutOfRangeException">The depth limit is negative.</exception>
     internal static AccessReaderOptions CreateLinkedSourceOpenOptions(
         AccessReaderOptions options,
-        string hostDatabasePath,
         LinkedSourceTraversal? traversal = null,
         ReadOnlyMemory<char> password = default)
     {
@@ -110,13 +75,12 @@ internal static class LinkedTableManager
             FileAccess = options.FileAccess,
             FileShare = options.FileShare,
             Password = password,
-            UseLockFile = options.UseLockFile,
+            UseLockFile = false,
             LockFileUserName = options.LockFileUserName,
             LockFileMachineName = options.LockFileMachineName,
             UseByteRangeLocks = options.UseByteRangeLocks,
             LockTimeoutMilliseconds = options.LockTimeoutMilliseconds,
-            LinkedSourcePathAllowlist = NormalizeAllowlist(options.LinkedSourcePathAllowlist, hostDatabasePath),
-            LinkedSourcePathValidator = options.LinkedSourcePathValidator,
+            LinkedSourceResolver = options.LinkedSourceResolver,
             LinkedSourceMaxDepth = options.LinkedSourceMaxDepth,
             LinkedSourcePasswordResolver = options.LinkedSourcePasswordResolver,
             LinkedSourceTraversal = traversal ?? options.LinkedSourceTraversal,
@@ -134,9 +98,10 @@ internal static class LinkedTableManager
     /// </summary>
     /// <param name="catalog">Reads the <c>MSysObjects</c> rows.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
+    /// <param name="includeSystem">Whether system identities are required for execution policy.</param>
     /// <exception cref="InvalidDataException">Thrown when linked-table metadata exceeds the per-reader row limit.</exception>
     /// <exception cref="JetCorruptDataException">Required linked catalog structure is missing or invalid.</exception>
-    internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CatalogReader catalog, CancellationToken cancellationToken)
+    internal static async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CatalogReader catalog, CancellationToken cancellationToken, bool includeSystem = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -176,7 +141,7 @@ internal static class LinkedTableManager
                 continue;
             }
 
-            if (CatalogValueReader.TryParseInt64(row, idxFlags, out long flagsLong) &&
+            if (!includeSystem && CatalogValueReader.TryParseInt64(row, idxFlags, out long flagsLong) &&
                 (unchecked((uint)flagsLong) & Constants.SystemObjects.SystemTableMask) != 0)
             {
                 continue;
@@ -227,7 +192,7 @@ internal static class LinkedTableManager
 
     /// <summary>
     /// Opens the source database referenced by <paramref name="link"/> as a
-    /// separate reader, applying the host's allowlist and validator and its
+    /// separate reader, applying the host's stream resolver and its
     /// linked-source open options.
     /// </summary>
     /// <param name="policy">The host's linked-source policy.</param>
@@ -240,20 +205,24 @@ internal static class LinkedTableManager
         CancellationToken cancellationToken)
     {
         ThrowIfUnsupportedLinkedRead(link);
+        cancellationToken.ThrowIfCancellationRequested();
 
         string resolvedPath = ResolveLinkedSourcePath(policy, link);
         LinkedSourceTraversal traversal = ExtendLinkedTraversal(policy, link, resolvedPath);
-        ReadOnlyMemory<char> password = policy.OpenOptions.LinkedSourcePasswordResolver?.Invoke(link with { }, resolvedPath) ?? default;
-        AccessReaderOptions linkedOptions = CreateLinkedSourceOpenOptions(policy.OpenOptions, policy.HostDatabasePath, traversal, password);
-
-        if (!File.Exists(resolvedPath))
+        Stream source = await OpenSourceStreamAsync(policy, link, resolvedPath, cancellationToken).ConfigureAwait(false);
+        AccessReaderOptions linkedOptions;
+        try
         {
-            throw new FileNotFoundException(
-                $"Source database for linked table '{link.Name}' not found: {resolvedPath}",
-                resolvedPath);
+            ReadOnlyMemory<char> password = policy.OpenOptions.LinkedSourcePasswordResolver?.Invoke(link with { }, resolvedPath) ?? default;
+            linkedOptions = CreateLinkedSourceOpenOptions(policy.OpenOptions, traversal, password);
+        }
+        catch
+        {
+            await source.DisposeAsync().ConfigureAwait(false);
+            throw;
         }
 
-        return await AccessReader.OpenAsync(resolvedPath, linkedOptions, cancellationToken).ConfigureAwait(false);
+        return await AccessReader.OpenLinkedSourceAsync(source, resolvedPath, linkedOptions, cancellationToken).ConfigureAwait(false);
     }
 
     internal static async ValueTask<long> CountLinkedTextRowsAsync(
@@ -261,7 +230,7 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        LinkedTextDataSource source = GetLinkedTextDataSource(policy, link);
+        LinkedTextDataSource source = await GetLinkedTextDataSourceAsync(policy, link, cancellationToken).ConfigureAwait(false);
         using var records = new LinkedTextRecordReader(source);
         return await records.DelimitedReader.CountRecordsAsync(source.Format.HasHeaderRow, cancellationToken).ConfigureAwait(false);
     }
@@ -572,7 +541,7 @@ internal static class LinkedTableManager
     /// <summary>Refuses cycles and excessive recursion before touching the next source.</summary>
     /// <param name="policy">The inherited linked-source policy.</param>
     /// <param name="link">The next linked table.</param>
-    /// <param name="resolvedPath">The authorized source path.</param>
+    /// <param name="resolvedPath">The untrusted logical source path hint.</param>
     /// <returns>The new immutable ancestry.</returns>
     /// <exception cref="InvalidDataException">The read contains a cycle or exceeds its depth limit.</exception>
     private static LinkedSourceTraversal ExtendLinkedTraversal(LinkedSourcePolicy policy, LinkedTableInfo link, string resolvedPath)
@@ -693,11 +662,7 @@ internal static class LinkedTableManager
         }
     }
 
-    private static string ResolveLinkedSourcePath(
-        LinkedTableInfo link,
-        string hostDatabasePath,
-        IReadOnlyList<string> linkedSourcePathAllowlist,
-        Func<LinkedTableInfo, string, bool>? linkedSourcePathValidator)
+    private static string ResolveLinkedSourcePath(LinkedSourcePolicy policy, LinkedTableInfo link)
     {
         if (string.IsNullOrWhiteSpace(link.SourcePath))
         {
@@ -709,51 +674,10 @@ internal static class LinkedTableManager
         string rawPath = link.SourcePath.Trim();
         ThrowIfUnsafeWindowsPath(rawPath, $"linked table '{link.Name}'");
         rawPath = rawPath.Replace('\\', Path.DirectorySeparatorChar);
-        bool hasHostDatabasePath = !string.IsNullOrWhiteSpace(hostDatabasePath);
-        string baseDirectory = hasHostDatabasePath
-            ? Path.GetDirectoryName(hostDatabasePath) ?? Directory.GetCurrentDirectory()
-            : Directory.GetCurrentDirectory();
-        string resolvedPath = ResolvePath(rawPath, baseDirectory, $"linked table '{link.Name}'");
-        bool isWithinHostDatabaseDirectory = hasHostDatabasePath && IsPathWithinDirectory(resolvedPath, baseDirectory);
-        bool callbackApproved = linkedSourcePathValidator?.Invoke(link with { }, resolvedPath) ?? false;
-        string? allowlistRoot = linkedSourcePathAllowlist.FirstOrDefault(root => IsPathWithinDirectory(resolvedPath, root));
-
-        if (!hasHostDatabasePath && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{link.SourcePath}' cannot be resolved safely because the host database was opened from a stream. " +
-                "Use AccessReaderOptions.LinkedSourcePathAllowlist or LinkedSourcePathValidator to explicitly allow trusted paths.");
-        }
-
-        if (!isWithinHostDatabaseDirectory && linkedSourcePathAllowlist.Count == 0 && !callbackApproved)
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{link.SourcePath}' is outside the host database directory. " +
-                "Use AccessReaderOptions.LinkedSourcePathValidator to explicitly allow trusted paths.");
-        }
-
-        if (linkedSourcePathAllowlist.Count > 0 &&
-            allowlistRoot == null)
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{resolvedPath}' is not permitted by AccessReaderOptions.LinkedSourcePathAllowlist.");
-        }
-
-        if (linkedSourcePathValidator != null && !callbackApproved)
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked table '{link.Name}' source path '{resolvedPath}' was rejected by AccessReaderOptions.LinkedSourcePathValidator.");
-        }
-
-        string trustedDirectory = allowlistRoot
-            ?? (isWithinHostDatabaseDirectory ? baseDirectory : Path.GetDirectoryName(resolvedPath) ?? resolvedPath);
-        EnsurePathDoesNotCrossReparsePoint(
-            resolvedPath,
-            trustedDirectory,
-            targetIsDirectory: link.Kind == LinkedTableKind.Text,
-            context: $"linked table '{link.Name}' source path");
-
-        return resolvedPath;
+        string baseDirectory = string.IsNullOrWhiteSpace(policy.HostDatabasePath)
+            ? Directory.GetCurrentDirectory()
+            : Path.GetDirectoryName(policy.HostDatabasePath) ?? Directory.GetCurrentDirectory();
+        return ResolvePath(rawPath, baseDirectory, $"linked table '{link.Name}'");
     }
 
     private static string ResolveLinkedTextSourceFilePath(LinkedSourcePolicy policy, LinkedTableInfo link)
@@ -764,7 +688,6 @@ internal static class LinkedTableManager
         }
 
         string resolvedDirectory = ResolveLinkedSourcePath(policy, link);
-
         if (string.IsNullOrWhiteSpace(link.SourceObjectName))
         {
             throw new FileNotFoundException(
@@ -775,40 +698,45 @@ internal static class LinkedTableManager
         string rawFilePath = link.SourceObjectName.Trim();
         ThrowIfUnsafeWindowsPath(rawFilePath, $"linked text table '{link.Name}'");
         rawFilePath = rawFilePath.Replace('\\', Path.DirectorySeparatorChar);
-        string resolvedFilePath = ResolvePath(
-            rawFilePath,
-            resolvedDirectory,
-            $"linked text table '{link.Name}'");
+        string resolvedFilePath = ResolvePath(rawFilePath, resolvedDirectory, $"linked text table '{link.Name}'");
         if (!IsPathWithinDirectory(resolvedFilePath, resolvedDirectory))
         {
             throw new UnauthorizedAccessException(
                 $"Linked text table '{link.Name}' source file '{link.SourceObjectName}' is outside its source directory.");
         }
 
-        if (policy.OpenOptions.LinkedSourcePathValidator != null
-            && !policy.OpenOptions.LinkedSourcePathValidator(link with { }, resolvedFilePath))
-        {
-            throw new UnauthorizedAccessException(
-                $"Linked text table '{link.Name}' source file '{resolvedFilePath}' was rejected by AccessReaderOptions.LinkedSourcePathValidator.");
-        }
-
-        EnsurePathDoesNotCrossReparsePoint(
-            resolvedFilePath,
-            resolvedDirectory,
-            targetIsDirectory: false,
-            context: $"linked text table '{link.Name}' source file");
-
         return resolvedFilePath;
     }
 
-    private static string ResolveLinkedSourcePath(LinkedSourcePolicy policy, LinkedTableInfo link)
+    private static async ValueTask<Stream> OpenSourceStreamAsync(
+        LinkedSourcePolicy policy,
+        LinkedTableInfo link,
+        string resolvedPath,
+        CancellationToken cancellationToken)
     {
-        AccessReaderOptions linkedOptions = policy.OpenOptions;
-        return ResolveLinkedSourcePath(
-            link,
-            policy.HostDatabasePath,
-            linkedOptions.LinkedSourcePathAllowlist,
-            linkedOptions.LinkedSourcePathValidator);
+        cancellationToken.ThrowIfCancellationRequested();
+        Func<LinkedTableInfo, string, CancellationToken, ValueTask<Stream>> resolver = policy.OpenOptions.LinkedSourceResolver
+            ?? throw new UnauthorizedAccessException(
+                $"Linked table '{link.Name}' requires AccessReaderOptions.LinkedSourceResolver to provide an authorized source stream.");
+        Stream source = await resolver(link with { }, resolvedPath, cancellationToken).ConfigureAwait(false)
+            ?? throw new UnauthorizedAccessException($"Linked table '{link.Name}' source was not authorized by AccessReaderOptions.LinkedSourceResolver.");
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!source.CanRead || !source.CanSeek)
+            {
+                throw new ArgumentException("The linked-source resolver must return a readable, seekable stream.", nameof(policy));
+            }
+
+            source.Position = 0;
+            return source;
+        }
+        catch
+        {
+            await source.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async ValueTask<LinkedTextRowReader> OpenLinkedTextRowsAsync(
@@ -816,22 +744,20 @@ internal static class LinkedTableManager
         LinkedTableInfo link,
         CancellationToken cancellationToken)
     {
-        LinkedTextDataSource source = GetLinkedTextDataSource(policy, link);
+        LinkedTextDataSource source = await GetLinkedTextDataSourceAsync(policy, link, cancellationToken).ConfigureAwait(false);
         return await LinkedTextRowReader.OpenAsync(source, cancellationToken).ConfigureAwait(false);
     }
 
-    private static LinkedTextDataSource GetLinkedTextDataSource(LinkedSourcePolicy policy, LinkedTableInfo link)
+    private static async ValueTask<LinkedTextDataSource> GetLinkedTextDataSourceAsync(
+        LinkedSourcePolicy policy,
+        LinkedTableInfo link,
+        CancellationToken cancellationToken)
     {
         LinkedTextLimits limits = CreateLinkedTextLimits(policy.OpenOptions);
         string resolvedPath = ResolveLinkedTextSourceFilePath(policy, link);
-        if (!File.Exists(resolvedPath))
-        {
-            throw new FileNotFoundException(
-                $"Text source for linked table '{link.Name}' not found: {resolvedPath}",
-                resolvedPath);
-        }
-
-        return new LinkedTextDataSource(resolvedPath, ParseTextLinkFormat(link.ConnectString), limits, link.Name);
+        DelimitedTextFormat format = ParseTextLinkFormat(link.ConnectString);
+        Stream source = await OpenSourceStreamAsync(policy, link, resolvedPath, cancellationToken).ConfigureAwait(false);
+        return new LinkedTextDataSource(source, format, limits, link.Name);
     }
 
     private static List<ColumnMetadata> CreateLinkedTextColumnMetadata(string[] columnNames)
@@ -1047,92 +973,6 @@ internal static class LinkedTableManager
         }
     }
 
-    private static void EnsurePathDoesNotCrossReparsePoint(
-        string path,
-        string trustedDirectory,
-        bool targetIsDirectory,
-        string context)
-    {
-        string fullTrustedDirectory = Path.GetFullPath(trustedDirectory);
-        string fullPath = Path.GetFullPath(path, fullTrustedDirectory);
-        if (!IsPathWithinDirectory(fullPath, fullTrustedDirectory))
-        {
-            throw new UnauthorizedAccessException(
-                $"{context} '{path}' is outside trusted directory '{trustedDirectory}'.");
-        }
-
-        string directoryToCheck = targetIsDirectory ? fullPath : Path.GetDirectoryName(fullPath) ?? fullTrustedDirectory;
-        for (string? ancestor = fullTrustedDirectory; ancestor != null; ancestor = Path.GetDirectoryName(ancestor))
-        {
-            CheckExistingDirectoryForReparsePoint(ancestor, context);
-        }
-
-        string relativeDirectory = Path.GetRelativePath(fullTrustedDirectory, directoryToCheck);
-        if (!string.Equals(relativeDirectory, ".", StringComparison.Ordinal))
-        {
-            string current = fullTrustedDirectory;
-            string[] segments = relativeDirectory.Split(
-                PathSeparators,
-                StringSplitOptions.RemoveEmptyEntries);
-            foreach (string segment in segments)
-            {
-                current = Path.Combine(current, segment);
-                CheckExistingDirectoryForReparsePoint(current, context);
-            }
-        }
-
-        if (!targetIsDirectory && File.Exists(fullPath))
-        {
-            CheckExistingFileForReparsePoint(fullPath, context);
-        }
-    }
-
-    private static void CheckExistingDirectoryForReparsePoint(string directoryPath, string context)
-    {
-        if (!Directory.Exists(directoryPath))
-        {
-            return;
-        }
-
-        CheckExistingPathForReparsePoint(directoryPath, context);
-    }
-
-    private static void CheckExistingFileForReparsePoint(string filePath, string context)
-    {
-        if (!File.Exists(filePath))
-        {
-            return;
-        }
-
-        CheckExistingPathForReparsePoint(filePath, context);
-    }
-
-    private static void CheckExistingPathForReparsePoint(string path, string context)
-    {
-        try
-        {
-            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            {
-                throw new UnauthorizedAccessException(
-                    $"{context} '{path}' crosses a filesystem reparse point.");
-            }
-        }
-        catch (UnauthorizedAccessException)
-        {
-            throw;
-        }
-        catch (Exception ex) when (
-            ex is IOException or
-            ArgumentException or
-            NotSupportedException or
-            PathTooLongException)
-        {
-            throw new UnauthorizedAccessException(
-                $"Unable to verify {context} '{path}' for filesystem reparse points.",
-                ex);
-        }
-    }
-
     private static bool IsPathWithinDirectory(string path, string directory)
     {
         string fullDirectory = Path.GetFullPath(directory);
@@ -1162,7 +1002,7 @@ internal static class LinkedTableManager
     private static string DecodeTextForeignName(string foreignName) =>
         foreignName.Replace('#', '.');
 
-    private readonly record struct LinkedTextDataSource(string FilePath, DelimitedTextFormat Format, LinkedTextLimits Limits, string TableName);
+    private readonly record struct LinkedTextDataSource(Stream Source, DelimitedTextFormat Format, LinkedTextLimits Limits, string TableName);
 
     private readonly record struct LinkedTextLimits(
         DelimitedTextLimits Delimited,
@@ -1171,12 +1011,12 @@ internal static class LinkedTableManager
 
     private sealed class LinkedTextRecordReader : IDisposable
     {
-        private readonly FileStream sourceStream;
+        private readonly Stream sourceStream;
         private readonly StreamReader textReader;
 
         internal LinkedTextRecordReader(LinkedTextDataSource source)
         {
-            this.sourceStream = new FileStream(source.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            this.sourceStream = source.Source;
             StreamReader? reader = null;
             try
             {

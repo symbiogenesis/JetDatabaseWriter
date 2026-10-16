@@ -207,8 +207,7 @@ internal sealed class IndexRowReader(
     internal async ValueTask<IReadOnlyList<IndexMetadata>> ListSeekableIndexesAsync(string tableName, CancellationToken cancellationToken)
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
-        await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved is null)
         {
             await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -247,8 +246,7 @@ internal sealed class IndexRowReader(
     internal async ValueTask<bool> CanSeekJoinKeysAsync(string tableName, IndexMetadata index, IEnumerable<object?[]> keys, CancellationToken cancellationToken)
     {
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
-        await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved is null)
         {
             await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -342,8 +340,7 @@ internal sealed class IndexRowReader(
         }
 
         using AsyncReentrantOperationGate.Lease operation = operations.Enter();
-        await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        ResolvedTable? resolved = await tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
@@ -387,8 +384,9 @@ internal sealed class IndexRowReader(
         Guard.NotNull(createProjection, nameof(createProjection));
         cancellationToken.ThrowIfCancellationRequested();
 
-        await tables.ThrowIfLinkedExecutionUnavailableAsync(tableName, cancellationToken).ConfigureAwait(false);
-        ResolvedTable? resolved = await catalog.ResolveTableAsync(tableName, cancellationToken).ConfigureAwait(false);
+        await tables.ThrowIfLinkedLocalReadAsync(tableName, cancellationToken).ConfigureAwait(false);
+
+        ResolvedTable? resolved = await tables.ResolveLocalTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (resolved == null)
         {
             await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);

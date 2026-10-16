@@ -133,8 +133,7 @@ var options = new AccessReaderOptions("secretPassword")
     FileAccess               = FileAccess.Read,        // default
     FileShare                = FileShare.Read,         // default; path readers retain read-only sharing
     UseLockFile              = true,   // create .ldb/.laccdb lockfile (default: true)
-    LinkedSourcePathAllowlist = new[] { @"C:\TrustedLinkedDatabases" },
-    LinkedSourcePathValidator = (link, fullPath) => link.Kind == LinkedTableKind.Access,
+    // LinkedSourceResolver must supply an authorized stream to enable linked reads.
 };
 await using var reader = await AccessReader.OpenAsync("database.mdb", options);
 
@@ -148,6 +147,38 @@ var writerOptions = new AccessWriterOptions("secretPassword")
 };
 await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOptions);
 ```
+
+Linked Access/text data reads require `LinkedSourceResolver`; listing link definitions and
+cached ODBC columns does not. Register trusted, committed snapshot bytes independently
+of the host database, then select them in the resolver. For example, after the application
+has obtained `approvedBackendSnapshot` from its trusted source:
+
+```csharp
+var linkedOptions = new AccessReaderOptions
+{
+    LinkedSourceResolver = (link, pathHint, cancellationToken) =>
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (link.Kind != LinkedTableKind.Access
+            || pathHint != @"C:\TrustedLinkedDatabases\Backend.accdb")
+        {
+            throw new UnauthorizedAccessException("The linked source is not registered.");
+        }
+
+        return new ValueTask<Stream>(new MemoryStream(approvedBackendSnapshot, writable: false));
+    },
+};
+```
+
+The hint selects an already-authorized resource; never use unchecked catalog metadata to
+open files inside the callback. An application returning a FileStream must verify its actual
+handle using its own platform policy or establish it in a trusted filesystem namespace.
+Keep the source isolated and committed until disposal. The library neither reopens the
+filename nor inspects its lock/journal sidecars; the application must perform any required
+recovery before registration. The reader owns each returned stream, including cancellation
+and parse failures, so return a fresh stream per request. The same resolver applies to nested
+links, and the depth limit still bounds recursion through physical aliases. Source passwords
+come only from `LinkedSourcePasswordResolver`, after stream authorization.
 
 `MaxAttachmentContentBytesPerOperation` includes extension headers and is shared across attachment columns during one table scan. Each table in a multi-table read starts a fresh budget. Set a positive larger limit for trusted reads that exceed the 256 MiB default; `ValueTooLarge` refusals propagate in strict and lenient modes. Inflation checks cancellation between output chunks and before its final excess-byte check. A single decompressor read, checksum or copy remains a synchronous interval.
 

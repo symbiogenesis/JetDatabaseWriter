@@ -131,6 +131,7 @@ internal sealed class AccessQueryProvider<[DynamicallyAccessedMembers(Dynamicall
         // Empty Take and in-memory tails can bypass that source entirely.
         if (maySkipSource)
         {
+            await tables.ThrowIfLinkedExecutionUnavailableAsync(table, cancellationToken).ConfigureAwait(false);
             await tables.RequireTableAsync(table, cancellationToken).ConfigureAwait(false);
         }
 

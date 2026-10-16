@@ -59,7 +59,7 @@ internal sealed class ReaderServices : IDisposable
         db.OwnedPages.DiagnosticsEnabled = options.DiagnosticsEnabled;
 
         var linkedSources = new LinkedSourcePolicy(
-            LinkedTableManager.CreateLinkedSourceOpenOptions(options, db.DatabasePath),
+            LinkedTableManager.CreateLinkedSourceOpenOptions(options),
             db.DatabasePath);
 
         this.Operations = new AsyncReentrantOperationGate(typeof(AccessReader), options.AttachmentReadContext);

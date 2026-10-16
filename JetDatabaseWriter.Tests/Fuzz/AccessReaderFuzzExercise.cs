@@ -83,10 +83,10 @@ internal static class AccessReaderFuzzExercise
             MaxTotalEncryptionSpinCount = MaxEncryptionIterations,
             EncryptionWorkBudget = encryptionBudget,
             LinkedSourceMaxDepth = 0,
-            LinkedSourcePathValidator = (_, _) =>
+            LinkedSourceResolver = (_, _, _) =>
             {
                 log("[FuzzCoverage] reader:link-denied");
-                return false;
+                throw new UnauthorizedAccessException("Linked-source execution is disabled by the fuzz harness.");
             },
             LinkedTextMaxRecordLength = 4096,
             LinkedTextMaxFieldLength = 4096,

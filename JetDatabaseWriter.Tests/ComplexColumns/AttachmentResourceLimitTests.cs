@@ -286,7 +286,7 @@ public sealed class AttachmentResourceLimitTests
                 {
                     UseLockFile = false,
                     StrictParsing = strict,
-                    LinkedSourcePathAllowlist = [directory],
+                    LinkedSourceResolver = JetDatabaseWriter.Tests.Relationships.LinkedTestPaths.ResolverFor(sourcePath),
                     MaxAttachmentContentBytesPerOperation = 3 * ContentLength,
                 },
                 leaveOpen: true,
@@ -307,7 +307,7 @@ public sealed class AttachmentResourceLimitTests
     public void AttachmentBudget_LinkedReadersShareNestedScopeAndResetAfterExit()
     {
         AccessReaderOptions root = new AccessReaderOptions { MaxAttachmentContentBytesPerOperation = 23 }.WithEncryptionWorkBudget();
-        AccessReaderOptions linked = JetDatabaseWriter.Relationships.LinkedTableManager.CreateLinkedSourceOpenOptions(root, string.Empty);
+        AccessReaderOptions linked = JetDatabaseWriter.Relationships.LinkedTableManager.CreateLinkedSourceOpenOptions(root);
         var rootGate = new AsyncReentrantOperationGate(typeof(AccessReader), root.AttachmentReadContext);
         var linkedGate = new AsyncReentrantOperationGate(typeof(AccessReader), linked.AttachmentReadContext);
         byte[] wrapped = AttachmentWrapper.Encode("txt", [1, 2, 3]);

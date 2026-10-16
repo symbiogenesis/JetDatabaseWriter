@@ -346,7 +346,7 @@ public sealed class LinkedTableTests : IDisposable
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedProducts", sourcePath, sourceTableName, TestContext.Current.CancellationToken);
 
         // Reading "LinkedProducts" from the front-end should follow the link
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(sourcePath) }, cancellationToken: TestContext.Current.CancellationToken);
         IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         // Verify the linked table metadata is present
@@ -390,7 +390,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedItems", sourcePath, "Items", TestContext.Current.CancellationToken);
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(sourcePath) }, cancellationToken: TestContext.Current.CancellationToken);
         int count = await reader.Rows("LinkedItems", cancellationToken: TestContext.Current.CancellationToken).CountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, count);
@@ -432,7 +432,7 @@ public sealed class LinkedTableTests : IDisposable
             "MissingTable",
             TestContext.Current.CancellationToken);
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: TestContext.Current.CancellationToken);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(missingSourcePath) }, cancellationToken: TestContext.Current.CancellationToken);
         IReadOnlyList<LinkedTableInfo> linked = await reader.ListLinkedTablesAsync(TestContext.Current.CancellationToken);
 
         LinkedTableInfo? entry = linked.FirstOrDefault(l =>
@@ -534,9 +534,9 @@ public sealed class LinkedTableTests : IDisposable
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_CanBeAllowedByCallback(bool windowsSeparators)
+    public async Task LinkedTable_ReadLinkedTable_RelativeTraversalPath_CanUseExplicitCapability(bool windowsSeparators)
     {
-        // Trusted callers can explicitly allow an escaped relative path via callback.
+        // Trusted callers can explicitly supply a source capability for a relative path.
         string sourcePath = await this.CreateTempAccdbDatabaseAsync("LinkPolicySrc");
 
         await using (AccessWriter writer = await AccessWriter.OpenAsync(sourcePath, cancellationToken: TestContext.Current.CancellationToken))
@@ -562,9 +562,7 @@ public sealed class LinkedTableTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            LinkedSourcePathValidator = (link, resolvedPath) =>
-                string.Equals(link.Name, "LinkedTrusted", StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(resolvedPath, sourcePath, StringComparison.OrdinalIgnoreCase),
+            LinkedSourceResolver = LinkedTestPaths.ResolverFor(sourcePath),
         };
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
@@ -576,9 +574,9 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTable_ReadLinkedTable_PathOutsideAllowlist_ThrowsUnauthorizedAccess()
+    public async Task LinkedTable_ReadLinkedTable_UnmappedSource_ThrowsUnauthorizedAccess()
     {
-        // Allowlist should block linked sources outside trusted directories.
+        // An explicit source mapping must reject every other path.
         string sourcePath = await this.CreateTempAccdbDatabaseAsync("LinkAllowSrc");
         string frontEndPath = await this.CreateTempAccdbDatabaseAsync("LinkAllowFE");
 
@@ -601,7 +599,7 @@ public sealed class LinkedTableTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            LinkedSourcePathAllowlist = [allowlistedDir],
+            LinkedSourceResolver = LinkedTestPaths.ResolverFor(Path.Combine(allowlistedDir, "authorized.accdb")),
         };
 
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, TestContext.Current.CancellationToken);
@@ -610,7 +608,7 @@ public sealed class LinkedTableTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedTable_ReadLinkedTable_AllowlistRejectsSiblingDirectoryWithSharedPrefix()
+    public async Task LinkedTable_ReadLinkedTable_ExplicitMappingRejectsSiblingDirectoryWithSharedPrefix()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         string parentDirectory = Path.Combine(LinkedTestPaths.GetCanonicalTempPath(), $"LinkAllowPrefix_{Guid.NewGuid():N}");
@@ -635,7 +633,7 @@ public sealed class LinkedTableTests : IDisposable
 
         var options = new AccessReaderOptions
         {
-            LinkedSourcePathAllowlist = [allowlistedDirectory],
+            LinkedSourceResolver = LinkedTestPaths.ResolverFor(Path.Combine(allowlistedDirectory, "authorized.accdb")),
         };
         await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, options, ct);
 
@@ -686,7 +684,7 @@ public sealed class LinkedTableTests : IDisposable
 
         await InjectLinkedTableEntryAsync(frontEndPath, "LinkedCustomers", sourcePath, "Customers", ct);
 
-        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, cancellationToken: ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(frontEndPath, new AccessReaderOptions { LinkedSourceResolver = LinkedTestPaths.ResolverFor(sourcePath) }, cancellationToken: ct);
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync("LinkedCustomers", ct);
 
         Assert.Equal(3, meta.Count);
@@ -714,16 +712,16 @@ public sealed class LinkedTableTests : IDisposable
         var options = new AccessReaderOptions
         {
             UseLockFile = false,
-            LinkedSourcePathValidator = (_, _) =>
+            LinkedSourceResolver = (link, path, token) =>
             {
                 authorizations++;
-                return true;
+                return LinkedTestPaths.ResolverFor(first, second)(link, path, token);
             },
         };
         await using AccessReader reader = await AccessReader.OpenAsync(first, options, ct);
         InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
         Assert.Contains("cycle", failure.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(2, authorizations);
+        Assert.Equal(1, authorizations);
     }
 
     [Fact]
@@ -735,7 +733,7 @@ public sealed class LinkedTableTests : IDisposable
         string missing = Path.Combine(Path.GetDirectoryName(first)!, $"not-opened-{Guid.NewGuid():N}.accdb");
         await InjectLinkedTableEntryAsync(first, "ToB", second, "ToMissing", ct);
         await InjectLinkedTableEntryAsync(second, "ToMissing", missing, "Data", ct);
-        await using AccessReader reader = await AccessReader.OpenAsync(first, new AccessReaderOptions { UseLockFile = false, LinkedSourceMaxDepth = 1 }, ct);
+        await using AccessReader reader = await AccessReader.OpenAsync(first, new AccessReaderOptions { UseLockFile = false, LinkedSourceMaxDepth = 1, LinkedSourceResolver = LinkedTestPaths.ResolverFor(second) }, ct);
         InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.GetRealRowCountAsync("ToB", ct));
         Assert.Contains("depth", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -754,6 +752,7 @@ public sealed class LinkedTableTests : IDisposable
         var options = new AccessReaderOptions("unrelated-host-password")
         {
             UseLockFile = false,
+            LinkedSourceResolver = LinkedTestPaths.ResolverFor(sourcePath),
             LinkedSourcePasswordResolver = (link, path) =>
             {
                 Assert.Equal("LinkedData", link.Name);

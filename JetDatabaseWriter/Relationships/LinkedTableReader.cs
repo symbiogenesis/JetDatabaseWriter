@@ -29,7 +29,10 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// </summary>
     private volatile List<LinkedTableInfo>? links;
 
-    /// <summary>Returns every linked table defined in the catalog, scanning <c>MSysObjects</c> on first use.</summary>
+    /// <summary>All linked identities, including system links omitted from public listings.</summary>
+    private volatile List<LinkedTableInfo>? executionLinks;
+
+    /// <summary>Returns non-system linked tables, scanning <c>MSysObjects</c> on first use.</summary>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     internal async ValueTask<List<LinkedTableInfo>> GetLinkedTablesAsync(CancellationToken cancellationToken)
     {
@@ -45,20 +48,37 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     }
 
     /// <summary>Discards the cached link list.</summary>
-    internal void ClearCache() => this.links = null;
+    internal void ClearCache()
+    {
+        this.links = null;
+        this.executionLinks = null;
+    }
 
-    /// <summary>Refuses execution of ODBC links even when they have a local cached TDEF.</summary>
+    /// <summary>Refuses unavailable linked execution even when a local cached TDEF exists.</summary>
     /// <param name="tableName">The requested table.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <exception cref="NotSupportedException">ODBC execution is unavailable.</exception>
-    internal async ValueTask ThrowIfOdbcExecutionAsync(string tableName, CancellationToken cancellationToken)
+    /// <exception cref="UnauthorizedAccessException">No authorized source resolver was supplied.</exception>
+    internal async ValueTask ThrowIfExecutionUnavailableAsync(string tableName, CancellationToken cancellationToken)
     {
         LinkedTableInfo? link = await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         if (link?.Kind == LinkedTableKind.Odbc)
         {
             throw new NotSupportedException($"Linked ODBC table '{tableName}' exposes cached schema only; ODBC execution is unavailable.");
         }
+
+        if (link is not null && policy.OpenOptions.LinkedSourceResolver is null)
+        {
+            throw new UnauthorizedAccessException($"Linked table '{tableName}' requires AccessReaderOptions.LinkedSourceResolver to supply an authorized source stream.");
+        }
     }
+
+    /// <summary>Checks whether a name represents external data, independently of cached TDEFs.</summary>
+    /// <param name="tableName">The requested table.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Whether the table is linked.</returns>
+    internal async ValueTask<bool> IsLinkedTableAsync(string tableName, CancellationToken cancellationToken)
+        => await this.FindLinkedTableAsync(tableName, cancellationToken).ConfigureAwait(false) is not null;
 
     /// <summary>Counts the rows of a linked table, or returns <see langword="null"/> when <paramref name="tableName"/> is not a link.</summary>
     /// <param name="tableName">The linked table name.</param>
@@ -201,7 +221,13 @@ internal sealed class LinkedTableReader(CatalogReader catalog, LinkedSourcePolic
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask<LinkedTableInfo?> FindLinkedTableAsync(string tableName, CancellationToken cancellationToken)
     {
-        List<LinkedTableInfo> linkedTables = await this.GetLinkedTablesAsync(cancellationToken).ConfigureAwait(false);
+        List<LinkedTableInfo>? linkedTables = this.executionLinks;
+        if (linkedTables is null)
+        {
+            linkedTables = await LinkedTableManager.GetLinkedTablesAsync(catalog, cancellationToken, includeSystem: true).ConfigureAwait(false);
+            this.executionLinks = linkedTables;
+        }
+
         LinkedTableInfo? link = linkedTables.Find(l => string.Equals(l.Name, tableName, StringComparison.OrdinalIgnoreCase));
         return link is null ? null : link with { };
     }

@@ -34,6 +34,7 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await tables.ThrowIfLinkedLocalReadAsync(tableName, cancellationToken).ConfigureAwait(false);
         await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         return info == null
@@ -56,6 +57,7 @@ internal sealed class ComplexItemReader(ComplexColumnReader complexColumns, Tabl
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
         cancellationToken.ThrowIfCancellationRequested();
 
+        await tables.ThrowIfLinkedLocalReadAsync(tableName, cancellationToken).ConfigureAwait(false);
         await tables.RequireTableAsync(tableName, cancellationToken).ConfigureAwait(false);
         ComplexColumnInfo? info = await this.FindComplexColumnAsync(tableName, columnName, cancellationToken).ConfigureAwait(false);
         return info == null

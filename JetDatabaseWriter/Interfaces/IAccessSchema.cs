@@ -181,7 +181,7 @@ public interface IAccessSchema : IAccessBase
     /// Asynchronously creates a linked-text/CSV table entry (MSysObjects type 6)
     /// that references a text or CSV file in a directory. No rows are stored
     /// locally; managed readers parse supported delimited text sources on demand
-    /// through the linked-source path policy and expose fields as strings.
+    /// through the authorized linked-source stream resolver and expose fields as strings.
     /// </summary>
     /// <param name="linkedTableName">The name of the linked table as it appears in this database. It must follow the Access naming rules: 1 to 64 characters, not only white space, no leading space, and none of <c>. ! ` [ ]</c> or a control character. The foreign name is not checked against these rules.</param>
     /// <param name="sourceDirectoryPath">Path to the directory containing the text/CSV source file.</param>

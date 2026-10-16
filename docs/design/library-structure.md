@@ -340,10 +340,10 @@ JetDatabaseWriter/
 │   ├── RelationshipRewriteState.cs        (a table's relationship state captured before a column add/drop/rename rewrite)
 │   ├── FkLogicalIndexSnapshot.cs          (one FK logical-index entry carried across that rewrite)
 │   ├── RelationshipKeyColumn.cs           (a relationship key column named by MSysRelationships)
-│   ├── LinkedTableManager.cs              (linked-table catalog scan, source-path policy, delimited-text read-through, link creation)
+│   ├── LinkedTableManager.cs              (linked-table catalog scan, source-stream capability resolution, delimited-text read-through, link creation)
 │   ├── LinkedTableReader.cs               (reader-side link cache and read-through; opens a separate reader for Access-file links)
 │   ├── LinkedTextSourceStream.cs          (opened text-source ownership and byte-consumption limits)
-│   └── LinkedSourcePolicy.cs              (linked-source open options plus the host path relative sources anchor to)
+│   └── LinkedSourcePolicy.cs              (linked-source stream resolver options plus the logical host path for nested hints)
 │
 ├── ComplexColumns/                        (multi-value fields, attachments, versioned columns)
 │   ├── ComplexColumnReader.cs             (complex-column metadata, subtypes, flat-table decode, and the row-read cells)
@@ -774,7 +774,7 @@ Classes such as `PageAllocator`, `DataPageInserter`, `TDefPageBuilder`, `Relatio
 
 ### 9. Linked-table metadata spans catalog, schema, and delimited text parsing
 
-Linked-table public APIs live on `IAccessSchema`; linked-table catalog scanning, source-path policy, and creation live in `Relationships/LinkedTableManager`, and the reader's link cache and read-through live in `Relationships/LinkedTableReader`, which reads an Access-file link by opening a separate `AccessReader` on its source; ODBC schema-cache property-map generation lives in `Schema/LinkedOdbcLvPropBuilder` because it emits `MSysObjects.LvProp` property blocks using the shared schema property-map builder. Text/CSV linked-table read-through delegates record parsing to `DelimitedText/`, keeping separator, quote, line-ending, header-normalization, and parser-limit behavior reusable outside the linked-table manager.
+Linked-table public APIs live on `IAccessSchema`; linked-table catalog scanning, source-stream capability resolution, and creation live in `Relationships/LinkedTableManager`, and the reader's link cache and read-through live in `Relationships/LinkedTableReader`, which reads an Access-file link by opening a separate `AccessReader` on its source; ODBC schema-cache property-map generation lives in `Schema/LinkedOdbcLvPropBuilder` because it emits `MSysObjects.LvProp` property blocks using the shared schema property-map builder. Text/CSV linked-table read-through delegates record parsing to `DelimitedText/`, keeping separator, quote, line-ending, header-normalization, and parser-limit behavior reusable outside the linked-table manager.
 
 ### 10. Relationship catalog and runtime helpers are split from lifecycle orchestration
 
@@ -798,7 +798,7 @@ The public entry points are:
 |------|---------|
 | `AccessReader` | Open and read .mdb/.accdb files — stream rows, materialize DataTables/POCOs, LINQ `Query<T>` with relationship-inferred eager loading, exact index seek, read schema, relationship metadata, linked-table metadata/read-through, complex-column metadata/items |
 | `AccessWriter` | Create/open/write .mdb/.accdb files — CRUD with named-column `RowValues`/`RowCriteria` filters, DDL, linked-table catalog rows, relationships, complex-column row APIs, transactions, storage maintenance, encryption conversion helpers |
-| `AccessReaderOptions` | Reader configuration: page cache, validation, strict parsing, password, lock-file settings (the reader never writes, so it takes no byte-range locks and ignores `UseByteRangeLocks`), linked-source path policy, linked-text limits |
+| `AccessReaderOptions` | Reader configuration: page cache, validation, strict parsing, password, lock-file settings (the reader never writes, so it takes no byte-range locks and ignores `UseByteRangeLocks`), linked-source stream resolver, linked-text limits |
 | `AccessWriterOptions` | Writer configuration: password, full catalog schema, lock-file/byte-range locking, transaction page budget, secure erase, implicit transactional writes |
 | `JetTransaction` | Disposable transaction handle returned by `BeginTransactionAsync` |
 | `Linq.AccessQueryExtensions` | LINQ extensions for `Query<T>` results — relationship-inferred `Include`/`ThenInclude` eager loading and async terminal operators |

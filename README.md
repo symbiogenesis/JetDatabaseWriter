@@ -47,6 +47,8 @@ Use it to query, migrate, or generate `.mdb` and `.accdb` files directly from yo
 
 The parser enforces bounds on several page, long-value, attachment and encryption paths. Hostile-file auditing and fuzz coverage remain ongoing; the CVE review is a threat-model inventory, not proof that every attack surface is mitigated. See [the security work](docs/todo.md#s--hostile-file-parsing-and-schema-preservation) and [the vulnerability review](docs/cve-vulnerability-analysis.md).
 
+Access/text linked data requires a `LinkedSourceResolver` that supplies an authorized stream. The library reads that exact stream without opening catalog paths or filename-derived sidecars; see [linked-source configuration](docs/operations.md#configuration).
+
 ---
 
 ### Correctness

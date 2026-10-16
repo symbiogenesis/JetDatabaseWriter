@@ -33,8 +33,9 @@ public class LinkedTextReadBenchmarks
         string databasePath = Path.Combine(this.rootDirectory, "LinkedText.accdb");
         const string headeredFileName = "headered.csv";
 
+        string sourcePath = Path.Combine(this.rootDirectory, headeredFileName);
         await File.WriteAllTextAsync(
-            Path.Combine(this.rootDirectory, headeredFileName),
+            sourcePath,
             BuildCsvSource(),
             Encoding.UTF8).ConfigureAwait(false);
 
@@ -50,7 +51,20 @@ public class LinkedTextReadBenchmarks
 
         this.reader = await AccessReader.OpenAsync(
             databasePath,
-            new AccessReaderOptions { UseLockFile = false }).ConfigureAwait(false);
+            new AccessReaderOptions
+            {
+                UseLockFile = false,
+                LinkedSourceResolver = (link, _, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (link.Name != HeaderedTable)
+                    {
+                        throw new UnauthorizedAccessException("Only the fixture source is registered.");
+                    }
+
+                    return new ValueTask<Stream>(new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read));
+                },
+            }).ConfigureAwait(false);
     }
 
     /// <summary>Disposes the open reader and removes temporary benchmark files.</summary>

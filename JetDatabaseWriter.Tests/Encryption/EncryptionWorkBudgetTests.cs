@@ -30,7 +30,7 @@ public sealed class EncryptionWorkBudgetTests
         {
             UseLockFile = false,
             MaxTotalEncryptionSpinCount = 150_000,
-            LinkedSourcePathAllowlist = [TestDatabases.EncryptedRoot],
+            LinkedSourceResolver = JetDatabaseWriter.Tests.Relationships.LinkedTestPaths.ResolverFor(source),
             LinkedSourcePasswordResolver = static (_, _) => "Native123".AsMemory(),
         };
         await using AccessReader reader = await AccessReader.OpenAsync(host, options, leaveOpen: true, TestContext.Current.CancellationToken);
@@ -82,9 +82,9 @@ public sealed class EncryptionWorkBudgetTests
     {
         var original = new AccessReaderOptions { MaxTotalEncryptionSpinCount = 100_000 };
         AccessReaderOptions root = original.WithEncryptionWorkBudget();
-        AccessReaderOptions first = LinkedTableManager.CreateLinkedSourceOpenOptions(root, string.Empty);
-        AccessReaderOptions sibling = LinkedTableManager.CreateLinkedSourceOpenOptions(root, string.Empty);
-        AccessReaderOptions nested = LinkedTableManager.CreateLinkedSourceOpenOptions(first, string.Empty);
+        AccessReaderOptions first = LinkedTableManager.CreateLinkedSourceOpenOptions(root);
+        AccessReaderOptions sibling = LinkedTableManager.CreateLinkedSourceOpenOptions(root);
+        AccessReaderOptions nested = LinkedTableManager.CreateLinkedSourceOpenOptions(first);
         Assert.Same(root.EncryptionWorkBudget, first.EncryptionWorkBudget);
         Assert.Same(first.EncryptionWorkBudget, nested.EncryptionWorkBudget);
         first.EncryptionWorkBudget!.Charge(60_000);

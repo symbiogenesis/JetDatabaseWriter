@@ -1,8 +1,9 @@
 namespace JetDatabaseWriter;
 
 using System;
-using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
@@ -121,36 +122,37 @@ public sealed class AccessReaderOptions : AccessOptions
     /// <summary>
     /// Gets the requested file sharing mode. Default: Read. Write and delete sharing are excluded.
     /// Path-based readers restrict sharing to read access. A caller-supplied FileStream
-    /// additionally requires a compatible read-only lease. Windows enforces sharing;
+    /// supplied to OpenAsync additionally requires a compatible read-only lease; resolver
+    /// capabilities instead require caller-managed isolation. Windows enforces sharing;
     /// other platforms require cooperating access. Keep the source unchanged while open.
     /// </summary>
     public FileShare FileShare { get; init; } = FileShare.Read;
 
     /// <summary>
-    /// Gets an optional allowlist of directories that linked-table source paths must stay under.
-    /// Paths may be absolute or relative (relative entries are resolved from the opened database directory).
-    /// Leave empty to allow only source files under the opened database directory, unless
-    /// <see cref="LinkedSourcePathValidator"/> explicitly approves a resolved path.
-    /// Symlink/reparse crossings are refused, but authorization is path-based:
-    /// opened-handle identity, hard links and path-swap races remain unverified.
+    /// Gets the resolver that supplies an authorized source for an Access or text link.
+    /// Without a resolver, linked data execution is refused. The callback receives detached,
+    /// untrusted catalog metadata, an absolute path hint, and the operation cancellation token.
+    /// Return a fresh readable, seekable stream positioned at zero, or throw to deny access.
+    /// Ownership transfers to the reader, including on cancellation or failed parsing.
     /// </summary>
-    public IReadOnlyList<string> LinkedSourcePathAllowlist { get; init; } = [];
-
-    /// <summary>
-    /// Gets an optional callback to approve linked-table source paths.
-    /// The callback receives linked-table metadata and the resolved absolute source path.
-    /// Text links require approval of both the source directory and the final file path.
-    /// Return true to allow opening the source; false to block it. Approval cannot
-    /// bypass symlink/reparse refusal and does not bind permission to the opened handle.
-    /// </summary>
-    public Func<LinkedTableInfo, string, bool>? LinkedSourcePathValidator { get; init; }
+    /// <remarks>
+    /// Authorize the actual resource before returning it, using trusted registrations or
+    /// host-specific handle verification. Opening a catalog-supplied path after checking its
+    /// spelling does not establish authorization: symlinks, hard links and concurrent renames
+    /// can refer to another resource. The library reads only the returned stream; it never
+    /// opens its filename, lock file or recovery journal. Supply an isolated, committed snapshot
+    /// and retain exclusive use of its position until disposal. The resolver is inherited by
+    /// nested Access links. Path hints and cycle checks do not establish physical file identity;
+    /// the depth limit bounds recursion through aliases. ODBC links remain metadata-only.
+    /// </remarks>
+    public Func<LinkedTableInfo, string, CancellationToken, ValueTask<Stream>>? LinkedSourceResolver { get; init; }
 
     /// <summary>Gets the maximum number of successive Access linked-source opens. Default: 32; zero disables Access read-through.</summary>
     public int LinkedSourceMaxDepth { get; init; } = 32;
 
     /// <summary>
     /// Gets an optional password provider for an authorized Access linked source.
-    /// The callback receives a detached link and its resolved absolute path after path authorization.
+    /// The callback receives a detached link and its resolved absolute path after the resolver supplies an authorized stream.
     /// The host database password is never forwarded automatically. Returned memory must remain unchanged until the linked read completes.
     /// </summary>
     public Func<LinkedTableInfo, string, ReadOnlyMemory<char>>? LinkedSourcePasswordResolver { get; init; }
