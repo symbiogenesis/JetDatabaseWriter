@@ -27,9 +27,11 @@ public sealed class ParentReadFailureTests(DatabaseCache db) : IClassFixture<Dat
         // CompanyName has no covering index, so this additional relationship
         // forces a parent snapshot even when ShipperID can be sought directly.
         await ForeignKeyTestDatabase.PlantRelationshipAsync(stream, "FK_DecodeParent", "Orders", "ShipVia", "Shippers", "CompanyName");
+        long parentPage;
         await using (AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, ForeignKeyTestDatabase.WriterOptions(WriteMode.Direct), cancellationToken: Ct))
         {
             CatalogEntry entry = await harness.Services.Catalog.GetRequiredCatalogEntryAsync("Shippers", Ct);
+            parentPage = entry.TDefPage;
             TableDef definition = await harness.Database.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, "Shippers", Ct);
             byte[] page = (byte[])(await harness.Pager.ReadPageAsync(entry.TDefPage, Ct)).Clone();
             JetFormat format = harness.Database.Format;
@@ -47,8 +49,10 @@ public sealed class ParentReadFailureTests(DatabaseCache db) : IClassFixture<Dat
         {
             await ForeignKeyTestDatabase.RunAsync(writer, mode, async () =>
             {
-                InvalidOperationException error = await Assert.ThrowsAnyAsync<InvalidOperationException>(async () => await writer.InsertRowAsync("Orders", new JetDatabaseWriter.Models.RowValues { ["ShipVia"] = 1 }, Ct));
-                Assert.IsNotType<JetConstraintException>(error);
+                JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await writer.InsertRowAsync("Orders", new JetDatabaseWriter.Models.RowValues { ["ShipVia"] = 1 }, Ct));
+                Assert.Equal(JetErrorCode.CorruptTableDefinition, error.ErrorCode);
+                Assert.Equal("CompanyName", error.ErrorInfo.ColumnName);
+                Assert.Equal(parentPage, error.ErrorInfo.PageNumber);
                 Assert.Contains("CompanyName", error.Message, StringComparison.Ordinal);
             });
         }

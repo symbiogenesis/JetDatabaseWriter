@@ -27,7 +27,10 @@ public sealed class ComplexColumnCatalogValidationTests
         System.Collections.Generic.IReadOnlyList<ColumnMetadata> metadata = await reader.GetColumnMetadataAsync("Test", ComplexColumnTestSupport.Ct);
         ColumnMetadata unsupported = Assert.Single(metadata, column => column.Name == "UnknownComplex");
         Assert.Equal("Multi-value 0x48", unsupported.TypeName);
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () => await reader.GetMultiValueItemsAsync("Test", "UnknownComplex", ComplexColumnTestSupport.Ct));
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.GetMultiValueItemsAsync("Test", "UnknownComplex", ComplexColumnTestSupport.Ct));
+        Assert.Equal(JetErrorCode.CorruptTableDefinition, error.ErrorCode);
+        Assert.Equal("Value", error.ErrorInfo.ColumnName);
+        Assert.NotNull(error.ErrorInfo.PageNumber);
         Assert.Contains("0x48", error.Message, StringComparison.Ordinal);
     }
 
