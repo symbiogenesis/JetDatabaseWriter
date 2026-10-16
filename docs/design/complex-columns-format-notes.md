@@ -324,15 +324,15 @@ Allocation order for the chained form is **reverse**: `EncodeAsLvalChainAsync` a
 
 Chunking math:
 
-- One row per LVAL page.
+- One row per chained LVAL page; single-page values can share a column's LVAL page.
 - Single-page row max = `pgSize − LvalPageLayout.MinRowStart`: `4096 − 20 = 4076` bytes on Jet4/ACE, `2048 − 12 = 2036` on Jet3.
 - Chain row max = single-page row max − 4 (the in-row next-pointer prefix): 4072 on Jet4/ACE, 2032 on Jet3 (Access 97's chunk size).
-- The inline caps apply on every format. Access 97 itself keeps only values of 32 bytes or less inline; the writer keeps the larger caps because it writes one value per LVAL page.
+- The inline caps apply on every format. Access 97 itself keeps only values of 32 bytes or less inline; the writer retains its larger inline caps.
 
 C8 caveats:
 
 - **Upper limit is `Constants.LongValue.MaxPayloadBytes = (1 << 24) − 1`** (just under 16 MiB) per single MEMO / OLE / Attachment value is a writer implementation limit. The native length field has 30 bits, and readers can opt into a larger budget. Larger payloads throw `JetLimitationException`.
-- **Default update/delete do not reclaim old LVAL pages**: `UpdateRowsAsync` rewrites the row through `InsertRowDataAsync` and allocates a fresh LVAL chain; `DeleteRowsAsync` marks the owning row deleted. With `SecureEraseMode.None`, old LVAL pages remain on disk for Compact & Repair or a rebuild. With `SecureEraseMode.DeletedRowsAndFreedPages`, `LongValueEncoder.DeallocateLongValueAsync` walks the single-page or chained descriptor and releases each LVAL row: it zeroes the row and marks it deleted, and returns the page to the Access global free list, scrubbed, once no other live row is left on it (Access packs several values onto one page). `DropTableAsync` and schema rewrites release the old rows the same way in every mode, zeroing them only under secure erase. A chain hop that is not a live row of an LVAL page ends the walk.
+- **Update/delete release old LVAL storage in every erase mode.** Release walks single-page or chained descriptors, reclaims each deleted row's space while preserving surviving row identities, and returns an empty page to the global free list. Single-page values reuse free space within their column's LVAL pages. `SecureEraseMode.DeletedRowsAndFreedPages` additionally zeroes deleted payloads and freed pages. Table drops and schema rewrites use the same release path. A chain hop that is not a live row of an LVAL page ends the walk. See [usage-map maintenance](usage-map-maintenance.md#free-space-and-long-values).
 - **System-table OLE columns (`MSysObjects.LvProp` / `LvModule` / `LvExtra`) use the same caps.** `MSysObjects` rows are inserted through `TableRowStore`, whose long-value pass moves an `LvProp` blob over 64 bytes to LVAL pages like any other OLE value (`Jet3LongValueTests.CreateTable_LvPropOver256Bytes_PropertiesRoundTrip`).
 - **Validation.** Round-trip through this library's reader is verified in `JetDatabaseWriter.Tests/ComplexColumns/ComplexColumnsLvalChainTests.cs` (single-page form, chained form, deflate-compressed text payload). Automated DAO CompactDatabase coverage now includes writer-authored attachment payload bytes on the `ComplexFields` fixture in `ComplexFixture_WriterAttachmentRowsSurviveCompactAndRepair` and a Northwind-hosted writer-created attachment table with a chained-LVAL `.jpg` payload in `DaoCompact_ComplexColumnsWithLvalPayload_SurviveCompactAndRepair`; see [writer-disk-format-validation-matrix.md](writer-disk-format-validation-matrix.md).
 

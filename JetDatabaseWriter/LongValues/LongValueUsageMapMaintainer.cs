@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -100,19 +101,52 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
         }
 
         LongValueUsageMap map = maps.Single(entry => entry.ColumnNumber == columnNumber);
+        if (map.Owned != default && map.Free != default)
+        {
+            UsageMapOwnership.Proof[] proofs = await UsageMapOwnership.InspectForMutationBatchAsync(format, tableDefs, catalogRows, pager, tdefPage, [map.OwnedOffset, map.FreeOffset], cancellationToken).ConfigureAwait(false);
+            if (proofs.All(proof => proof.IsExclusiveRow && proof.HasExclusiveBitmapPages))
+            {
+                return (proofs[0].Pointer, proofs[1].Pointer);
+            }
+        }
+
+        // A copy changes the reference graph. Fall back to fresh sequential
+        // preparation rather than retaining this read-only phase across writes.
         UsageMapPointer owned = await this.PreparePointerAsync(tdefPage, map.OwnedOffset, cancellationToken).ConfigureAwait(false);
         UsageMapPointer free = await this.PreparePointerAsync(tdefPage, map.FreeOffset, cancellationToken).ConfigureAwait(false);
         return (owned, free);
     }
 
-    /// <summary>Prepares all existing column maps before releasing a table row's external values.</summary>
+    /// <summary>Prepares column maps that can change while releasing a table row's external values.</summary>
     /// <param name="tdefPage">The table identity.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Independent column map pointers.</returns>
     internal async ValueTask<List<(UsageMapPointer Owned, UsageMapPointer Free)>> PrepareTableAsync(long tdefPage, CancellationToken cancellationToken)
     {
         List<LongValueUsageMap> maps = await this.ReadMapsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        maps = await this.SelectReleaseMapsAsync(maps, cancellationToken).ConfigureAwait(false);
         var result = new List<(UsageMapPointer Owned, UsageMapPointer Free)>(maps.Count);
+        if (maps.Count > 0 && maps.All(map => map.Owned != default && map.Free != default))
+        {
+            int[] offsets = new int[maps.Count * 2];
+            for (int index = 0; index < maps.Count; index++)
+            {
+                offsets[index * 2] = maps[index].OwnedOffset;
+                offsets[(index * 2) + 1] = maps[index].FreeOffset;
+            }
+
+            UsageMapOwnership.Proof[] proofs = await UsageMapOwnership.InspectForMutationBatchAsync(format, tableDefs, catalogRows, pager, tdefPage, offsets, cancellationToken).ConfigureAwait(false);
+            if (proofs.All(proof => proof.IsExclusiveRow && proof.HasExclusiveBitmapPages))
+            {
+                for (int index = 0; index < proofs.Length; index += 2)
+                {
+                    result.Add((proofs[index].Pointer, proofs[index + 1].Pointer));
+                }
+
+                return result;
+            }
+        }
+
         foreach (LongValueUsageMap map in maps)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -240,6 +274,82 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
     {
         bytes[offset] = checked((byte)pointer.RowIndex);
         WriteUInt24(bytes, offset + 1, pointer.PageNumber);
+    }
+
+    private async ValueTask<List<LongValueUsageMap>> SelectReleaseMapsAsync(List<LongValueUsageMap> maps, CancellationToken cancellationToken)
+    {
+        var selected = new List<LongValueUsageMap>(maps.Count);
+        HashSet<long>? globalBitmaps = null;
+        foreach (LongValueUsageMap map in maps)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var bitmaps = new HashSet<long>();
+            bool ownedHasMembers = await this.HasReleaseMembersAsync(map.Owned, bitmaps, cancellationToken).ConfigureAwait(false);
+            bool freeHasMembers = await this.HasReleaseMembersAsync(map.Free, bitmaps, cancellationToken).ConfigureAwait(false);
+            if (ownedHasMembers || freeHasMembers)
+            {
+                selected.Add(map);
+                continue;
+            }
+
+            if (bitmaps.Count > 0)
+            {
+                globalBitmaps ??= await UsageMapOwnership.ReadGlobalBitmapPagesAsync(format, pager, cancellationToken).ConfigureAwait(false)
+                    ?? throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, "The global usage map is unreadable.");
+                if (globalBitmaps.Overlaps(bitmaps))
+                {
+                    // Freeing LVAL pages also edits the global bitmap. An
+                    // empty column map sharing it must be isolated first.
+                    selected.Add(map);
+                }
+            }
+        }
+
+        return selected;
+    }
+
+    private async ValueTask<bool> HasReleaseMembersAsync(UsageMapPointer pointer, HashSet<long> bitmaps, CancellationToken cancellationToken)
+    {
+        if (pointer == default)
+        {
+            return false;
+        }
+
+        if (pointer.PageNumber <= 1 || pointer.PageNumber >= pager.PageCount)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, "The column's LVAL usage-map pointer is outside the database.");
+        }
+
+        byte[] page = await pager.ReadPageAsync(pointer.PageNumber, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var members = new List<long>();
+            if (page[0] != Constants.PageTypes.Data || Ri32(page, format.DataPage.TDefOff) != 0
+                || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound row)
+                || row.RowSize < 6
+                || !await UsageMap.TryEnumeratePagesAsync(page, row, format.PageSize, pager.PageCount, 1, true, pager.ReadPageAsync, PageBuffers.Return, members, cancellationToken).ConfigureAwait(false))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, "The column's LVAL usage-map storage is malformed.");
+            }
+
+            if (page[row.RowStart] == Constants.UsageMap.ReferenceMapType)
+            {
+                for (int index = 0; index < UsageMap.ReferencePointerCount(row.RowSize); index++)
+                {
+                    int bitmap = Ri32(page, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (index * 4));
+                    if (bitmap > 0)
+                    {
+                        _ = bitmaps.Add(bitmap);
+                    }
+                }
+            }
+
+            return members.Count > 0;
+        }
+        finally
+        {
+            PageBuffers.Return(page);
+        }
     }
 
     private async ValueTask<List<long>> ReadMembershipAsync(UsageMapPointer pointer, CancellationToken cancellationToken)

@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -368,11 +369,40 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// <param name="tableTdefPage">The owning table identity, or zero for a standalone storage test.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     internal async ValueTask DeallocateLongValueAsync(LongValueDescriptor descriptor, CancellationToken cancellationToken, long tableTdefPage = 0)
+        => await this.DeallocateLongValuesAsync([descriptor], cancellationToken, tableTdefPage).ConfigureAwait(false);
+
+    /// <summary>Releases a group of values under one temporary ownership topology observer.</summary>
+    /// <param name="descriptors">The external values to release.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="tableTdefPage">The owning table, or zero for standalone storage tests.</param>
+    /// <returns>A task completed after releasing each reachable LVAL row.</returns>
+    internal async ValueTask DeallocateLongValuesAsync(IReadOnlyList<LongValueDescriptor> descriptors, CancellationToken cancellationToken, long tableTdefPage = 0)
     {
-        List<(UsageMapPointer Owned, UsageMapPointer Free)>? maps = usageMaps is not null && tableTdefPage > 0
-            ? await usageMaps.PrepareTableAsync(tableTdefPage, cancellationToken).ConfigureAwait(false)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!descriptors.Any(descriptor => descriptor.IsExternal && descriptor.FirstDp != 0))
+        {
+            return;
+        }
+
+        LongValueReleaseScope? release = usageMaps is not null && tableTdefPage > 0
+            ? new LongValueReleaseScope(format, pager, ct => usageMaps.PrepareTableAsync(tableTdefPage, ct))
             : null;
-        await LongValueStore.DeallocateExternalPagesAsync(descriptor, (pointer, ct) => this.ReleaseLvalRowAsync(pointer, maps, ct), cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (release is not null)
+            {
+                _ = await release.GetMapsAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (LongValueDescriptor descriptor in descriptors)
+            {
+                await LongValueStore.DeallocateExternalPagesAsync(descriptor, (pointer, ct) => this.ReleaseLvalRowAsync(pointer, release, tableTdefPage, ct), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            release?.Dispose();
+        }
     }
 
     /// <summary>
@@ -387,10 +417,11 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
     /// damaged chain never frees a page of another kind.
     /// </summary>
     /// <param name="lvalDp">The row pointer (<c>page &lt;&lt; 8 | row</c>).</param>
-    /// <param name="maps">The independent column maps to update after releasing the last live row.</param>
+    /// <param name="release">The temporary map preparation for this release.</param>
+    /// <param name="tableTdefPage">The owning table identity.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The next-row pointer stored at the start of the row, or 0.</returns>
-    private async ValueTask<uint> ReleaseLvalRowAsync(uint lvalDp, IReadOnlyList<(UsageMapPointer Owned, UsageMapPointer Free)>? maps, CancellationToken cancellationToken)
+    private async ValueTask<uint> ReleaseLvalRowAsync(uint lvalDp, LongValueReleaseScope? release, long tableTdefPage, CancellationToken cancellationToken)
     {
         long pageNumber = LongValueStore.PageNumber(lvalDp);
         int rowIndex = LongValueStore.RowIndex(lvalDp);
@@ -429,25 +460,39 @@ internal sealed class LongValueEncoder(JetFormat format, Pager pager, PageAlloca
             uint nextDp = row.RowSize >= 4 ? Ru32(lvalPage, row.RowStart) : 0;
             if (otherLiveRows)
             {
-                if (options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+                // Refresh can promote a free map. Keep its original fresh
+                // preparation boundary, outside the dedicated-page reuse.
+                release?.OnInvalidateAll();
+                try
                 {
-                    Array.Clear(lvalPage, row.RowStart, row.RowSize);
-                }
+                    if (options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages)
+                    {
+                        Array.Clear(lvalPage, row.RowStart, row.RowSize);
+                    }
 
-                int slotOffset = format.DataPage.RowsStart + (rowIndex * 2);
-                Wu16(lvalPage, slotOffset, Ru16(lvalPage, slotOffset) | Constants.DataPage.DeletedRowFlag);
-                DataPageRows.ReclaimDeletedRowSpace(format, lvalPage, rowIndex, options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages);
-                await pager.WritePageAsync(pageNumber, lvalPage, cancellationToken).ConfigureAwait(false);
-                if (usageMaps is not null && maps is not null)
+                    int slotOffset = format.DataPage.RowsStart + (rowIndex * 2);
+                    Wu16(lvalPage, slotOffset, Ru16(lvalPage, slotOffset) | Constants.DataPage.DeletedRowFlag);
+                    DataPageRows.ReclaimDeletedRowSpace(format, lvalPage, rowIndex, options.SecureEraseMode == SecureEraseMode.DeletedRowsAndFreedPages);
+                    await pager.WritePageAsync(pageNumber, lvalPage, cancellationToken).ConfigureAwait(false);
+                    if (usageMaps is not null && release is not null)
+                    {
+                        List<(UsageMapPointer Owned, UsageMapPointer Free)> maps = await usageMaps.PrepareTableAsync(tableTdefPage, cancellationToken).ConfigureAwait(false);
+                        await usageMaps.RefreshFreeSpaceAsync(maps, pageNumber, Ru16(lvalPage, 2) >= 3 && Ru16(lvalPage, format.DataPage.NumRows) < Constants.DataPage.MaxRowsPerPage, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                finally
                 {
-                    await usageMaps.RefreshFreeSpaceAsync(maps, pageNumber, Ru16(lvalPage, 2) >= 3 && Ru16(lvalPage, format.DataPage.NumRows) < Constants.DataPage.MaxRowsPerPage, cancellationToken).ConfigureAwait(false);
+                    release?.OnInvalidateAll();
                 }
             }
             else
             {
                 await pageAllocator.DeallocatePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-                if (usageMaps is not null && maps is not null)
+                if (usageMaps is not null && release is not null)
                 {
+                    // Freeing can promote the global allocation map. Observe
+                    // that topology before editing any retained column pointer.
+                    IReadOnlyList<(UsageMapPointer Owned, UsageMapPointer Free)> maps = await release.GetMapsAsync(cancellationToken).ConfigureAwait(false);
                     await usageMaps.ClearPageAsync(maps, pageNumber, cancellationToken).ConfigureAwait(false);
                 }
             }

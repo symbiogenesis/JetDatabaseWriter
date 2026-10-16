@@ -22,6 +22,12 @@ map. It detects row aliases and shared REFERENCE bitmap pages. Traversal has
 aggregate definition and candidate budgets and observes cancellation. Mutation
 proofs validate unrelated map pointers, bitmap headers and member bounds without
 collecting their member sets. Reclamation uses a fresh complete membership proof.
+Opaque references to nonlive map slots retain their readable payload members
+and bitmap storage after live descriptors detach. Invalid retained payload
+bounds refuse reclamation.
+Several mutation targets can share one read-only inspection, which ends before
+any map or definition write. If isolation requires writes, later preparations
+inspect the updated graph.
 
 Before editing shared storage, the writer copies the map into private rows and
 bitmap pages and retargets its descriptor. For aliased table owned/free maps it
@@ -30,9 +36,9 @@ owner, excluding globally free residual pages. Other owners' rows and bitmaps
 remain unchanged. Cached table-map decisions are invalidated when definitions
 or pointer layouts change and restored or reset with transaction rollback.
 
-Jet3 index maps describe the current live tree after insert, delete, merge and
-rebuild. Reclamation excludes members retained by other maps or reachable
-trees. Table rewrites, table drops and removed FK descriptors release map-row
+Index maps describe the current live tree after insert, delete, merge and
+rebuild. On every format, reclamation excludes members retained by other maps
+or reachable trees. Table rewrites, table drops and removed FK descriptors release map-row
 and bitmap storage only after checking every surviving definition. Uncertain
 opaque references retain storage; they do not authorize freeing it.
 
@@ -55,6 +61,13 @@ erase. Native chained values list every page in the owned map and leave the
 free map empty, including a partially filled final page. Chain chunks are not
 used as ordinary single-value row space. Schema rewrites create independent
 column maps while preserving surviving column numbers and opaque metadata.
+Release preparation leaves unused empty column maps unchanged, except when
+shared global bitmap storage requires isolation before allocator writes. A
+release-only batch can retain prepared map pointers while clearing membership
+bits. Definition, catalog, map-reference or global bitmap topology changes
+invalidate that preparation; shared-page refresh prepares fresh maps. The
+batch discards all state when it exits.
+
 Calculated Memo columns can retain native Text descriptors. Their persisted
 calculated result type determines long storage; schema creation and rewrites
 author their map records even while the table is empty.

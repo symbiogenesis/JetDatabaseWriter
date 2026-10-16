@@ -210,7 +210,7 @@ await writer.DeleteRowsAsync("Contacts", new RowCriteria
 `IsNotNull`. Ordered comparisons coerce the operand to the column's runtime type, so
 passing an `int` operand against a `decimal` column compares correctly.
 
-> By default, update and delete are logical row mutations, not secure erase operations. Old row payload bytes and external LVAL payload pages can remain in the file unless secure erase is enabled.
+> Update and delete release external LVAL storage for reuse. By default, deleted payload bytes can remain in the file until overwritten; enable secure erase to clear them during deletion.
 
 ### Storage maintenance and secure erase
 

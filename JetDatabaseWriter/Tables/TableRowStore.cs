@@ -258,10 +258,7 @@ internal sealed class TableRowStore(
             return;
         }
 
-        foreach (LongValueDescriptor root in longValueRoots)
-        {
-            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken, tableDef.TDefPageNumber ?? 0).ConfigureAwait(false);
-        }
+        await longValueEncoder.DeallocateLongValuesAsync(longValueRoots, cancellationToken, tableDef.TDefPageNumber ?? 0).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -444,9 +441,6 @@ internal sealed class TableRowStore(
             PageBuffers.Return(page);
         }
 
-        foreach (LongValueDescriptor root in longValueRoots)
-        {
-            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken, owner).ConfigureAwait(false);
-        }
+        await longValueEncoder.DeallocateLongValuesAsync(longValueRoots, cancellationToken, owner).ConfigureAwait(false);
     }
 }

@@ -46,7 +46,9 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
 
             if (map[bound.RowStart] == Constants.UsageMap.InlineMapType)
             {
-                if (UsageMap.TrySetInlinePageState(map, bound.RowStart, bound.RowSize, pageNumber, isMarked: false))
+                bool hadState = UsageMap.TryGetInlinePageState(map, bound.RowStart, bound.RowSize, pageNumber, out bool wasMarked);
+                if (UsageMap.TrySetInlinePageState(map, bound.RowStart, bound.RowSize, pageNumber, isMarked: false)
+                    && (!hadState || wasMarked))
                 {
                     await pager.WritePageAsync(usageMapPageNumber, map, cancellationToken).ConfigureAwait(false);
                 }
@@ -69,9 +71,14 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
             byte[] bitmap = await pager.ReadPageAsync(bitmapNumber, cancellationToken).ConfigureAwait(false);
             try
             {
-                if (bitmap[0] == Constants.PageTypes.UsageMap && UsageMap.TrySetReferencePageState(bitmap, format.PageSize, pageNumber, isMarked: false))
+                if (bitmap[0] == Constants.PageTypes.UsageMap)
                 {
-                    await pager.WritePageAsync(bitmapNumber, bitmap, cancellationToken).ConfigureAwait(false);
+                    bool hadState = UsageMap.TryGetReferencePageState(bitmap, format.PageSize, pageNumber, out bool wasMarked);
+                    if (UsageMap.TrySetReferencePageState(bitmap, format.PageSize, pageNumber, isMarked: false)
+                        && (!hadState || wasMarked))
+                    {
+                        await pager.WritePageAsync(bitmapNumber, bitmap, cancellationToken).ConfigureAwait(false);
+                    }
                 }
             }
             finally
@@ -188,8 +195,13 @@ internal sealed class UsageMapEditor(JetFormat format, Pager pager, PageAllocato
         switch (usageMapPage[rowStart])
         {
             case Constants.UsageMap.InlineMapType:
-                if (UsageMap.TrySetInlinePageState(usageMapPage, rowStart, rowSize, pageNumber, isMarked: true)
-                    || (UsageMap.IsInlineBitmapEmpty(usageMapPage, rowStart, rowSize) && UsageMap.TryWriteInlineRow(usageMapPage, rowStart, rowSize, [pageNumber])))
+                bool hadState = UsageMap.TryGetInlinePageState(usageMapPage, rowStart, rowSize, pageNumber, out bool wasMarked);
+                if (UsageMap.TrySetInlinePageState(usageMapPage, rowStart, rowSize, pageNumber, isMarked: true))
+                {
+                    return !hadState || !wasMarked;
+                }
+
+                if (UsageMap.IsInlineBitmapEmpty(usageMapPage, rowStart, rowSize) && UsageMap.TryWriteInlineRow(usageMapPage, rowStart, rowSize, [pageNumber]))
                 {
                     return true;
                 }

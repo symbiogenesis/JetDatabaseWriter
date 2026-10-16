@@ -15,6 +15,7 @@ using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Tests.Infrastructure;
@@ -476,6 +477,41 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
         }
     }
 
+    private static async Task AssertIndexMapMatchesTreeAsync(DatabaseFile db, UsageMapPointer pointer, long rootPage, long owner, CancellationToken cancellationToken)
+    {
+        Assert.InRange(pointer.PageNumber, 2L, db.Pages.PageCount - 1);
+        byte[] map = await db.Pages.ReadPageCopyAsync(pointer.PageNumber, cancellationToken);
+        Assert.Equal(Constants.PageTypes.Data, map[0]);
+        Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(map.AsSpan(db.Format.DataPage.TDefOff)));
+        Assert.True(UsageMap.TryGetRowBound(map, db.Format.DataPage, db.Format.PageSize, pointer.RowIndex, out RowBound row));
+        var mapped = new List<long>();
+        Assert.True(await UsageMap.TryEnumeratePagesAsync(map, row, db.Format.PageSize, db.Pages.PageCount, 1, true, db.Pages.ReadPageAsync, PageBuffers.Return, mapped, cancellationToken));
+
+        var tree = new HashSet<long>();
+        var pending = new Stack<long>();
+        pending.Push(rootPage);
+        while (pending.TryPop(out long pageNumber))
+        {
+            Assert.InRange(pageNumber, 2, db.Pages.PageCount - 1);
+            Assert.True(tree.Add(pageNumber), $"Index tree revisits page {pageNumber}.");
+            byte[] page = await db.Pages.ReadPageCopyAsync(pageNumber, cancellationToken);
+            Assert.Equal(owner, BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(4)));
+            if (page[0] == Constants.PageTypes.IndexIntermediate)
+            {
+                foreach (DecodedIntermediateEntry child in IndexPageCodec.DecodeIntermediateEntries(db.Format.IndexPage, page, db.Format.PageSize))
+                {
+                    pending.Push(child.ChildPage);
+                }
+            }
+            else
+            {
+                Assert.Equal(Constants.PageTypes.IndexLeaf, page[0]);
+            }
+        }
+
+        Assert.Equal(tree.Order(), mapped.Order());
+    }
+
     private static string EntryKey(byte[] key, long dataPage, int dataRow)
         => string.Create(CultureInfo.InvariantCulture, $"{Convert.ToHexString(key)}@{dataPage}:{dataRow}");
 
@@ -566,24 +602,17 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             Assert.Equal(IndexCountOf(format), indexes.Count(i => !i.IsForeignKey));
             Assert.Equal(expectedForeignKeys, indexes.Count(i => i.IsForeignKey));
 
-            // Jet4 / ACE real indexes carry a used_pages pointer (row = real
-            // index + 2 of the table's usage map) just before first_dp; it
-            // must land in the descriptor, not in a neighbouring col_map.
-            if (format != DatabaseFormat.Jet3Mdb)
+            // Index maps may spill onto another page or detach shared storage.
+            // Validate their members against the complete tree, independently
+            // of the table map's address or a fixed row-number convention.
+            int numCols = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.Format.TDef.NumCols));
+            int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(db.Format.TDef.NumRealIdx));
+            int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, td, numCols, numRealIdx);
+            foreach (IndexMetadata index in indexes.DistinctBy(index => index.RealIndexNumber))
             {
-                int numCols = BinaryPrimitives.ReadUInt16LittleEndian(td.AsSpan(db.Format.TDef.NumCols));
-                int numRealIdx = BinaryPrimitives.ReadInt32LittleEndian(td.AsSpan(db.Format.TDef.NumRealIdx));
-                int realIdxDescStart = IndexCatalogReader.LocateRealIdxDescStart(db.Format, td, numCols, numRealIdx);
-                int usageMapPage = td[db.Format.TDef.UsedPagesPage]
-                    | (td[db.Format.TDef.UsedPagesPage + 1] << 8)
-                    | (td[db.Format.TDef.UsedPagesPage + 2] << 16);
-                foreach (int realIdxNum in indexes.Select(i => i.RealIndexNumber).Distinct())
-                {
-                    Assert.True(db.Format.Index.TryReadRealIdxSlot(td, realIdxDescStart, realIdxNum, out RealIdxSlot slot));
-                    int usedPagesOffset = slot.FirstDpOffset - 4;
-                    Assert.Equal(realIdxNum + 2, td[usedPagesOffset]);
-                    Assert.Equal(usageMapPage, td[usedPagesOffset + 1] | (td[usedPagesOffset + 2] << 8) | (td[usedPagesOffset + 3] << 16));
-                }
+                Assert.True(db.Format.Index.TryReadRealIdxSlot(td, realIdxDescStart, index.RealIndexNumber, out RealIdxSlot slot));
+                Assert.True(UsageMap.TryReadPointer(td, slot.FirstDpOffset - 4, out UsageMapPointer pointer));
+                await AssertIndexMapMatchesTreeAsync(db, pointer, index.FirstDp, entry.TDefPage, this.ct);
             }
 
             List<RowLocation> locations = await db.GetLiveRowLocationsAsync(entry.TDefPage, this.ct);

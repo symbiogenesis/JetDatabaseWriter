@@ -211,8 +211,9 @@ internal sealed class CatalogOwnedMapPolicy(JetFormat format, TableDefReader tab
 
     private async ValueTask EnsureExclusiveMapsAsync(long tdefPage, CancellationToken cancellationToken)
     {
-        UsageMapOwnership.Proof owned = await UsageMapOwnership.InspectForMutationAsync(format, tableDefs, catalogRows, pages, tdefPage, format.TDef.UsedPages, cancellationToken).ConfigureAwait(false);
-        UsageMapOwnership.Proof free = await UsageMapOwnership.InspectForMutationAsync(format, tableDefs, catalogRows, pages, tdefPage, format.TDef.FreePages, cancellationToken).ConfigureAwait(false);
+        UsageMapOwnership.Proof[] proofs = await UsageMapOwnership.InspectForMutationBatchAsync(format, tableDefs, catalogRows, pages, tdefPage, [format.TDef.UsedPages, format.TDef.FreePages], cancellationToken).ConfigureAwait(false);
+        UsageMapOwnership.Proof owned = proofs[0];
+        UsageMapOwnership.Proof free = proofs[1];
         bool copyOwned = !owned.IsExclusiveRow || !owned.HasExclusiveBitmapPages;
         bool copyFree = !free.IsExclusiveRow || !free.HasExclusiveBitmapPages;
         if (!copyOwned && !copyFree)

@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Indexes;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog;
@@ -744,11 +745,11 @@ internal sealed class IndexMaintainer(
             throw;
         }
 
-        long[][] mapPageGroups = rebuiltIndexPageGroups;
-        await this.DetachAliasedIndexMapsAsync(tdefPage, realIdxByNum, indexPointers, cancellationToken).ConfigureAwait(false);
-
+        long[][] mapPageGroups = await this.FilterUnchangedIndexMapsAsync(indexPointers, rebuiltIndexPageGroups, cancellationToken).ConfigureAwait(false);
         if (HasAnyIndexPageGroup(mapPageGroups))
         {
+            var changedIndexes = realIdxByNum.Where(entry => mapPageGroups[entry.Key].Length > 0).ToDictionary(entry => entry.Key, entry => entry.Value);
+            await this.DetachAliasedIndexMapsAsync(tdefPage, changedIndexes, indexPointers, cancellationToken).ConfigureAwait(false);
             long usageMapPage = this.ReadTableUsageMapPage(tdefBuffer);
             indexPointers = await dataPages.UpdateTableIndexUsageMapRowsAsync(usageMapPage, indexPointers, mapPageGroups, cancellationToken).ConfigureAwait(false);
             for (int realIdxNum = 0; realIdxNum < mapPageGroups.Length; realIdxNum++)
@@ -1066,7 +1067,7 @@ internal sealed class IndexMaintainer(
 
             long[] treePages = await this.TryCollectIndexTreePagesAsync(layout, tdefPage, rootPage, cancellationToken).ConfigureAwait(false) ?? [];
             var reclaimable = new HashSet<long>(treePages);
-            if (pointers[realIdxNum] != default)
+            if (pointers[realIdxNum] != default && mappedGroups[realIdxNum].Any(page => !reclaimable.Contains(page)))
             {
                 UsageMapOwnership.Proof proof;
                 try
@@ -1109,6 +1110,19 @@ internal sealed class IndexMaintainer(
             }
         }
 
+        bool hasReplacedPages = false;
+        int groupCount = Math.Min(oldIndexPageGroups.Length, rebuiltIndexPageGroups.Length);
+        for (int realIdxNum = 0; realIdxNum < groupCount && !hasReplacedPages; realIdxNum++)
+        {
+            hasReplacedPages = rebuiltIndexPageGroups[realIdxNum].Length > 0
+                && oldIndexPageGroups[realIdxNum].Any(page => page > 2 && !newPages.Contains(page));
+        }
+
+        if (!hasReplacedPages)
+        {
+            return;
+        }
+
         // Include every current descriptor, even one not maintained in this
         // pass. A page shared with another live tree must stay allocated.
         (TdefPreambleStatus status, TdefPreamble current) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
@@ -1137,25 +1151,16 @@ internal sealed class IndexMaintainer(
             }
 
             newPages.UnionWith(reachable);
-            if (format.IsJet3 && UsageMap.TryReadPointer(current.Buffer, slot.FirstDpOffset - 4, out UsageMapPointer pointer) && pointer != default)
-            {
-                UsageMapOwnership.Proof proof;
-                try
-                {
-                    proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, slot.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
-                }
-                catch (JetCorruptDataException)
-                {
-                    return;
-                }
-
-                newPages.UnionWith(proof.Pages);
-                newPages.UnionWith(proof.OtherMappedPages);
-            }
         }
 
+        HashSet<long>? mappedPages = await this.TryReadCurrentIndexMapProtectionAsync(tdefPage, current, cancellationToken).ConfigureAwait(false);
+        if (mappedPages is null)
+        {
+            return;
+        }
+
+        newPages.UnionWith(mappedPages);
         var deallocatedPages = new HashSet<long>();
-        int groupCount = Math.Min(oldIndexPageGroups.Length, rebuiltIndexPageGroups.Length);
         for (int realIdxNum = 0; realIdxNum < groupCount; realIdxNum++)
         {
             if (rebuiltIndexPageGroups[realIdxNum].Length == 0 || oldIndexPageGroups[realIdxNum].Length == 0)
@@ -1300,22 +1305,179 @@ internal sealed class IndexMaintainer(
             _ = UsageMap.TryReadPointer(tdefBuffer, entry.FirstDpOffset - 4, out indexPointers[realIdxNum]);
         }
 
+        long[][] mapPageGroups = await this.FilterUnchangedIndexMapsAsync(indexPointers, indexPageGroups, cancellationToken).ConfigureAwait(false);
+        if (!HasAnyIndexPageGroup(mapPageGroups))
+        {
+            return;
+        }
+
         var entriesByNumber = new Dictionary<int, RealIdxEntry>();
         foreach ((int realIdxNum, RealIdxEntry entry) in slots)
         {
-            entriesByNumber.Add(realIdxNum, entry);
+            if (mapPageGroups[realIdxNum].Length > 0)
+            {
+                entriesByNumber.Add(realIdxNum, entry);
+            }
         }
 
         await this.DetachAliasedIndexMapsAsync(tdefPage, entriesByNumber, indexPointers, cancellationToken).ConfigureAwait(false);
         indexPointers = await dataPages.UpdateTableIndexUsageMapRowsAsync(
-            this.ReadTableUsageMapPage(tdefBuffer), indexPointers, indexPageGroups, cancellationToken).ConfigureAwait(false);
+            this.ReadTableUsageMapPage(tdefBuffer), indexPointers, mapPageGroups, cancellationToken).ConfigureAwait(false);
         foreach ((int realIdxNum, RealIdxEntry entry) in slots)
         {
-            if (indexPageGroups[realIdxNum].Length > 0)
+            if (mapPageGroups[realIdxNum].Length > 0)
             {
                 UsageMapPointer pointer = indexPointers[realIdxNum];
                 WriteIndexUsageMapPointer(tdefBuffer, entry.FirstDpOffset - 4, pointer.RowIndex, pointer.PageNumber);
             }
+        }
+    }
+
+    /// <summary>Elides map writes only when strict membership already equals the current tree.</summary>
+    /// <param name="pointers">The current physical map pointers.</param>
+    /// <param name="treePageGroups">The complete current trees, retained unchanged for reclamation.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Write groups with empty entries for maps that need no edit.</returns>
+    private async ValueTask<long[][]> FilterUnchangedIndexMapsAsync(UsageMapPointer[] pointers, long[][] treePageGroups, CancellationToken cancellationToken)
+    {
+        long[][] writes = (long[][])treePageGroups.Clone();
+        var mapPages = new Dictionary<int, byte[]>();
+        try
+        {
+            for (int index = 0; index < treePageGroups.Length; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (treePageGroups[index].Length == 0)
+                {
+                    continue;
+                }
+
+                List<long>? members = await this.TryReadStrictIndexMapMembersAsync(pointers[index], mapPages, cancellationToken).ConfigureAwait(false);
+                if (members is null || members.Count != treePageGroups[index].Length)
+                {
+                    continue;
+                }
+
+                var uniqueMembers = new HashSet<long>(members);
+                if (uniqueMembers.Count == members.Count && uniqueMembers.SetEquals(treePageGroups[index]))
+                {
+                    // Shared storage is safe to retain because neither
+                    // its row nor any bitmap will be written in this pass.
+                    writes[index] = [];
+                }
+            }
+
+            return writes;
+        }
+        finally
+        {
+            foreach (byte[] page in mapPages.Values)
+            {
+                PageBuffers.Return(page);
+            }
+        }
+    }
+
+    private async ValueTask<List<long>?> TryReadStrictIndexMapMembersAsync(UsageMapPointer pointer, Dictionary<int, byte[]> mapPages, CancellationToken cancellationToken)
+    {
+        if (pointer.PageNumber <= 1 || pointer.PageNumber >= pager.PageCount)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (!mapPages.TryGetValue(pointer.PageNumber, out byte[]? page))
+            {
+                page = await pager.ReadPageAsync(pointer.PageNumber, cancellationToken).ConfigureAwait(false);
+                mapPages.Add(pointer.PageNumber, page);
+            }
+
+            if (page[0] != Constants.PageTypes.Data || page[1] != 1 || Ri32(page, format.DataPage.TDefOff) != 0
+                || !UsageMap.TryGetRowBound(page, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound row)
+                || row.RowSize < 6
+                || (Ru16(page, format.DataPage.RowsStart + (pointer.RowIndex * 2)) & ~Constants.DataPage.RowOffsetMask) != 0)
+            {
+                return null;
+            }
+
+            var members = new List<long>();
+            return await UsageMap.TryEnumeratePagesAsync(page, row, format.PageSize, pager.PageCount, 1, true, pager.ReadPageAsync, PageBuffers.Return, members, cancellationToken).ConfigureAwait(false)
+                ? members
+                : null;
+        }
+        catch (JetCorruptDataException)
+        {
+            // A no-change decision requires a completely readable target.
+            return null;
+        }
+    }
+
+    private async ValueTask<HashSet<long>?> TryReadCurrentIndexMapProtectionAsync(long tdefPage, TdefPreamble current, CancellationToken cancellationToken)
+    {
+        var mapPages = new Dictionary<int, byte[]>();
+        var mappedPages = new HashSet<long>();
+        int proofOffset = -1;
+        try
+        {
+            for (int realIdxNum = 0; realIdxNum < current.NumRealIdx; realIdxNum++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!format.Index.TryReadRealIdxSlot(current.Buffer, current.RealIdxDescStart, realIdxNum, out RealIdxSlot slot))
+                {
+                    return null;
+                }
+
+                int offset = slot.FirstDpOffset - 4;
+                if (Ri32(current.Buffer, offset) == 0)
+                {
+                    continue;
+                }
+
+                if (!UsageMap.TryReadPointer(current.Buffer, offset, out UsageMapPointer pointer))
+                {
+                    return null;
+                }
+
+                List<long>? members = await this.TryReadStrictIndexMapMembersAsync(pointer, mapPages, cancellationToken).ConfigureAwait(false);
+                if (members is null)
+                {
+                    return null;
+                }
+
+                mappedPages.UnionWith(members);
+                if (proofOffset < 0)
+                {
+                    proofOffset = offset;
+                }
+            }
+        }
+        finally
+        {
+            foreach (byte[] page in mapPages.Values)
+            {
+                PageBuffers.Return(page);
+            }
+        }
+
+        if (proofOffset < 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            // One full graph inspection includes all other map memberships.
+            // Every current descriptor was also validated above, because an
+            // invalid row can be omitted from that conservative graph scan.
+            UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, proofOffset, cancellationToken).ConfigureAwait(false);
+            mappedPages.UnionWith(proof.Pages);
+            mappedPages.UnionWith(proof.OtherMappedPages);
+            return mappedPages;
+        }
+        catch (JetCorruptDataException)
+        {
+            return null;
         }
     }
 
@@ -1326,26 +1488,35 @@ internal sealed class IndexMaintainer(
     /// <param name="cancellationToken">The cancellation token.</param>
     private async ValueTask DetachAliasedIndexMapsAsync(long tdefPage, Dictionary<int, RealIdxEntry> entries, UsageMapPointer[] pointers, CancellationToken cancellationToken)
     {
-        foreach ((int realIdxNum, RealIdxEntry entry) in entries)
+        KeyValuePair<int, RealIdxEntry>[] targets = entries.Where(entry => pointers[entry.Key] != default).ToArray();
+        if (targets.Length == 0)
         {
-            if (pointers[realIdxNum] == default)
+            return;
+        }
+
+        UsageMapOwnership.Proof[] proofs;
+        try
+        {
+            int[] offsets = targets.Select(target => target.Value.FirstDpOffset - 4).ToArray();
+            proofs = await UsageMapOwnership.InspectForMutationBatchAsync(format, tableDefs, catalogRows, pager, tdefPage, offsets, cancellationToken).ConfigureAwait(false);
+        }
+        catch (JetCorruptDataException)
+        {
+            // Uncertain metadata requires private rows for this entire read-only
+            // phase. Reclamation retains every uncertain original page.
+            foreach (KeyValuePair<int, RealIdxEntry> target in targets)
             {
-                continue;
+                pointers[target.Key] = default;
             }
 
-            try
+            return;
+        }
+
+        for (int index = 0; index < targets.Length; index++)
+        {
+            if (!proofs[index].IsExclusiveRow || !proofs[index].HasExclusiveBitmapPages)
             {
-                UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectForMutationAsync(format, tableDefs, catalogRows, pager, tdefPage, entry.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
-                if (!proof.IsExclusiveRow || !proof.HasExclusiveBitmapPages)
-                {
-                    pointers[realIdxNum] = default;
-                }
-            }
-            catch (JetCorruptDataException)
-            {
-                // Rebuild privately when unrelated metadata prevents a proof;
-                // the reclamation path retains every uncertain original page.
-                pointers[realIdxNum] = default;
+                pointers[targets[index].Key] = default;
             }
         }
     }

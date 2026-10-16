@@ -464,10 +464,7 @@ internal sealed class TableStorageEditor(
             }
         }
 
-        foreach (LongValueDescriptor root in longValueRoots)
-        {
-            await longValueEncoder.DeallocateLongValueAsync(root, cancellationToken, tdefPage).ConfigureAwait(false);
-        }
+        await longValueEncoder.DeallocateLongValuesAsync(longValueRoots, cancellationToken, tdefPage).ConfigureAwait(false);
 
         if (firstTdefPage is not null)
         {

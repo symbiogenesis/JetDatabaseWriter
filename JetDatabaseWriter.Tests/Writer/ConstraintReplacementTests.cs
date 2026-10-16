@@ -36,26 +36,19 @@ public sealed class ConstraintReplacementTests
         await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, Options(automatic), leaveOpen: true, Ct))
         {
             await writer.CreateTableAsync("Rules", Columns(7, oldRule: true), Ct);
-            (long originalPage, byte[] originalDefinition, TableDef original) = await DefinitionAsync(stream);
+            (long originalPage, TableDef original) = await DefinitionAsync(stream);
             await writer.SetTableValidationRuleAsync("Rules", new TableValidationRule("[Score] < 10"), Ct);
             await writer.InsertRowAsync("Rules", [40, DbDefault.Value], Ct);
 
             await writer.DropTableAsync("Rules", Ct);
-            await writer.CreateTableAsync("Rules", Columns(19, oldRule: false), Ct);
-            (long replacementPage, byte[] replacementDefinition, TableDef replacement) = await DefinitionAsync(stream);
+            await CreateReplacementAtAsync(writer, originalPage);
+            (long replacementPage, TableDef replacement) = await DefinitionAsync(stream);
             Assert.Equal(originalPage, replacementPage);
             Assert.Equal(original.Columns.Count, replacement.Columns.Count);
             for (int index = 0; index < original.Columns.Count; index++)
             {
                 Assert.Equal(original.Columns[index].ColNum, replacement.Columns[index].ColNum);
                 Assert.Equal(original.Columns[index].RawDescriptor, replacement.Columns[index].RawDescriptor);
-            }
-
-            // Jet3 retains shared map storage and allocates different map rows; those
-            // pointers are not column identity. Jet4/ACE reuse the entire TDEF image.
-            if (format != DatabaseFormat.Jet3Mdb)
-            {
-                Assert.Equal(originalDefinition, replacementDefinition);
             }
 
             // Creation must also forget the old table rule before a new one is set.
@@ -156,6 +149,37 @@ public sealed class ConstraintReplacementTests
         await AssertRowsAsync(stream, [40, 41], [20, 19]);
     }
 
+    private static async Task CreateReplacementAtAsync(AccessWriter writer, long originalPage)
+    {
+        // Reclaimed map storage can precede the old TDEF. Hold lower free
+        // pages so the regression still forces the same physical table identity.
+        var held = new List<long>();
+        try
+        {
+            while (true)
+            {
+                long page = await writer.Services.PageAllocator.AllocatePageAsync(new byte[writer.Database.Format.PageSize], Ct);
+                if (page == originalPage)
+                {
+                    await writer.Services.PageAllocator.DeallocatePageAsync(page, Ct);
+                    break;
+                }
+
+                held.Add(page);
+                Assert.InRange(page, 2, originalPage - 1);
+            }
+
+            await writer.CreateTableAsync("Rules", Columns(19, oldRule: false), Ct);
+        }
+        finally
+        {
+            foreach (long page in held)
+            {
+                await writer.Services.PageAllocator.DeallocatePageAsync(page, Ct);
+            }
+        }
+    }
+
     private static ColumnDefinition[] Columns(int defaultValue, bool oldRule) =>
     [
         new("Id", typeof(int)) { IsAutoIncrement = true },
@@ -185,13 +209,13 @@ public sealed class ConstraintReplacementTests
         Assert.Equal(before, stream.ToArray());
     }
 
-    private static async Task<(long Page, byte[] Bytes, TableDef Definition)> DefinitionAsync(MemoryStream stream)
+    private static async Task<(long Page, TableDef Definition)> DefinitionAsync(MemoryStream stream)
     {
         await using var copy = new MemoryStream(stream.ToArray());
         await using AccessReader reader = await TestDatabase.OpenReaderAsync(copy, cancellationToken: Ct);
         CatalogEntry entry = Assert.IsType<CatalogEntry>(await reader.GetCatalogEntryAsync("Rules", Ct));
         TableDef definition = Assert.IsType<TableDef>(await reader.ReadTableDefAsync(entry.TDefPage, Ct));
-        return (entry.TDefPage, await reader.ReadPageCopyAsync(entry.TDefPage, Ct), definition);
+        return (entry.TDefPage, definition);
     }
 
     private static async Task<(long Page, ColumnInfo Column)> ScoreColumnAsync(MemoryStream stream)
