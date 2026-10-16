@@ -8,7 +8,6 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Maintenance;
@@ -60,14 +59,11 @@ public sealed class CompactInventoryTests
         await using DatabaseFile file = Open(bytes);
         var source = new ObservedPageSource(file.Pages);
         using var definitions = new TableDefReader(source, file.Format, cacheResults: false);
-        using var owned = new OwnedDataPages(source, file.Format, cacheResults: false);
-        var catalog = new CatalogRowReader(file.Format, definitions, owned);
         int records = 0;
         JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactStorageInventory.ScanAsync(
             source,
             file.Format,
             definitions,
-            catalog,
             new CompactTraversalBudget { MaxPages = source.PageCount - 1 },
             (_, _) =>
             {
@@ -128,7 +124,6 @@ public sealed class CompactInventoryTests
             file.Pages,
             file.Format,
             file.TableDefs,
-            new CatalogRowReader(file.Format, file.TableDefs, file.OwnedPages),
             new(),
             async (_, _) => await cancellation.CancelAsync(),
             cancellation.Token));
@@ -136,17 +131,15 @@ public sealed class CompactInventoryTests
         var expected = new IOException("inventory read failed");
         var source = new ObservedPageSource(file.Pages) { Failure = expected };
         using var definitions = new TableDefReader(source, file.Format, cacheResults: false);
-        using var owned = new OwnedDataPages(source, file.Format, cacheResults: false);
         IOException actual = await Assert.ThrowsAsync<IOException>(async () => await CompactStorageInventory.ScanAsync(
-            source, file.Format, definitions, new CatalogRowReader(file.Format, definitions, owned), new(), (_, _) => ValueTask.CompletedTask, Ct));
+            source, file.Format, definitions, new(), (_, _) => ValueTask.CompletedTask, Ct));
         Assert.Same(expected, actual);
 
         var invalidData = new InvalidDataException("caller stream failure");
         var lateSource = new ObservedPageSource(file.Pages) { Failure = invalidData, FailureAfterReads = file.Pages.PageCount + 1 };
         using var lateDefinitions = new TableDefReader(lateSource, file.Format, cacheResults: false);
-        using var lateOwned = new OwnedDataPages(lateSource, file.Format, cacheResults: false);
         InvalidDataException lateActual = await Assert.ThrowsAsync<InvalidDataException>(async () => await CompactStorageInventory.ScanAsync(
-            lateSource, file.Format, lateDefinitions, new CatalogRowReader(file.Format, lateDefinitions, lateOwned), new(), (_, _) => ValueTask.CompletedTask, Ct));
+            lateSource, file.Format, lateDefinitions, new(), (_, _) => ValueTask.CompletedTask, Ct));
         Assert.Same(invalidData, lateActual);
     }
 
@@ -239,6 +232,182 @@ public sealed class CompactInventoryTests
         Assert.NotNull(error.ErrorInfo.PageNumber);
     }
 
+    [Fact]
+    public async Task Inventory_ShortPhysicalBufferRefusesWithStructuredLocation()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var source = new ObservedPageSource(file.Pages) { ShortPage = 0 };
+        using var definitions = new TableDefReader(source, file.Format, cacheResults: false);
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactStorageInventory.ScanAsync(
+            source, file.Format, definitions, new(), (_, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(0, error.ErrorInfo.PageNumber);
+        Assert.Equal(1, source.Reads);
+    }
+
+    [Fact]
+    public async Task Inventory_DoesNotPopulateCallerDefinitionCache()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var source = new ObservedPageSource(file.Pages);
+        using var definitions = new TableDefReader(source, file.Format, cacheResults: true) { VerifyOnHit = false };
+        await CompactStorageInventory.ScanAsync(
+            source, file.Format, definitions, new(), (_, _) => ValueTask.CompletedTask, Ct);
+        int reads = source.Reads;
+        Assert.NotNull(await definitions.ReadImageAsync(2, Ct));
+        Assert.True(source.Reads > reads);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Inventory_ChangingPhysicalGeometryRefusesBeforeHashing(bool changePageSize, bool changePageCount)
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var source = new ObservedPageSource(file.Pages) { ChangePageSizeAfterRead = changePageSize, ChangePageCountAfterRead = changePageCount };
+        using var definitions = new TableDefReader(source, file.Format, cacheResults: false);
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactStorageInventory.ScanAsync(
+            source, file.Format, definitions, new(), (_, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(0, error.ErrorInfo.PageNumber);
+        Assert.Equal(1, source.Reads);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task Inventory_TotalReadBudgetIncludesMetadataReads(int extraReads)
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var source = new ObservedPageSource(file.Pages);
+        using var definitions = new TableDefReader(source, file.Format, cacheResults: false);
+        long limit = file.Pages.PageCount + extraReads;
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactStorageInventory.ScanAsync(
+            source, file.Format, definitions, new() { MaxPageReads = limit }, (_, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(limit, source.Reads);
+        Assert.Contains("MaxPageReads", error.ErrorInfo.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Inventory_ReadBudgetInsideDefinitionRetainsItsCodeAndLocation()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        const int schemaBytes = 64 * 1024;
+        using var definitions = new TableDefReader(file.Pages, file.Format, cacheResults: false, maxLogicalBytes: schemaBytes, maxSchemaTraversalBytes: schemaBytes);
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactStorageInventory.ScanAsync(
+            file.Pages,
+            file.Format,
+            definitions,
+            new() { MaxPageReads = file.Pages.PageCount + 2, MaxSchemaBytes = schemaBytes },
+            (_, _) => ValueTask.CompletedTask,
+            Ct));
+        Assert.Equal(JetErrorCode.ValueTooLarge, error.ErrorCode);
+        Assert.Equal(2, error.ErrorInfo.PageNumber);
+        Assert.Contains("MaxPageReads", error.ErrorInfo.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Inventory_WorkingStorageAdmissionRefusesBeforeReading()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var source = new ObservedPageSource(file.Pages);
+        using var definitions = new TableDefReader(source, file.Format, cacheResults: false);
+        int records = 0;
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactStorageInventory.ScanAsync(
+            source,
+            file.Format,
+            definitions,
+            new() { MaxWorkingBytes = 1 },
+            (_, _) =>
+            {
+                records++;
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+        Assert.Contains("MaxWorkingBytes", error.ErrorInfo.Reason, StringComparison.Ordinal);
+        Assert.Equal(0, source.Reads);
+        Assert.Equal(0, records);
+    }
+
+    [Fact]
+    public async Task Inventory_RecordBudgetStopsBeforeDeliveringAnotherObservation()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        int records = 0;
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await CompactStorageInventory.ScanAsync(
+            file.Pages,
+            file.Format,
+            file.TableDefs,
+            new() { MaxRecords = 1 },
+            (_, _) =>
+            {
+                records++;
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+        Assert.Contains("MaxRecords", error.ErrorInfo.Reason, StringComparison.Ordinal);
+        Assert.Equal(1, records);
+    }
+
+    [Fact]
+    public async Task Inventory_EmptyBitmapStillConsumesTraversalBudget()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        Assert.True(UsageMap.TryGetRowBound(bytes.AsSpan(format.PageSize, format.PageSize), format.DataPage, format.PageSize, 0, out JetDatabaseWriter.Pages.Models.RowBound row));
+        Assert.Equal(0, bytes[format.PageSize + row.RowStart]);
+        bytes.AsSpan(format.PageSize + row.RowStart + 5, row.RowSize - 5).Clear();
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(bytes, new() { MaxMapSteps = 1 }));
+        Assert.Contains("MaxMapSteps", error.ErrorInfo.Reason, StringComparison.Ordinal);
+        Assert.Equal(1, error.ErrorInfo.PageNumber);
+    }
+
+    [Fact]
+    public async Task Inventory_CatalogDiscoveryDoesNotDependOnOwnedMapBits()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        List<CompactStorageRecord> initial = await ScanAsync(bytes);
+        CompactStorageRecord pointer = Assert.Single(initial, record => record.Role == "table-owned-map" && record.OwnerTDefPage == 2);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        int offset = checked((int)pointer.TargetPageNumber!.Value * format.PageSize);
+        Assert.True(UsageMap.TryGetRowBound(bytes.AsSpan(offset, format.PageSize), format.DataPage, format.PageSize, pointer.TargetRowIndex!.Value, out JetDatabaseWriter.Pages.Models.RowBound row));
+        Assert.Equal(0, bytes[offset + row.RowStart]);
+        bytes.AsSpan(offset + row.RowStart + 5, row.RowSize - 5).Clear();
+        List<CompactStorageRecord> records = await ScanAsync(bytes);
+        Assert.Equal(initial.Where(record => record.Kind == "catalog-object"), records.Where(record => record.Kind == "catalog-object"));
+        Assert.Contains(records, record => record.Kind == "catalog-object" && record.Name == "Items");
+    }
+
+    [Fact]
+    public async Task Inventory_UnknownCatalogOwnedPageRefusesCompleteDiscovery()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        List<CompactStorageRecord> initial = await ScanAsync(bytes);
+        CompactStorageRecord item = Assert.Single(initial, record => record.Kind == "catalog-object" && record.Name == "Items");
+        bytes[checked((int)item.PageNumber * 4096)] = 0x7F;
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(bytes));
+        Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+        Assert.Equal(item.PageNumber, error.ErrorInfo.PageNumber);
+    }
+
+    [Fact]
+    public async Task Inventory_ContradictoryCatalogRowCountIsAdvisoryAndDiagnosed()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        int offset = (2 * format.PageSize) + format.TDef.NumRows;
+        uint declared = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(offset, 4));
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(offset, 4), declared + 1);
+        List<CompactStorageRecord> records = await ScanAsync(bytes);
+        Assert.Contains(records, record => record.Kind == "diagnostic" && record.PageNumber == 2 && record.Detail!.Contains("advisory", StringComparison.Ordinal));
+        Assert.Contains(records, record => record.Kind == "catalog-object" && record.Name == "Items");
+    }
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private static async Task<byte[]> CreateAsync(DatabaseFormat format)
@@ -264,7 +433,6 @@ public sealed class CompactInventoryTests
             file.Pages,
             file.Format,
             file.TableDefs,
-            new CatalogRowReader(file.Format, file.TableDefs, file.OwnedPages),
             budget ?? new(),
             (record, _) =>
             {
@@ -277,9 +445,9 @@ public sealed class CompactInventoryTests
 
     private sealed class ObservedPageSource(IPageSource inner) : IPageSource
     {
-        public int PageSize => inner.PageSize;
+        public int PageSize => this.ChangePageSizeAfterRead && this.Reads > 0 ? inner.PageSize / 2 : inner.PageSize;
 
-        public long PageCount => inner.PageCount;
+        public long PageCount => this.ChangePageCountAfterRead && this.Reads > 0 ? inner.PageCount + 1 : inner.PageCount;
 
         public bool IsDisposed => inner.IsDisposed;
 
@@ -289,9 +457,20 @@ public sealed class CompactInventoryTests
 
         internal long FailureAfterReads { get; init; }
 
+        internal long? ShortPage { get; init; }
+
+        internal bool ChangePageSizeAfterRead { get; init; }
+
+        internal bool ChangePageCountAfterRead { get; init; }
+
         public ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
         {
             this.Reads++;
+            if (pageNumber == this.ShortPage)
+            {
+                return ValueTask.FromResult(System.Buffers.ArrayPool<byte>.Shared.Rent(256));
+            }
+
             return this.Failure is { } failure && this.Reads > this.FailureAfterReads
                 ? ValueTask.FromException<byte[]>(failure)
                 : inner.ReadPageAsync(pageNumber, cancellationToken);

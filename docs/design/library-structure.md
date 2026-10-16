@@ -121,11 +121,10 @@ JetDatabaseWriter/
 │       └── PreEncodedLongValue.cs
 │
 ├── LongValues/                            (shared LVAL storage codec)
-│   ├── LongValueStore.cs                  (descriptor/page helpers, chain traversal, deallocation)
+│   ├── LongValueStore.cs                  (descriptor/page helpers, bounded raw payload streaming, deallocation)
 │   └── Models/
 │       ├── LongValueDescriptor.cs         (12-byte MEMO/OLE/attachment descriptor parser/serializer)
-│       ├── LvalRowLocation.cs
-│       └── LvalChainResult.cs             (bounded chain-read result)
+│       └── LvalRowLocation.cs
 │
 ├── ValueDecoding/                         (read-path: bytes → typed values)
 │   ├── RowDecodePlan.cs                   (row-layout preflight, projection masks, string rows, typed/direct slice decoding)

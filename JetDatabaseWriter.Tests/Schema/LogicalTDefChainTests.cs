@@ -16,6 +16,116 @@ public sealed class LogicalTDefChainTests
 
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
+    [Theory]
+    [InlineData(57, false)]
+    [InlineData(76, false)]
+    [InlineData(88, false)]
+    [InlineData(100, false)]
+    [InlineData(130, false)]
+    [InlineData(76, true)]
+    [InlineData(100, true)]
+    public async Task WriteAsync_ResizingPreservesRetainedHeadersAndOpaquePadding(int usedLength, bool replaceBuffer)
+    {
+        const int originalLength = 88;
+        var pages = new Dictionary<long, byte[]>
+        {
+            [10] = CreatePage(20),
+            [20] = CreatePage(0),
+        };
+        Wi32(pages[10], 8, originalLength - 8);
+        pages[10][1] = 0xA1;
+        pages[20][1] = 0xB2;
+        pages[20][2] = 0xC3;
+        pages[20][3] = 0xD4;
+        pages[20].AsSpan(8, originalLength - PageSize).Fill(0x6B);
+        pages[20].AsSpan(8 + originalLength - PageSize).Fill(0xD7);
+        LogicalTDefChain chain = await LogicalTDefChain.ReadRequiredAsync(
+            10, PageSize, (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct);
+        byte[] bytes = chain.EnsureCapacity(usedLength);
+        if (replaceBuffer)
+        {
+            bytes = new byte[LogicalTDefChain.GetLogicalCapacity(PageSize, usedLength)];
+            chain.Bytes.AsSpan(0, Math.Min(originalLength, usedLength)).CopyTo(bytes);
+        }
+
+        if (usedLength > originalLength)
+        {
+            bytes.AsSpan(originalLength, usedLength - originalLength).Fill(0x8B);
+        }
+
+        var deallocated = new List<long>();
+        long nextPage = 30;
+        await chain.WriteAsync(bytes, usedLength, AllocateAsync, (number, page, token) => WritePageAsync(pages, number, page, token), DeallocateAsync, true, this.ct);
+
+        Assert.Equal(0xA1, pages[10][1]);
+        Assert.Equal(usedLength - 8, Ri32(pages[10], 8));
+        if (usedLength <= PageSize)
+        {
+            Assert.Equal([20L], deallocated);
+            Assert.Equal(0, Ri32(pages[10], 4));
+        }
+        else
+        {
+            Assert.Empty(deallocated);
+            Assert.Equal(new byte[] { Constants.PageTypes.TableDefinition, 0xB2, 0xC3, 0xD4 }, pages[20].AsSpan(0, 4).ToArray());
+            Assert.Equal(usedLength > 120 ? 30 : 0, Ri32(pages[20], 4));
+            if (usedLength < 120)
+            {
+                Assert.All(pages[20].AsSpan(8 + Math.Max(originalLength, usedLength) - PageSize).ToArray(), value => Assert.Equal(0xD7, value));
+            }
+        }
+
+        if (usedLength < originalLength)
+        {
+            LogicalTDefChain rewritten = await LogicalTDefChain.ReadRequiredAsync(
+                10, PageSize, (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct);
+            int removedLength = Math.Min(originalLength, rewritten.Bytes.Length) - usedLength;
+            Assert.All(rewritten.Bytes.AsSpan(usedLength, removedLength).ToArray(), value => Assert.Equal(0, value));
+        }
+
+        if (usedLength > 120)
+        {
+            Assert.Equal(new byte[] { Constants.PageTypes.TableDefinition, 1, 0, 0, 0, 0, 0, 0 }, pages[30].AsSpan(0, 8).ToArray());
+        }
+
+        ValueTask<long> AllocateAsync(byte[] page, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            long number = nextPage++;
+            pages[number] = ClonePage(page);
+            return ValueTask.FromResult(number);
+        }
+
+        ValueTask DeallocateAsync(long number, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            deallocated.Add(number);
+            Assert.True(pages.Remove(number));
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(int.MaxValue)]
+    [InlineData(PageSize - 8)]
+    public async Task WriteAsync_AmbiguousOriginalLengthRefusesBeforeChangingPages(int declaredLength)
+    {
+        var pages = new Dictionary<long, byte[]> { [10] = CreatePage(20), [20] = CreatePage(0) };
+        Wi32(pages[10], 8, declaredLength);
+        byte[] root = ClonePage(pages[10]);
+        byte[] continuation = ClonePage(pages[20]);
+        LogicalTDefChain chain = await LogicalTDefChain.ReadRequiredAsync(
+            10, PageSize, (number, token) => ReadPageAsync(pages, number, token), ReturnBorrowedPage, true, this.ct);
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await chain.WriteAsync(chain.Bytes, PageSize + 24, AllocateUnexpectedPageAsync, (number, page, token) => WritePageAsync(pages, number, page, token), (_, _) => ValueTask.CompletedTask, true, this.ct));
+        Assert.Equal(JetErrorCode.CorruptTableDefinition, error.ErrorCode);
+        Assert.Equal(10, error.ErrorInfo.PageNumber);
+        Assert.NotNull(error.ErrorInfo.Reason);
+        Assert.Equal(root, pages[10]);
+        Assert.Equal(continuation, pages[20]);
+    }
+
     [Fact]
     public async Task WriteAsync_GrowingPastFirstPage_AllocatesContinuationAndPreservesLogicalBytes()
     {
@@ -93,6 +203,8 @@ public sealed class LogicalTDefChainTests
         };
 
         var deallocatedPages = new List<long>();
+
+        Wi32(pages[10], 8, 176 - 8);
 
         LogicalTDefChain chain = await LogicalTDefChain.ReadRequiredAsync(
             10,

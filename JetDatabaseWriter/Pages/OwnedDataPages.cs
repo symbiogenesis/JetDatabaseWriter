@@ -175,15 +175,50 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     /// <param name="visitRowAsync">Called for each row; returns <see langword="false"/> to stop.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="requireCompleteRows">Whether malformed live slots and unresolved overflow pointers refuse the walk.</param>
+    /// <param name="scanPhysicalPages">Whether to stream physical owner headers without map or owner-index materialization.</param>
     /// <returns>A task that completes when the walk ends.</returns>
     /// <exception cref="JetCorruptDataException">Strict traversal cannot safely reach every live row.</exception>
     internal async ValueTask ForEachLiveTableRowAsync(
         long tdefPage,
         TableRowVisitor visitRowAsync,
         CancellationToken cancellationToken,
-        bool requireCompleteRows = false)
+        bool requireCompleteRows = false,
+        bool scanPhysicalPages = false)
     {
         Guard.NotNull(visitRowAsync, nameof(visitRowAsync));
+
+        if (scanPhysicalPages)
+        {
+            for (long number = 3; number < this.pages.PageCount; number++)
+            {
+                this.pages.ThrowIfDisposedOrCancelled(cancellationToken);
+                byte[] page = await this.pages.ReadUncachedPageAsync(number, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (Ri32(page, this.format.DataPage.TDefOff) != tdefPage)
+                    {
+                        continue;
+                    }
+
+                    if (IsUnrecognizedPageType(page[0]) && requireCompleteRows)
+                    {
+                        throw CreateTraversalException(number, "An unrecognized page type has matching table ownership; complete content cannot be established.");
+                    }
+
+                    if (page[0] == Constants.PageTypes.Data
+                        && !await this.ForEachRowOnPageAsync(number, page, visitRowAsync, cancellationToken, requireCompleteRows).ConfigureAwait(false))
+                    {
+                        return;
+                    }
+                }
+                finally
+                {
+                    PageBuffers.Return(page);
+                }
+            }
+
+            return;
+        }
 
         await this.ForEachOwnedDataPageAsync(
             tdefPage,

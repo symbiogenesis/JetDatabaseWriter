@@ -47,7 +47,15 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     private async ValueTask<LvalRowLocation> LocateLvalRowSlowAsync(int lvalPage, int lvalRow, CancellationToken cancellationToken)
     {
         byte[] page = await pages.ReadPageAsync(lvalPage, cancellationToken).ConfigureAwait(false);
-        return this.LocateLvalRow(lvalPage, lvalRow, page);
+        try
+        {
+            return this.LocateLvalRow(lvalPage, lvalRow, page);
+        }
+        catch
+        {
+            pages.ReturnUncachedPage(page);
+            throw;
+        }
     }
 
     private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
@@ -55,9 +63,6 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
         RowBound[] rowDirectory = pages.GetRowDirectory(lvalPage, page);
         return LongValueStore.LocateRow(lvalPage, lvalRow, page, format.DataPage, format.PageSize, rowDirectory);
     }
-
-    internal async ValueTask<LvalChainResult> ReadLvalChainAsync(uint firstLvalDp, int maxLen, CancellationToken cancellationToken)
-        => await LongValueStore.ReadChainedPayloadAsync(firstLvalDp, maxLen, format.PageSize, this.LocateLvalRowAsync, cancellationToken).ConfigureAwait(false);
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
     {
@@ -82,6 +87,66 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
     internal async ValueTask<byte[]> ReadLongValueBytesExactAsync(byte[] row, int start, int len, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        LongValueDescriptor descriptor = this.ReadDescriptor(row, start, len, int.MaxValue);
+        if (descriptor.Length == 0)
+        {
+            return [];
+        }
+
+        if (descriptor.IsInline)
+        {
+            return BinaryBuffer.CopySlice(row, start + Constants.LongValue.HeaderSize, descriptor.Length);
+        }
+
+        // Grow only from validated chunks: a corrupt descriptor must not
+        // reserve its claimed payload before its first row is readable.
+        var output = new MemoryStream();
+        try
+        {
+            await this.CopyPayloadAsync(row, start, len, descriptor, output, descriptor.Length, cancellationToken).ConfigureAwait(false);
+            return output.ToArray();
+        }
+        finally
+        {
+            await output.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Streams the stored payload into a staging stream without decoding it.
+    /// The destination stays open and can contain a partial value on failure.
+    /// Descriptor bytes, padding and ownership remain separate preservation obligations.
+    /// </summary>
+    /// <param name="row">The buffer holding the column.</param>
+    /// <param name="start">The descriptor offset.</param>
+    /// <param name="len">The column slice length.</param>
+    /// <param name="destination">The staging destination.</param>
+    /// <param name="maxChainRows">The maximum external rows and cycle-tracking entries.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task completed after copying the declared stored bytes.</returns>
+    internal async ValueTask CopyLongValueRawBytesAsync(byte[] row, int start, int len, Stream destination, int maxChainRows, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        LongValueDescriptor descriptor = this.ReadDescriptor(row, start, len, maxChainRows);
+        await this.CopyPayloadAsync(row, start, len, descriptor, destination, maxChainRows, cancellationToken).ConfigureAwait(false);
+    }
+
+    private ValueTask CopyPayloadAsync(byte[] row, int start, int len, LongValueDescriptor descriptor, Stream destination, int maxChainRows, CancellationToken cancellationToken)
+        => LongValueStore.CopyPayloadAsync(
+            descriptor,
+            row.AsMemory(start + Constants.LongValue.HeaderSize, len - Constants.LongValue.HeaderSize),
+            destination,
+            format.PageSize,
+            maxValueBytes,
+            maxChainRows,
+            this.LocateLvalRowAsync,
+            cancellationToken,
+            this.ReleaseLvalPage);
+
+    private void ReleaseLvalPage(byte[] page) => pages.ReturnUncachedPage(page);
+
+    private LongValueDescriptor ReadDescriptor(byte[] row, int start, int len, int maxChainRows)
+    {
         if (start < 0 || len < 0 || start > row.Length - len)
         {
             throw new InvalidDataException("the long-value column slice is outside the row buffer");
@@ -92,51 +157,8 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
             throw new InvalidDataException($"the long-value descriptor is {len} byte(s), shorter than the {Constants.LongValue.HeaderSize}-byte header");
         }
 
-        if (descriptor.StorageMode is not Constants.LongValue.InlineStorageMode
-            and not Constants.LongValue.SinglePageStorageMode
-            and not Constants.LongValue.ChainedStorageMode)
-        {
-            throw new InvalidDataException($"the long-value storage mode 0x{descriptor.StorageMode:X2} is reserved");
-        }
-
-        this.ValidateStoredLength(descriptor.Length);
-
-        if (descriptor.Length <= 0)
-        {
-            return [];
-        }
-
-        switch (descriptor.StorageMode)
-        {
-            case Constants.LongValue.InlineStorageMode:
-                int valueStart = start + Constants.LongValue.HeaderSize;
-                int inlineLen = descriptor.Length;
-                if (inlineLen > len - Constants.LongValue.HeaderSize)
-                {
-                    throw new InvalidDataException($"the inline value claims {descriptor.Length} byte(s) but the column slice contains fewer bytes");
-                }
-
-                return BinaryBuffer.CopySlice(row, valueStart, inlineLen);
-
-            case Constants.LongValue.SinglePageStorageMode:
-                LvalRowLocation location = await this.LocateLvalRowAsync(descriptor.FirstDp, cancellationToken).ConfigureAwait(false);
-                if (location.Failed)
-                {
-                    throw new InvalidDataException($"the LVAL row could not be located: {location.Error}");
-                }
-
-                int size = descriptor.Length;
-                if (location.Size < size || location.Start < 0 || location.Start > location.Page.Length - size)
-                {
-                    throw new InvalidDataException($"the LVAL row is truncated but the descriptor claims {descriptor.Length} byte(s)");
-                }
-
-                return BinaryBuffer.CopySlice(location.Page, location.Start, size);
-
-            default:
-                LvalChainResult chain = await this.ReadLvalChainAsync(descriptor.FirstDp, descriptor.Length, cancellationToken).ConfigureAwait(false);
-                return chain.Data ?? throw new InvalidDataException($"the LVAL chain could not be read: {chain.Error}");
-        }
+        LongValueStore.ValidatePayload(descriptor, len - Constants.LongValue.HeaderSize, format.PageSize, maxValueBytes, maxChainRows);
+        return descriptor;
     }
 
     /// <summary>

@@ -262,7 +262,26 @@ completeness for missing/contradictory maps or damaged ownership.
 
 `CompactInventoryTests` checks bounded physical/catalog/TDEF/map observations,
 complete per-page hashes, pinned opaque content, cancellation, real I/O propagation
-and structured refusal. `storage-audit` consumes the stream into a bounded partial
-or completed NDJSON inventory. Every region remains pinned; neither this phase
-nor its completion marker proves full row/LVAL/index reachability or permits
+and structured refusal. It also checks total read/work/record limits, storage
+admission, short-page refusal, budget attribution through definition readers
+and isolation from caller definition caches.
+Inventory catalog scans use physical owner headers; row-count hints remain
+advisory. `storage-audit` consumes the stream into a bounded partial or completed
+NDJSON inventory with bounded record serialization. Every region remains pinned;
+neither this phase nor its completion marker proves full row/LVAL/index reachability or permits
 relocation, reclamation, repair or replacement.
+
+`LongValueStreamingTests` verifies exact opaque stored payloads, including a
+generated value beyond 16 MiB copied through a reused page into a non-buffering
+verifier. Explicit byte/row limits, corruption, cycles, cancellation, I/O exception
+identity, deferred allocation on first-row refusal and awaited buffer release
+are separate checks. This is synthetic
+streaming evidence, not a Microsoft-authored large-value or native error-envelope
+oracle.
+
+`LogicalTDefChainTests` checks retained physical prefixes and original padding,
+growth/shrink behavior, clearing of removed metadata and refusal of contradictory
+declared lengths before mutation. `NativeTDefChainPreservationTests` compares
+retained pages of DAO-authored wide tables and checks native reopen, insertion,
+compact and readback. These chain write-back checks do not establish complete
+generated-schema preservation or permission to relocate unknown metadata.

@@ -402,10 +402,13 @@ the same range.
 ### 1. MEMO/OLE LVAL decode
 
 MEMO/OLE remains the largest special-case read cost, but the avoidable
-allocation work has already been reduced. The current implementation fills the
-declared chained payload buffer directly for valid chains, uses inline cycle
-detection before allocating a `HashSet<uint>`, reuses cached live-row bounds when
-locating LVAL rows, and avoids async slow-path setup on cached LVAL page hits.
+allocation work has already been reduced. Raw-copy callers can stream the
+declared payload to a staging stream without a payload-sized array. Materialized
+external reads grow their buffer only after validated bytes arrive, so an
+unreadable first row does not allocate its declared payload. Inline reads copy
+their slice directly. Traversal uses inline cycle detection before allocating a
+`HashSet<uint>`, reuses cached live-row bounds when locating LVAL rows, and avoids
+async slow-path setup on cached LVAL page hits.
 
 Remaining cost is mostly inherent: non-inline values require additional page
 reads, text MEMO values must allocate the returned `string`, and OLE callers
@@ -416,10 +419,10 @@ Primary code path:
 
 - `LongValueDecoder.ReadLongValueAsync`
 - `LongValueDecoder.ReadLongValueRawBytesAsync`
-- `LongValueDecoder.ReadLvalChainAsync`
+- `LongValueDecoder.CopyLongValueRawBytesAsync`
 - `LongValueDecoder.LocateLvalRowAsync`
 - `LongValueDecoder.DecodeLongValue`
-- `LongValueStore.ReadChainedPayloadAsync`
+- `LongValueStore.CopyPayloadAsync`
 
 ### 2. DataTable materialization
 

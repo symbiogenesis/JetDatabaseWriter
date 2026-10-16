@@ -17,4 +17,17 @@ internal sealed class CompactTraversalBudget
 
     /// <summary>Gets the aggregate logical table-definition byte limit.</summary>
     public int MaxSchemaBytes { get; init; } = 64 * 1024 * 1024;
+
+    /// <summary>Gets the total page-read limit, including repeated reads and fallback scans.</summary>
+    public long MaxPageReads { get; init; } = 8_388_608;
+
+    /// <summary>Gets the total inspected map bytes and directory slots, including empty ones.</summary>
+    public long MaxMapSteps { get; init; } = 268_435_456;
+
+    /// <summary>Gets the maximum number of observations delivered to the visitor.</summary>
+    public long MaxRecords { get; init; } = 8_388_608;
+
+    /// <summary>Gets the conservative admission allowance for scan-owned storage, excluding the caller and visitor.</summary>
+    /// <remarks>This accounts for collection capacity and simultaneous schema copies; it is not a CLR heap measurement.</remarks>
+    public long MaxWorkingBytes { get; init; } = 512 * 1024 * 1024;
 }

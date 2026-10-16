@@ -516,8 +516,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
     /// <summary>
     /// Corrupts an LVAL page pointer to form a self-referencing cycle:
     /// the "next page" field of the first LVAL row points back to the same page.
-    /// Without cycle detection (<c>HashSet&lt;uint&gt; seen</c> in
-    /// <c>ReadLvalChainAsync</c>), this would loop indefinitely. With it,
+    /// Without cycle detection in <c>CopyPayloadAsync</c>, this would loop indefinitely. With it,
     /// the chain terminates immediately.
     /// </summary>
     [Fact]
@@ -528,10 +527,17 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
         byte[] page = new byte[16];
         BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(0, 4), rowPointer);
         int reads = 0;
-        LvalChainResult result = await LongValueStore.ReadChainedPayloadAsync(
-            rowPointer, 32, page.Length, LocateAsync, TestContext.Current.CancellationToken);
-        Assert.Null(result.Data);
-        Assert.Equal("the chain contains a cycle", result.Error);
+        await using var output = new MemoryStream();
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await LongValueStore.CopyPayloadAsync(
+                LongValueDescriptor.Chained(32, rowPointer, 0),
+                ReadOnlyMemory<byte>.Empty,
+                output,
+                page.Length,
+                32,
+                32,
+                LocateAsync,
+                TestContext.Current.CancellationToken));
         Assert.Equal(1, reads);
 
         ValueTask<LvalRowLocation> LocateAsync(uint pointer, CancellationToken token)

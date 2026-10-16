@@ -230,20 +230,14 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
             throw SchemaBudgetExceeded(startPage);
         }
 
-        try
-        {
-            return await LogicalTDefChain.ReadAsync(
-                startPage,
-                this.format.PageSize,
-                this.pages.ReadPageAsync,
-                PageBuffers.Return,
-                retainPageNumbers: true,
-                cancellationToken,
-                Math.Min(this.MaxLogicalBytes, schemaBudget)).ConfigureAwait(false);
-        }
-        catch (JetLimitationException error) when (error.ErrorCode == JetErrorCode.ValueTooLarge && schemaBudget <= this.MaxLogicalBytes)
-        {
-            throw SchemaBudgetExceeded(startPage);
-        }
+        return await LogicalTDefChain.ReadAsync(
+            startPage,
+            this.format.PageSize,
+            this.pages.ReadPageAsync,
+            PageBuffers.Return,
+            retainPageNumbers: true,
+            cancellationToken,
+            Math.Min(this.MaxLogicalBytes, schemaBudget),
+            logicalByteLimitExceeded: schemaBudget <= this.MaxLogicalBytes ? () => SchemaBudgetExceeded(startPage) : null).ConfigureAwait(false);
     }
 }

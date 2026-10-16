@@ -1,8 +1,8 @@
 namespace JetDatabaseWriter.FormatProbe;
 
+using System.Buffers;
 using System.CommandLine;
 using System.Text.Json;
-using JetDatabaseWriter.Catalog;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Maintenance;
@@ -23,6 +23,10 @@ internal static class StorageAuditProbe
         var maxDiagnostics = new Option<int>("--max-diagnostics") { DefaultValueFactory = _ => 1024, Description = "Maximum uncertainty diagnostics." };
         var maxSchemaBytes = new Option<int>("--max-schema-bytes") { DefaultValueFactory = _ => 64 * 1024 * 1024, Description = "Maximum aggregate logical definition bytes; not a total heap limit." };
         var maxReportBytes = new Option<long>("--max-report-bytes") { DefaultValueFactory = _ => 64 * 1024 * 1024, Description = "Maximum UTF-8 report bytes, including terminal status." };
+        var maxPageReads = new Option<long>("--max-page-reads") { DefaultValueFactory = _ => 8_388_608, Description = "Maximum aggregate reads, including repeated and fallback reads." };
+        var maxMapSteps = new Option<long>("--max-map-steps") { DefaultValueFactory = _ => 268_435_456, Description = "Maximum inspected map bytes and directory slots, including empty ones." };
+        var maxRecords = new Option<long>("--max-records") { DefaultValueFactory = _ => 8_388_608, Description = "Maximum inventory observations." };
+        var maxWorkingBytes = new Option<long>("--max-working-bytes") { DefaultValueFactory = _ => 512 * 1024 * 1024, Description = "Conservative scan-owned storage reservation, including collections and scratch; not a CLR heap measurement." };
         var passwordEnvironment = new Option<string?>("--password-environment") { Description = "Name of an environment variable containing the source password; its value is never reported." };
         var command = new RootCommand("Read-only physical/catalog/TDEF/map inventory. Every region remains pinned; rows, LVAL contents and index trees are not validated.")
         {
@@ -34,6 +38,10 @@ internal static class StorageAuditProbe
             maxDiagnostics,
             maxSchemaBytes,
             maxReportBytes,
+            maxPageReads,
+            maxMapSteps,
+            maxRecords,
+            maxWorkingBytes,
             passwordEnvironment,
         };
         command.SetAction(async (parse, cancellationToken) =>
@@ -46,10 +54,15 @@ internal static class StorageAuditProbe
             int diagnosticLimit = parse.GetValue(maxDiagnostics);
             int schemaLimit = parse.GetValue(maxSchemaBytes);
             long reportLimit = parse.GetValue(maxReportBytes);
+            long readLimit = parse.GetValue(maxPageReads);
+            long mapStepLimit = parse.GetValue(maxMapSteps);
+            long recordLimit = parse.GetValue(maxRecords);
+            long workingLimit = parse.GetValue(maxWorkingBytes);
             string? passwordVariable = parse.GetValue(passwordEnvironment);
             if (!Path.IsPathFullyQualified(sourcePath) || !Path.IsPathFullyQualified(reportPath)
                 || HasEnvironmentToken(sourcePath) || HasEnvironmentToken(reportPath)
-                || pageLimit <= 0 || objectLimit <= 0 || referenceLimit <= 0 || diagnosticLimit <= 0 || schemaLimit <= 0 || reportLimit < TerminalReserve * 2)
+                || pageLimit <= 0 || objectLimit <= 0 || referenceLimit <= 0 || diagnosticLimit <= 0 || schemaLimit <= 0 || reportLimit < TerminalReserve * 2
+                || readLimit <= 0 || mapStepLimit <= 0 || recordLimit <= 0 || workingLimit <= 0)
             {
                 await Console.Error.WriteLineAsync("Use absolute paths without unresolved environment tokens and positive limits; --max-report-bytes must be at least 8192.");
                 return 2;
@@ -69,6 +82,10 @@ internal static class StorageAuditProbe
                 MaxReferences = referenceLimit,
                 MaxDiagnostics = diagnosticLimit,
                 MaxSchemaBytes = schemaLimit,
+                MaxPageReads = readLimit,
+                MaxMapSteps = mapStepLimit,
+                MaxRecords = recordLimit,
+                MaxWorkingBytes = workingLimit,
             };
             return await RunAsync(sourcePath, reportPath, budget, reportLimit, password.AsMemory(), cancellationToken).ConfigureAwait(false);
         });
@@ -125,8 +142,7 @@ internal static class StorageAuditProbe
                         MaxReportBytes = reportLimit,
                     };
                     await log.WriteAsync(headerRecord, cancellationToken).ConfigureAwait(false);
-                    var catalogRows = new CatalogRowReader(database.Format, database.TableDefs, database.OwnedPages);
-                    await CompactStorageInventory.ScanAsync(database.Pages, database.Format, database.TableDefs, catalogRows, budget, log.WriteAsync, cancellationToken).ConfigureAwait(false);
+                    await CompactStorageInventory.ScanAsync(database.Pages, database.Format, database.TableDefs, budget, log.WriteAsync, cancellationToken).ConfigureAwait(false);
                     await report.FlushAsync(cancellationToken).ConfigureAwait(false);
                     await log.WriteTerminalAsync(new { Kind = "audit-terminal", InventoryCompleted = true, RelocationProven = false, ValuesValidated = false, Records = log.RecordCount }, cancellationToken).ConfigureAwait(false);
                     await report.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -169,6 +185,8 @@ internal static class StorageAuditProbe
 
     private sealed class AuditLog(FileStream stream, long maxBytes)
     {
+        private readonly RecordBuffer buffer = new();
+
         internal long RecordCount { get; private set; }
 
         internal ValueTask WriteAsync<T>(T record, CancellationToken cancellationToken)
@@ -203,14 +221,23 @@ internal static class StorageAuditProbe
         private async ValueTask WriteCoreAsync<T>(T record, long limit, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(record);
-            if (bytes.Length >= limit - stream.Position)
+
+            // The inventory schema has only bounded names and fixed diagnostic
+            // text. Refuse a record before serialization can grow an unbounded
+            // temporary array, and reserve its newline inside the byte limit.
+            int capacity = checked((int)Math.Min(16 * 1024, Math.Max(0, limit - stream.Position - 1)));
+            this.buffer.Reset(capacity);
+            var writer = new Utf8JsonWriter(this.buffer);
+            try
             {
-                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The inventory report exceeds --max-report-bytes.");
+                JsonSerializer.Serialize(writer, record);
+            }
+            finally
+            {
+                await writer.DisposeAsync().ConfigureAwait(false);
             }
 
-            Array.Resize(ref bytes, bytes.Length + 1);
-            bytes[^1] = (byte)'\n';
+            ReadOnlyMemory<byte> bytes = this.buffer.CompleteLine();
             long start = stream.Position;
             try
             {
@@ -230,6 +257,58 @@ internal static class StorageAuditProbe
                 }
 
                 throw;
+            }
+        }
+    }
+
+    private sealed class RecordBuffer : IBufferWriter<byte>
+    {
+        private readonly byte[] bytes = new byte[(16 * 1024) + 1];
+        private int capacity;
+        private int written;
+
+        public void Advance(int count)
+        {
+            if (count < 0 || count > this.capacity - this.written)
+            {
+                throw ReportLimit();
+            }
+
+            this.written += count;
+        }
+
+        public Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            this.CheckSize(sizeHint);
+            return this.bytes.AsMemory(this.written, this.capacity - this.written);
+        }
+
+        public Span<byte> GetSpan(int sizeHint = 0)
+        {
+            this.CheckSize(sizeHint);
+            return this.bytes.AsSpan(this.written, this.capacity - this.written);
+        }
+
+        internal void Reset(int capacity)
+        {
+            this.capacity = capacity;
+            this.written = 0;
+        }
+
+        internal ReadOnlyMemory<byte> CompleteLine()
+        {
+            this.bytes[this.written] = (byte)'\n';
+            return this.bytes.AsMemory(0, this.written + 1);
+        }
+
+        private static JetLimitationException ReportLimit()
+            => new(JetErrorCode.ValueTooLarge, "The inventory report exceeds --max-report-bytes or its 16 KiB record limit.");
+
+        private void CheckSize(int sizeHint)
+        {
+            if (sizeHint < 0 || Math.Max(1, sizeHint) > this.capacity - this.written)
+            {
+                throw ReportLimit();
             }
         }
     }

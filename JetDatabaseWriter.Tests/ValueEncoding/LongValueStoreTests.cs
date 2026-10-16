@@ -166,7 +166,7 @@ public sealed class LongValueStoreTests
     }
 
     [Fact]
-    public async Task ReadChainedPayloadAsync_RejectsCycleBeforeDeclaredLength()
+    public async Task CopyPayloadAsync_RejectsCycleBeforeDeclaredLength()
     {
         const int pageSize = 64;
         uint firstDp = LongValueStore.MakeRowPointer(4, rowIndex: 0);
@@ -177,40 +177,50 @@ public sealed class LongValueStoreTests
             [secondDp] = CreateChainedRow(firstDp, [0x44, 0x45, 0x46], pageSize),
         };
 
-        LvalChainResult result = await LongValueStore.ReadChainedPayloadAsync(
-            firstDp,
-            maxLength: 10,
-            pageSize,
-            (lvalDp, _) => new ValueTask<LvalRowLocation>(rows[lvalDp]),
-            CancellationToken.None);
-
-        Assert.Null(result.Data);
-        Assert.NotNull(result.Error);
+        await using var output = new MemoryStream();
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await LongValueStore.CopyPayloadAsync(
+                LongValueDescriptor.Chained(10, firstDp, 0),
+                ReadOnlyMemory<byte>.Empty,
+                output,
+                pageSize,
+                100,
+                100,
+                (lvalDp, _) => new ValueTask<LvalRowLocation>(rows[lvalDp]),
+                TestContext.Current.CancellationToken));
+        Assert.Equal(6, output.Length);
     }
 
     [Fact]
-    public async Task ReadChainedPayloadAsync_RejectsTruncatedChain()
+    public async Task CopyPayloadAsync_RejectsTruncatedChain()
     {
-        LvalChainResult result = await LongValueStore.ReadChainedPayloadAsync(
-            256,
-            maxLength: 10,
-            pageSize: 64,
-            (_, _) => new ValueTask<LvalRowLocation>(CreateChainedRow(0, [1, 2, 3], 64)),
-            TestContext.Current.CancellationToken);
-
-        Assert.Null(result.Data);
-        Assert.NotNull(result.Error);
+        await using var output = new MemoryStream();
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await LongValueStore.CopyPayloadAsync(
+                LongValueDescriptor.Chained(10, 256, 0),
+                ReadOnlyMemory<byte>.Empty,
+                output,
+                64,
+                100,
+                100,
+                (_, _) => new ValueTask<LvalRowLocation>(CreateChainedRow(0, [1, 2, 3], 64)),
+                TestContext.Current.CancellationToken));
+        Assert.Equal(3, output.Length);
     }
 
     [Fact]
-    public async Task ReadChainedPayloadAsync_PropagatesIoFailure()
+    public async Task CopyPayloadAsync_PropagatesIoFailure()
     {
         var failure = new IOException("read failure");
+        await using var output = new MemoryStream();
         IOException actual = await Assert.ThrowsAsync<IOException>(async () =>
-            await LongValueStore.ReadChainedPayloadAsync(
-                256,
-                maxLength: 10,
-                pageSize: 64,
+            await LongValueStore.CopyPayloadAsync(
+                LongValueDescriptor.Chained(10, 256, 0),
+                ReadOnlyMemory<byte>.Empty,
+                output,
+                64,
+                100,
+                100,
                 (_, _) => ValueTask.FromException<LvalRowLocation>(failure),
                 TestContext.Current.CancellationToken));
 

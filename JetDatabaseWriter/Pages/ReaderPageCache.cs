@@ -95,6 +95,19 @@ internal sealed class ReaderPageCache : IDisposable
         return page;
     }
 
+    /// <summary>
+    /// Releases a result of this cache's <see cref="ReadPageAsync"/> when caching
+    /// is disabled. Cached results remain shared and must not be returned.
+    /// </summary>
+    /// <param name="page">A buffer returned by this cache, no longer in use by the caller.</param>
+    internal void ReturnUncachedPage(byte[] page)
+    {
+        if (this.pageCache is null)
+        {
+            PageBuffers.Return(page);
+        }
+    }
+
     /// <summary>Returns a page that is already cached without touching the file.</summary>
     /// <param name="n">The page number.</param>
     /// <param name="page">Receives the cached page bytes, or an empty array.</param>

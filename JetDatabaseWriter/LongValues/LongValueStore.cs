@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Infrastructure;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -133,52 +135,146 @@ internal static class LongValueStore
         return new LvalRowLocation(page, 0, 0, "deleted/overflow row");
     }
 
-    internal static async ValueTask<LvalChainResult> ReadChainedPayloadAsync(
-        uint firstLvalDp,
-        int maxLength,
+    /// <summary>
+    /// Streams exactly the descriptor's declared stored payload without decoding
+    /// text, calculated envelopes or OLE content. The descriptor and row padding
+    /// are separate preservation obligations. Trailing bytes and next pointers
+    /// beyond the declared payload are not interpreted; this is not an ownership
+    /// or reclamation proof. Traversal failures can leave a partial destination.
+    /// </summary>
+    /// <param name="descriptor">The original stored descriptor.</param>
+    /// <param name="inlinePayload">The column slice after its descriptor, when inline.</param>
+    /// <param name="destination">The staging stream, left open and not flushed.</param>
+    /// <param name="pageSize">The physical page size and largest output chunk.</param>
+    /// <param name="maxValueBytes">The maximum declared payload length.</param>
+    /// <param name="maxChainRows">The maximum external rows, also bounding cycle-tracking storage.</param>
+    /// <param name="locateRowAsync">Locates one borrowed row; it must remain valid until its write completes.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="releasePage">Releases each located buffer after its awaited write, including failed locations. If locating throws, the locator retains ownership.</param>
+    /// <returns>A task completed after copying the declared payload.</returns>
+    /// <exception cref="ArgumentException">The destination is not writable.</exception>
+    /// <exception cref="InvalidDataException">The descriptor or reachable row content is malformed or incomplete.</exception>
+    /// <exception cref="JetLimitationException">The payload or external-row budget is exceeded.</exception>
+    internal static async ValueTask CopyPayloadAsync(
+        LongValueDescriptor descriptor,
+        ReadOnlyMemory<byte> inlinePayload,
+        Stream destination,
         int pageSize,
+        int maxValueBytes,
+        int maxChainRows,
         Func<uint, CancellationToken, ValueTask<LvalRowLocation>> locateRowAsync,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<byte[]>? releasePage = null)
     {
-        if (maxLength <= 0)
+        Guard.NotNull(destination, nameof(destination));
+        Guard.NotNull(locateRowAsync, nameof(locateRowAsync));
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidatePayload(descriptor, inlinePayload.Length, pageSize, maxValueBytes, maxChainRows);
+        if (!destination.CanWrite)
         {
-            return LvalChainResult.Failure("no chunks read");
+            throw new ArgumentException("The long-value destination must be writable.", nameof(destination));
         }
 
-        await using var output = new MemoryStream();
-        uint currentDp = firstLvalDp;
+        if (descriptor.IsInline)
+        {
+            for (int offset = 0; offset < descriptor.Length;)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int count = Math.Min(pageSize, descriptor.Length - offset);
+                await destination.WriteAsync(inlinePayload.Slice(offset, count), cancellationToken).ConfigureAwait(false);
+                offset += count;
+            }
+
+            return;
+        }
+
+        uint currentDp = descriptor.FirstDp;
+        int copied = 0;
+        int rows = 0;
         SmallLvalDpSet seen = default;
-        while (output.Length < maxLength)
+        while (copied < descriptor.Length)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (currentDp == 0)
             {
-                return LvalChainResult.Failure($"the chain ended after {output.Length} of {maxLength} byte(s)");
+                throw new InvalidDataException($"the chain ended after {copied} of {descriptor.Length} byte(s)");
+            }
+
+            if (rows >= maxChainRows)
+            {
+                throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The long value exceeds the configured limit of {maxChainRows} external row(s).");
             }
 
             if (!seen.Add(currentDp))
             {
-                return LvalChainResult.Failure("the chain contains a cycle");
+                throw new InvalidDataException("the chain contains a cycle");
             }
 
+            rows++;
             LvalRowLocation location = await locateRowAsync(currentDp, cancellationToken).ConfigureAwait(false);
-            if (location.Failed)
+            try
             {
-                return LvalChainResult.Failure(location.Error!);
-            }
+                if (location.Failed)
+                {
+                    throw new InvalidDataException($"the LVAL row could not be located: {location.Error}");
+                }
 
-            int validPageLength = Math.Min(pageSize, location.Page.Length);
-            if (location.Start < 0 || location.Size <= 4 || location.Start > validPageLength - location.Size)
+                int prefixLength = descriptor.IsSinglePage ? 0 : 4;
+                int validPageLength = Math.Min(pageSize, location.Page.Length);
+                if (location.Start < 0 || location.Size <= prefixLength || location.Size > validPageLength || location.Start > validPageLength - location.Size)
+                {
+                    throw new InvalidDataException($"invalid LVAL row bounds: start {location.Start}, size {location.Size}");
+                }
+
+                int available = location.Size - prefixLength;
+                if (descriptor.IsSinglePage && available < descriptor.Length)
+                {
+                    throw new InvalidDataException($"the LVAL row is truncated but the descriptor claims {descriptor.Length} byte(s)");
+                }
+
+                currentDp = descriptor.IsSinglePage ? 0 : Ru32(location.Page, location.Start);
+                int count = Math.Min(available, descriptor.Length - copied);
+                await destination.WriteAsync(location.Page.AsMemory(location.Start + prefixLength, count), cancellationToken).ConfigureAwait(false);
+                copied += count;
+            }
+            finally
             {
-                return LvalChainResult.Failure($"invalid chained row bounds: start {location.Start}, size {location.Size}");
+                if (location.Page.Length > 0)
+                {
+                    releasePage?.Invoke(location.Page);
+                }
             }
+        }
+    }
 
-            currentDp = Ru32(location.Page, location.Start);
-            int wantedData = Math.Min(location.Size - 4, maxLength - checked((int)output.Length));
-            await output.WriteAsync(location.Page.AsMemory(location.Start + 4, wantedData), cancellationToken).ConfigureAwait(false);
+    internal static void ValidatePayload(LongValueDescriptor descriptor, int inlineLength, int pageSize, int maxValueBytes, int maxChainRows)
+    {
+        Guard.Positive(pageSize, nameof(pageSize));
+        Guard.InRange(maxValueBytes, 0, int.MaxValue, nameof(maxValueBytes));
+        Guard.InRange(maxChainRows, 0, int.MaxValue, nameof(maxChainRows));
+
+        if (descriptor.Length is < 0 or > LongValueDescriptor.MaxLength
+            || descriptor.StorageMode is not Constants.LongValue.InlineStorageMode
+                and not Constants.LongValue.SinglePageStorageMode
+                and not Constants.LongValue.ChainedStorageMode)
+        {
+            throw new InvalidDataException("the long-value descriptor has an invalid length or reserved storage mode");
         }
 
-        return LvalChainResult.Success(output.ToArray());
+        if (descriptor.Length > maxValueBytes)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, $"The long value declares {descriptor.Length} stored byte(s), exceeding the configured limit {maxValueBytes}.");
+        }
+
+        if (descriptor.IsInline && descriptor.Length > inlineLength)
+        {
+            throw new InvalidDataException($"the inline value claims {descriptor.Length} byte(s) but the column slice contains fewer bytes");
+        }
+
+        if (!descriptor.IsInline && descriptor.Length > 0 && maxChainRows == 0)
+        {
+            throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The long value requires an external row but the configured row limit is zero.");
+        }
     }
 
     /// <summary>

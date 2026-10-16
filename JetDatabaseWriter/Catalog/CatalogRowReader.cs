@@ -31,9 +31,11 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// <param name="msys">The <c>MSysObjects</c> table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="maxEntries">The maximum number of catalog entries to inspect.</param>
+    /// <param name="maxNameLength">The maximum retained catalog name length.</param>
+    /// <param name="scanPhysicalPages">Whether to stream catalog owner headers without materializing ownership indexes.</param>
     /// <exception cref="JetLimitationException">The catalog or complex discovery metadata budget is exceeded.</exception>
     /// <exception cref="JetCorruptDataException">The catalog is missing a required field, a live row has malformed required values, or its row directory and overflow pointers cannot be completely traversed.</exception>
-    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue)
+    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue, int maxNameLength = int.MaxValue, bool scanPhysicalPages = false)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
         ColumnInfo? parentIdColumn = msys.FindColumn("ParentId");
@@ -75,6 +77,11 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
                     }
 
                     string name = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn);
+                    if (name.Length > maxNameLength)
+                    {
+                        throw CorruptRow(location, "A catalog object name exceeds the inventory name limit.");
+                    }
+
                     if (string.IsNullOrEmpty(name)
                         || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn), out long id)
                         || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn), out int objectType)
@@ -99,7 +106,8 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
                     return new ValueTask<bool>(true);
                 },
                 cancellationToken,
-                requireCompleteRows: true).ConfigureAwait(false);
+                requireCompleteRows: true,
+                scanPhysicalPages).ConfigureAwait(false);
         }
         catch (JetCorruptDataException error) when (error.ErrorCode == JetErrorCode.MalformedValue)
         {

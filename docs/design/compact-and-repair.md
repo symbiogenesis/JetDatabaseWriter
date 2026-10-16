@@ -51,9 +51,26 @@ compound encrypted packages are outside this probe's native-file contract.
 Page, catalog-object, reference, diagnostic, schema and UTF-8 output limits apply.
 The CLI exposes `--max-pages`, `--max-objects`, `--max-references`,
 `--max-diagnostics`, `--max-schema-bytes` and `--max-report-bytes`;
-`storage-audit --help` lists defaults. Cancellation,
-corruption, I/O failure or a budget refusal returns nonzero and retains any
-partial report. A final `audit-terminal` with `InventoryCompleted: true` describes
+`--max-page-reads`, `--max-map-steps`, `--max-records` and
+`--max-working-bytes` additionally limit repeated traversal, bitmap bytes and
+directory slots (including zeroes), emitted observations and working-storage
+admission. Defaults are 8,388,608 page reads, 268,435,456 map steps, 8,388,608
+records and 512 MiB of admitted storage. `storage-audit --help` lists all defaults.
+
+Before inventory I/O, storage admission reserves 4 MiB of scratch, 1,024 bytes
+per allowed catalog object, and sixteen times the per-definition byte allowance.
+These conservative allowances include collection capacity and simultaneous
+definition representations. Catalog discovery scans physical owner headers
+without constructing a whole-file ownership index or relying on map hints.
+Damaged ownership can still hide catalog identities; this scan does not prove
+catalog completeness or authorize reclaiming any page.
+Admission excludes caller/visitor allocations, runtime overhead and shared buffer-pool
+retention, and is not an exact heap guarantee. The scan owns uncached definition
+and ownership readers instead of populating caller caches. Report serialization
+uses a fixed bounded buffer before writing each record.
+
+Cancellation, corruption, I/O failure or a budget refusal returns nonzero and
+retains any partial report. A final `audit-terminal` with `InventoryCompleted: true` describes
 only the stated inventory coverage; it is never a value-completeness,
 relocation, repair or power-loss verdict. A successful process exit also requires
 report flush and close to succeed.
@@ -65,9 +82,9 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; streaming pinned physical/catalog/TDEF/map inventory | S1: collection overhead, cache lifetime, remaining traversal and output budgets; cancellation throughout |
-| Preserve stored values | Strict write-back scans; refusal for unreadable mapped content; unreadable-LVAL refusal | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned bytes; stream rows and large LVALs |
-| Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation | S7/S9: complete raw descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; scan-owned uncached physical/catalog/TDEF/map inventory with storage admission, read/work/record limits and bounded serialization | S1: extend bounded traversal, collection accounting and cancellation to remaining row/LVAL/index discovery; qualify runtime/pool and caller-owned memory separately |
+| Preserve stored values | Strict write-back scans; refusal for unreadable mapped content; unreadable-LVAL refusal; bounded raw LVAL streaming | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
+| Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
 | Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs | I2: verified tree ownership, shared roots, cross-TDEF index numbers and native key ordering; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
@@ -75,6 +92,22 @@ in the corresponding TODO item.
 The compact-copy engine must avoid the existing table rewrite snapshots; it can
 implement the required bounded raw copy without completing I6's separate
 in-place-update and seek optimizations.
+
+Raw LVAL streaming copies the descriptor-declared stored payload without text,
+OLE or calculated-value interpretation. Byte and chain-row budgets bound the
+copy, and each destination write finishes before its source page is released.
+This preserves opaque payloads without establishing what a native error envelope
+means. Failure can leave a partial destination, which must remain private and
+must never be published as a validated value. Following the declared payload
+length does not prove that trailing bytes or remaining chain pointers are
+disposable.
+
+Logical TDEF chain writes retain the first four bytes of existing continuation
+headers on the same physical pages, while rewriting their next-page pointers.
+They preserve original padding beyond both the old declared end and the new
+logical end; metadata deliberately removed by a shrink is cleared. New pages use
+canonical headers. This storage-level preservation does not prove that an
+uninterpreted reference can survive relocation or a generated schema rewrite.
 
 Index prefix compression can include row bookmarks and intermediate child-page
 pointers. Changing page numbers can change compressed entry lengths, so a

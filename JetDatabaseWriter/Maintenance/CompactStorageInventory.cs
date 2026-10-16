@@ -24,19 +24,18 @@ internal static class CompactStorageInventory
     /// <summary>Streams physical, catalog, TDEF and map observations, without claiming complete incoming-reference coverage.</summary>
     /// <param name="pages">The immutable decrypted page source.</param>
     /// <param name="format">The source's verified format.</param>
-    /// <param name="tableDefs">A definition reader bounded by the schema budget.</param>
-    /// <param name="catalogRows">The corresponding strict catalog scanner.</param>
+    /// <param name="tableDefs">Supplies definition limits; its cached images are not used or populated.</param>
     /// <param name="budget">The traversal limits.</param>
     /// <param name="visitor">Consumes each observation before traversal continues.</param>
     /// <param name="cancellationToken">Cancels traversal.</param>
     /// <returns>A task that completes only when this inventory phase succeeds.</returns>
     /// <exception cref="JetLimitationException">A traversal or schema-reader limit is exceeded.</exception>
     /// <exception cref="JetCorruptDataException">A known structural reference is malformed.</exception>
-    internal static ValueTask ScanAsync(IPageSource pages, JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    internal static ValueTask ScanAsync(IPageSource pages, JetFormat format, TableDefReader tableDefs, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
     {
         Guard.NotNull(pages, nameof(pages));
         Guard.NotNull(tableDefs, nameof(tableDefs));
-        Guard.NotNull(catalogRows, nameof(catalogRows));
+        Guard.Positive(tableDefs.MaxLogicalBytes, nameof(tableDefs));
         Guard.NotNull(budget, nameof(budget));
         Guard.NotNull(visitor, nameof(visitor));
         Guard.InRange(budget.MaxPages, 1L, long.MaxValue, nameof(budget));
@@ -44,6 +43,10 @@ internal static class CompactStorageInventory
         Guard.InRange(budget.MaxReferences, 1L, long.MaxValue, nameof(budget));
         Guard.Positive(budget.MaxDiagnostics, nameof(budget));
         Guard.Positive(budget.MaxSchemaBytes, nameof(budget));
+        Guard.InRange(budget.MaxPageReads, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxMapSteps, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxRecords, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxWorkingBytes, 1L, long.MaxValue, nameof(budget));
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
         if (pages.PageCount > budget.MaxPages)
         {
@@ -60,7 +63,33 @@ internal static class CompactStorageInventory
             throw Corrupt(0, "The physical database size or page layout is invalid.");
         }
 
-        return new Scanner(pages, format, tableDefs, catalogRows, budget, visitor).RunAsync(cancellationToken);
+        // Reserve worst-case collection capacities before any traversal allocates
+        // them. Readers are private to this scan, so these collections cannot grow
+        // across calls or retain every parsed table image in the caller's cache.
+        long remainingWorkingBytes = budget.MaxWorkingBytes;
+        ReserveWorkingStorage(ref remainingWorkingBytes, 4 * 1024 * 1024, 1);
+        ReserveWorkingStorage(ref remainingWorkingBytes, budget.MaxObjects, 1024);
+        ReserveWorkingStorage(ref remainingWorkingBytes, Math.Min(tableDefs.MaxLogicalBytes, budget.MaxSchemaBytes), 16);
+        return RunOwnedAsync(pages, format, tableDefs.MaxLogicalBytes, budget, visitor, cancellationToken);
+    }
+
+    private static void ReserveWorkingStorage(ref long remaining, long count, int bytesPerItem)
+    {
+        if (count > remaining / bytesPerItem)
+        {
+            throw Limit("The conservative scan-owned storage reservation exceeds MaxWorkingBytes.");
+        }
+
+        remaining -= count * bytesPerItem;
+    }
+
+    private static async ValueTask RunOwnedAsync(IPageSource pages, JetFormat format, int maxLogicalBytes, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        var bounded = new CompactInventoryPageSource(pages, budget.MaxPageReads);
+        using var definitions = new TableDefReader(bounded, format, cacheResults: false, Math.Min(maxLogicalBytes, budget.MaxSchemaBytes), budget.MaxSchemaBytes);
+        using var owned = new OwnedDataPages(bounded, format, cacheResults: false);
+        var catalog = new CatalogRowReader(format, definitions, owned);
+        await new Scanner(bounded, format, definitions, catalog, budget, visitor).RunAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static JetLimitationException Limit(string reason, long? page = null)
@@ -73,6 +102,8 @@ internal static class CompactStorageInventory
     {
         private long references;
         private int diagnostics;
+        private long mapSteps;
+        private long records;
 
         internal async ValueTask RunAsync(CancellationToken cancellationToken)
         {
@@ -90,7 +121,12 @@ internal static class CompactStorageInventory
             _ = await this.ValidateDefinitionChainAsync(2, budget.MaxSchemaBytes, cancellationToken).ConfigureAwait(false);
             TDefImage catalog = await tableDefs.ReadImageAsync(2, budget.MaxSchemaBytes, cancellationToken).ConfigureAwait(false)
                 ?? throw Corrupt(2, "The catalog definition cannot be read.");
-            List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(catalog.Definition, cancellationToken, budget.MaxObjects).ConfigureAwait(false);
+            List<CatalogRow> rows = await catalogRows.GetCatalogRowsAsync(catalog.Definition, cancellationToken, budget.MaxObjects, maxNameLength: 64, scanPhysicalPages: true).ConfigureAwait(false);
+            if (rows.Count != catalog.Header.Counters.RowCount)
+            {
+                await this.DiagnosticAsync(2, "The advisory catalog row count differs from physically discovered live rows; all discovered identities are retained and all storage remains pinned.", cancellationToken).ConfigureAwait(false);
+            }
+
             var roots = new HashSet<long> { 2 };
             foreach (CatalogRow row in rows)
             {
@@ -332,6 +368,7 @@ internal static class CompactStorageInventory
                     int count = UsageMap.ReferencePointerCount(row.RowSize);
                     for (int index = 0; index < count; index++)
                     {
+                        this.StepMap(pageNumber, cancellationToken);
                         int offset = row.RowStart + 1 + (index * 4);
                         long bitmapNumber = Ru32(page, offset);
                         if (bitmapNumber == 0)
@@ -376,7 +413,7 @@ internal static class CompactStorageInventory
         {
             for (int offset = firstOffset; offset < endOffset; offset++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                this.StepMap(source, cancellationToken);
                 for (int bit = 0; bit < 8; bit++)
                 {
                     if ((page[offset] & (1 << bit)) == 0)
@@ -442,7 +479,24 @@ internal static class CompactStorageInventory
         private ValueTask EmitAsync(CompactStorageRecord record, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (this.records >= budget.MaxRecords)
+            {
+                throw Limit("The observation count exceeds MaxRecords.", record.PageNumber);
+            }
+
+            this.records++;
             return visitor(record, cancellationToken);
+        }
+
+        private void StepMap(long page, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (this.mapSteps >= budget.MaxMapSteps)
+            {
+                throw Limit("The usage-map traversal exceeds MaxMapSteps.", page);
+            }
+
+            this.mapSteps++;
         }
     }
 }

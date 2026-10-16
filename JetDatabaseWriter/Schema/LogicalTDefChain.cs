@@ -12,12 +12,23 @@ internal sealed class LogicalTDefChain
 {
     private readonly int pageSizeBytes;
     private readonly List<long> pageNumbers;
+    private readonly List<uint> pageHeaders;
+    private byte[]? preservedPadding;
+    private int preservedUsedLength;
 
-    private LogicalTDefChain(byte[] bytes, List<long> pageNumbers, int pageSizeBytes)
+    private LogicalTDefChain(byte[] bytes, List<long> pageNumbers, List<uint> pageHeaders, int pageSizeBytes)
     {
         this.Bytes = bytes;
         this.pageNumbers = pageNumbers;
+        this.pageHeaders = pageHeaders;
         this.pageSizeBytes = pageSizeBytes;
+        long declaredEnd = bytes.Length >= 12 ? (long)Ri32(bytes, 8) + 8 : 0;
+        if (pageNumbers.Count > 0 && declaredEnd >= 12 && declaredEnd <= bytes.Length
+            && GetLogicalPageCount(pageSizeBytes, (int)declaredEnd) == pageNumbers.Count)
+        {
+            this.preservedUsedLength = (int)declaredEnd;
+            this.preservedPadding = bytes.AsSpan(this.preservedUsedLength).ToArray();
+        }
     }
 
     internal byte[] Bytes { get; private set; }
@@ -31,7 +42,8 @@ internal sealed class LogicalTDefChain
         Action<byte[]> returnPage,
         bool retainPageNumbers,
         CancellationToken cancellationToken,
-        int maxLogicalBytes = 16 * 1024 * 1024)
+        int maxLogicalBytes = 16 * 1024 * 1024,
+        Func<JetLimitationException>? logicalByteLimitExceeded = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 #if NET8_0_OR_GREATER
@@ -45,6 +57,7 @@ internal sealed class LogicalTDefChain
 
         await using var output = new MemoryStream();
         List<long> physicalPages = [];
+        List<uint> physicalHeaders = [];
         HashSet<long> seen = [];
         long pageNumber = startPage;
         int pageIndex = 0;
@@ -60,7 +73,8 @@ internal sealed class LogicalTDefChain
             int bytesToCopy = pageIndex == 0 ? pageSizeBytes : pageSizeBytes - 8;
             if (output.Length > (long)maxLogicalBytes - bytesToCopy)
             {
-                throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The table definition exceeds the configured byte budget.");
+                throw logicalByteLimitExceeded?.Invoke()
+                    ?? new JetLimitationException(JetErrorCode.ValueTooLarge, "The table definition exceeds the configured byte budget.");
             }
 
             byte[] page = await readPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -95,6 +109,7 @@ internal sealed class LogicalTDefChain
                 if (retainPageNumbers)
                 {
                     physicalPages.Add(pageNumber);
+                    physicalHeaders.Add(Ru32(page, 0));
                 }
 
                 pageNumber = Ru32(page, 4);
@@ -108,7 +123,7 @@ internal sealed class LogicalTDefChain
 
         return pageIndex == 0
             ? null
-            : new LogicalTDefChain(output.ToArray(), physicalPages, pageSizeBytes);
+            : new LogicalTDefChain(output.ToArray(), physicalPages, physicalHeaders, pageSizeBytes);
     }
 
     internal static async ValueTask<LogicalTDefChain> ReadRequiredAsync(
@@ -159,7 +174,9 @@ internal sealed class LogicalTDefChain
         byte[] logicalBytes,
         int usedLength,
         int pageSizeBytes,
-        IReadOnlyList<long>? pageNumbers = null)
+        IReadOnlyList<long>? pageNumbers = null,
+        IReadOnlyList<uint>? pageHeaders = null,
+        bool preservePadding = false)
     {
         int pageCount = pageNumbers?.Count ?? GetLogicalPageCount(pageSizeBytes, usedLength);
         byte[][] pages = new byte[pageCount][];
@@ -179,10 +196,15 @@ internal sealed class LogicalTDefChain
                 page[3] = logicalBytes[3];
             }
 
+            if (pageHeaders is not null && pageIndex < pageHeaders.Count)
+            {
+                Wi32(page, 0, unchecked((int)pageHeaders[pageIndex]));
+            }
+
             Wi32(page, 4, GetNextPageNumber(pageNumbers, pageIndex));
 
             int sourceOffset = pageSizeBytes + ((pageIndex - 1) * bodyPerContinuation);
-            int copyLength = Math.Min(bodyPerContinuation, Math.Max(0, usedLength - sourceOffset));
+            int copyLength = Math.Min(bodyPerContinuation, Math.Max(0, (preservePadding ? logicalBytes.Length : usedLength) - sourceOffset));
             if (copyLength > 0)
             {
                 Buffer.BlockCopy(logicalBytes, sourceOffset, page, 8, copyLength);
@@ -225,6 +247,7 @@ internal sealed class LogicalTDefChain
     /// </param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <exception cref="InvalidOperationException">Thrown when the chain retains no physical page.</exception>
+    /// <exception cref="JetCorruptDataException">The original declared length does not identify the final retained page.</exception>
     internal async ValueTask WriteAsync(
         byte[] logicalBytes,
         int usedLength,
@@ -239,10 +262,38 @@ internal sealed class LogicalTDefChain
             throw new InvalidOperationException("A logical TDEF chain must retain at least one physical page before it can be written.");
         }
 
+        if (this.preservedPadding is null)
+        {
+            throw new JetCorruptDataException(JetErrorCode.CorruptTableDefinition, "The table definition's declared length does not identify its final physical page.", new JetErrorInfo { PageNumber = this.pageNumbers[0], Reason = "The original logical length is invalid or contradicts the retained chain" });
+        }
+
         this.Bytes = logicalBytes;
         logicalBytes = this.EnsureCapacity(usedLength);
 
         int pageCount = GetLogicalPageCount(this.pageSizeBytes, usedLength);
+        int capacity = GetLogicalCapacity(this.pageSizeBytes, usedLength);
+        int previousCapacity = LogicalLengthForPageCount(this.pageSizeBytes, this.pageNumbers.Count);
+        if (capacity > previousCapacity)
+        {
+            int newPaddingStart = Math.Max(previousCapacity, usedLength);
+            Array.Clear(logicalBytes, newPaddingStart, capacity - newPaddingStart);
+        }
+
+        if (usedLength < this.preservedUsedLength)
+        {
+            // Clear removed metadata, retaining only bytes that were padding
+            // before this edit. Padding stays at its original physical offsets.
+            Array.Clear(logicalBytes, usedLength, Math.Min(this.preservedUsedLength, capacity) - usedLength);
+        }
+
+        int paddingStart = Math.Max(usedLength, this.preservedUsedLength);
+        int consumedPadding = paddingStart - this.preservedUsedLength;
+        int paddingLength = Math.Min(this.preservedPadding.Length - consumedPadding, capacity - paddingStart);
+        if (paddingLength > 0)
+        {
+            this.preservedPadding.AsSpan(consumedPadding, paddingLength).CopyTo(logicalBytes.AsSpan(paddingStart));
+        }
+
         long[] physicalPages = new long[pageCount];
         int retainedCount = Math.Min(this.pageNumbers.Count, pageCount);
         for (int pageIndex = 0; pageIndex < retainedCount; pageIndex++)
@@ -256,7 +307,6 @@ internal sealed class LogicalTDefChain
         }
 
         logicalBytes[0] = Constants.PageTypes.TableDefinition;
-        logicalBytes[1] = 0x01;
         int tdefLength = Math.Max(0, usedLength - 8);
         Wi32(logicalBytes, 8, tdefLength);
         if (writeFreeSpace)
@@ -264,7 +314,7 @@ internal sealed class LogicalTDefChain
             Wu16(logicalBytes, 2, Math.Max(0, this.pageSizeBytes - tdefLength - 8));
         }
 
-        byte[][] pages = MaterializePages(logicalBytes, usedLength, this.pageSizeBytes, physicalPages);
+        byte[][] pages = MaterializePages(logicalBytes, usedLength, this.pageSizeBytes, physicalPages, this.pageHeaders, preservePadding: true);
         for (int pageIndex = 0; pageIndex < pages.Length; pageIndex++)
         {
             await writePageAsync(physicalPages[pageIndex], pages[pageIndex], cancellationToken).ConfigureAwait(false);
@@ -277,6 +327,14 @@ internal sealed class LogicalTDefChain
 
         this.pageNumbers.Clear();
         this.pageNumbers.AddRange(physicalPages);
+        this.pageHeaders.Clear();
+        foreach (byte[] page in pages)
+        {
+            this.pageHeaders.Add(Ru32(page, 0));
+        }
+
+        this.preservedUsedLength = usedLength;
+        this.preservedPadding = logicalBytes.AsSpan(usedLength, capacity - usedLength).ToArray();
     }
 
     /// <summary>
