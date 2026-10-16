@@ -61,7 +61,7 @@ internal sealed class WriterServices
             new CatalogReader(db.Format, db.TableDefs, catalog, this.CatalogRows, snapshotRows));
         this.Snapshots = snapshots;
         var tdefPageBuilder = new TDefPageBuilder(db.Format, pager);
-        var longValueEncoder = new LongValueEncoder(db.Format, pager, this.PageAllocator, options, new LongValueUsageMapMaintainer(db.Format, pager, this.PageAllocator, db.TableDefs, this.CatalogRows));
+        var longValueEncoder = new LongValueEncoder(db.Format, pager, this.PageAllocator, options, new LongValueUsageMapMaintainer(db.Format, pager, this.PageAllocator, db.TableDefs, this.CatalogRows, catalog));
         this.OwnedMaps = new CatalogOwnedMapPolicy(db.Format, db.TableDefs, this.CatalogRows, db.Pages, pager, this.PageAllocator, this.TDefWriter);
         pager.AddWriteObserver(this.OwnedMaps);
         var usageMaps = new UsageMapEditor(db.Format, pager, this.PageAllocator);

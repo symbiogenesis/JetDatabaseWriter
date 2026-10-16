@@ -10,6 +10,8 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Pages;
+using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -417,57 +419,27 @@ public sealed class Jet4FormatCookieTests(DatabaseCache db) : IClassFixture<Data
     {
         byte[] fileBytes = await this.CreateSingleTableDatabase(format);
         int pgSz = PageSize(format);
+        await using var stream = new MemoryStream(fileBytes, writable: false);
+        await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: this.ct);
+        CatalogEntry table = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("TestTable", this.ct));
+        byte[] tdef = Assert.IsType<byte[]>(await harness.Database.TableDefs.ReadTDefBytesAsync(table.TDefPage, this.ct));
+        JetFormat jetFormat = harness.Database.Format;
 
-        // Find a user-table TDEF (not the MSysObjects TDEF at page 2) and
-        // read its used_pages pointer at offset 0x37..0x3A.
-        foreach (int tdefPage in FindTdefPages(fileBytes, format))
+        // Read each pointer independently: detaching an aliased native map
+        // can place the owned and free rows on separate private pages.
+        foreach (int offset in new[] { jetFormat.TDef.UsedPages, jetFormat.TDef.FreePages })
         {
-            if (tdefPage <= 2)
-            {
-                continue; // Skip system TDEFs
-            }
-
-            int off = tdefPage * pgSz;
-
-            // used_pages pointer: row byte at 0x37, page LE3 at 0x38..0x3A.
-            byte usedRow = fileBytes[off + 0x37];
-            int usedPage = fileBytes[off + 0x38] | (fileBytes[off + 0x39] << 8) | (fileBytes[off + 0x3A] << 16);
-
-            if (usedPage == 0)
-            {
-                continue; // System TDEFs without usage-map pages
-            }
-
-            Assert.Equal(0, usedRow); // row 0 = used_pages
-
-            // Verify the usage-map page.
-            int umOff = usedPage * pgSz;
-            Assert.Equal(0x01, fileBytes[umOff]); // page_type = 0x01 (data page)
-            Assert.Equal(0x01, fileBytes[umOff + 1]); // second byte = 0x01
-
-            // Row count includes at least used_pages + free_pages. Tables with
-            // indexes also carry per-real-index usage-map rows after those two.
-            int numRows = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 12, 2));
-            Assert.True(numRows >= 2, $"Expected at least used_pages/free_pages rows; found {numRows}.");
-
-            // Each row is 69 bytes: 1-byte type-0 marker + 4-byte start page + 64 bitmap bytes.
-            int row0Off = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 14, 2));
-            int row1Off = BinaryPrimitives.ReadUInt16LittleEndian(fileBytes.AsSpan(umOff + 16, 2));
-
-            // Rows are at page tail.
-            Assert.Equal(pgSz - 69, row0Off & 0x1FFF); // mask off flags
-            Assert.Equal(pgSz - 138, row1Off & 0x1FFF);
-
-            // First byte of each row is 0x00 (type-0 inline usage map).
-            Assert.Equal(0x00, fileBytes[umOff + (row0Off & 0x1FFF)]);
-            Assert.Equal(0x00, fileBytes[umOff + (row1Off & 0x1FFF)]);
-
-            // free_pages pointer: row byte at 0x3B, page LE3 at 0x3C..0x3E.
-            byte freeRow = fileBytes[off + 0x3B];
-            int freePage = fileBytes[off + 0x3C] | (fileBytes[off + 0x3D] << 8) | (fileBytes[off + 0x3E] << 16);
-
-            Assert.Equal(1, freeRow); // row 1 = free_pages
-            Assert.Equal(usedPage, freePage); // Same usage-map page for both.
+            Assert.True(UsageMap.TryReadPointer(tdef, offset, out UsageMapPointer pointer));
+            Assert.InRange(pointer.PageNumber, 1, (fileBytes.Length / pgSz) - 1);
+            byte[] map = fileBytes.AsSpan(pointer.PageNumber * pgSz, pgSz).ToArray();
+            Assert.Equal(0x01, map[0]);
+            Assert.Equal(0x01, map[1]);
+            Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(map.AsSpan(jetFormat.DataPage.TDefOff)));
+            Assert.True(UsageMap.TryGetRowBound(map, jetFormat.DataPage, pgSz, pointer.RowIndex, out RowBound row));
+            Assert.Equal(0, BinaryPrimitives.ReadUInt16LittleEndian(map.AsSpan(jetFormat.DataPage.RowsStart + (pointer.RowIndex * 2))) & 0xC000);
+            Assert.Equal(69, row.RowSize);
+            Assert.Equal(pgSz - ((pointer.RowIndex + 1) * 69), row.RowStart);
+            Assert.Equal(0x00, map[row.RowStart]);
         }
     }
 

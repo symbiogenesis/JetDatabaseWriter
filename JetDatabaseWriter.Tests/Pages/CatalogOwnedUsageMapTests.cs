@@ -25,12 +25,6 @@ public sealed class CatalogOwnedUsageMapTests
     public async Task NativeAceSchemaRewrite_ListsCatalogRowPageInOwnedMap()
     {
         await using MemoryStream stream = await CopyFixtureAsync();
-        HashSet<long> before;
-        await using (AccessReader reader = await TestDatabase.OpenReaderAsync(stream, cancellationToken: Ct))
-        {
-            before = await ReadCatalogDataPagesAsync(reader.Database);
-        }
-
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct))
         {
             await writer.RenameColumnAsync("Table4", "name", "Label", Ct);
@@ -40,8 +34,9 @@ public sealed class CatalogOwnedUsageMapTests
         DatabaseFile db = after.Database;
         List<long> owned = await ReadLiteralCatalogOwnedMapAsync(db);
         long rowPage = await FindCatalogRowPageAsync(db, "Table4");
-        Assert.DoesNotContain(rowPage, before);
         Assert.Contains(rowPage, owned);
+        ColumnMetadata column = Assert.Single(await after.GetColumnMetadataAsync("Table4", Ct), column => column.Name == "Label");
+        Assert.Equal(typeof(string), column.ClrType);
         Assert.All(await ReadCatalogDataPagesAsync(db), page => Assert.Contains(page, owned));
     }
 

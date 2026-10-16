@@ -19,7 +19,9 @@ Physical page owner zero does not prove that a map row is private.
 `UsageMapOwnership` checks live local TDEF chains, including opaque bytes and
 column-map pointers, other rows on map-storage pages, and the global allocation
 map. It detects row aliases and shared REFERENCE bitmap pages. Traversal has
-aggregate definition and candidate budgets and observes cancellation.
+aggregate definition and candidate budgets and observes cancellation. Mutation
+proofs validate unrelated map pointers, bitmap headers and member bounds without
+collecting their member sets. Reclamation uses a fresh complete membership proof.
 
 Before editing shared storage, the writer copies the map into private rows and
 bitmap pages and retargets its descriptor. For aliased table owned/free maps it
@@ -53,6 +55,9 @@ erase. Native chained values list every page in the owned map and leave the
 free map empty, including a partially filled final page. Chain chunks are not
 used as ordinary single-value row space. Schema rewrites create independent
 column maps while preserving surviving column numbers and opaque metadata.
+Calculated Memo columns can retain native Text descriptors. Their persisted
+calculated result type determines long storage; schema creation and rewrites
+author their map records even while the table is empty.
 
 Prepared surgical index splits reserve their precomputed append addresses
 through `PageAllocator`, which updates global allocation bits before publication.
@@ -74,6 +79,9 @@ full map page, FK spill allocation, large tree growth/deletion, native key
 order and constraint enforcement through compact. `LongValueUsageMapTests`
 compares native column trailers, packed single values, chained-value free-map
 behavior, reuse and compact on all three formats.
+`CalculatedLongValueMapTests` preserves native calculated descriptors, column
+identities and map records through populated and empty rewrites; the native
+calculated-column rename tests verify evaluation and compact/readback.
 
 Synthetic ownership and overflow tests separately cover aliases, malformed
 storage, global bitmap protection, byte-preserving refusal, cancellation and

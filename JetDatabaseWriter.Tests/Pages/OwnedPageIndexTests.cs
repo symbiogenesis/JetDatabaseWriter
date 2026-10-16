@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Pages;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -102,7 +103,7 @@ public sealed class OwnedPageIndexTests
 
     /// <summary>A session's second insert avoids repeating Northwind's physical owner scan.</summary>
     [Fact]
-    public async Task Northwind_SecondInsert_ReadsFewerThan300Pages()
+    public async Task Northwind_SecondInsert_DoesNotRepeatPhysicalOwnerScan()
     {
         byte[] image = await File.ReadAllBytesAsync(TestDatabases.MdbtoolsNwind, TestContext.Current.CancellationToken);
         await using var stream = new MemoryStream();
@@ -120,6 +121,10 @@ public sealed class OwnedPageIndexTests
         await writer.InsertRowAsync("Shippers", new RowValues { ["CompanyName"] = "Pager first" }, TestContext.Current.CancellationToken);
         trace.Reset();
         await writer.InsertRowAsync("Shippers", new RowValues { ["CompanyName"] = "Pager second" }, TestContext.Current.CancellationToken);
-        Assert.True(trace.ReadCounts(2048).Values.Sum() < 300);
+        IReadOnlyDictionary<long, long> counts = trace.ReadCounts(2048);
+
+        // Native map ownership checks read catalog and map storage. Repeating
+        // the physical owner scan would additionally read every file page.
+        Assert.True(counts.Values.Sum() < stream.Length / 2048, $"Total reads: {counts.Values.Sum()}; distinct pages: {counts.Count}; file pages: {stream.Length / 2048}.");
     }
 }

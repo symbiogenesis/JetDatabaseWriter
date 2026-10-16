@@ -6,6 +6,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
@@ -23,6 +24,107 @@ public sealed class UsageMapOwnershipTests
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task MutationProof_DoesNotCollectUnrelatedMembers(DatabaseFormat format)
+    {
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct);
+        await writer.CreateTableAsync("M", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], Ct);
+        await writer.CreateTableAsync("Other", [new ColumnDefinition("Id", typeof(int))], Ct);
+        await writer.InsertRowAsync("M", new RowValues { ["Id"] = 1 }, Ct);
+        await writer.InsertRowAsync("Other", new RowValues { ["Id"] = 2 }, Ct);
+        long root = (await writer.Services.Catalog.GetRequiredCatalogEntryAsync("M", Ct)).TDefPage;
+        TDefImage image = Assert.IsType<TDefImage>(await writer.Database.TableDefs.ReadImageAsync(root, Ct));
+        int offset = Assert.Single(image.RealIndexes).Slot.FirstDpOffset - 4;
+        long otherRoot = (await writer.Services.Catalog.GetRequiredCatalogEntryAsync("Other", Ct)).TDefPage;
+        long otherMember = Assert.Single(await writer.Database.OwnedPages.GetOwnedDataPagesAsync(otherRoot, Ct));
+        byte[] bitmap = new byte[writer.Database.Format.PageSize];
+        bitmap[0] = Constants.PageTypes.UsageMap;
+        Assert.True(UsageMap.TrySetReferencePageState(bitmap, writer.Database.Format.PageSize, otherMember, isMarked: true));
+        long bitmapPage = await writer.Services.PageAllocator.AllocatePageAsync(bitmap, Ct);
+        byte[] other = await writer.Database.Pages.ReadPageCopyAsync(otherRoot, Ct);
+        Assert.True(UsageMap.TryReadPointer(other, writer.Database.Format.TDef.UsedPages, out UsageMapPointer pointer));
+        byte[] map = await writer.Database.Pages.ReadPageCopyAsync(pointer.PageNumber, Ct);
+        Assert.True(UsageMap.TryGetRowBound(map, writer.Database.Format.DataPage, writer.Database.Format.PageSize, pointer.RowIndex, out RowBound row));
+        Array.Clear(map, row.RowStart, row.RowSize);
+        map[row.RowStart] = Constants.UsageMap.ReferenceMapType;
+        JetDatabaseWriter.Schema.JetTypeInfo.Wi32(map, row.RowStart + 1, checked((int)bitmapPage));
+        await writer.Pager.WritePageAsync(pointer.PageNumber, map, Ct);
+        UsageMapOwnership.Proof full = await UsageMapOwnership.InspectAsync(writer.Database.Format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, offset, Ct);
+
+        Assert.Contains(otherMember, full.OtherMappedPages);
+        await AssertMutationProofAsync(writer, root, offset, full);
+    }
+
+    [Theory]
+    [InlineData("pointer")]
+    [InlineData("negative-pointer")]
+    [InlineData("header")]
+    [InlineData("page-zero")]
+    [InlineData("past-end")]
+    [InlineData("far-window")]
+    [InlineData("inline-negative-base")]
+    [InlineData("inline-page-zero")]
+    [InlineData("inline-past-end")]
+    public async Task MutationProof_UnrelatedReferenceMapStillRejectsInvalidStorage(string corruption)
+    {
+        await using var stream = new MemoryStream();
+        await using AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, DatabaseFormat.Jet3Mdb, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, Ct);
+        await writer.CreateTableAsync("M", [new ColumnDefinition("Id", typeof(int))], Ct);
+        await writer.CreateTableAsync("Other", [new ColumnDefinition("Id", typeof(int))], Ct);
+        JetFormat format = writer.Database.Format;
+        long root = (await writer.Services.Catalog.GetRequiredCatalogEntryAsync("M", Ct)).TDefPage;
+        long otherRoot = (await writer.Services.Catalog.GetRequiredCatalogEntryAsync("Other", Ct)).TDefPage;
+        byte[] bitmap = new byte[format.PageSize];
+        bitmap[0] = corruption == "header" ? Constants.PageTypes.Data : Constants.PageTypes.UsageMap;
+        long bitmapPage = await writer.Services.PageAllocator.AllocatePageAsync(bitmap, Ct);
+        if (corruption is "page-zero" or "past-end" or "far-window")
+        {
+            long member = corruption == "page-zero" ? 0 : writer.Database.Pages.PageCount;
+            Assert.True(UsageMap.TrySetReferencePageState(bitmap, format.PageSize, member, isMarked: true));
+            await writer.Pager.WritePageAsync(bitmapPage, bitmap, Ct);
+        }
+
+        byte[] other = await writer.Database.Pages.ReadPageCopyAsync(otherRoot, Ct);
+        Assert.True(UsageMap.TryReadPointer(other, format.TDef.UsedPages, out UsageMapPointer pointer));
+        byte[] map = await writer.Database.Pages.ReadPageCopyAsync(pointer.PageNumber, Ct);
+        Assert.True(UsageMap.TryGetRowBound(map, format.DataPage, format.PageSize, pointer.RowIndex, out RowBound row));
+        Array.Clear(map, row.RowStart, row.RowSize);
+        if (corruption is "inline-negative-base" or "inline-page-zero" or "inline-past-end")
+        {
+            map[row.RowStart] = Constants.UsageMap.InlineMapType;
+            if (corruption == "inline-negative-base")
+            {
+                JetDatabaseWriter.Schema.JetTypeInfo.Wi32(map, row.RowStart + 1, -1);
+            }
+            else
+            {
+                long member = corruption == "inline-page-zero" ? 0 : writer.Database.Pages.PageCount;
+                Assert.True(UsageMap.TrySetInlinePageState(map, row.RowStart, row.RowSize, member, isMarked: true));
+            }
+        }
+        else
+        {
+            map[row.RowStart] = Constants.UsageMap.ReferenceMapType;
+            long reference = corruption switch
+            {
+                "pointer" => writer.Database.Pages.PageCount,
+                "negative-pointer" => -1,
+                _ => bitmapPage,
+            };
+            int referenceOffset = corruption == "far-window" ? 5 : 1;
+            JetDatabaseWriter.Schema.JetTypeInfo.Wi32(map, row.RowStart + referenceOffset, checked((int)reference));
+        }
+
+        await writer.Pager.WritePageAsync(pointer.PageNumber, map, Ct);
+
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await UsageMapOwnership.InspectAsync(format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, format.TDef.UsedPages, Ct));
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await UsageMapOwnership.InspectForMutationAsync(format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, format.TDef.UsedPages, Ct));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
     public async Task IndexMap_ExclusiveRowOnSharedPage_ProtectsOtherMapMembers(DatabaseFormat format)
     {
         await using var stream = new MemoryStream();
@@ -33,6 +135,7 @@ public sealed class UsageMapOwnershipTests
         TDefImage image = Assert.IsType<TDefImage>(await writer.Database.TableDefs.ReadImageAsync(root, Ct));
         int offset = Assert.Single(image.RealIndexes).Slot.FirstDpOffset - 4;
         UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(writer.Database.Format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, offset, Ct);
+        await AssertMutationProofAsync(writer, root, offset, proof);
         Assert.True(proof.IsExclusiveRow);
         Assert.True(proof.HasExclusiveBitmapPages);
         Assert.False(proof.IsDedicatedPage);
@@ -69,6 +172,7 @@ public sealed class UsageMapOwnershipTests
 
         UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(writer.Database.Format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, offset, Ct);
 
+        await AssertMutationProofAsync(writer, root, offset, proof);
         Assert.False(proof.IsExclusiveRow);
         Assert.False(proof.HasExclusiveBitmapPages);
         Assert.False(proof.IsDedicatedPage);
@@ -161,6 +265,9 @@ public sealed class UsageMapOwnershipTests
             await writer.Pager.WritePageAsync(otherRoot, other, Ct);
         }
 
+        UsageMapOwnership.Proof aliased = await UsageMapOwnership.InspectAsync(format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, format.TDef.UsedPages, Ct);
+        await AssertMutationProofAsync(writer, root, format.TDef.UsedPages, aliased);
+        Assert.False(sharedBitmap ? aliased.HasExclusiveBitmapPages : aliased.IsExclusiveRow);
         Assert.True(await writer.Services.OwnedMaps.CanMaintainAsync(root, Ct));
         byte[] isolatedDefinition = await writer.Database.Pages.ReadPageCopyAsync(root, Ct);
         Assert.True(UsageMap.TryReadPointer(isolatedDefinition, format.TDef.UsedPages, out UsageMapPointer isolated));
@@ -267,6 +374,7 @@ public sealed class UsageMapOwnershipTests
         await writer.Pager.WritePageAsync(pointer.PageNumber, map, Ct);
 
         UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, format.TDef.UsedPages, Ct);
+        await AssertMutationProofAsync(writer, root, format.TDef.UsedPages, proof);
         Assert.False(proof.HasExclusiveBitmapPages);
         Assert.True(await writer.Services.OwnedMaps.CanMaintainAsync(root, Ct));
         Assert.True(UsageMap.TrySetReferencePageState(bitmap, format.PageSize, pointer.PageNumber, isMarked: true));
@@ -302,5 +410,17 @@ public sealed class UsageMapOwnershipTests
         Assert.True(UsageMap.TryReadPointer(isolated, format.TDef.UsedPages, out UsageMapPointer replacement));
         Assert.NotEqual(pointer, replacement);
         Assert.Equal(map, await writer.Database.Pages.ReadPageCopyAsync(pointer.PageNumber, Ct));
+    }
+
+    private static async ValueTask AssertMutationProofAsync(AccessWriter writer, long root, int offset, UsageMapOwnership.Proof full)
+    {
+        UsageMapOwnership.Proof mutation = await UsageMapOwnership.InspectForMutationAsync(writer.Database.Format, writer.Database.TableDefs, writer.Services.CatalogRows, writer.Database.Pages, root, offset, Ct);
+        Assert.Equal(full.Pointer, mutation.Pointer);
+        Assert.Equal(full.Pages, mutation.Pages);
+        Assert.Equal(full.BitmapPages, mutation.BitmapPages);
+        Assert.Equal(full.IsExclusiveRow, mutation.IsExclusiveRow);
+        Assert.Equal(full.HasExclusiveBitmapPages, mutation.HasExclusiveBitmapPages);
+        Assert.Equal(full.IsDedicatedPage, mutation.IsDedicatedPage);
+        Assert.Empty(mutation.OtherMappedPages);
     }
 }

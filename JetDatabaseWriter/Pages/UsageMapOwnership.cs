@@ -17,6 +17,18 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <summary>Proves usage-map row and bitmap ownership before editing or releasing native storage.</summary>
 internal static class UsageMapOwnership
 {
+    /// <summary>Inspects map ownership for mutation without collecting unrelated member pages.</summary>
+    /// <param name="format">The database format.</param>
+    /// <param name="tableDefs">The definition reader.</param>
+    /// <param name="catalogRows">The local catalog reader.</param>
+    /// <param name="pages">The current page source.</param>
+    /// <param name="ownerTdefPage">The definition containing the map pointer.</param>
+    /// <param name="ownerOffset">The map pointer's logical offset.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The target map's members and its conservative storage ownership proof.</returns>
+    internal static ValueTask<Proof> InspectForMutationAsync(JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, IPageSource pages, long ownerTdefPage, int ownerOffset, CancellationToken cancellationToken)
+        => InspectCoreAsync(format, tableDefs, catalogRows, pages, ownerTdefPage, ownerOffset, collectOtherMembers: false, cancellationToken);
+
     /// <summary>Inspects every local definition, including opaque descriptors, for references to a map's storage.</summary>
     /// <param name="format">The database format.</param>
     /// <param name="tableDefs">The definition reader.</param>
@@ -28,7 +40,10 @@ internal static class UsageMapOwnership
     /// <returns>The map's members and conservative storage ownership proof.</returns>
     /// <exception cref="JetCorruptDataException">A definition or usage map is invalid or exceeds the ownership budget.</exception>
     /// <exception cref="JetLimitationException">The ownership reference budget is exceeded.</exception>
-    internal static async ValueTask<Proof> InspectAsync(JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, IPageSource pages, long ownerTdefPage, int ownerOffset, CancellationToken cancellationToken)
+    internal static ValueTask<Proof> InspectAsync(JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, IPageSource pages, long ownerTdefPage, int ownerOffset, CancellationToken cancellationToken)
+        => InspectCoreAsync(format, tableDefs, catalogRows, pages, ownerTdefPage, ownerOffset, collectOtherMembers: true, cancellationToken);
+
+    private static async ValueTask<Proof> InspectCoreAsync(JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, IPageSource pages, long ownerTdefPage, int ownerOffset, bool collectOtherMembers, CancellationToken cancellationToken)
     {
         byte[] target = await tableDefs.ReadTDefBytesAsync(ownerTdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw InvalidMap(ownerTdefPage, "The map's table definition is unreadable.");
@@ -194,13 +209,20 @@ internal static class UsageMapOwnership
                     if (candidateRows.Contains(new UsageMapPointer(rowIndex, checked((int)pageNumber)))
                         && candidate[row.RowStart] is Constants.UsageMap.InlineMapType or Constants.UsageMap.ReferenceMapType)
                     {
-                        var otherMembers = new List<long>();
-                        if (!await UsageMap.TryEnumeratePagesAsync(candidate, row, format.PageSize, pages.PageCount, 1, true, pages.ReadPageAsync, PageBuffers.Return, otherMembers, cancellationToken).ConfigureAwait(false))
+                        if (collectOtherMembers)
+                        {
+                            var otherMembers = new List<long>();
+                            if (!await UsageMap.TryEnumeratePagesAsync(candidate, row, format.PageSize, pages.PageCount, 1, true, pages.ReadPageAsync, PageBuffers.Return, otherMembers, cancellationToken).ConfigureAwait(false))
+                            {
+                                throw InvalidMap(pageNumber, "Another usage-map bitmap is invalid.");
+                            }
+
+                            proof.OtherMappedPages.UnionWith(otherMembers);
+                        }
+                        else if (!await ValidateOtherMapAsync(format, pages, candidate, row, cancellationToken).ConfigureAwait(false))
                         {
                             throw InvalidMap(pageNumber, "Another usage-map bitmap is invalid.");
                         }
-
-                        proof.OtherMappedPages.UnionWith(otherMembers);
                     }
 
                     if (!candidateRows.Contains(new UsageMapPointer(rowIndex, checked((int)pageNumber)))
@@ -225,13 +247,98 @@ internal static class UsageMapOwnership
             }
         }
 
-        if (!proof.IsExclusiveRow)
+        if (collectOtherMembers && !proof.IsExclusiveRow)
         {
             proof.OtherMappedPages.UnionWith(proof.Pages);
         }
 
         proof.HasExclusiveBitmapPages &= proof.IsExclusiveRow;
         return proof;
+    }
+
+    private static async ValueTask<bool> ValidateOtherMapAsync(JetFormat format, IPageSource pages, byte[] map, RowBound row, CancellationToken cancellationToken)
+    {
+        if (map[row.RowStart] == Constants.UsageMap.InlineMapType)
+        {
+            if (row.RowSize <= Constants.UsageMap.InlineMapHeaderSize)
+            {
+                return false;
+            }
+
+            int basePage = Ri32(map, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset);
+            int bitmapBytes = Math.Min(row.RowSize - Constants.UsageMap.InlineBitmapOffset, format.PageSize - row.RowStart - Constants.UsageMap.InlineBitmapOffset);
+            return basePage >= 0 && bitmapBytes > 0
+                && HasValidMemberBounds(map, row.RowStart + Constants.UsageMap.InlineBitmapOffset, bitmapBytes, basePage, pages.PageCount);
+        }
+
+        for (int index = 0; index < UsageMap.ReferencePointerCount(row.RowSize); index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int bitmapPage = Ri32(map, row.RowStart + Constants.UsageMap.ReferenceMapPointerOffset + (index * 4));
+            if (bitmapPage == 0)
+            {
+                continue;
+            }
+
+            if (bitmapPage < 0 || bitmapPage >= pages.PageCount)
+            {
+                return false;
+            }
+
+            byte[] bitmap = await pages.ReadPageAsync(bitmapPage, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (bitmap[0] != Constants.PageTypes.UsageMap
+                    || !HasValidMemberBounds(bitmap, Constants.UsageMap.ReferenceMapBitmapOffset, format.PageSize - Constants.UsageMap.ReferenceMapBitmapOffset, (long)index * UsageMap.PagesPerReferenceMapPage(format.PageSize), pages.PageCount))
+                {
+                    return false;
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(bitmap);
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasValidMemberBounds(byte[] bitmap, int offset, int byteCount, long basePage, long totalPages)
+    {
+        // Mutation needs certainty about the map's storage, not a second copy
+        // of its members. Only bits outside [1, PageCount) can invalidate it.
+        int bitCapacity = byteCount * 8;
+        int firstValid = checked((int)Math.Min(bitCapacity, Math.Max(0L, 1 - basePage)));
+        int afterLastValid = checked((int)Math.Min(bitCapacity, Math.Max(0L, totalPages - basePage)));
+        for (int index = 0; index < firstValid / 8; index++)
+        {
+            if (bitmap[offset + index] != 0)
+            {
+                return false;
+            }
+        }
+
+        int firstBit = firstValid % 8;
+        if (firstBit != 0 && (bitmap[offset + (firstValid / 8)] & ((1 << firstBit) - 1)) != 0)
+        {
+            return false;
+        }
+
+        int lastBit = afterLastValid % 8;
+        if (lastBit != 0 && (bitmap[offset + (afterLastValid / 8)] & (0xFF << lastBit)) != 0)
+        {
+            return false;
+        }
+
+        for (int index = (afterLastValid + 7) / 8; index < byteCount; index++)
+        {
+            if (bitmap[offset + index] != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Finds candidate map storage that no surviving definition or map row references.</summary>

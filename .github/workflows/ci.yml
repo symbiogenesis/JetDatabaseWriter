@@ -112,6 +112,7 @@ jobs:
           dotnet test --test-modules JetDatabaseWriter.Tests.dll
           --root-directory JetDatabaseWriter.Tests/bin/Release/${{ matrix.tf }}
           --minimum-expected-tests 1
+          --long-running 60 --xunit-diagnostics on
           --report-xunit-xml --report-xunit-xml-filename tests.xml
           --results-directory artifacts/test-results/${{ matrix.tf }}
 

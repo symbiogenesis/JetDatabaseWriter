@@ -44,10 +44,8 @@ public sealed class DaoAgileAlgorithmTests
                 await transaction.RollbackAsync(TestContext.Current.CancellationToken);
             }
 
-            await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("Maintenance", [1, new byte[32_000]], TestContext.Current.CancellationToken);
+            await FreePageTailFixture.AddFreeTailAsync(writer, requireDirtyPayload: true);
             long populatedLength = new FileInfo(session.SourcePath).Length;
-            await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
             Assert.True(await writer.ScrubFreePagesAsync(TestContext.Current.CancellationToken) > 0);
             Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) > 0);
             Assert.True(new FileInfo(session.SourcePath).Length < populatedLength);

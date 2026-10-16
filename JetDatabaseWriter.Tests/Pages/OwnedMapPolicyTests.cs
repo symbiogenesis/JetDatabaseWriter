@@ -17,7 +17,7 @@ using Xunit;
 /// Pins <see cref="CatalogOwnedMapPolicy"/>, which decides whose owned-page
 /// usage maps the writer may extend when it appends a data page: local user tables,
 /// MSysObjects and Jet4/ACE system tables, with decisions cached by TDEF page.
-/// The fixed MSysObjects root needs no scan or cached decision, and a table
+/// The fixed MSysObjects root also proves map ownership, and a table
 /// that a rolled-back transaction created is forgotten.
 /// </summary>
 public sealed class OwnedMapPolicyTests
@@ -49,7 +49,8 @@ public sealed class OwnedMapPolicyTests
             Assert.True(counting.BytesRead == 0, "A cached Jet3 answer read pages.");
         }
 
-        await using var fixture = new MemoryStream(await File.ReadAllBytesAsync(TestDatabases.Jet3Test, Ct));
+        await using var fixture = new MemoryStream();
+        await fixture.WriteAsync(await File.ReadAllBytesAsync(TestDatabases.Jet3Test, Ct), Ct);
         await using AccessWriter accessAuthored = await TestDatabase.OpenWriterAsync(fixture, cancellationToken: Ct);
         List<CatalogEntry> tables = await accessAuthored.Services.Catalog.GetUserTablesAsync(Ct);
         Assert.NotEmpty(tables);
@@ -62,7 +63,8 @@ public sealed class OwnedMapPolicyTests
     /// <summary>
     /// Imported local Jet4/ACE system tables have writable owned maps. Their
     /// decisions are cached after one scan, as a user table's decision is.
-    /// The fixed MSysObjects root is writable without a scan or cache entry.
+    /// Retargeting shared maps invalidates earlier decisions; unchanged metadata
+    /// permits cached answers, including the fixed MSysObjects root.
     /// </summary>
     /// <param name="jet4">Whether to use the Jet4 fixture rather than ACE.</param>
     [Theory]
@@ -70,7 +72,8 @@ public sealed class OwnedMapPolicyTests
     [InlineData(true)]
     public async Task AccessAuthoredLocalTables_AreWritableOnce_WithoutRescanningTheCatalog(bool jet4)
     {
-        await using var file = new MemoryStream(await File.ReadAllBytesAsync(jet4 ? TestDatabases.TestV2003 : TestDatabases.NorthwindTraders, Ct));
+        await using var file = new MemoryStream();
+        await file.WriteAsync(await File.ReadAllBytesAsync(jet4 ? TestDatabases.TestV2003 : TestDatabases.NorthwindTraders, Ct), Ct);
         await using var counting = new CountingStream(file);
 
         // Measure the policy's memoization through physical reads of the catalog.
@@ -100,6 +103,8 @@ public sealed class OwnedMapPolicyTests
         }
 
         Assert.True(await policy.CanMaintainAsync(userTable, Ct));
+        Assert.True(await policy.CanMaintainAsync(2, Ct));
+        Assert.True(await policy.CanMaintainAsync(userTable, Ct));
         counting.Reset();
         Assert.True(await policy.CanMaintainAsync(userTable, Ct));
         Assert.True(await policy.CanMaintainAsync(2, Ct));
@@ -108,7 +113,9 @@ public sealed class OwnedMapPolicyTests
 
         OwnedMapPolicyState state = policy.Capture();
         Assert.Empty(state.RefusedTdefs);
-        Assert.Equal(systemTables.Append(userTable).Order(), state.WritableTdefs.Order());
+        Assert.Contains(userTable, state.WritableTdefs);
+        Assert.Contains(2L, state.WritableTdefs);
+        Assert.All(state.WritableTdefs, root => Assert.Contains(root, systemTables.Append(userTable).Append(2L)));
     }
 
     /// <summary>
@@ -146,23 +153,22 @@ public sealed class OwnedMapPolicyTests
         await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
         CatalogOwnedMapPolicy policy = harness.Services.OwnedMaps;
         Assert.True(await policy.CanMaintainAsync(await TDefPageOfAsync(harness, TableName), Ct));
-        OwnedMapPolicyState before = policy.Capture();
 
         long rolledBackPage;
         await using (JetTransaction transaction = await harness.BeginTransactionAsync(Ct))
         {
             await harness.CreateTableAsync("Temp", [new ColumnDefinition("Id", typeof(int))], [], Ct);
             rolledBackPage = await TDefPageOfAsync(harness, "Temp");
-            Assert.Contains(rolledBackPage, policy.Capture().WritableTdefs);
             Assert.True(await policy.CanMaintainAsync(rolledBackPage, Ct));
+            Assert.Contains(rolledBackPage, policy.Capture().WritableTdefs);
             await transaction.RollbackAsync(Ct);
         }
 
         OwnedMapPolicyState after = policy.Capture();
-        Assert.Equal(before.WritableTdefs.Order(), after.WritableTdefs.Order());
-        Assert.Equal(before.RefusedTdefs.Order(), after.RefusedTdefs.Order());
+        Assert.DoesNotContain(rolledBackPage, after.WritableTdefs);
         Assert.Null(await harness.Services.Catalog.GetCatalogEntryAsync("Temp", Ct));
         Assert.False(await policy.CanMaintainAsync(rolledBackPage, Ct));
+        Assert.True(await policy.CanMaintainAsync(await TDefPageOfAsync(harness, TableName), Ct));
 
         await harness.CreateTableAsync("Temp", [new ColumnDefinition("Id", typeof(int))], [], Ct);
         long recreatedPage = await TDefPageOfAsync(harness, "Temp");

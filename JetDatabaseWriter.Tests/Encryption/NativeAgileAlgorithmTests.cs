@@ -84,10 +84,8 @@ public sealed class NativeAgileAlgorithmTests
 
             await writer.CreateTableAsync("AfterCompact", [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }], TestContext.Current.CancellationToken);
             await writer.InsertRowAsync("AfterCompact", [11], TestContext.Current.CancellationToken);
-            await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("Maintenance", [new byte[32_000]], TestContext.Current.CancellationToken);
+            await FreePageTailFixture.AddFreeTailAsync(writer, requireDirtyPayload: true);
             long populatedLength = stream.Length;
-            await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
             Assert.True(await writer.ScrubFreePagesAsync(TestContext.Current.CancellationToken) > 0);
             Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) > 0);
             Assert.True(stream.Length < populatedLength);

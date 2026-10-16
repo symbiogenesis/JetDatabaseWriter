@@ -22,7 +22,8 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="allocator">The page allocator.</param>
 /// <param name="tableDefs">The logical definition reader.</param>
 /// <param name="catalogRows">The catalog reader used to prove map ownership.</param>
-internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager, PageAllocator allocator, TableDefReader tableDefs, CatalogRowReader catalogRows)
+/// <param name="catalog">Reads persisted calculated result types when their descriptor alone does not identify long storage.</param>
+internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager, PageAllocator allocator, TableDefReader tableDefs, CatalogRowReader catalogRows, TableCatalog catalog)
 {
     private readonly UsageMapEditor editor = new(format, pager, allocator);
 
@@ -31,10 +32,11 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
     /// <param name="pager">The transaction-aware page writer.</param>
     /// <param name="allocator">The page allocator.</param>
     /// <param name="tdefPage">The table identity.</param>
+    /// <param name="definition">The column layout, including persisted calculated result types.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task completed when the trailer and new map rows are linked.</returns>
     /// <exception cref="InvalidDataException">The native trailer or column layout cannot be read completely.</exception>
-    internal static async ValueTask InitializeAsync(JetFormat format, Pager pager, PageAllocator allocator, long tdefPage, CancellationToken cancellationToken)
+    internal static async ValueTask InitializeAsync(JetFormat format, Pager pager, PageAllocator allocator, long tdefPage, TableDef definition, CancellationToken cancellationToken)
     {
         LogicalTDefChain chain = await LogicalTDefChain.ReadRequiredAsync(tdefPage, format.PageSize, pager.ReadPageAsync, PageBuffers.Return, true, cancellationToken).ConfigureAwait(false);
         if (!LongValueUsageMaps.TryRead(format, chain.Bytes, out List<LongValueUsageMap> maps, out int sentinel))
@@ -42,8 +44,6 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
             throw new InvalidDataException("The long-value usage-map trailer is malformed.");
         }
 
-        TableDef definition = TDefCodec.Parse(format, chain.Bytes)?.Definition
-            ?? throw new InvalidDataException("The long-value column definitions are malformed.");
         var missing = definition.Columns.Where(column => (ResolveValueType(column) is MemoType or OleType) && !maps.Any(map => map.ColumnNumber == column.ColNum)).ToList();
         if (missing.Count == 0)
         {
@@ -79,10 +79,26 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
     /// <param name="columnNumber">The row-layout column number.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The owned and free row pointers.</returns>
+    /// <exception cref="InvalidDataException">The table or selected column does not declare readable long-value storage.</exception>
     internal async ValueTask<(UsageMapPointer Owned, UsageMapPointer Free)> PrepareColumnAsync(long tdefPage, int columnNumber, CancellationToken cancellationToken)
     {
-        await InitializeAsync(format, pager, allocator, tdefPage, cancellationToken).ConfigureAwait(false);
         List<LongValueUsageMap> maps = await this.ReadMapsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (!maps.Any(entry => entry.ColumnNumber == columnNumber))
+        {
+            // Access can retain a Text descriptor for a calculated Memo. Its
+            // persisted ResultType establishes long storage after the catalog
+            // entry exists, including a schema rewrite's private replacement.
+            TableDef definition = await catalog.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException("The long-value column definitions are malformed.");
+            if (!definition.Columns.Any(column => column.ColNum == columnNumber && !column.IsFixed && ResolveValueType(column) is MemoType or OleType))
+            {
+                throw new InvalidDataException("The selected column does not declare long-value storage.");
+            }
+
+            await InitializeAsync(format, pager, allocator, tdefPage, definition, cancellationToken).ConfigureAwait(false);
+            maps = await this.ReadMapsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        }
+
         LongValueUsageMap map = maps.Single(entry => entry.ColumnNumber == columnNumber);
         UsageMapPointer owned = await this.PreparePointerAsync(tdefPage, map.OwnedOffset, cancellationToken).ConfigureAwait(false);
         UsageMapPointer free = await this.PreparePointerAsync(tdefPage, map.FreeOffset, cancellationToken).ConfigureAwait(false);
@@ -264,7 +280,7 @@ internal sealed class LongValueUsageMapMaintainer(JetFormat format, Pager pager,
         _ = UsageMap.TryReadPointer(chain.Bytes, offset, out UsageMapPointer pointer);
         if (pointer.PageNumber != 0)
         {
-            UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, offset, cancellationToken).ConfigureAwait(false);
+            UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectForMutationAsync(format, tableDefs, catalogRows, pager, tdefPage, offset, cancellationToken).ConfigureAwait(false);
             if (proof.IsExclusiveRow && proof.HasExclusiveBitmapPages)
             {
                 return pointer;

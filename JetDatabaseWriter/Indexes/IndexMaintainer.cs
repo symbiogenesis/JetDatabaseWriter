@@ -1004,8 +1004,9 @@ internal sealed class IndexMaintainer(
     /// <summary>
     /// Collects every page of the current tree of each real index a Jet3 bulk
     /// rebuild is about to replace, and the original members of exclusively
-    /// owned map rows. Shared map members remain protected. An unreadable map
-    /// or tree prevents reclamation rather than guessing page ownership.
+    /// owned map rows. Shared rows cannot contribute extra map-only candidates;
+    /// surviving references protect traversed tree pages after publication. An
+    /// unreadable map or tree prevents reclamation rather than guessing ownership.
     /// </summary>
     /// <param name="tdefPage">The TDEF page.</param>
     /// <param name="tdefBuffer">The logical TDEF bytes, before the rebuild patches them.</param>
@@ -1043,7 +1044,6 @@ internal sealed class IndexMaintainer(
         }
 
         long[][] mappedGroups = await this.ReadIndexPageGroupsFromUsageMapAsync(pointers, cancellationToken).ConfigureAwait(false) ?? CreateEmptyPageGroups(numRealIdx);
-        var mappedPages = new HashSet<long>();
         for (int realIdxNum = 0; realIdxNum < mappedGroups.Length; realIdxNum++)
         {
             // Even an unmaintained descriptor may own pages shared with a
@@ -1052,8 +1052,6 @@ internal sealed class IndexMaintainer(
             {
                 return CreateEmptyPageGroups(numRealIdx);
             }
-
-            mappedPages.UnionWith(mappedGroups[realIdxNum]);
         }
 
         long[][] groups = CreateEmptyPageGroups(numRealIdx);
@@ -1084,10 +1082,10 @@ internal sealed class IndexMaintainer(
                 {
                     reclaimable.UnionWith(mappedGroups[realIdxNum]);
                 }
-                else
-                {
-                    reclaimable.ExceptWith(mappedPages);
-                }
+
+                // Keep the traversed old tree even when its original map
+                // row was shared. All aliases may detach in this rebuild;
+                // the postpublication walk protects any surviving reference.
             }
 
             groups[realIdxNum] = [.. reclaimable];
@@ -1337,7 +1335,7 @@ internal sealed class IndexMaintainer(
 
             try
             {
-                UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectAsync(format, tableDefs, catalogRows, pager, tdefPage, entry.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
+                UsageMapOwnership.Proof proof = await UsageMapOwnership.InspectForMutationAsync(format, tableDefs, catalogRows, pager, tdefPage, entry.FirstDpOffset - 4, cancellationToken).ConfigureAwait(false);
                 if (!proof.IsExclusiveRow || !proof.HasExclusiveBitmapPages)
                 {
                     pointers[realIdxNum] = default;

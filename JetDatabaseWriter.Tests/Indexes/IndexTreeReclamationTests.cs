@@ -144,6 +144,13 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             }
         }
 
+        stream.Position = 0;
+        await using (AccessWriter native = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct))
+        {
+            CatalogEntry table = (await native.Services.Catalog.GetCatalogEntryAsync("Table1", this.ct))!;
+            Assert.Empty(await PageAudit.FindUnreachableIndexPagesAsync(native.Database, native.Services.PageAllocator, table.TDefPage, this.ct));
+        }
+
         for (int i = 0; i <= 10; i++)
         {
             stream.Position = 0;
@@ -170,7 +177,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             await using AccessWriter harness = await TestDatabase.OpenWriterAsync(stream, cancellationToken: this.ct);
             CatalogEntry table = (await harness.Services.Catalog.GetCatalogEntryAsync("Table1", this.ct))!;
             SortedSet<long> unreachable = await PageAudit.FindUnreachableIndexPagesAsync(harness.Database, harness.Services.PageAllocator, table.TDefPage, this.ct);
-            Assert.Empty(unreachable);
+            Assert.True(unreachable.Count == 0, $"Batch {i}: unreachable index pages {string.Join(", ", unreachable)}.");
         }
 
         stream.Position = 0;

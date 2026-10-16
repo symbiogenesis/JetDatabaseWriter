@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
@@ -28,6 +29,7 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
 {
     private const string Relationship = "PC";
 
+    private static readonly string[] OwnershipTables = ["P", "C"];
     private static readonly AccessReaderOptions ReaderOptions = new() { UseLockFile = false };
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -261,11 +263,9 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
 
     /// <summary>
     /// A warm writer checks relationships on every insert, update and delete
-    /// without reading <c>MSysObjects</c> or <c>MSysRelationships</c>. Jet4 and
-    /// ACCDB only: on Jet3 the writer keeps no usage map for the tables it
-    /// creates, so every read of P or C walks every page of the file anyway;
-    /// the nwind case of <see cref="DeleteRows_NoMatch_AfterWarmUp_ReadsFewBytes"/>
-    /// covers Jet3.
+    /// without reading <c>MSysObjects</c> or <c>MSysRelationships</c> after
+    /// ownership proofs are warm in the current transaction. The nwind case of
+    /// <see cref="DeleteRows_NoMatch_AfterWarmUp_ReadsFewBytes"/> covers Jet3.
     /// </summary>
     /// <param name="format">The database format.</param>
     /// <param name="mode">How the writer runs the operations.</param>
@@ -298,6 +298,16 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
             counting.Reset();
             await RunAsync(writer, mode, async () =>
             {
+                // Explicit transactions discard page and ownership caches when
+                // attaching their journal. Prime ownership separately so this
+                // measures relationship-cache reads during the DML itself.
+                foreach (string table in OwnershipTables)
+                {
+                    CatalogEntry entry = await writer.Services.Catalog.GetRequiredCatalogEntryAsync(table, Ct);
+                    Assert.True(await writer.Services.OwnedMaps.CanMaintainAsync(entry.TDefPage, Ct));
+                }
+
+                counting.Reset();
                 Assert.Equal(1, await writer.UpdateRowsAsync("P", "Id", 2, new Dictionary<string, object?> { ["N"] = "dos" }, Ct));
                 await writer.InsertRowAsync("C", [2, 1], Ct);
                 Assert.Equal(1, await writer.UpdateRowsAsync("C", "Id", 2, new Dictionary<string, object?> { ["PId"] = 2 }, Ct));

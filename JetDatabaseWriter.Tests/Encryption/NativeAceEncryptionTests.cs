@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using JetDatabaseWriter.Encryption;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -85,10 +84,8 @@ public sealed class NativeAceEncryptionTests
         long populatedLength;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
         {
-            await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
-            await writer.InsertRowAsync("Maintenance", [1, new byte[32_000]], TestContext.Current.CancellationToken);
+            await FreePageTailFixture.AddFreeTailAsync(writer, requireDirtyPayload: true);
             populatedLength = stream.Length;
-            await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
             Assert.True(await writer.ScrubFreePagesAsync(TestContext.Current.CancellationToken) > 0);
             Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) > 0);
         }
@@ -116,9 +113,7 @@ public sealed class NativeAceEncryptionTests
         await stream.WriteAsync(original, TestContext.Current.CancellationToken);
         stream.Position = 0;
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions("Native123") { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken);
-        await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync("Maintenance", [1, new byte[32_000]], TestContext.Current.CancellationToken);
-        await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
+        await FreePageTailFixture.AddFreeTailAsync(writer, requireDirtyPayload: true);
         byte[] baseline = stream.ToArray();
         if (fault == "flush")
         {

@@ -7,7 +7,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
-using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
@@ -40,7 +39,10 @@ public sealed class AgileMaintenanceFaultTests
         await stream.WriteAsync(variant, TestContext.Current.CancellationToken);
         stream.Position = 0;
         await using AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions("vector") { UseLockFile = false, SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages }, leaveOpen: true, TestContext.Current.CancellationToken);
-        await PrepareFreeTailAsync(writer, fault == "spilled-truncated" ? 400_000 : 32_000);
+
+        // 160 before-images exceed the default 128-page physical undo cache.
+        int tailPages = fault == "spilled-truncated" ? 160 : 8;
+        await FreePageTailFixture.AddFreeTailAsync(writer, tailPages);
         byte[] baseline = stream.ToArray();
         switch (fault)
         {
@@ -68,7 +70,7 @@ public sealed class AgileMaintenanceFaultTests
         await Assert.ThrowsAsync<IOException>(async () => await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken));
         Assert.True(stream.Faulted);
         Assert.Equal(baseline, stream.ToArray());
-        Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) > 0);
+        Assert.True(await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken) >= tailPages);
         await writer.InsertRowAsync("T", [8, "After truncation fault"], TestContext.Current.CancellationToken);
         await writer.DisposeAsync();
         stream.Position = 0;
@@ -90,7 +92,7 @@ public sealed class AgileMaintenanceFaultTests
         AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions("vector") { UseLockFile = false, SecureEraseMode = SecureEraseMode.DeletedRowsAndFreedPages }, leaveOpen: true, TestContext.Current.CancellationToken);
         try
         {
-            await PrepareFreeTailAsync(writer);
+            await FreePageTailFixture.AddFreeTailAsync(writer);
             stream.FailWritesFrom(2);
             await Assert.ThrowsAsync<AggregateException>(async () => await writer.ShrinkDatabaseAsync(TestContext.Current.CancellationToken));
             JetOperationException failure = await Assert.ThrowsAsync<JetOperationException>(async () => await writer.InsertRowAsync("T", [9, "Refused after failed undo"], TestContext.Current.CancellationToken));
@@ -103,12 +105,5 @@ public sealed class AgileMaintenanceFaultTests
         {
             await writer.DisposeAsync();
         }
-    }
-
-    private static async Task PrepareFreeTailAsync(AccessWriter writer, int payloadLength = 32_000)
-    {
-        await writer.CreateTableAsync("Maintenance", [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
-        await writer.InsertRowAsync("Maintenance", [1, new byte[payloadLength]], TestContext.Current.CancellationToken);
-        await writer.DropTableAsync("Maintenance", TestContext.Current.CancellationToken);
     }
 }

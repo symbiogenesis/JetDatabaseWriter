@@ -383,7 +383,7 @@ internal sealed class CatalogArtifactWriter(
             }
         }
 
-        await LongValueUsageMapMaintainer.InitializeAsync(format, pager, pageAllocator, tdefPageNumber, cancellationToken).ConfigureAwait(false);
+        await LongValueUsageMapMaintainer.InitializeAsync(format, pager, pageAllocator, tdefPageNumber, tableDef, cancellationToken).ConfigureAwait(false);
 
         // A schema rewrite hands over the original table's properties projected
         // onto the rebuilt columns; a new table's come from its column definitions.

@@ -55,9 +55,7 @@ public sealed class ShrinkCrashRecoveryTests
             {
                 await writer.CreateTableAsync("Retained", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
                 await writer.InsertRowAsync("Retained", [1], TestContext.Current.CancellationToken);
-                await writer.CreateTableAsync("Tail", [new("Payload", typeof(byte[]))], TestContext.Current.CancellationToken);
-                await writer.InsertRowAsync("Tail", [new byte[32_000]], TestContext.Current.CancellationToken);
-                await writer.DropTableAsync("Tail", TestContext.Current.CancellationToken);
+                await FreePageTailFixture.AddFreeTailAsync(writer, requireDirtyPayload: true);
             }
 
             byte[] baseline = await File.ReadAllBytesAsync(baselinePath, TestContext.Current.CancellationToken);

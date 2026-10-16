@@ -1,14 +1,17 @@
 namespace JetDatabaseWriter.Tests.Pages;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
+using Xunit.Sdk;
 
 public sealed class EmittedPageInvariantTests
 {
@@ -79,6 +82,58 @@ public sealed class EmittedPageInvariantTests
         }
 
         EmittedPageInvariantAssert.AllPagesAreWellFormed(stream.ToArray(), format);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DeleteEveryRow_EmptyStableSlotsAtPageEnd_EmitWellFormedPages(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], this.ct);
+            await writer.InsertRowsAsync("T", [[1], [2], [3]], this.ct);
+            Assert.Equal(3, await writer.DeleteRowsAsync("T", RowCriteria.All(), this.ct));
+        }
+
+        EmittedPageInvariantAssert.AllPagesAreWellFormed(stream.ToArray(), format);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, 0)]
+    [InlineData(DatabaseFormat.Jet3Mdb, 0x8000)]
+    [InlineData(DatabaseFormat.Jet3Mdb, 0xC000)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 0)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 0x8000)]
+    [InlineData(DatabaseFormat.Jet4Mdb, 0xC000)]
+    [InlineData(DatabaseFormat.AceAccdb, 0)]
+    [InlineData(DatabaseFormat.AceAccdb, 0x8000)]
+    [InlineData(DatabaseFormat.AceAccdb, 0xC000)]
+    public async Task Invariant_RejectsAliasedNonemptyPayloadSlots(DatabaseFormat format, int flags)
+    {
+        await using MemoryStream stream = await CreateFreshStreamAsync(format);
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync("T", [new ColumnDefinition("Id", typeof(int))], this.ct);
+            await writer.InsertRowsAsync("T", [[1], [2], [3]], this.ct);
+        }
+
+        byte[] image = stream.ToArray();
+        await using (AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: this.ct))
+        {
+            CatalogEntry table = Assert.IsType<CatalogEntry>(await harness.GetCatalogEntryAsync("T", this.ct));
+            long pageNumber = Assert.Single(await harness.Database.OwnedPages.GetOwnedDataPagesAsync(table.TDefPage, this.ct));
+            JetFormat jetFormat = harness.Database.Format;
+            int directory = checked((int)(pageNumber * jetFormat.PageSize)) + jetFormat.DataPage.RowsStart;
+            int start = BinaryPrimitives.ReadUInt16LittleEndian(image.AsSpan(directory)) & Constants.DataPage.RowOffsetMask;
+            int slotIndex = flags == 0xC000 ? 2 : 1;
+            BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(directory + (slotIndex * 2)), checked((ushort)(start | flags)));
+        }
+
+        XunitException error = Assert.ThrowsAny<XunitException>(() => EmittedPageInvariantAssert.AllPagesAreWellFormed(image, format));
+        Assert.Contains("aliases payload start", error.Message, StringComparison.Ordinal);
     }
 
     [Theory]

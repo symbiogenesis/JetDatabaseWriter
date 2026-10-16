@@ -155,28 +155,29 @@ internal static class EmittedPageInvariantAssert
 
         int[] rawOffsets = new int[numRows];
         int[] starts = new int[numRows];
+        bool[] emptySlots = new bool[numRows];
+        var payloadStarts = new HashSet<int>();
         for (int rowIndex = 0; rowIndex < numRows; rowIndex++)
         {
             int raw = ReadUInt16(page, layout.RowsStart + (rowIndex * 2));
             int rowStart = raw & 0x1FFF;
             rawOffsets[rowIndex] = raw;
             starts[rowIndex] = rowStart;
+            int previousStart = rowIndex == 0 ? pageSize : starts[rowIndex - 1];
+            bool isEmpty = (raw & 0xC000) == 0xC000 && rowStart == previousStart;
+            emptySlots[rowIndex] = isEmpty;
 
             Assert.True(raw != 0, Message(pageNumber, $"Row slot {rowIndex} is zero within numRows={numRows}."));
             Assert.True((raw & 0x2000) == 0, Message(pageNumber, $"Row slot {rowIndex} uses reserved marker bit 0x2000 (raw=0x{raw:X4})."));
             Assert.True(
-                rowStart >= slotTableEnd && rowStart < pageSize,
-                Message(pageNumber, $"Row slot {rowIndex} starts at {rowStart}, outside [{slotTableEnd}, {pageSize})."));
+                rowStart >= slotTableEnd && (rowStart < pageSize || (isEmpty && rowStart == pageSize)),
+                Message(pageNumber, $"Row slot {rowIndex} starts at {rowStart}, outside its payload bounds."));
+            Assert.True(
+                isEmpty || payloadStarts.Add(rowStart),
+                Message(pageNumber, $"Nonempty row slot {rowIndex} aliases payload start {rowStart}."));
         }
 
         Array.Sort(starts);
-        for (int sortedIndex = 1; sortedIndex < starts.Length; sortedIndex++)
-        {
-            Assert.True(
-                starts[sortedIndex] > starts[sortedIndex - 1],
-                Message(pageNumber, $"Duplicate or unsorted row start {starts[sortedIndex]} in row-slot directory."));
-        }
-
         int expectedFreeSpace = starts[0] - slotTableEnd;
         Assert.Equal(expectedFreeSpace, freeSpace);
 
@@ -184,8 +185,19 @@ internal static class EmittedPageInvariantAssert
         for (int rowIndex = 0; rowIndex < numRows; rowIndex++)
         {
             int rowStart = rawOffsets[rowIndex] & 0x1FFF;
+            if (emptySlots[rowIndex])
+            {
+                rowSlots.Add(new RowSlotInfo(rowIndex, rawOffsets[rowIndex], rowStart, rowStart - 1));
+                continue;
+            }
+
             int sortedIndex = Array.BinarySearch(starts, rowStart);
             Assert.True(sortedIndex >= 0, Message(pageNumber, $"Row slot {rowIndex} start {rowStart} was not found after sorting."));
+            while (sortedIndex + 1 < starts.Length && starts[sortedIndex + 1] == rowStart)
+            {
+                sortedIndex++;
+            }
+
             int rowEnd = sortedIndex + 1 < starts.Length ? starts[sortedIndex + 1] - 1 : pageSize - 1;
             rowSlots.Add(new RowSlotInfo(rowIndex, rawOffsets[rowIndex], rowStart, rowEnd));
         }
