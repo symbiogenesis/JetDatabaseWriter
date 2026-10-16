@@ -142,7 +142,7 @@ internal static class IndexCatalogReader
 
         if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
-            numRealIdx = 0;
+            return [];
         }
 
         // Section walk mirrors TableDefReader.ReadTableDefAsync and FormatProbe.

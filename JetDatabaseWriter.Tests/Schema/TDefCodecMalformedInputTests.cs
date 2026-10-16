@@ -35,17 +35,15 @@ public sealed class TDefCodecMalformedInputTests
     [InlineData(DatabaseFormat.Jet4Mdb, int.MaxValue)]
     [InlineData(DatabaseFormat.AceAccdb, -1)]
     [InlineData(DatabaseFormat.AceAccdb, int.MaxValue)]
-    public void Parse_InvalidRealIndexCount_ClampsForColumnsAndRetainsDeclaredCount(DatabaseFormat kind, int count)
+    public void Parse_InvalidRealIndexCount_RefusesMisalignedColumnsAndRetainsDeclaredCount(DatabaseFormat kind, int count)
     {
         var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
         Wi32(td, format.TDef.NumRealIdx, count);
-        TDefImage? image = TDefCodec.Parse(format, td);
-        Assert.NotNull(image);
-        Assert.Equal(count, image.Header.RealIndexCount);
-        Assert.True(image.Issues.HasFlag(TDefParseIssues.InvalidRealIndexCount));
-        var legacy = new LegacyTDefParsers(format);
-        Assert.Equal(legacy.Parse(td)!.Columns[0], image.Columns[0] with { RawDescriptor = [] });
+        Assert.Null(TDefCodec.ReadColumns(format, td, out TDefHeader header, out _, out TDefParseIssues issues, out _));
+        Assert.Equal(count, header.RealIndexCount);
+        Assert.True(issues.HasFlag(TDefParseIssues.InvalidRealIndexCount));
+        Assert.Null(TDefCodec.Parse(format, td));
     }
 
     [Theory]
@@ -102,13 +100,22 @@ public sealed class TDefCodecMalformedInputTests
     {
         var format = JetFormat.ForNewDatabase(kind);
         byte[] td = OneColumn(format);
+        TDefImage validImage = Assert.IsType<TDefImage>(TDefCodec.Parse(format, td));
         Wi32(td, format.TDef.NumIdx, logicalCount);
         Wi32(td, format.TDef.NumRealIdx, realCount);
         TDefImage? image = TDefCodec.Parse(format, td);
-        Assert.NotNull(image);
-        Assert.Equal(logicalCount, image.Header.LogicalIndexCount);
-        Assert.Equivalent(LegacyIndexCatalogReader.ReadMetadata(format, td, image.Columns), IndexCatalogReader.ReadMetadata(format, td, image.Columns), strict: true);
-        Assert.Empty(IndexCatalogReader.ReadMetadata(format, td, image.Columns));
+        if (realCount is < 0 or > Constants.TableDefinition.MaxIndexes)
+        {
+            Assert.Null(image);
+        }
+        else
+        {
+            Assert.NotNull(image);
+            Assert.Equal(logicalCount, image.Header.LogicalIndexCount);
+        }
+
+        Assert.Equivalent(LegacyIndexCatalogReader.ReadMetadata(format, td, validImage.Columns), IndexCatalogReader.ReadMetadata(format, td, validImage.Columns), strict: true);
+        Assert.Empty(IndexCatalogReader.ReadMetadata(format, td, validImage.Columns));
     }
 
     [Theory]

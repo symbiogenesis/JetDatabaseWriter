@@ -122,7 +122,7 @@ public sealed class CveMitigationTests(DatabaseCache db) : IClassFixture<Databas
 
     /// <summary>
     /// Corrupts the numRealIdx field (offset 51 in Jet4/ACE TDEF) to a huge
-    /// value. The reader clamps this to [0, 1000]; verify no crash/OOM.
+    /// value. The reader refuses the invalid definition before decoding columns; verify no crash/OOM.
     /// </summary>
     [Fact]
     [Trait("CveAnalogue", "CVE-2018-8423")]

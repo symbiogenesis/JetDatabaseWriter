@@ -44,7 +44,7 @@ internal static class TDefCodec
         };
     }
 
-    /// <summary>Returns null for an incomplete header or column section; malformed names preserve empty-name columns.</summary>
+    /// <summary>Returns null for invalid physical-index counts or incomplete column sections; malformed names preserve empty-name columns.</summary>
     /// <param name="format">The database's format profile.</param>
     /// <param name="td">The logical chain bytes.</param>
     /// <returns>The owned immutable image, or null.</returns>
@@ -57,11 +57,6 @@ internal static class TDefCodec
         }
 
         int numRealIdx = header.RealIndexCount;
-        if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
-        {
-            numRealIdx = 0;
-        }
-
         IndexSectionAnchors? section = null;
         if (header.LogicalIndexCount is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
@@ -124,7 +119,7 @@ internal static class TDefCodec
     /// <param name="hasDeletedColumns">Whether column numbers contain deleted-column gaps.</param>
     /// <param name="issues">The tolerant column-section issues.</param>
     /// <param name="realIndexDescriptorStart">The name-section end, or -1 for unreadable column names.</param>
-    /// <returns>Owned columns, or null for an incomplete header or descriptor section.</returns>
+    /// <returns>Owned columns, or null for an invalid physical-index count or incomplete header or descriptor section.</returns>
     internal static List<ColumnInfo>? ReadColumns(
         JetFormat format,
         byte[]? td,
@@ -146,11 +141,12 @@ internal static class TDefCodec
         int numCols = header.ColumnCount;
         int numRealIdx = header.RealIndexCount;
 
-        // Safety: corrupt or unusual TDEFs can report absurd index counts
+        // The physical count locates the column descriptors. Substituting zero
+        // would decode index bookkeeping as columns instead of refusing corruption.
         if (numRealIdx is < 0 or > Constants.TableDefinition.MaxIndexes)
         {
             issues |= TDefParseIssues.InvalidRealIndexCount;
-            numRealIdx = 0;
+            return null;
         }
 
         if (numCols > Constants.TableDefinition.MaxColumns)

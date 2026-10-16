@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Pages.Paging;
 using JetDatabaseWriter.Schema.Models;
 using static JetDatabaseWriter.Schema.JetTypeInfo;
@@ -122,8 +123,9 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <summary>Reads an immutable parsed structural image, with guarded cache publication.</summary>
     /// <param name="tdefPage">The root page.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The image, or null for an unreadable definition.</returns>
+    /// <returns>The image, or null when the root is not a table definition.</returns>
     /// <exception cref="InvalidDataException">Verification detects stale cached structure.</exception>
+    /// <exception cref="JetCorruptDataException">A table definition has an invalid column layout.</exception>
     internal async ValueTask<TDefImage?> ReadImageAsync(long tdefPage, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -145,6 +147,14 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         long epoch = this.images.Epoch;
         LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
+        if (chain is not null && image is null)
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptTableDefinition,
+                $"The table definition at page {tdefPage} has an invalid or incomplete column layout.",
+                new JetErrorInfo { PageNumber = tdefPage });
+        }
+
         image?.TDefPageNumber = tdefPage;
 
         if (this.cacheResults && image is not null && chain is not null)

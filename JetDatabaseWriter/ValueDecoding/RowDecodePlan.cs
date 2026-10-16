@@ -43,6 +43,27 @@ internal sealed class RowDecodePlan
             this.hasBigBinaryColumns |= column.Type == BigBinaryType;
         }
 
+        if (columnOrdinals is not null)
+        {
+            foreach (int ordinal in columnOrdinals)
+            {
+                if (ordinal >= 0 && ordinal < this.columns.Count)
+                {
+                    ValidateColumnType(this.columns[ordinal], tableDef.TDefPageNumber);
+                }
+            }
+        }
+        else
+        {
+            for (int ordinal = 0; ordinal < this.columns.Count; ordinal++)
+            {
+                if (wantedColumns?[ordinal] != false)
+                {
+                    ValidateColumnType(this.columns[ordinal], tableDef.TDefPageNumber);
+                }
+            }
+        }
+
         this.PreservesLongValueBytes = preserveLongValueBytes;
     }
 
@@ -298,6 +319,18 @@ internal sealed class RowDecodePlan
         }
 
         return new ColumnSlice(col.IsCalculated || col.Type is TextType or BinaryType or BigBinaryType ? ColumnSliceKind.Var : ColumnSliceKind.Fixed, start, sz, false);
+    }
+
+    private static void ValidateColumnType(ColumnInfo column, long? pageNumber)
+    {
+        ColumnType valueType = JetTypeInfo.ResolveValueType(column);
+        if (JetTypeInfo.GetMetadata(valueType) is null)
+        {
+            throw new JetCorruptDataException(
+                JetErrorCode.CorruptTableDefinition,
+                $"Column '{column.Name}' declares unsupported value type {JetTypeInfo.GetTypeDisplayName(valueType)}.",
+                new JetErrorInfo { ColumnName = column.Name, PageNumber = pageNumber });
+        }
     }
 
     private static DateTime ReadDatePayload(ReadOnlySpan<byte> payload, ColumnType type)

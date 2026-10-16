@@ -37,6 +37,57 @@ public sealed class WriterFuzzSafetyOracleTests
         Assert.Same(failure, actual);
     }
 
+    /// <summary>An arbitrary unsupported implementation path is not a known format refusal.</summary>
+    [Fact]
+    public async Task UnexpectedNotSupportedFailure_Propagates()
+    {
+        await using var stream = new MemoryStream([1, 2, 3]);
+        var failure = new NotSupportedException("Unexpected implementation failure.");
+        NotSupportedException actual = await Assert.ThrowsAsync<NotSupportedException>(async () =>
+            await WriterFuzzSafetyOracle.ExecuteAsync(stream, () => throw failure));
+        Assert.Same(failure, actual);
+    }
+
+    /// <summary>MDB Int64 declarations are documented refusals that leave the original image intact.</summary>
+    /// <param name="format">The database generation.</param>
+    /// <param name="addColumn">Whether to add a column instead of creating a table.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    public async Task Int64OnMdb_RefusesWithoutChangingBytes(DatabaseFormat format, bool addColumn)
+    {
+        await using var stream = new MemoryStream();
+        var options = new AccessWriterOptions { UseLockFile = false, UseTransactionalWrites = true };
+        byte[] before;
+        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(stream, format, options, leaveOpen: true, TestContext.Current.CancellationToken))
+        {
+            await writer.CreateTableAsync("Items", [new("Id", typeof(int))], TestContext.Current.CancellationToken);
+            await writer.InsertRowAsync("Items", [1], TestContext.Current.CancellationToken);
+            before = stream.ToArray();
+            var column = new ColumnDefinition("LargeNumber", typeof(long));
+            Exception? rejection = await WriterFuzzSafetyOracle.ExecuteAsync(stream, async () =>
+            {
+                if (addColumn)
+                {
+                    await writer.AddColumnAsync("Items", column, TestContext.Current.CancellationToken);
+                }
+                else
+                {
+                    await writer.CreateTableAsync("Refused", [column], TestContext.Current.CancellationToken);
+                }
+            });
+            JetNotSupportedException refusal = Assert.IsType<JetNotSupportedException>(rejection);
+            Assert.Equal(JetErrorCode.FeatureNotSupported, refusal.ErrorCode);
+            Assert.Equal(column.Name, refusal.ErrorInfo.ColumnName);
+            WriterFuzzSafetyOracle.AssertUnchanged(stream, before);
+        }
+
+        WriterFuzzSafetyOracle.AssertUnchanged(stream, before);
+        await WriterFuzzSafetyOracle.VerifyRoundTripAsync(stream, options.Password, TestContext.Current.CancellationToken);
+    }
+
     /// <summary>Valid output corruption is always a failure, including password-protected output.</summary>
     [Fact]
     public async Task RoundTrip_InvalidOutput_Propagates()

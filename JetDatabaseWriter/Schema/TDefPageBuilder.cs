@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -40,6 +41,7 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
     /// <param name="paramName">The public parameter that carries <paramref name="definition"/>, for <see cref="ArgumentException.ParamName"/>.</param>
     /// <returns>The column's type code.</returns>
     /// <exception cref="NotSupportedException">The format cannot hold the column, including a Jet3 decimal column whose precision or scale Currency cannot hold.</exception>
+    /// <exception cref="JetNotSupportedException">An Int64/Large Number column is declared on an MDB format.</exception>
     /// <exception cref="ArgumentException">A calculated column has no expression, the definition's flags conflict, a Hyperlink column is not a Memo, or (<see cref="ArgumentOutOfRangeException"/>) the precision or scale of a decimal column, or of a multi-value column's decimal items, is out of range.</exception>
     internal static ColumnType ValidateColumnForFormat(ColumnDefinition definition, JetFormat format, string paramName)
     {
@@ -48,8 +50,10 @@ internal sealed class TDefPageBuilder(JetFormat format, Pager pager)
 
         if (type == BigIntType && !format.SupportsBigInt)
         {
-            throw new NotSupportedException(
-                $"Column '{definition.Name}': Int64/Large Number columns are only supported in ACCDB databases.");
+            throw new JetNotSupportedException(
+                JetErrorCode.FeatureNotSupported,
+                $"Column '{definition.Name}': Int64/Large Number columns are only supported in ACCDB databases.",
+                new JetErrorInfo { ColumnName = definition.Name });
         }
 
         if (type == DateTimeExtendedType && !format.SupportsDateTimeExtended)

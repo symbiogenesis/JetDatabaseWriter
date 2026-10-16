@@ -65,7 +65,7 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
         {
             byte[]? bytes = await reader.ReadTDefBytesAsync(root, ct);
             Assert.NotNull(bytes);
-            AssertParity(harness.Database.Format, bytes);
+            AssertParity(harness.Database.Format, bytes, $"{Path.GetFileName(path)} page {root}");
         }
     }
 
@@ -106,7 +106,7 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
             Assert.NotNull(entry);
             byte[]? bytes = await harness.Database.TableDefs.ReadTDefBytesAsync(entry.TDefPage, ct);
             Assert.NotNull(bytes);
-            AssertParity(harness.Database.Format, bytes);
+            AssertParity(harness.Database.Format, bytes, $"{kind} {table}");
             TDefImage? image = TDefCodec.Parse(harness.Database.Format, bytes);
             Assert.NotNull(image);
             Assert.Contains(image.LogicalIndexes, index => index.Entry.IndexType == IndexKind.ForeignKey);
@@ -117,17 +117,31 @@ public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<Datab
         }
     }
 
-    private static void AssertParity(JetFormat format, byte[] bytes)
+    private static void AssertParity(JetFormat format, byte[] bytes, string context)
     {
         var legacy = new LegacyTDefParsers(format);
         TableDef? expected = legacy.Parse(bytes);
         TDefImage? actual = TDefCodec.Parse(format, bytes);
+        if (bytes.Length >= format.TDef.BlockEnd
+            && Ri32(bytes, format.TDef.NumRealIdx) is < 0 or > Constants.TableDefinition.MaxIndexes)
+        {
+            // Raw page scans can find invalid headers. The frozen parser's zero
+            // substitution is not a valid column-layout oracle for those counts.
+            Assert.Null(actual);
+            Assert.Null(TDefCodec.ReadColumns(format, bytes, out TDefHeader header, out _, out TDefParseIssues issues, out _));
+            Assert.Equal(Ri32(bytes, format.TDef.NumRealIdx), header.RealIndexCount);
+            Assert.True(issues.HasFlag(TDefParseIssues.InvalidRealIndexCount));
+            return;
+        }
+
         if (expected is null)
         {
             Assert.Null(actual);
             return;
         }
 
+        TDefCounts counts = TDefCodec.ReadCounts(format, bytes);
+        Assert.True(actual is not null, $"{context}: columns={counts.ColumnCount}, logical indexes={counts.LogicalIndexCount}, physical indexes={counts.RealIndexCount}.");
         Assert.NotNull(actual);
         Assert.Equal(Ru32(bytes, format.TDef.NumRows), actual.Header.Counters.RowCount);
         Assert.Equal(expected.HasDeletedColumns, actual.HasDeletedColumns);

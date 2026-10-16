@@ -10,6 +10,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
@@ -917,8 +918,19 @@ public sealed class CalculatedColumnWriteTests
         };
 
         await using AccessWriter writer = await OpenWriterAsync(stream);
-        NotSupportedException exception = await Assert.ThrowsAsync<NotSupportedException>(async () =>
-            await writer.AddColumnAsync("NoSuchTable", column, TestContext.Current.CancellationToken));
+        async Task AddColumnAsync() => await writer.AddColumnAsync("NoSuchTable", column, TestContext.Current.CancellationToken);
+        NotSupportedException exception;
+        if (kind == "largeNumber")
+        {
+            JetNotSupportedException refusal = await Assert.ThrowsAsync<JetNotSupportedException>(AddColumnAsync);
+            Assert.Equal(JetErrorCode.FeatureNotSupported, refusal.ErrorCode);
+            Assert.Equal(column.Name, refusal.ErrorInfo.ColumnName);
+            exception = refusal;
+        }
+        else
+        {
+            exception = await Assert.ThrowsAsync<NotSupportedException>(AddColumnAsync);
+        }
 
         Assert.Contains("only supported in ACCDB", exception.Message, StringComparison.Ordinal);
         Assert.Contains($"'{column.Name}'", exception.Message, StringComparison.Ordinal);

@@ -59,9 +59,7 @@ public sealed class UnknownColumnTypeTests
             async () =>
             {
                 Task UpdateAsync() => writer.UpdateRowsAsync("Samples", "Known", 7, new Dictionary<string, object?> { ["Known"] = 8 }, ct).AsTask();
-                Exception error = variable
-                    ? await Assert.ThrowsAsync<InvalidOperationException>(UpdateAsync)
-                    : await Assert.ThrowsAsync<JetCorruptDataException>(UpdateAsync);
+                JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(UpdateAsync);
                 Assert.Contains("0x48", error.Message, StringComparison.Ordinal);
                 Assert.Contains("Opaque", error.Message, StringComparison.Ordinal);
                 Assert.Equal(original, stream.ToArray());
@@ -170,6 +168,32 @@ public sealed class UnknownColumnTypeTests
         Assert.Equal(ColumnSize.FromBytes(sizeof(int)), metadata.Size);
         Assert.Equal(!variable, metadata.IsFixedLength);
         Assert.Equal(original, stream.ToArray());
+    }
+
+    [Fact]
+    public void DecodePlan_UnselectedUnknownColumn_DoesNotBlockKnownValues()
+    {
+        var definition = new TableDef
+        {
+            Columns =
+            [
+                new ColumnInfo { Name = "Opaque", Type = (ColumnType)UnknownCode, Flags = Constants.ColumnDescriptorFlags.Fixed, Size = sizeof(int), ColNum = 0 },
+                new ColumnInfo { Name = "Known", Type = ColumnType.LongIntegerType, Flags = Constants.ColumnDescriptorFlags.Fixed, Size = sizeof(int), ColNum = 1, FixedOff = sizeof(int) },
+            ],
+        };
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        byte[] row = [2, 0, 0x78, 0x56, 0x34, 0x12, 7, 0, 0, 0, 3];
+        var typed = RowDecodePlan.CreateTyped(definition, [false, true], strictParsing: true);
+        object?[] buffer = new object?[2];
+        Assert.True(typed.TryDecodeTypedIntoBuffer(format, row, 0, row.Length, longValueDecoder: null!, buffer, out bool needsLongValue));
+        Assert.False(needsLongValue);
+        Assert.Null(buffer[0]);
+        Assert.Equal(7, buffer[1]);
+
+        var partial = RowDecodePlan.CreatePartial(definition, [1]);
+        object?[] projected = new object?[1];
+        Assert.True(partial.TryDecodePartialColumns(format, row, 0, row.Length, projected));
+        Assert.Equal(7, Assert.Single(projected));
     }
 
     [Theory]

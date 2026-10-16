@@ -60,5 +60,6 @@ internal static class WriterFuzzSafetyOracle
         or JetErrorCode.UnsupportedExpression or JetErrorCode.ColumnReferencedByExpression or JetErrorCode.TableInRelationship
         or JetErrorCode.KeyColumnInRelationship or JetErrorCode.ValidationRuleViolation or JetErrorCode.TableValidationRuleViolation
         or JetErrorCode.ValueTooLarge or JetErrorCode.RowTooLarge or JetErrorCode.JournalBudgetExceeded
-        or JetErrorCode.NumericOverflow or JetErrorCode.IndexEntryTooLarge or JetErrorCode.ColumnCountLimit;
+        or JetErrorCode.NumericOverflow or JetErrorCode.IndexEntryTooLarge or JetErrorCode.ColumnCountLimit
+        or JetErrorCode.FeatureNotSupported;
 }
