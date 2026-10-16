@@ -23,13 +23,13 @@ Ordinary MEMO/OLE deletion and replacement release LVAL rows in every erase mode
 
 Current concern: ordinary MEMO/OLE row deletion passes the owning `TableDef` into the row-delete path so external LVAL roots can be collected. Some complex-column paths delete or clear hidden flat rows without that context, which may leave attachment `FileData` LVAL pages orphaned until Compact & Repair.
 
-### 2. Design a managed Compact & Repair style rebuild API
+### 2. Implement managed Compact & Repair
 
-- [ ] Sketch an API such as `CompactDatabaseAsync` that writes live database content into a new stream or file.
-- [ ] Decide whether the first version supports Jet3, Jet4, ACE, encrypted files, complex columns, linked-table catalog entries, and relationships.
-- [ ] Preserve catalog metadata that the writer can currently round-trip, including indexes, relationships, complex columns, column properties, linked-table metadata, and encryption settings where supported.
-- [ ] Rebuild live table rows and indexes instead of moving pages in place.
-- [ ] Validate with reader round-trip and DAO CompactDatabase on the rebuilt output.
+I17 owns the complete requirement. The [Compact & Repair plan](compact-and-repair.md)
+defines preservation, bounded diagnosis, compact-copy, validation/reporting,
+durable replacement and native acceptance packages, including their precise
+dependencies. Public decoded-value export/import does not preserve enough
+metadata to implement that contract.
 
 Non-goal: forensic erasure of the original source file. A rebuild can omit deleted rows, orphaned pages, and interior free pages from the new file, but it cannot guarantee removal from storage hardware, filesystem journals, snapshots, backups, or prior copies.
 
