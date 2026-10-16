@@ -91,6 +91,15 @@ public sealed class ComplexSchemaDaoTests
             Assert.Equal(seed, await ReadCounterAsync(original, table.Entry.TDefPage));
         }
 
+        string nativeReferenceSnapshot = BuildNativeReferenceIndexSnapshotScript(tableName, renamedColumn);
+        AccessRoundTripEnvironment.CompactResult nativeOriginal = session.RunDaoDatabaseScript(
+            session.SourcePath,
+            nativeReferenceSnapshot + Environment.NewLine + "Write-Output ('NATIVE_REFERENCE_INDEX=' + ($referenceIndexes -join ','))",
+            TimeSpan.FromMinutes(1));
+        AssertDaoSuccess(nativeOriginal, "NATIVE_REFERENCE_INDEX=");
+        string expectedNativeReference = nativeOriginal.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Single(line => line.StartsWith("NATIVE_REFERENCE_INDEX=", StringComparison.Ordinal))["NATIVE_REFERENCE_INDEX=".Length..];
+
         await using (AccessWriter writer = await session.OpenWriterAsync(Ct))
         {
             await writer.AddColumnAsync(tableName, new ColumnDefinition("AddedMarker", typeof(int)), Ct);
@@ -138,10 +147,12 @@ public sealed class ComplexSchemaDaoTests
             """ : string.Empty;
         string nativeMutation = $$"""
             $table = $db.TableDefs({{tableLiteral}})
-            foreach ($columnName in @('RenamedFiles','AddedTags','RenamedAttachment')) {
+            foreach ($columnName in @('RenamedFiles','AddedTags')) {
                 $matches = @($table.Indexes | Where-Object { $_.Fields.Count -eq 1 -and $_.Fields.Item(0).Name -eq $columnName })
                 if ($matches.Count -ne 1 -or !$matches[0].Unique -or !$matches[0].Required) { throw ('Invalid reference index: ' + $columnName) }
             }
+            {{BuildNativeReferenceIndexSnapshotScript(tableName, "RenamedAttachment")}}
+            if (($referenceIndexes -join ',') -ne {{Quote(expectedNativeReference)}}) { throw 'Changed native reference-index visibility or properties.' }
             {{nativeEdit}}
             Write-Output '{{nativeMarker}}'
             """;
@@ -308,6 +319,18 @@ public sealed class ComplexSchemaDaoTests
         Assert.True(result.ExitCode == 0, $"DAO failed: {result.StdOut}\n{result.StdErr}");
         Assert.Contains(marker, result.StdOut, StringComparison.Ordinal);
     }
+
+    private static string BuildNativeReferenceIndexSnapshotScript(string tableName, string columnName)
+        => $$"""
+            $table = $db.TableDefs({{Quote(tableName)}})
+            $referenceIndexes = @()
+            for ($i = 0; $i -lt $table.Indexes.Count; $i++) {
+                $index = $table.Indexes.Item($i)
+                if ($index.Fields.Count -eq 1 -and $index.Fields.Item(0).Name -eq {{Quote(columnName)}}) {
+                    $referenceIndexes += ('{0}:{1}:{2}' -f $index.Unique,$index.Required,$index.IgnoreNulls)
+                }
+            }
+            """;
 
     private static string BuildNativeReadbackScript(string tableName, string renamedColumn, IReadOnlyList<ComplexColumnInfo> complex, Dictionary<string, IReadOnlyList<AttachmentRecord>> attachments, Dictionary<string, IReadOnlyList<MultiValueItem>> values, Dictionary<string, bool> appendOnly, ParentSnapshot parentValues, string workDir)
     {

@@ -195,6 +195,9 @@ public enum JetErrorCode
     /// <summary>Identifies ComplexDiscoveryBudgetExceeded.</summary>
     ComplexDiscoveryBudgetExceeded = 810,
 
+    /// <summary>Identifies SchemaTraversalBudgetExceeded.</summary>
+    SchemaTraversalBudgetExceeded = 811,
+
     /// <summary>Identifies FeatureNotSupported.</summary>
     FeatureNotSupported = 901,
 

@@ -35,6 +35,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="maxEncryptionSpinCount">The password hashing budget.</param>
     /// <param name="maxEncryptionInfoBytes">The descriptor byte budget.</param>
     /// <param name="maxTableDefinitionBytes">The per-table definition byte budget.</param>
+    /// <param name="maxSchemaTraversalBytes">The combined definition-byte budget for catalog traversal.</param>
     /// <param name="workBudget">The cumulative password work for a reader and linked sources.</param>
     /// <param name="cancellationToken">Cancels password derivation during open.</param>
     private DatabaseFile(
@@ -48,15 +49,22 @@ internal sealed class DatabaseFile : IAsyncDisposable
         int maxEncryptionSpinCount = 1_000_000,
         int maxEncryptionInfoBytes = 1024 * 1024,
         int maxTableDefinitionBytes = 16 * 1024 * 1024,
+        int maxSchemaTraversalBytes = 64 * 1024 * 1024,
         EncryptionWorkBudget? workBudget = null,
         CancellationToken cancellationToken = default)
     {
 #if NET8_0_OR_GREATER
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxTableDefinitionBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSchemaTraversalBytes);
 #else
         if (maxTableDefinitionBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(maxTableDefinitionBytes));
+        }
+
+        if (maxSchemaTraversalBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxSchemaTraversalBytes));
         }
 #endif
 
@@ -75,7 +83,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
         this.Pages = writable
             ? new Pager(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType, cacheSize)
             : new PageFile(stream, this.Format.PageSize, pageKeys, leaveOpen, ownerType);
-        this.TableDefs = new TableDefReader(this.Pages, this.Format, cacheResults: true, maxTableDefinitionBytes);
+        this.TableDefs = new TableDefReader(this.Pages, this.Format, cacheResults: true, maxTableDefinitionBytes, maxSchemaTraversalBytes);
         if (this.Pages is Pager pager)
         {
             pager.AddWriteObserver(this.TableDefs);
@@ -115,7 +123,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <param name="cancellationToken">Cancels password derivation during open.</param>
     /// <returns>The read-only file.</returns>
     internal static DatabaseFile ForReader(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, AccessOptions? options = null, CancellationToken cancellationToken = default)
-        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), workBudget: (options as AccessReaderOptions)?.EncryptionWorkBudget, cancellationToken: cancellationToken);
+        => new(stream, header, password, path, leaveOpen, writable: false, maxEncryptionSpinCount: options?.MaxEncryptionSpinCount ?? 1_000_000, maxEncryptionInfoBytes: options?.MaxEncryptionInfoBytes ?? (1024 * 1024), maxTableDefinitionBytes: options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), maxSchemaTraversalBytes: options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), workBudget: (options as AccessReaderOptions)?.EncryptionWorkBudget, cancellationToken: cancellationToken);
 
     /// <summary>
     /// Opens the writer's file over a <see cref="Pager"/>, which writes and
@@ -136,7 +144,7 @@ internal sealed class DatabaseFile : IAsyncDisposable
     /// <returns>The writer's file.</returns>
     internal static DatabaseFile ForWriter(Stream stream, byte[] header, ReadOnlyMemory<char> password, string path, bool leaveOpen, out Pager pager, int cacheSize = 256, AccessOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024), options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), cancellationToken: cancellationToken);
+        var file = new DatabaseFile(stream, header, password, path, leaveOpen, writable: true, cacheSize, options?.MaxEncryptionSpinCount ?? 1_000_000, options?.MaxEncryptionInfoBytes ?? (1024 * 1024), options?.MaxTableDefinitionBytes ?? (16 * 1024 * 1024), options?.MaxSchemaTraversalBytes ?? (64 * 1024 * 1024), cancellationToken: cancellationToken);
         pager = (Pager)file.Pages;
         return file;
     }

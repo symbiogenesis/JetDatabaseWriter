@@ -28,12 +28,16 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition chain limits; bounded usage-map ownership inspection | S1: aggregate definitions, catalog entries, collection overhead, traversal and output budgets; cancellation throughout |
-| Preserve stored values | Strict write-back scans; unreadable-LVAL refusal | S3/F8: distinguish native error envelopes, Null and damaged values; preserve raw unassigned bytes; stream large LVALs |
+| Bound discovery before allocating | Per-definition limits; aggregate logical-definition and entry-count limits per catalog validation; bounded usage-map ownership inspection | S1: collection overhead, cache lifetime, remaining traversal and output budgets; cancellation throughout |
+| Preserve stored values | Strict write-back scans; unreadable-LVAL refusal | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned bytes; stream rows and large LVALs |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation | S7/S9: complete raw descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
 | Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs | I2: verified tree ownership, shared roots, cross-TDEF index numbers and native key ordering; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
+
+The compact-copy engine must avoid the existing table rewrite snapshots; it can
+implement the required bounded raw copy without completing I6's separate
+in-place-update and seek optimizations.
 
 Individual attachment editing/history (R8), query planning, cache performance,
 benchmarks and the custom-stream recovery contract are not prerequisites for a

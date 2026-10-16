@@ -413,6 +413,7 @@ internal sealed class IndexMaintainer(
     /// table definition declares no index.
     /// </returns>
     /// <exception cref="JetLimitationException">The index section cannot be parsed or runs past the end of the table definition, or an index names a column the table does not have.</exception>
+    /// <exception cref="JetCorruptDataException">Logical-index names or physical-index references are invalid.</exception>
     private async ValueTask<(TdefPreamble Preamble, IndexCatalogReader.ResolvedIndexCatalog? Catalog)> ResolveMaintainableIndexesAsync(
         long tdefPage,
         TableDef tableDef,
@@ -420,6 +421,12 @@ internal sealed class IndexMaintainer(
         CancellationToken cancellationToken)
     {
         (TdefPreambleStatus status, TdefPreamble preamble) = await this.ReadTdefPreambleAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        if (preamble.NumIdx > 0 && preamble.NumRealIdx <= 0)
+        {
+            const string reason = "The table definition declares logical indexes without any physical index";
+            throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Table '{tableName}' declares logical indexes without any physical index.", new JetErrorInfo { TableName = tableName, PageNumber = tdefPage, Reason = reason });
+        }
+
         if (status == TdefPreambleStatus.Empty)
         {
             return (preamble, null);
@@ -436,6 +443,25 @@ internal sealed class IndexMaintainer(
         IndexSectionAnchors anchors = format.Index.GetIndexSection(preamble.RealIdxDescStart, preamble.NumRealIdx, preamble.NumIdx);
         List<string> logicalIndexNames = IndexCatalogReader.ReadLogicalIdxNames(format, preamble.Buffer, anchors.LogIdxNamesStart, preamble.NumIdx);
         this.ThrowIfIndexSectionCutShort(tableName, preamble, anchors, logicalIndexNames.Count);
+        var uniqueNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int logicalIndex = 0; logicalIndex < preamble.NumIdx; logicalIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string indexName = logicalIndexNames[logicalIndex];
+            if (!uniqueNames.Add(indexName))
+            {
+                const string reason = "The table definition contains duplicate logical-index names";
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Table '{tableName}' has duplicate logical index name '{indexName}'.", new JetErrorInfo { TableName = tableName, IndexName = indexName, PageNumber = tdefPage, Reason = reason });
+            }
+
+            if (!format.Index.TryReadLogicalEntry(preamble.Buffer, anchors.LogIdxStart, logicalIndex, out LogicalIdxEntry entry)
+                || entry.IndexNum2 < 0 || entry.IndexNum2 >= preamble.NumRealIdx)
+            {
+                const string reason = "The logical index references a real index outside its table definition";
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Index '{indexName}' of table '{tableName}' has an invalid real-index reference.", new JetErrorInfo { TableName = tableName, IndexName = indexName, PageNumber = tdefPage, Reason = reason });
+            }
+        }
+
         IndexCatalogReader.ResolvedIndexCatalog catalog = IndexCatalogReader.ReadResolved(
             preamble.Buffer,
             format.Index,

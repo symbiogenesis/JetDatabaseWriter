@@ -31,7 +31,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// <param name="msys">The <c>MSysObjects</c> table definition.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <param name="maxEntries">The maximum number of catalog entries to inspect.</param>
-    /// <exception cref="JetLimitationException">The complex discovery metadata budget is exceeded.</exception>
+    /// <exception cref="JetLimitationException">The catalog or complex discovery metadata budget is exceeded.</exception>
     /// <exception cref="JetCorruptDataException">The catalog is missing a required field, a live row has malformed required values, or its row directory and overflow pointers cannot be completely traversed.</exception>
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue)
     {
@@ -45,6 +45,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
             throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "MSysObjects is missing a required Id, Name, Type or Flags column.");
         }
 
+        int maxSchemaEntries = Math.Max(1, tableDefs.MaxSchemaTraversalBytes / 64);
         var result = new List<CatalogRow>();
         try
         {
@@ -52,6 +53,15 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
                 2,
                 (row, _) =>
                 {
+                    if (result.Count >= maxSchemaEntries)
+                    {
+                        const string reason = "The catalog row count exceeds the MaxSchemaTraversalBytes entry limit.";
+                        throw new JetLimitationException(
+                            JetErrorCode.SchemaTraversalBudgetExceeded,
+                            reason,
+                            new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.Location.PageNumber, Reason = reason });
+                    }
+
                     if (result.Count >= maxEntries)
                     {
                         throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Catalog discovery exceeds MaxComplexDiscoveryEntries.");
@@ -159,13 +169,30 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
 
             if (row.TDefPage < 2 || row.TDefPage >= tableDefs.PageCount
                 || (isCatalog ? row.TDefPage != 2 : row.TDefPage == 2)
-                || !roots.Add(row.TDefPage)
-                || await tableDefs.ReadTableDefAsync(row.TDefPage, cancellationToken).ConfigureAwait(false) is null)
+                || !roots.Add(row.TDefPage))
             {
                 throw new JetCorruptDataException(
                     JetErrorCode.CorruptCatalog,
                     "A catalog table reference is invalid or ambiguous.",
                     new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = row.PageNumber });
+            }
+        }
+
+        TDefImage catalog = await tableDefs.ReadImageAsync(2, tableDefs.MaxSchemaTraversalBytes, cancellationToken).ConfigureAwait(false)
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptCatalog, "The MSysObjects catalog table definition could not be read.");
+        int remainingSchemaBytes = tableDefs.MaxSchemaTraversalBytes - catalog.LogicalByteLength;
+        foreach (long root in roots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (root != 2)
+            {
+                TDefImage definition = await tableDefs.ReadImageAsync(root, remainingSchemaBytes, cancellationToken).ConfigureAwait(false)
+                    ?? throw new JetCorruptDataException(
+                        JetErrorCode.CorruptCatalog,
+                        "A catalog table reference does not identify a table definition.",
+                        new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = root });
+
+                remainingSchemaBytes -= definition.LogicalByteLength;
             }
         }
     }

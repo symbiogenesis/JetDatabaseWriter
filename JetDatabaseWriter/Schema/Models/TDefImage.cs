@@ -36,6 +36,9 @@ internal sealed class TDefImage
 
     internal TDefParseIssues Issues { get; }
 
+    /// <summary>Gets the retained logical byte length without copying the image.</summary>
+    internal int LogicalByteLength => this.bytes.Length;
+
     internal IndexSectionAnchors? IndexSection { get; }
 
     internal IReadOnlyList<TDefIndexDescriptor> RealIndexes { get; }

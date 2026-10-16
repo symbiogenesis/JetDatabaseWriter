@@ -9,6 +9,7 @@ using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.ComplexColumns;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Models;
@@ -62,10 +63,18 @@ internal sealed class TableStorageEditor(
     internal async ValueTask ApplyAsync(TableRewritePlan plan, string tempName, CancellationToken cancellationToken)
     {
         TableRewriteCopy copy = await this.CopyRowsAndIndexesAsync(plan, tempName, cancellationToken).ConfigureAwait(false);
-        await this.PreserveJet3IndexMetadataAsync(plan, copy, cancellationToken).ConfigureAwait(false);
+        await this.PreserveIndexMetadataAsync(plan, copy, cancellationToken).ConfigureAwait(false);
         await this.ValidateCopyAsync(copy, cancellationToken).ConfigureAwait(false);
         await this.ReplaceOriginalAsync(plan, copy, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Reports a rewrite that cannot preserve a surviving native index.</summary>
+    /// <param name="plan">The table's rewrite plan.</param>
+    /// <param name="indexName">The surviving index.</param>
+    /// <param name="reason">The preservation conflict.</param>
+    /// <returns>The structured refusal.</returns>
+    private static JetLimitationException CreateUnpreservableIndexException(TableRewritePlan plan, string indexName, string reason)
+        => new(JetErrorCode.IndexesUnmaintainable, $"Index '{indexName}' of table '{plan.TableName}' cannot be preserved: {reason}.", new JetErrorInfo { TableName = plan.TableName, IndexName = indexName, PageNumber = plan.Entry.TDefPage, Reason = reason });
 
     private async ValueTask<TableRewriteCopy> CopyRowsAndIndexesAsync(TableRewritePlan plan, string tempName, CancellationToken cancellationToken)
     {
@@ -150,36 +159,111 @@ internal sealed class TableStorageEditor(
         return new TableRewriteCopy(tempName, tempEntry, tempDef, [.. storagePages], fkIndexNumbers);
     }
 
-    private async ValueTask PreserveJet3IndexMetadataAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
+    private async ValueTask PreserveIndexMetadataAsync(TableRewritePlan plan, TableRewriteCopy copy, CancellationToken cancellationToken)
     {
-        if (!format.IsJet3 || plan.SourceImage.RealIndexes.Count == 0)
+        if (plan.SourceImage.RealIndexes.Count == 0)
         {
             return;
         }
 
         byte[] original = plan.SourceImage.CopyBytes();
-        var originalIndexes = new Dictionary<string, IndexMetadata>(StringComparer.OrdinalIgnoreCase);
-        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(format, original, plan.Definition.Columns))
+        var originalIndexes = new Dictionary<string, TDefLogicalIndexDescriptor>(StringComparer.OrdinalIgnoreCase);
+        foreach (TDefLogicalIndexDescriptor index in plan.SourceImage.LogicalIndexes)
         {
-            originalIndexes.Add(index.Name, index);
+            if (!originalIndexes.TryAdd(index.Name, index))
+            {
+                throw new JetCorruptDataException(JetErrorCode.CorruptIndex, $"Table '{plan.TableName}' has duplicate logical index name '{index.Name}'.", new JetErrorInfo { TableName = plan.TableName, IndexName = index.Name, PageNumber = plan.Entry.TDefPage, Reason = "The table definition contains duplicate logical-index names" });
+            }
         }
 
         LogicalTDefChain replacement = await tableDefs.ReadTDefChainAsync(copy.Entry.TDefPage, cancellationToken).ConfigureAwait(false);
-        TDefCounts counts = TDefCodec.ReadCounts(format, replacement.Bytes);
-        int descriptorStart = IndexCatalogReader.LocateRealIdxDescStart(format, replacement.Bytes, counts.ColumnCount, counts.RealIndexCount);
-        foreach (IndexMetadata index in IndexCatalogReader.ReadMetadata(format, replacement.Bytes, copy.Definition.Columns))
+        TDefImage image = TDefCodec.Parse(format, replacement.Bytes)
+            ?? throw new JetCorruptDataException(JetErrorCode.CorruptIndex, "The replacement index descriptors cannot be read.", new JetErrorInfo { TableName = plan.TableName, PageNumber = copy.Entry.TDefPage, Reason = "The replacement table definition cannot be parsed" });
+        var physicalMetadata = new Dictionary<int, byte[]>();
+        foreach (TDefLogicalIndexDescriptor index in image.LogicalIndexes)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!originalIndexes.TryGetValue(index.Name, out IndexMetadata? source))
+            if (!originalIndexes.TryGetValue(index.Name, out TDefLogicalIndexDescriptor? source))
             {
                 continue;
             }
 
-            int sourceSlot = format.TDef.BlockEnd + (source.RealIndexNumber * format.TDef.RealIdxEntrySz);
-            int targetSlot = format.TDef.BlockEnd + (index.RealIndexNumber * format.TDef.RealIdxEntrySz);
-            original.AsSpan(sourceSlot, format.TDef.RealIdxEntrySz).CopyTo(replacement.Bytes.AsSpan(targetSlot));
-            int descriptor = format.Index.RealIdxPhysOffset(descriptorStart, index.RealIndexNumber);
-            replacement.Bytes[format.Index.FlagsAbsoluteOffset(descriptor)] = plan.SourceImage.RealIndexes[source.RealIndexNumber].Slot.Flags;
+            int sourceNumber = source.Entry.IndexNum2;
+            int targetNumber = index.Entry.IndexNum2;
+            TDefIndexDescriptor targetDescriptor = image.RealIndexes[targetNumber];
+            int bookkeepingWidth = format.TDef.RealIdxEntrySz;
+            int sourceSlot = format.TDef.BlockEnd + (sourceNumber * bookkeepingWidth);
+            int targetSlot = format.TDef.BlockEnd + (targetNumber * bookkeepingWidth);
+            byte[] metadata = new byte[bookkeepingWidth + format.Index.RealIdxPhysSize];
+            original.AsSpan(sourceSlot, bookkeepingWidth).CopyTo(metadata);
+            if (!format.IsJet3)
+            {
+                // Jet4/ACE count words describe the rebuilt live rows. Jet3's
+                // eight-byte slots are native optimizer estimates kept verbatim.
+                replacement.Bytes.AsSpan(targetSlot + 4, 4).CopyTo(metadata.AsSpan(4));
+            }
+
+            IReadOnlyList<byte> sourceDescriptor = plan.SourceImage.RealIndexes[sourceNumber].RawDescriptor;
+            for (int offset = 0; offset < sourceDescriptor.Count; offset++)
+            {
+                metadata[bookkeepingWidth + offset] = sourceDescriptor[offset];
+            }
+
+            // Match active key columns by ordinal, retaining sparse native slot
+            // positions and padding. The rebuilt tree must use the same direction.
+            int keyColumn = 0;
+            for (int slot = 0; slot < Constants.TableDefinition.ColMapSlotCount; slot++)
+            {
+                int offset = format.Index.ColMapStartWithinPhys + (slot * Constants.TableDefinition.ColMapSlotSize);
+                if (Ru16(metadata, bookkeepingWidth + offset) == ushort.MaxValue)
+                {
+                    continue;
+                }
+
+                if (keyColumn >= targetDescriptor.Columns.Count)
+                {
+                    throw CreateUnpreservableIndexException(plan, index.Name, "The source and replacement indexes have different key-column counts");
+                }
+
+                KeyColumn targetColumn = targetDescriptor.Columns[keyColumn++];
+                bool sourceAscending = (metadata[bookkeepingWidth + offset + 2] & 1) != 0;
+                if (sourceAscending != targetColumn.Ascending)
+                {
+                    throw CreateUnpreservableIndexException(plan, index.Name, "The replacement tree uses a different key direction");
+                }
+
+                Wu16(metadata, bookkeepingWidth + offset, targetColumn.ColNum);
+            }
+
+            if (keyColumn != targetDescriptor.Columns.Count)
+            {
+                throw CreateUnpreservableIndexException(plan, index.Name, "The source and replacement indexes have different key-column counts");
+            }
+
+            // Rebuilt trees own new roots and usage maps.
+            int references = format.Index.FirstDpAbsoluteOffset(0) - 4;
+            replacement.Bytes.AsSpan(targetDescriptor.Slot.PhysStart + references, 8).CopyTo(metadata.AsSpan(bookkeepingWidth + references));
+            if (physicalMetadata.TryGetValue(targetNumber, out byte[]? existing)
+                && !existing.AsSpan().SequenceEqual(metadata))
+            {
+                throw CreateUnpreservableIndexException(plan, index.Name, "The replacement would merge incompatible native index metadata");
+            }
+
+            physicalMetadata[targetNumber] = metadata;
+            metadata.AsSpan(0, bookkeepingWidth).CopyTo(replacement.Bytes.AsSpan(targetSlot));
+            metadata.AsSpan(bookkeepingWidth).CopyTo(replacement.Bytes.AsSpan(targetDescriptor.Slot.PhysStart));
+
+            // Logical numbering and partner references belong to the generated
+            // graph. Native cascade bytes, kind, cookies and trailing bytes survive.
+            int entryStart = index.Entry.FieldsOffset - format.Index.LogicalEntryFieldsOffset;
+            for (int offset = 0; offset < source.RawDescriptor.Count; offset++)
+            {
+                int fieldOffset = offset - format.Index.LogicalEntryFieldsOffset;
+                if (fieldOffset is < 0 or >= 17)
+                {
+                    replacement.Bytes[entryStart + offset] = source.RawDescriptor[offset];
+                }
+            }
         }
 
         await replacement.WriteInPlaceAsync(pager.ReadPageAsync, PageBuffers.Return, pager.WritePageAsync, cancellationToken).ConfigureAwait(false);

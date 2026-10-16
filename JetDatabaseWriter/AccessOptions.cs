@@ -51,6 +51,14 @@ public abstract class AccessOptions(bool useByteRangeLocks)
     public int MaxTableDefinitionBytes { get; init; } = 16 * 1024 * 1024;
 
     /// <summary>
+    /// Gets the maximum combined logical table-definition bytes inspected by one
+    /// catalog traversal, including the system catalog. Default: 64 MiB. Must be
+    /// positive. Catalog row collections are also limited to one entry per 64
+    /// bytes of this budget (at least one entry); this is not a total-memory limit.
+    /// </summary>
+    public int MaxSchemaTraversalBytes { get; init; } = 64 * 1024 * 1024;
+
+    /// <summary>
     /// Gets a value indicating whether a lockfile (.ldb / .laccdb) slot is maintained
     /// alongside a file database while open. Disposal releases this opener's slot and
     /// attempts to remove an unused lockfile; other holders or permissions can retain it.

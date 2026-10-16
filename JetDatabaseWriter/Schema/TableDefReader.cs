@@ -23,12 +23,14 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <param name="format">The format profile.</param>
     /// <param name="cacheResults">Whether parsed structural images are cached.</param>
     /// <param name="maxLogicalBytes">The per-table definition byte budget.</param>
-    internal TableDefReader(IPageSource pages, JetFormat format, bool cacheResults, int maxLogicalBytes = 16 * 1024 * 1024)
+    /// <param name="maxSchemaTraversalBytes">The combined definition-byte budget for catalog traversal.</param>
+    internal TableDefReader(IPageSource pages, JetFormat format, bool cacheResults, int maxLogicalBytes = 16 * 1024 * 1024, int maxSchemaTraversalBytes = 64 * 1024 * 1024)
     {
         this.pages = pages;
         this.format = format;
         this.cacheResults = cacheResults;
         this.MaxLogicalBytes = maxLogicalBytes;
+        this.MaxSchemaTraversalBytes = maxSchemaTraversalBytes;
         this.images = new TDefImageCache(format);
     }
 
@@ -40,6 +42,9 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
 
     /// <summary>Gets the per-table logical byte budget for direct chain readers.</summary>
     internal int MaxLogicalBytes { get; }
+
+    /// <summary>Gets the combined logical-byte limit for one catalog traversal.</summary>
+    internal int MaxSchemaTraversalBytes { get; }
 
     /// <summary>Gets or sets a value indicating whether cache hits are checked against the source.</summary>
     internal bool VerifyOnHit { get; set; } = VerifyCacheHits;
@@ -124,16 +129,30 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     /// <param name="tdefPage">The root page.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The image, or null when the root is not a table definition.</returns>
+    internal ValueTask<TDefImage?> ReadImageAsync(long tdefPage, CancellationToken cancellationToken = default)
+        => this.ReadImageAsync(tdefPage, this.MaxSchemaTraversalBytes, cancellationToken);
+
+    /// <summary>Reads an image within the remaining allowance of a catalog traversal.</summary>
+    /// <param name="tdefPage">The root page.</param>
+    /// <param name="remainingSchemaBytes">The remaining logical-byte allowance of the current catalog traversal.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The image, or null when the root is not a table definition.</returns>
     /// <exception cref="InvalidDataException">Verification detects stale cached structure.</exception>
     /// <exception cref="JetCorruptDataException">A table definition has an invalid column layout.</exception>
-    internal async ValueTask<TDefImage?> ReadImageAsync(long tdefPage, CancellationToken cancellationToken = default)
+    /// <exception cref="JetLimitationException">The image exceeds the remaining schema traversal budget.</exception>
+    internal async ValueTask<TDefImage?> ReadImageAsync(long tdefPage, int remainingSchemaBytes, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (this.cacheResults && this.images.TryGet(tdefPage, out TDefImage? cached))
         {
+            if (cached.LogicalByteLength > Math.Min(this.MaxSchemaTraversalBytes, remainingSchemaBytes))
+            {
+                throw SchemaBudgetExceeded(tdefPage);
+            }
+
             if (this.VerifyOnHit)
             {
-                LogicalTDefChain? current = await this.ReadChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+                LogicalTDefChain? current = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken).ConfigureAwait(false);
                 if (current is null || !this.images.StructuralBytesEqual(cached.CopyBytes(), current.Bytes))
                 {
                     throw new InvalidDataException($"The cached table definition at page {tdefPage} is stale.");
@@ -145,7 +164,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         }
 
         long epoch = this.images.Epoch;
-        LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken).ConfigureAwait(false);
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
         if (chain is not null && image is null)
         {
@@ -190,6 +209,41 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
+    private static JetLimitationException SchemaBudgetExceeded(long page)
+    {
+        const string reason = "The combined table definitions exceed MaxSchemaTraversalBytes.";
+        return new JetLimitationException(
+            JetErrorCode.SchemaTraversalBudgetExceeded,
+            reason,
+            new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = page, Reason = reason });
+    }
+
     private ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, CancellationToken cancellationToken)
-        => LogicalTDefChain.ReadAsync(startPage, this.format.PageSize, this.pages.ReadPageAsync, PageBuffers.Return, retainPageNumbers: true, cancellationToken, this.MaxLogicalBytes);
+        => this.ReadChainAsync(startPage, this.MaxSchemaTraversalBytes, cancellationToken);
+
+    private async ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, int remainingSchemaBytes, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int schemaBudget = Math.Min(this.MaxSchemaTraversalBytes, remainingSchemaBytes);
+        if (schemaBudget < this.format.PageSize)
+        {
+            throw SchemaBudgetExceeded(startPage);
+        }
+
+        try
+        {
+            return await LogicalTDefChain.ReadAsync(
+                startPage,
+                this.format.PageSize,
+                this.pages.ReadPageAsync,
+                PageBuffers.Return,
+                retainPageNumbers: true,
+                cancellationToken,
+                Math.Min(this.MaxLogicalBytes, schemaBudget)).ConfigureAwait(false);
+        }
+        catch (JetLimitationException error) when (error.ErrorCode == JetErrorCode.ValueTooLarge && schemaBudget <= this.MaxLogicalBytes)
+        {
+            throw SchemaBudgetExceeded(startPage);
+        }
+    }
 }

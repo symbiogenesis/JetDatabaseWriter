@@ -148,6 +148,16 @@ var writerOptions = new AccessWriterOptions("secretPassword")
 await using var writer = await AccessWriter.OpenAsync("database.mdb", writerOptions);
 ```
 
+Both readers and writers limit one logical table-definition chain to
+`MaxTableDefinitionBytes` (16 MiB by default). `MaxSchemaTraversalBytes`
+(64 MiB by default) additionally bounds the combined logical definition bytes
+in one catalog validation, including `MSysObjects`, and derives a catalog-entry
+count ceiling from that limit. These are positive resource limits; callers may
+increase them for trusted large schemas. A schema traversal limit reports
+`SchemaTraversalBudgetExceeded` in strict and lenient modes. It does not imply
+corruption or impose a process-wide memory ceiling: parsed objects, cache
+lifetime and collection overhead have separate costs.
+
 Linked Access/text data reads require `LinkedSourceResolver`; listing link definitions and
 cached ODBC columns does not. Register trusted, committed snapshot bytes independently
 of the host database, then select them in the resolver. For example, after the application

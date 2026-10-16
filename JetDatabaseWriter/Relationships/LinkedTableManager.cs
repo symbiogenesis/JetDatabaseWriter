@@ -66,6 +66,7 @@ internal static class LinkedTableManager
             MaxTotalEncryptionSpinCount = options.MaxTotalEncryptionSpinCount,
             EncryptionWorkBudget = options.EncryptionWorkBudget,
             MaxTableDefinitionBytes = options.MaxTableDefinitionBytes,
+            MaxSchemaTraversalBytes = options.MaxSchemaTraversalBytes,
             MaxLongValueBytes = options.MaxLongValueBytes,
             MaxAttachmentContentBytes = options.MaxAttachmentContentBytes,
             MaxAttachmentContentBytesPerOperation = options.MaxAttachmentContentBytesPerOperation,

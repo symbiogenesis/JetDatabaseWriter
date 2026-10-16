@@ -18,6 +18,42 @@
 
 `IndexMaintainer` owns key/metadata preparation and TDEF/usage-map finalization. Ordinary and catalog tree surgery belongs to `IndexBTreeEditor`; catalog insertion accepts an encoded entry after catalog policy has run. Staged leaf and cross-leaf plans validate append addresses and page ownership, and complete neighboring-page reads before the ordered append, neighbor, leaf and ancestor writes. The intermediate rewrite context owns deepest-first pending operations, collapse, replacement/max propagation and split-tail staging; root publication is a separate step. The incremental metadata state carries pending root changes across TDEF refreshes; its finalization links reservations through usage maps and TDEF writes inside the existing caller-owned transaction.
 
+## Descriptor preservation during schema rewrites
+
+Add/Drop/Rename retains surviving physical and logical index descriptors by
+index name. Physical bookkeeping, native flags, column-order bytes and opaque
+descriptor bytes survive; rebuilt column numbers, usage-map pointers, tree roots,
+logical index numbers and partner references come from the replacement graph.
+The Jet4/ACE maintained index-row count uses the replacement value while its
+surrounding opaque bookkeeping words survive. Jet3 statistics remain estimates
+rather than being replaced by live row counts. Invalid logical-to-physical index
+references refuse mutation before temporary storage is created.
+If several source descriptors would merge into one replacement tree, their
+preserved metadata must agree. Incompatible metadata refuses the rewrite with
+`IndexesUnmaintainable` and rolls back its temporary storage.
+Sparse column-map slots retain their original positions while active column
+numbers are retargeted by key ordinal. A source FK sort direction that differs
+from its regenerated tree also refuses the rewrite rather than emitting
+descriptor flags that disagree with the tree. Preserving such standalone
+descending FK trees remains a schema-rewrite requirement.
+
+`IndexDescriptorPreservationTests` compares synthetic opaque bytes across all
+formats, schema operations and write modes, including shared self-FK trees,
+index reads, uniqueness, complete rollback and incompatible-merge refusal.
+Separate DAO-authored sources exercise native metadata, reads, constraints,
+mutation and compact/reopen. Synthetic marker preservation does not establish
+native acceptance of those invented marker bytes or a general relocation
+contract for opaque metadata.
+
+In the Microsoft-authored `ComplexFields.accdb` `Documents` table, physical
+descriptor byte 47 is `02` on the attachment-supporting index. DAO120 omits
+that index from `TableDef.Indexes`; changing only this byte to zero exposes
+the same index with Unique and Required set. The preserved `02` form permits
+attachment reads, insertion, compact and reopened extraction after a column
+rename. This observation establishes visibility for that specimen, not every
+bit of the trailing field. Native tests compare original visibility rather
+than requiring internal supporting indexes to become public DAO indexes.
+
 ## Null keys and cascade planning
 
 Non-primary unique indexes allow multiple all-Null keys; partly Null composite keys still participate in uniqueness. IgnoreNulls omits all-Null keys in rebuilds, incremental changes and catalog splices. Required and primary indexes reject a Null component before mutation. Northwind Employees supplies real-file evidence for repeated Null WindowsUserName keys; the format/write-mode regression matrix covers batch inserts, updates and reopen behavior.
