@@ -56,6 +56,29 @@ public sealed class DelimitedTextReaderFuzzTests
         RunFuzzIteration(input);
     }
 
+    /// <summary>
+    /// Keeps generated empty records distinct from end-of-input and adjacent record terminators.
+    /// </summary>
+    /// <param name="prefix">The preceding encoded record, if any.</param>
+    /// <param name="lineEnding">The empty record's terminator.</param>
+    /// <param name="expectedRowCount">The number of encoded records.</param>
+    [Theory]
+    [InlineData("", "", 1)]
+    [InlineData("", "\r\n", 1)]
+    [InlineData("", "\n", 1)]
+    [InlineData("", "\r", 1)]
+    [InlineData("previous\r", "\n", 2)]
+    [InlineData("previous\r", "\r\n", 2)]
+    public void RoundTripEmptySingleColumnRecord_PreservesRow(string prefix, string lineEnding, int expectedRowCount)
+    {
+        string source = prefix + EscapeField(string.Empty, ',') + lineEnding;
+
+        List<string[]> rows = ReadAll(source, ',');
+
+        Assert.Equal(expectedRowCount, rows.Count);
+        Assert.Equal([string.Empty], rows[^1]);
+    }
+
     private static void RunFuzzIteration(byte[] fuzzedBytes)
     {
         var random = FuzzRandom.Create(fuzzedBytes);
