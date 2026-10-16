@@ -48,6 +48,7 @@ public sealed class DelimitedTextReaderTests
 
     public static TheoryData<byte[], int, int, int, bool, char> FuzzSeedRoundTripCases => new()
     {
+        { [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 1, 1, 0, false, ',' },
         { CreateFuzzSeed(23768213), 1, 1, 0, false, ',' },
         { CreateFuzzSeed(71832791), 48, 6, 8, false, ',' },
         { CreateFuzzSeed(91827364), 150, 18, 24, true, ',' },
@@ -499,7 +500,9 @@ public sealed class DelimitedTextReaderTests
 
     private static string EscapeField(string value, char delimiter)
     {
-        if (value.IndexOf(delimiter, StringComparison.Ordinal) < 0 &&
+        // An unquoted empty record can disappear at EOF or merge adjacent CR/LF terminators.
+        if (value.Length > 0 &&
+            value.IndexOf(delimiter, StringComparison.Ordinal) < 0 &&
             value.IndexOf('"', StringComparison.Ordinal) < 0 &&
             value.IndexOf('\r', StringComparison.Ordinal) < 0 &&
             value.IndexOf('\n', StringComparison.Ordinal) < 0)

@@ -29,32 +29,36 @@ function Start-Process {
     Assert-Check ($WindowStyle -eq 'Hidden') 'The runner would open a visible window.'
     Assert-Check ([IO.Path]::IsPathFullyQualified($WorkingDirectory) -and $WorkingDirectory.StartsWith([IO.Path]::GetTempPath()) -and (Test-Path -LiteralPath $WorkingDirectory)) 'The runner working directory was not an absolute temporary directory.'
     Assert-Check ($Environment.Keys.Count -eq 2) 'The child environment redirected inherited system/profile paths.'
-    [IO.File]::WriteAllText($RedirectStandardOutput, '[FuzzCoverage] reader:open')
+    $processMode = $fuzzTestContext.Mode
+    if ($processMode -eq 'RejectedShrinks') {
+        $processMode = if ($RedirectStandardOutput -match '-shrink-\d+\.stdout\.log$') { 'Pass' } else { 'FailureA' }
+    }
+    [IO.File]::WriteAllText($RedirectStandardOutput, ('[FuzzCoverage] reader:open' + [Environment]::NewLine + $processMode))
     [IO.File]::WriteAllText($RedirectStandardError, '')
-    if ($fuzzTestContext.Mode -eq 'LaunchFailed') { throw 'Synthetic launch failure' }
+    if ($processMode -eq 'LaunchFailed') { throw 'Synthetic launch failure' }
     $xmlPath = $ArgumentList[-1].Trim('"')
-    if ($fuzzTestContext.Mode -eq 'CompleteCoverage') {
+    if ($processMode -eq 'CompleteCoverage') {
         $tags = @('open:completed', 'catalog:completed', 'schema:completed', 'index-list:completed', 'rows:completed', 'seek:completed', 'links:completed', 'relationships:completed', 'encryption-attempt', 'encrypted:completed', 'link-denied') | ForEach-Object { "[FuzzCoverage] reader:$_" }
         [IO.File]::WriteAllText($xmlPath, ('<assemblies><test result="Pass"><output><![CDATA[{0}]]></output></test></assemblies>' -f ($tags -join [Environment]::NewLine)))
-    } elseif ($fuzzTestContext.Mode -eq 'Pass') {
+    } elseif ($processMode -eq 'Pass') {
         [IO.File]::WriteAllText($xmlPath, '<assemblies><assembly><collection><test result="Pass" /></collection></assembly></assemblies>')
-    } elseif ($fuzzTestContext.Mode -eq 'XmlCoverage') {
+    } elseif ($processMode -eq 'XmlCoverage') {
         [IO.File]::WriteAllText($RedirectStandardOutput, '')
         [IO.File]::WriteAllText($xmlPath, '<assemblies><test result="Pass"><output><![CDATA[[FuzzCoverage] reader:seek:completed
 [FuzzCoverage] writer.insert.succeeded
 [FuzzCoverage] schema.write.refused]]></output></test></assemblies>')
-    } elseif ($fuzzTestContext.Mode -in 'FailureA', 'FailureB') {
-        [IO.File]::WriteAllText($xmlPath, ('<assemblies><test result="Fail"><failure exception-type="{0}"><message>input-dependent</message><stack-trace>at Fuzz.Harness in C:\agent\file.cs:line 17</stack-trace></failure></test></assemblies>' -f $fuzzTestContext.Mode))
-    } elseif ($fuzzTestContext.Mode -eq 'Unexpected') {
+    } elseif ($processMode -in 'FailureA', 'FailureB') {
+        [IO.File]::WriteAllText($xmlPath, ('<assemblies><test result="Fail"><failure exception-type="{0}"><message>input-dependent</message><stack-trace>at Fuzz.Harness in C:\agent\file.cs:line 17</stack-trace></failure></test></assemblies>' -f $processMode))
+    } elseif ($processMode -eq 'Unexpected') {
         [IO.File]::WriteAllText($xmlPath, '<assemblies><test result="Skip" /></assemblies>')
-    } elseif ($fuzzTestContext.Mode -eq 'Malformed') {
+    } elseif ($processMode -eq 'Malformed') {
         [IO.File]::WriteAllText($xmlPath, '<assemblies>')
     }
     $process = [pscustomobject]@{
-        ExitCode = $(if ($fuzzTestContext.Mode -in 'Failed', 'FailureA', 'FailureB') { 7 } else { 0 })
-        HasExited = ($fuzzTestContext.Mode -notin 'MemoryLimit', 'Timeout')
+        ExitCode = $(if ($processMode -in 'Failed', 'FailureA', 'FailureB') { 7 } else { 0 })
+        HasExited = ($processMode -notin 'MemoryLimit', 'Timeout')
         PrivateMemorySize64 = 513MB
-        Mode = $fuzzTestContext.Mode
+        Mode = $processMode
         KilledTree = $false
         Disposed = $false
     }
@@ -74,7 +78,7 @@ function Start-Process {
     $fuzzTestContext.Processes.Add($process)
     return $process
 }
-function Invoke-Scenario([string] $Name, [string] $Mode, [int] $Cases, [int] $ExpectedCases = 0) {
+function Invoke-Scenario([string] $Name, [string] $Mode, [int] $Cases, [int] $ExpectedCases = 0, [int] $MinimizeAttempts = 1) {
     if ($ExpectedCases -eq 0) { $ExpectedCases = 3 * $Cases }
     $fuzzTestContext.Mode = $Mode
     $fuzzTestContext.Processes.Clear()
@@ -86,11 +90,11 @@ function Invoke-Scenario([string] $Name, [string] $Mode, [int] $Cases, [int] $Ex
         }
     }
     $caught = $null
-    try { & $subject -Runner $runner -Cases $Cases -Seed 42 -TimeoutSeconds 1 -MinimizeAttempts 1 -MinimizeSeconds 2 -OutputDirectory $output }
+    try { & $subject -Runner $runner -Cases $Cases -Seed 42 -TimeoutSeconds 1 -MinimizeAttempts $MinimizeAttempts -MinimizeSeconds 2 -OutputDirectory $output }
     catch { $caught = $_ }
     $manifestPath = Join-Path $output 'manifest.json'
     Assert-Check (Test-Path -LiteralPath $manifestPath) "$Name did not preserve its manifest. Error: $caught"
-    Assert-Check ($fuzzTestContext.Processes.Count -ge $ExpectedCases -and $fuzzTestContext.Processes.Count -le (2 * $ExpectedCases) -or $Mode -eq 'LaunchFailed') "$Name did not run every case within its minimization bound."
+    Assert-Check ($fuzzTestContext.Processes.Count -ge $ExpectedCases -and $fuzzTestContext.Processes.Count -le ((1 + $MinimizeAttempts) * $ExpectedCases) -or $Mode -eq 'LaunchFailed') "$Name did not run every case within its minimization bound."
     Assert-Check (@($fuzzTestContext.Processes | Where-Object { -not $_.Disposed }).Count -eq 0) "$Name leaked a process handle."
     if ($Mode -in 'MemoryLimit', 'Timeout') {
         Assert-Check (@($fuzzTestContext.Processes | Where-Object { -not $_.KilledTree }).Count -eq 0) "$Name did not terminate the process tree."
@@ -104,7 +108,7 @@ function Invoke-Scenario([string] $Name, [string] $Mode, [int] $Cases, [int] $Ex
             Assert-Check (-not [string]::IsNullOrEmpty($entry.Signature)) "$Name omitted the original failure signature."
             if ($entry.Minimized) {
                 Assert-Check (Test-Path -LiteralPath (Join-Path $output $entry.Minimized.Input)) "$Name lost its minimized reproduction."
-                Assert-Check ($entry.Minimized.Attempts -le 1 -and $entry.Minimized.Signature -eq $entry.Signature) "$Name violated its shrink budget or failure signature."
+                Assert-Check ($entry.Minimized.Attempts -le $MinimizeAttempts -and $entry.Minimized.Signature -eq $entry.Signature) "$Name violated its shrink budget or failure signature."
             }
         }
     }
@@ -124,6 +128,19 @@ $failureA = Invoke-Scenario 'failure-signature-a' 'FailureA' 1
 $failureB = Invoke-Scenario 'failure-signature-b' 'FailureB' 1
 Assert-Check ($failureA.Manifest[0].Signature -ne $failureB.Manifest[0].Signature) 'Different exception types produced the same shrink signature.'
 Assert-Check ($failureA.Manifest[0].Signature -eq $failureA.Manifest[0].Minimized.Signature) 'Failure identity was not preserved in the minimized reproduction.'
+$rejectedShrinks = Invoke-Scenario 'rejected-shrinks' 'RejectedShrinks' 1 -MinimizeAttempts 2
+Assert-Check ($null -ne $rejectedShrinks.Error) 'Rejected shrink probes falsely passed the original failures.'
+foreach ($entry in $rejectedShrinks.Manifest) {
+    Assert-Check ($entry.Minimized.Attempts -eq 2 -and $entry.Minimized.SHA256 -eq $entry.SHA256) 'Rejected shrinks changed the retained failing input.'
+    $prefix = Join-Path $rejectedShrinks.Output $entry.Case
+    foreach ($suffix in @('.stdout.log', '.stderr.log', '.xml')) {
+        $minimumLog = "$prefix.minimized$suffix"
+        Assert-Check (Test-Path -LiteralPath $minimumLog) 'An unchanged minimized input lost its original diagnostics.'
+        if (Test-Path -LiteralPath $minimumLog) {
+            Assert-Check ([IO.File]::ReadAllText($minimumLog) -eq [IO.File]::ReadAllText("$prefix$suffix")) 'A rejected shrink overwrote the retained failure diagnostics.'
+        }
+    }
+}
 $missing = Invoke-Scenario 'stale-results' 'Missing' 1
 Assert-Check ($null -ne $missing.Error) 'Stale XML results falsely passed.'
 Assert-Check (@($missing.Manifest | Where-Object Status -eq 'MissingResult').Count -eq 3) 'Missing current results were not recorded.'

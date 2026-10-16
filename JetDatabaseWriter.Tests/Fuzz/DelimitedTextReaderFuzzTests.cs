@@ -35,6 +35,27 @@ public sealed class DelimitedTextReaderFuzzTests
     [Fact(Explicit = true)]
     public async Task FuzzDelimitedTextReader() => RunFuzzIteration(await FuzzInput.ReadAsync(TestContext.Current.CancellationToken));
 
+    /// <summary>
+    /// Empty single-column records need explicit field syntax to survive EOF and mixed line endings.
+    /// </summary>
+    /// <param name="mixedLineEndings">Whether to place an empty row between CR and LF terminators.</param>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RoundTripGeneratedRows_EmptySingleColumnRecords_PreservesRowCount(bool mixedLineEndings)
+    {
+        // FuzzRandom consumes one big-endian integer per choice: delimiter, row/column counts,
+        // raggedness, then field lengths and optional line endings.
+        int[] choices = mixedLineEndings ? [0, 2, 0, 1, 0, 2, 0, 0, 1] : [0, 1, 0, 1, 0, 1];
+        byte[] input = new byte[choices.Length * sizeof(int)];
+        for (int index = 0; index < choices.Length; index++)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(input.AsSpan(index * sizeof(int)), choices[index]);
+        }
+
+        RunFuzzIteration(input);
+    }
+
     private static void RunFuzzIteration(byte[] fuzzedBytes)
     {
         var random = FuzzRandom.Create(fuzzedBytes);
@@ -176,7 +197,9 @@ public sealed class DelimitedTextReaderFuzzTests
 
     private static string EscapeField(string value, char delimiter)
     {
-        if (value.IndexOf(delimiter, StringComparison.Ordinal) < 0 &&
+        // An unquoted empty record can disappear at EOF or merge adjacent CR/LF terminators.
+        if (value.Length > 0 &&
+            value.IndexOf(delimiter, StringComparison.Ordinal) < 0 &&
             value.IndexOf('"', StringComparison.Ordinal) < 0 &&
             value.IndexOf('\r', StringComparison.Ordinal) < 0 &&
             value.IndexOf('\n', StringComparison.Ordinal) < 0)

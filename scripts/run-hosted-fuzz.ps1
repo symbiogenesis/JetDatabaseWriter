@@ -218,13 +218,19 @@ try {
                 $failures++
                 Save-Manifests
                 if ($outcome.Status -notin 'LaunchError', 'ProcessError' -and $MinimizeAttempts -gt 0) {
+                    # The probe runs in the minimizer scope, where $outcome changes after each attempt.
+                    $failureSignature = $outcome.Signature
+                    foreach ($suffix in @('.stdout.log', '.stderr.log', '.xml')) {
+                        $originalLog = Join-Path $outputPath "$caseName$suffix"
+                        if (Test-Path -LiteralPath $originalLog) { [IO.File]::Copy($originalLog, (Join-Path $outputPath "$caseName.minimized$suffix"), $true) }
+                    }
                     $probe = {
                         param([byte[]] $Candidate, [double] $Remaining, [int] $Attempt)
                         $probePrefix = Join-Path $sessionRoot "$caseName-shrink-$Attempt"
                         $probeInput = "$probePrefix.bin"
                         [IO.File]::WriteAllBytes($probeInput, $Candidate)
                         $probeResult = Invoke-FuzzProcess $probeInput $methods[$kind] $probePrefix ([Math]::Min($TimeoutSeconds, $Remaining))
-                        if ($probeResult.Signature -eq $outcome.Signature) {
+                        if ($probeResult.Signature -eq $failureSignature) {
                             foreach ($suffix in @('.stdout.log', '.stderr.log', '.xml')) {
                                 if (Test-Path -LiteralPath "$probePrefix$suffix") { [IO.File]::Copy("$probePrefix$suffix", (Join-Path $outputPath "$caseName.minimized$suffix"), $true) }
                             }
