@@ -147,8 +147,7 @@ public sealed partial class CatalogDiagnosticsTests
 
     /// <summary>
     /// "Total rows scanned" matches the <c>MSysObjects</c> row count on databases the
-    /// writer creates, including Jet3 and Jet4 files whose catalogs have no row
-    /// naming <c>MSysObjects</c>.
+    /// writer creates in each supported format.
     /// </summary>
     /// <param name="format">The database format.</param>
     [Theory]

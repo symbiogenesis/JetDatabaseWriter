@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Catalog;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
@@ -33,8 +34,7 @@ public sealed class SystemTableLookupTests
 
     /// <summary>
     /// Every read API returns <c>MSysObjects</c> with its columns and rows on a
-    /// database the writer created, including Jet3 and Jet4 files whose catalogs
-    /// have no row naming <c>MSysObjects</c>.
+    /// database the writer created in each supported format.
     /// </summary>
     /// <param name="format">The database format.</param>
     [Theory]
@@ -62,17 +62,22 @@ public sealed class SystemTableLookupTests
 
     /// <summary>
     /// The reader's and the writer's system-table lookups resolve <c>MSysObjects</c>
-    /// to TDEF page 2 when its catalog row is absent from a created Jet3 database.
+    /// to TDEF page 2 when its catalog row has been removed.
     /// </summary>
-    [Fact]
-    public async Task FindSystemTable_MSysObjects_WithMissingCatalogRow_ResolvesPage2()
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task FindSystemTable_MSysObjects_WithMissingCatalogRow_ResolvesPage2(DatabaseFormat format)
     {
-        byte[] bytes = await CreateDatabaseAsync(DatabaseFormat.Jet3Mdb, this.ct);
-        Assert.False(await CorruptCatalogSelfRowAsync(bytes, this.ct));
+        byte[] bytes = await CreateDatabaseAsync(format, this.ct);
+        Assert.True(await AlterCatalogSelfRowAsync(bytes, remove: true, this.ct));
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
         await using (AccessReader reader = await TestDatabase.OpenReaderAsync(readStream, cancellationToken: this.ct))
         {
+            Assert.Equal(0, await reader.Services.Catalog.FindSystemTablePageAsync(static name => string.Equals(name, CatalogTable, StringComparison.OrdinalIgnoreCase), this.ct));
             Assert.Equal(2, await reader.Services.Catalog.FindSystemTablePageAsync(CatalogTable, this.ct));
             Assert.Equal(2, await reader.Services.Catalog.FindSystemTablePageAsync("msysobjects", this.ct));
         }
@@ -86,12 +91,13 @@ public sealed class SystemTableLookupTests
     /// <summary>A malformed present catalog self-row cannot trigger the absent-row bootstrap fallback.</summary>
     /// <param name="format">The database format with a catalog self-row.</param>
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]
     [InlineData(DatabaseFormat.AceAccdb)]
     public async Task FindSystemTable_MSysObjects_WithMalformedCatalogRow_RefusesCorruption(DatabaseFormat format)
     {
         byte[] bytes = await CreateDatabaseAsync(format, this.ct);
-        Assert.True(await CorruptCatalogSelfRowAsync(bytes, this.ct));
+        Assert.True(await AlterCatalogSelfRowAsync(bytes, remove: false, this.ct));
 
         await using (var readStream = new MemoryStream(bytes, writable: false))
         await using (AccessReader reader = await TestDatabase.OpenReaderAsync(readStream, cancellationToken: this.ct))
@@ -210,7 +216,7 @@ public sealed class SystemTableLookupTests
         Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
     }
 
-    private static async ValueTask<bool> CorruptCatalogSelfRowAsync(byte[] bytes, CancellationToken cancellationToken)
+    private static async ValueTask<bool> AlterCatalogSelfRowAsync(byte[] bytes, bool remove, CancellationToken cancellationToken)
     {
         await using var stream = new MemoryStream(bytes, writable: false);
         await using AccessReader harness = await TestDatabase.OpenReaderAsync(stream, cancellationToken: cancellationToken);
@@ -224,10 +230,23 @@ public sealed class SystemTableLookupTests
             return false;
         }
 
-        byte[] page = await harness.ReadPageCopyAsync(selfRow.PageNumber, cancellationToken);
-        RowBound bound = DataPageRows.EnumerateLiveRowBounds(database.Format, page).Single(row => row.RowIndex == selfRow.RowIndex);
-        int rowOffset = checked((int)(selfRow.PageNumber * database.Format.PageSize)) + bound.RowStart;
-        bytes.AsSpan(rowOffset, database.Format.RowFields.NumCols).Clear();
+        if (remove)
+        {
+            int slotOffset = checked((int)(selfRow.PageNumber * database.Format.PageSize)) + database.Format.DataPage.RowsStart + (selfRow.RowIndex * 2);
+            Span<byte> slot = bytes.AsSpan(slotOffset, 2);
+            ushort flags = BinaryPrimitives.ReadUInt16LittleEndian(slot);
+            BinaryPrimitives.WriteUInt16LittleEndian(slot, (ushort)(flags | Constants.DataPage.DeletedRowFlag));
+            Span<byte> count = bytes.AsSpan((2 * database.Format.PageSize) + database.Format.TDef.NumRows, 4);
+            BinaryPrimitives.WriteUInt32LittleEndian(count, BinaryPrimitives.ReadUInt32LittleEndian(count) - 1);
+        }
+        else
+        {
+            byte[] page = await harness.ReadPageCopyAsync(selfRow.PageNumber, cancellationToken);
+            RowBound bound = DataPageRows.EnumerateLiveRowBounds(database.Format, page).Single(row => row.RowIndex == selfRow.RowIndex);
+            int rowOffset = checked((int)(selfRow.PageNumber * database.Format.PageSize)) + bound.RowStart;
+            bytes.AsSpan(rowOffset, database.Format.RowFields.NumCols).Clear();
+        }
+
         return true;
     }
 
