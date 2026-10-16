@@ -29,7 +29,7 @@ public sealed class LongValueMaterializationAllocationTests
     [InlineData(true, 4)]
     public async Task UnreadableFirstRow_RefusesBeforeAllocatingClaimedPayload(bool chained, int damage)
     {
-        JetFormat format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
         byte[] physicalPage = new byte[format.PageSize];
         physicalPage[0] = damage == 2 ? Constants.PageTypes.TableDefinition : Constants.PageTypes.Data;
         "LVAL"u8.CopyTo(physicalPage.AsSpan(4));
