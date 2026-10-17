@@ -82,10 +82,10 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; scan-owned uncached physical/catalog/TDEF/map inventory; bounded per-table raw-row streaming and per-root raw-index auditing | S1: compose aggregate row/LVAL/index discovery limits and collection accounting across all objects; qualify runtime/pool and caller-owned memory separately |
-| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory and calculated-slot refusal; bounded raw row and LVAL streaming | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; scan-owned uncached physical/catalog/TDEF/map inventory; shared raw-row/LVAL/index discovery accounting and simultaneous storage admission | S1: integrate discovery sessions with whole-database enumeration and inventory/catalog lifetime; complete remaining public-scan accounting; qualify runtime/pool and caller-owned memory separately |
+| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory and calculated-slot refusal; bounded raw row and LVAL streaming; complete defined LVAL-chain observations including trailing storage | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key and reference observations | I2: complete tree ownership, shared-root/cross-TDEF proofs, separator fences, global ordering and a bounded raw-key tree builder; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key and reference observations with complete observed-graph cycle checks | I2: complete tree ownership, shared-root/cross-TDEF proofs, separator fences, global ordering and a bounded raw-key tree builder; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -110,8 +110,9 @@ inspected slots and fixed working storage have separate limits. The awaited
 visitor borrows the source page; it must not retain that memory. This avoids
 field decoding and table snapshots, but does not prove missing ownership,
 incoming aliases, field/LVAL integrity or safe relocation. Overflow-header padding
-and unreachable deleted payloads require a separate preservation decision. Budgets
-apply to one table invocation; a whole-database driver must compose aggregate limits.
+and unreachable deleted payloads require a separate preservation decision.
+Standalone budgets apply to one table invocation; a whole-database driver must
+enumerate all tables and use the shared session accounting described below.
 
 `CompactIndexAudit` observes one root's raw stored keys, bookmarks and known
 index references with bounded collections and entry bytes. It validates page
@@ -119,8 +120,34 @@ geometry/type/owner and in-page order without regenerating collation-sensitive
 keys. Its terminal record states the limited coverage and retains pinned
 storage. Reaching its observed graph is not a proof of separator fences,
 bookmark targets, global order, shared roots or incoming-reference ownership.
-Budgets apply to one root; orchestration and a raw-key tree builder remain open.
-These internal primitives do not extend the CLI inventory's completion contract.
+Every cycle in the observed entry-child/intermediate-tail graph is rejected by a
+bounded iterative walk, including cycles crossing tail aliases in separate
+branches. Acyclic tail/entry aliases remain observable. Terminal acyclicity does
+not prove exclusive page ownership or complete tree validity.
+Standalone budgets apply to one root; whole-database orchestration and a raw-key
+tree builder remain open. These internal primitives do not extend the CLI
+inventory's completion contract.
+
+`CompactLongValueAudit` observes the entire supplied column slice and every
+complete row reached through defined external references, following chained
+pointers to null even after the descriptor's declared payload is covered. It
+retains descriptors, tokens, next pointers and trailing bytes as borrowed raw
+observations. Zero-length external descriptors still expose their references.
+Dangling references, trailing cycles, malformed directories and missing declared
+bytes refuse completion while retaining partial observations. All storage stays
+pinned; neither observed trailing bytes nor an acyclic chain establishes
+exclusive ownership, native value semantics or safe relocation.
+
+`CompactDiscoverySession` composes repeated raw-row, raw-index and raw-LVAL audit
+and payload-copy calls against one uncached page source. Read, object, row,
+directory-slot, LVAL byte/row, index byte/entry/page, reference, graph-step and
+observation counters persist across calls and failures. Conservative storage
+reservations cover simultaneous scans, including a value operation awaited from
+a row visitor, and release on completion or failure. Runtime overhead, shared-pool
+retention and caller-owned buffers, streams and retained observations are
+separate. The caller must enumerate every required object and value: a session
+does not discover those identities, prove whole-database coverage or validate a
+compact result. Inventory/catalog accounting still has its own lifetime.
 
 Logical TDEF chain writes retain the first four bytes of existing continuation
 headers on the same physical pages, while rewriting their next-page pointers.

@@ -3,6 +3,9 @@ namespace JetDatabaseWriter.Maintenance;
 /// <summary>Hard limits for one read-only raw index-tree observation.</summary>
 internal sealed class CompactIndexBudget
 {
+    /// <summary>Gets the optional whole-session accounting shared by all discovery scans.</summary>
+    internal CompactDiscoveryAccounting? Accounting { get; init; }
+
     /// <summary>Gets the maximum discovered tree pages, including queued pages, and therefore page reads.</summary>
     public int MaxTreePages { get; init; } = 1_048_576;
 
@@ -15,8 +18,8 @@ internal sealed class CompactIndexBudget
     /// <summary>Gets the maximum nonzero header, child and bookmark reference observations.</summary>
     public long MaxReferences { get; init; } = 8_388_608;
 
-    /// <summary>Gets the maximum first-discovery ancestor steps used to reject reference cycles.</summary>
-    public long MaxLineageSteps { get; init; } = 67_108_864;
+    /// <summary>Gets the maximum graph node and edge inspections used to reject every navigable reference cycle.</summary>
+    public long MaxGraphSteps { get; init; } = 67_108_864;
 
     /// <summary>Gets the maximum visitor records.</summary>
     public long MaxRecords { get; init; } = 8_388_608;

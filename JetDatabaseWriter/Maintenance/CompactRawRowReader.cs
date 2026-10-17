@@ -66,7 +66,22 @@ internal static class CompactRawRowReader
             throw Limit(0, "The fixed raw-row storage reservation exceeds MaxWorkingBytes.");
         }
 
-        return new Scanner(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity).RunAsync(cancellationToken);
+        return RunAdmittedAsync(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity, reservation, cancellationToken);
+    }
+
+    private static async ValueTask RunAdmittedAsync(
+        IPageSource pages,
+        JetFormat format,
+        long pageCount,
+        long ownerTDefPage,
+        CompactRawRowBudget budget,
+        Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor,
+        int capacity,
+        long reservation,
+        CancellationToken cancellationToken)
+    {
+        using IDisposable? admission = budget.Accounting?.ReserveWorkingBytes(reservation, ownerTDefPage);
+        await new Scanner(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity).RunAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static JetLimitationException Limit(long page, string reason)
@@ -134,6 +149,7 @@ internal static class CompactRawRowReader
                             throw Limit(number, "The live-row count exceeds MaxRows.");
                         }
 
+                        budget.Accounting?.Charge(CompactDiscoveryCharge.Rows, 1, number);
                         this.rows++;
                         RowBound bound = this.physicalDirectory.GetBound(row, format.PageSize);
                         if ((raw & Constants.DataPage.OverflowRowFlag) != 0)
@@ -142,6 +158,7 @@ internal static class CompactRawRowReader
                         }
                         else
                         {
+                            budget.Accounting?.Charge(CompactDiscoveryCharge.Records, 1, number);
                             await visitor(new RowLocation(number, row, bound.RowStart, bound.RowSize), page.AsMemory(bound.RowStart, bound.RowSize), cancellationToken).ConfigureAwait(false);
                         }
 
@@ -171,6 +188,7 @@ internal static class CompactRawRowReader
                 for (int hop = 0; hop < budget.MaxOverflowHops; hop++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    budget.Accounting?.Charge(CompactDiscoveryCharge.GraphSteps, 1, currentNumber);
                     if (pointer.RowSize < Constants.DataPage.OverflowPointerSize)
                     {
                         throw Corrupt(currentNumber, $"Overflow slot {pointer.RowIndex} is shorter than four bytes.");
@@ -178,6 +196,7 @@ internal static class CompactRawRowReader
 
                     int targetRow = current[pointer.RowStart];
                     long targetPage = current[pointer.RowStart + 1] | (current[pointer.RowStart + 2] << 8) | (current[pointer.RowStart + 3] << 16);
+                    budget.Accounting?.Charge(CompactDiscoveryCharge.References, 1, currentNumber);
                     if (targetPage <= 0 || targetPage >= this.pageCount)
                     {
                         throw Corrupt(currentNumber, $"Overflow slot {pointer.RowIndex} targets a page outside the source.");
@@ -232,6 +251,7 @@ internal static class CompactRawRowReader
                             DataPageNumber = targetPage,
                             DataRowIndex = targetRow,
                         };
+                        budget.Accounting?.Charge(CompactDiscoveryCharge.Records, 1, targetPage);
                         await visitor(location, current.AsMemory(pointer.RowStart, pointer.RowSize), cancellationToken).ConfigureAwait(false);
                         return;
                     }
@@ -302,6 +322,7 @@ internal static class CompactRawRowReader
                     throw Limit(number, "The aggregate inspected row slots exceed MaxDirectorySlots.");
                 }
 
+                budget.Accounting?.Charge(CompactDiscoveryCharge.DirectorySlots, 1, number);
                 this.directorySlots++;
                 int raw = Ru16(page, format.DataPage.RowsStart + (row * 2));
                 if ((raw & ~(Constants.DataPage.RowOffsetMask | Constants.DataPage.NonLiveRowFlags)) != 0)

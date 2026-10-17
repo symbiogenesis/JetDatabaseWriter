@@ -45,6 +45,7 @@ public sealed class CompactIndexAuditTests
         Assert.Contains(records, static record => record.Role == "tail" && record.TargetPageNumber == 5);
         Assert.All(records, static record => Assert.True(record.IsPinned));
         CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.NavigableGraphAcyclic);
         Assert.False(terminal.TreeCompletenessProven);
         Assert.NotNull(terminal.Coverage);
         for (int i = 0; i < original.Length; i++)
@@ -237,7 +238,7 @@ public sealed class CompactIndexAuditTests
     [InlineData(3)]
     [InlineData(4)]
     [InlineData(6)]
-    public async Task TailCycles_RefuseSelfRootAndFirstDiscoveryAncestors(int target)
+    public async Task TailCycles_RefuseSelfRootAndOtherAncestors(int target)
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
         MemoryPages source = CreateTree(format);
@@ -246,6 +247,111 @@ public sealed class CompactIndexAuditTests
         source.Images[7] = Leaf(format, []);
         JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, format));
         Assert.Equal(6, error.ErrorInfo.PageNumber);
+    }
+
+    [Fact]
+    public async Task MixedTailAndEntryAliasCycle_RefusesBeforeTerminalAndPreservesSource()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateAliasGraph(format, cycle: true);
+        byte[][] original = source.Images.Values.Select(static page => page.ToArray()).ToArray();
+        var records = new List<CompactIndexRecord>();
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactIndexAudit.ScanAsync(
+            source,
+            format,
+            2,
+            3,
+            new(),
+            (record, _) =>
+            {
+                records.Add(record);
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+        Assert.Equal(JetErrorCode.CorruptIndex, error.ErrorCode);
+        Assert.Equal(6, error.ErrorInfo.PageNumber);
+        Assert.Contains("cycle", error.ErrorInfo.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(records, static record => record.Kind == "index-terminal");
+        Assert.Equal(4, source.Reads);
+        for (int i = 0; i < original.Length; i++)
+        {
+            Assert.Equal(original[i], source.Images.Values.ElementAt(i));
+        }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task TailAndEntryAliasDag_ReadsEveryPageOnceAndRetainsEveryReference(DatabaseFormat kind)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        MemoryPages source = CreateAliasGraph(format, cycle: false);
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        Assert.Equal(4, source.Reads);
+        Assert.Equal<long>([3, 4, 5, 6], records.Where(static record => record.Kind == "index-page").Select(static record => record.PageNumber).Order());
+        Assert.Contains(records, static record => record.Role == "tail" && record.PageNumber == 4 && record.TargetPageNumber == 6);
+        Assert.Contains(records, static record => record.Role == "child" && record.PageNumber == 5 && record.TargetPageNumber == 6);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.NavigableGraphAcyclic);
+        Assert.False(terminal.TreeCompletenessProven);
+        Assert.All(records, static record => Assert.True(record.IsPinned));
+    }
+
+    [Fact]
+    public async Task GraphBudget_CountsEveryDistinctNodeAndNavigableEdgeIncludingAliases()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateAliasGraph(format, cycle: false);
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxGraphSteps = 7 }));
+        Assert.Equal(4, source.Reads);
+        Assert.Contains("MaxGraphSteps", error.ErrorInfo.Reason, StringComparison.Ordinal);
+        source = CreateAliasGraph(format, cycle: false);
+        List<CompactIndexRecord> records = await ScanAsync(source, format, new() { MaxGraphSteps = 8 });
+        Assert.True(Assert.Single(records, static record => record.Kind == "index-terminal").NavigableGraphAcyclic);
+    }
+
+    [Fact]
+    public async Task WorkingBudget_ReservesGraphEdgesAndTraversalStateBeforeReading()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateAliasGraph(format, cycle: false);
+        const long maxEntries = 100;
+        const long maxReferences = 120;
+        long pages = source.PageCount - 1;
+        long edges = Math.Min(maxReferences, maxEntries + pages);
+        long storage = (384 * pages) + (16 * edges) + (16 * format.PageSize) + 65_536;
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxEntries = maxEntries, MaxReferences = maxReferences, MaxWorkingBytes = storage - 1 }));
+        Assert.Equal(0, source.Reads);
+        List<CompactIndexRecord> records = await ScanAsync(source, format, new() { MaxEntries = maxEntries, MaxReferences = maxReferences, MaxWorkingBytes = storage });
+        Assert.Single(records, static record => record.Kind == "index-terminal");
+    }
+
+    [Fact]
+    public async Task CancellationBeforeGraphProof_NeverEmitsTerminal()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateAliasGraph(format, cycle: false);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        var records = new List<CompactIndexRecord>();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await CompactIndexAudit.ScanAsync(
+            source,
+            format,
+            2,
+            3,
+            new(),
+            async (record, _) =>
+            {
+                records.Add(record);
+                if (record.Kind == "index-page" && record.PageNumber == 6)
+                {
+                    await cancellation.CancelAsync();
+                }
+            },
+            cancellation.Token));
+        Assert.Equal(4, source.Reads);
+        Assert.All(records, static record => Assert.False(record.NavigableGraphAcyclic));
+        Assert.DoesNotContain(records, static record => record.Kind == "index-terminal");
     }
 
     [Fact]
@@ -300,7 +406,7 @@ public sealed class CompactIndexAuditTests
     [InlineData("references")]
     [InlineData("records")]
     [InlineData("canonical-bytes")]
-    [InlineData("lineage")]
+    [InlineData("graph")]
     public async Task Budgets_RefuseBeforeExceedingTheirAllowance(string limit)
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
@@ -312,10 +418,10 @@ public sealed class CompactIndexAuditTests
             "entries" => new() { MaxEntries = 1 },
             "references" => new() { MaxReferences = 1 },
             "records" => new() { MaxRecords = 1 },
-            "lineage" => new() { MaxLineageSteps = 1 },
+            "graph" => new() { MaxGraphSteps = 1 },
             _ => new() { MaxCanonicalBytes = 1 },
         };
-        if (limit == "lineage")
+        if (limit == "graph")
         {
             source.Images[4] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 6)], 0, 0, 5);
             source.Images[6] = Leaf(format, []);
@@ -373,6 +479,15 @@ public sealed class CompactIndexAuditTests
             Ct));
     }
 
+    private static MemoryPages CreateAliasGraph(JetFormat format, bool cycle)
+        => new(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 4), new(new([2], 9, 1), 5)], 0, 0, 0),
+            [4] = TailIntermediate(format, cycle ? 5 : 6),
+            [5] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 6)], 0, 0, 0),
+            [6] = cycle ? TailIntermediate(format, 4) : Leaf(format, []),
+        });
+
     private static MemoryPages CreateTree(JetFormat format)
         => new(format.PageSize, new()
         {
@@ -380,6 +495,14 @@ public sealed class CompactIndexAuditTests
             [4] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1, 2, 3], 9, 0), new([1, 2, 4], 9, 1)], 0, 5, 0, true),
             [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([2], 9, 2)], 4, 0, 0, true),
         });
+
+    private static byte[] TailIntermediate(JetFormat format, long tail)
+    {
+        byte[] page = Leaf(format, []);
+        page[0] = Constants.PageTypes.IndexIntermediate;
+        BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(format.IndexPage.TailPageOffset, 4), checked((uint)tail));
+        return page;
+    }
 
     private static byte[] Leaf(JetFormat format, IReadOnlyList<IndexEntry> entries)
         => IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, entries, enablePrefixCompression: false);

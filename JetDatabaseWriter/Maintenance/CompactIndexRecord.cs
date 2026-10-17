@@ -39,6 +39,9 @@ internal sealed record CompactIndexRecord
     /// <summary>Gets the explicit observation coverage on the terminal record.</summary>
     public string? Coverage { get; init; }
 
+    /// <summary>Gets a value indicating whether all observed navigable edges were proven acyclic; true only on a successful terminal record.</summary>
+    public bool NavigableGraphAcyclic { get; init; }
+
     /// <summary>Gets a value indicating whether complete tree validity and incoming-reference ownership have been proven.</summary>
     public bool TreeCompletenessProven { get; }
 

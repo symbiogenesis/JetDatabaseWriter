@@ -16,8 +16,8 @@ using JetDatabaseWriter.Pages.Paging;
 /// Header sibling/tail references are retained but do not establish ownership. This does not
 /// validate bookmark target rows, separator fences, leaf-chain agreement, global key order,
 /// shared roots, allocation maps or opaque incoming references. Every observation remains pinned.
-/// Duplicate child reachability and first-discovery ancestor cycles are rejected; arbitrary
-/// mixed cycles through tail aliases remain unverified, although each page is read at most once.
+/// Repeated entry-child reachability and every cycle in the observed navigable graph are rejected.
+/// Acyclic entry/tail aliases remain observable; every distinct page is read at most once.
 /// An unrecognized or ambiguous payload refuses the scan instead of authorizing reclamation.
 /// </remarks>
 internal static class CompactIndexAudit
@@ -33,16 +33,17 @@ internal static class CompactIndexAudit
     /// <returns>A task completing after this root's bounded observation succeeds.</returns>
     /// <exception cref="JetCorruptDataException">A native reference, page or payload is malformed or ambiguous.</exception>
     /// <exception cref="JetLimitationException">A traversal or working-storage limit is exceeded.</exception>
-    internal static ValueTask ScanAsync(IPageSource pages, JetFormat format, long ownerTDefPage, long rootPage, CompactIndexBudget budget, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    internal static async ValueTask ScanAsync(IPageSource pages, JetFormat format, long ownerTDefPage, long rootPage, CompactIndexBudget budget, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
     {
         Guard.NotNull(pages, nameof(pages));
+        Guard.NotNull(format, nameof(format));
         Guard.NotNull(budget, nameof(budget));
         Guard.NotNull(visitor, nameof(visitor));
         Guard.Positive(budget.MaxTreePages, nameof(budget));
         Guard.InRange(budget.MaxEntries, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxCanonicalBytes, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxReferences, 1L, long.MaxValue, nameof(budget));
-        Guard.InRange(budget.MaxLineageSteps, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxGraphSteps, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxRecords, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxWorkingBytes, 1L, long.MaxValue, nameof(budget));
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
@@ -52,17 +53,34 @@ internal static class CompactIndexAudit
             throw Corrupt(rootPage, "The index root, owner or source geometry is invalid.");
         }
 
-        // Include collection capacity growth, pending pages, one pooled page,
-        // prefix/current/previous entry copies and per-record scratch. No page
-        // decoder constructs a list whose retained keys multiply with prefixes.
+        // Include dictionary/list capacity growth, per-page graph state, pending
+        // and DFS stacks, every navigable edge, one pooled page, and key scratch.
+        // Each stored entry consumes at least one payload byte even when its
+        // prefix includes the complete pointer trailer; each page adds one tail.
         long pageAllowance = Math.Min(budget.MaxTreePages, pageCount - 1);
-        long storage = (256L * pageAllowance) + (16L * format.PageSize) + 65_536;
+        long entryAllowance = Math.Min(budget.MaxEntries, pageAllowance * format.PageSize);
+        long edgeAllowance = Math.Min(budget.MaxReferences, entryAllowance + pageAllowance);
+        long storage = (384L * pageAllowance) + (16L * edgeAllowance) + (16L * format.PageSize) + 65_536;
         if (storage > budget.MaxWorkingBytes)
         {
             throw Limit(rootPage, "The conservative index storage reservation exceeds MaxWorkingBytes.");
         }
 
-        return new Scanner(pages, format, pageCount, ownerTDefPage, rootPage, budget, visitor).RunAsync(cancellationToken);
+        IDisposable? reservation = budget.Accounting?.ReserveWorkingBytes(storage, rootPage);
+        try
+        {
+            pages.ThrowIfDisposedOrCancelled(cancellationToken);
+            if (pages.PageCount != pageCount || pages.PageSize != format.PageSize)
+            {
+                throw Corrupt(rootPage, "The source page geometry changed during index admission.");
+            }
+
+            await new Scanner(pages, format, pageCount, ownerTDefPage, rootPage, budget, visitor).RunAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            reservation?.Dispose();
+        }
     }
 
     private static JetCorruptDataException Corrupt(long page, string reason)
@@ -73,14 +91,13 @@ internal static class CompactIndexAudit
 
     private sealed class Scanner(IPageSource pages, JetFormat format, long pageCount, long owner, long root, CompactIndexBudget budget, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor)
     {
-        private readonly Dictionary<long, long> discovered = [];
-        private readonly HashSet<long> children = [];
+        private readonly Dictionary<long, Node> discovered = [];
         private readonly Queue<long> pending = new();
         private readonly long pageCount = pageCount;
         private long entries;
         private long canonicalBytes;
         private long references;
-        private long lineageSteps;
+        private long graphSteps;
         private long records;
 
         private static bool IsBitSet(IndexPageLayout layout, byte[] page, int bit)
@@ -88,11 +105,13 @@ internal static class CompactIndexAudit
 
         internal async ValueTask RunAsync(CancellationToken cancellationToken)
         {
-            this.Schedule(root, root, isChild: true);
+            this.discovered.Add(root, new(root) { EntryParent = root });
+            this.pending.Enqueue(root);
             while (this.pending.Count > 0)
             {
                 long current = this.pending.Dequeue();
                 this.CheckSource(current, cancellationToken);
+                budget.Accounting?.Charge(CompactDiscoveryCharge.IndexPages, 1, current);
                 byte[] page = await pages.ReadUncachedPageAsync(current, cancellationToken).ConfigureAwait(false);
                 try
                 {
@@ -105,10 +124,13 @@ internal static class CompactIndexAudit
                 }
             }
 
+            this.ValidateGraph(cancellationToken);
+
             await this.EmitAsync(
                 this.Record("index-terminal", root) with
                 {
-                    Coverage = "One root's intermediate-entry children and intermediate tail references; in-page raw key order. Siblings, bookmark targets, fences, global order, arbitrary mixed tail-alias cycles, allocation and incoming-reference ownership remain unverified.",
+                    NavigableGraphAcyclic = true,
+                    Coverage = "One root's intermediate-entry children and intermediate tail references form an acyclic graph with no repeated entry-child ownership; in-page raw key order. Siblings, bookmark targets, fences, global order, allocation and incoming-reference ownership remain unverified.",
                 },
                 cancellationToken).ConfigureAwait(false);
         }
@@ -186,11 +208,6 @@ internal static class CompactIndexAudit
 
             if (intermediate && tail != 0)
             {
-                if (tail == current || tail == root)
-                {
-                    throw Corrupt(current, "An intermediate tail reference cycles to itself or the observed root.");
-                }
-
                 this.Schedule(current, tail, isChild: false);
             }
         }
@@ -270,61 +287,88 @@ internal static class CompactIndexAudit
                 throw Limit(current, "The index references exceed MaxReferences.");
             }
 
+            budget.Accounting?.Charge(CompactDiscoveryCharge.References, 1, current);
             this.references++;
         }
 
         private void Schedule(long current, long target, bool isChild)
         {
-            if (isChild && this.children.Contains(target))
+            if (target == current || target == root)
             {
-                throw Corrupt(current, "Repeated index child reachability is cyclic or shared; ownership is ambiguous.");
+                throw Corrupt(current, $"A navigable index reference to page {target} creates a cycle.");
             }
 
-            if (this.discovered.ContainsKey(target))
+            if (!this.discovered.TryGetValue(target, out Node? node))
             {
-                long ancestor = current;
-                while (true)
+                if (this.discovered.Count >= budget.MaxTreePages)
                 {
-                    if (this.lineageSteps >= budget.MaxLineageSteps)
-                    {
-                        throw Limit(current, "The index ancestor inspection exceeds MaxLineageSteps.");
-                    }
-
-                    this.lineageSteps++;
-                    if (ancestor == target)
-                    {
-                        throw Corrupt(current, "An index reference cycles to a first-discovery ancestor.");
-                    }
-
-                    long parent = this.discovered[ancestor];
-                    if (parent == ancestor)
-                    {
-                        break;
-                    }
-
-                    ancestor = parent;
+                    throw Limit(current, "The discovered index pages exceed MaxTreePages.");
                 }
 
-                if (isChild)
-                {
-                    this.children.Add(target);
-                }
-
-                return;
+                node = new(target);
+                this.discovered.Add(target, node);
+                this.pending.Enqueue(target);
             }
 
-            if (this.discovered.Count >= budget.MaxTreePages)
-            {
-                throw Limit(current, "The discovered index pages exceed MaxTreePages.");
-            }
-
-            this.discovered.Add(target, current);
             if (isChild)
             {
-                this.children.Add(target);
+                if (node.EntryParent.HasValue)
+                {
+                    throw Corrupt(current, $"Index page {target} is already an entry child of page {node.EntryParent.Value}; repeated entry-child ownership is ambiguous.");
+                }
+
+                node.EntryParent = current;
             }
 
-            this.pending.Enqueue(target);
+            this.discovered[current].Targets.Add(node);
+        }
+
+        private void ValidateGraph(CancellationToken cancellationToken)
+        {
+            // A first-discovery parent chain cannot prove this graph acyclic:
+            // a tail may alias a node discovered in a different branch. Retain
+            // every navigable edge and use iterative gray/black DFS instead.
+            var stack = new List<Node> { this.discovered[root] };
+            while (stack.Count > 0)
+            {
+                Node current = stack[^1];
+                this.CheckSource(current.Page, cancellationToken);
+                if (current.State == 0)
+                {
+                    this.GraphStep(current.Page);
+                    current.State = 1;
+                }
+
+                if (current.NextTarget == current.Targets.Count)
+                {
+                    current.State = 2;
+                    stack.RemoveAt(stack.Count - 1);
+                    continue;
+                }
+
+                this.GraphStep(current.Page);
+                Node target = current.Targets[current.NextTarget++];
+                if (target.State == 1)
+                {
+                    throw Corrupt(current.Page, $"A navigable index reference to active page {target.Page} creates a cycle.");
+                }
+
+                if (target.State == 0)
+                {
+                    stack.Add(target);
+                }
+            }
+        }
+
+        private void GraphStep(long current)
+        {
+            if (this.graphSteps >= budget.MaxGraphSteps)
+            {
+                throw Limit(current, "The index graph inspection exceeds MaxGraphSteps.");
+            }
+
+            budget.Accounting?.Charge(CompactDiscoveryCharge.GraphSteps, 1, current);
+            this.graphSteps++;
         }
 
         private void ReserveEntry(long current, int length)
@@ -334,6 +378,8 @@ internal static class CompactIndexAudit
                 throw Limit(current, "The index entries or reconstructed bytes exceed MaxEntries or MaxCanonicalBytes.");
             }
 
+            budget.Accounting?.Charge(CompactDiscoveryCharge.IndexEntries, 1, current);
+            budget.Accounting?.Charge(CompactDiscoveryCharge.IndexCanonicalBytes, length, current);
             this.entries++;
             this.canonicalBytes += length;
         }
@@ -358,9 +404,23 @@ internal static class CompactIndexAudit
                 throw Limit(record.PageNumber, "The index observations exceed MaxRecords.");
             }
 
+            budget.Accounting?.Charge(CompactDiscoveryCharge.Records, 1, record.PageNumber);
             this.records++;
             await visitor(record, cancellationToken).ConfigureAwait(false);
             this.CheckSource(record.PageNumber, cancellationToken);
+        }
+
+        private sealed class Node(long page)
+        {
+            internal long Page { get; } = page;
+
+            internal long? EntryParent { get; set; }
+
+            internal List<Node> Targets { get; } = [];
+
+            internal byte State { get; set; }
+
+            internal int NextTarget { get; set; }
         }
     }
 }

@@ -3,6 +3,9 @@ namespace JetDatabaseWriter.Maintenance;
 /// <summary>Admission and traversal limits for one table's raw physical row scan.</summary>
 internal sealed class CompactRawRowBudget
 {
+    /// <summary>Gets optional whole-session accounting shared with other discovery primitives.</summary>
+    internal CompactDiscoveryAccounting? Accounting { get; init; }
+
     /// <summary>Gets the maximum source size in physical pages, checked before reading.</summary>
     public long MaxPages { get; init; } = 1_048_576;
 

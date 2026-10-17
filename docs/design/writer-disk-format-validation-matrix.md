@@ -297,12 +297,30 @@ completeness proof.
 
 `CompactIndexAuditTests` checks bounded raw keys/bookmarks and references,
 page/type/owner validation, prefix reconstruction, in-page key order, ambiguous
-child reachability, tail traversal, traversal limits, cancellation and I/O failure.
+child reachability, tail traversal, mixed tail/entry cycle refusal, acyclic alias
+acceptance, graph/storage limits, cancellation and I/O failure.
 Microsoft-authored catalog specimens and a compressed duplicate-key Jet3 leaf
 check agreement with the existing codec. The terminal record explicitly leaves
 whole-tree completeness unproven. These read-only observations neither regenerate
 keys nor authorize tree relocation/reclamation or settle separator, global-order,
 shared-root and cross-TDEF requirements.
+
+`CompactLongValueAuditTests` checks preservation observations for complete column
+slices, defined external references and complete external rows, including
+zero-length descriptors, trailing bytes and extra chain rows. Synthetic dangling
+references, trailing cycles, malformed directories, budgets, cancellation and
+real I/O failures require explicit refusal without a terminal record. Observed
+bytes remain pinned. Existing Access-authored Jet3 packed Memo and chained OLE
+fields additionally check agreement with their original physical row bytes.
+These observations do not establish value semantics, exclusive ownership or safe
+relocation.
+
+`CompactDiscoverySessionTests` checks cumulative limits across repeated tables,
+index roots and long values, shared page-read accounting, nested row/value
+storage admission, release after failure, cancellation and real I/O exception
+identity. These are synthetic composition checks. Whole-database enumeration,
+inventory/catalog lifetime, missing ownership and native compact-result
+validation remain separate requirements.
 
 `LvalRowBoundsDecodePolicyTests` and `CalculatedLongValueDecodePolicyTests` check
 that malformed external directories and assigned calculated payloads produce
