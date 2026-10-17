@@ -759,8 +759,8 @@ internal sealed class RowDecodePlan
     {
         if (length <= 0)
         {
-            this.ValidateEmptyVariablePayload(column, length);
-            return string.Empty;
+            _ = this.DecodeEmptyVariableValue(column, length);
+            return column.IsCalculated && JetTypeInfo.ResolveValueType(column) is MemoType or OleType ? null! : string.Empty;
         }
 
         if (column.IsCalculated)
@@ -900,7 +900,7 @@ internal sealed class RowDecodePlan
         catch (Exception exception) when (RowValueDecodePolicy.IsMalformedValueException(exception))
         {
             _ = RowValueDecodePolicy.MalformedVariableValue(column, exception, this.strictParsing);
-            return string.Empty;
+            return JetTypeInfo.ResolveValueType(column) is MemoType or OleType ? null! : string.Empty;
         }
     }
 
@@ -941,8 +941,7 @@ internal sealed class RowDecodePlan
     {
         if (length <= 0)
         {
-            this.ValidateEmptyVariablePayload(column, length);
-            return RowValueDecodePolicy.EmptyVariableValue(column);
+            return this.DecodeEmptyVariableValue(column, length);
         }
 
         if (column.IsCalculated)
@@ -1003,16 +1002,15 @@ internal sealed class RowDecodePlan
         }
     }
 
-    private void ValidateEmptyVariablePayload(ColumnInfo column, int length)
+    private object DecodeEmptyVariableValue(ColumnInfo column, int length)
     {
         if (column.IsCalculated)
         {
-            _ = this.MalformedVariableValue(column, new ArgumentException("Calculated value envelope is truncated."));
+            return this.MalformedVariableValue(column, new ArgumentException("Calculated value envelope is truncated."));
         }
-        else
-        {
-            _ = RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes);
-        }
+
+        _ = RowValueDecodePolicy.HasFixedPayload(column, length, this.strictParsing || this.PreservesLongValueBytes);
+        return RowValueDecodePolicy.EmptyVariableValue(column);
     }
 
     private object MalformedVariableValue(ColumnInfo column, Exception exception)

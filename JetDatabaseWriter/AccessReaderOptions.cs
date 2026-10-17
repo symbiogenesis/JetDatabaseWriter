@@ -108,7 +108,10 @@ public sealed class AccessReaderOptions : AccessOptions
     /// reads emit a trace warning and return <see cref="DBNull.Value"/> in typed rows,
     /// empty text in string rows, or an unassigned/default POCO property.
     /// Unreadable MEMO/OLE descriptors or chains throw <see cref="InvalidDataException"/>
-    /// in strict mode; lenient reads emit a trace diagnostic and return a missing value:
+    /// in strict mode; malformed calculated MEMO/OLE envelopes throw
+    /// <see cref="Exceptions.JetCorruptDataException"/> with
+    /// <see cref="Exceptions.JetErrorCode.MalformedValue"/>. Lenient MEMO/OLE faults
+    /// emit a trace diagnostic and return a missing value:
     /// <see cref="DBNull.Value"/> in typed rows, null in string rows, or a default POCO property.
     /// Type-specific decoding coverage remains incomplete; this option does not make every
     /// malformed database readable. Underlying I/O failures and resource-budget refusals

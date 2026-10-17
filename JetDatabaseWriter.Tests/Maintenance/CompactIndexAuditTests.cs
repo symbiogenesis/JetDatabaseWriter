@@ -1,0 +1,448 @@
+namespace JetDatabaseWriter.Tests.Maintenance;
+
+using System;
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using JetDatabaseWriter.Enums;
+using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
+using JetDatabaseWriter.Indexes.Models;
+using JetDatabaseWriter.Maintenance;
+using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Tests.Infrastructure;
+using Xunit;
+
+/// <summary>Bounded raw index observations never grant reclamation or interpret stored key values.</summary>
+public sealed class CompactIndexAuditTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Tree_StreamsCanonicalKeysAndAllKnownReferencesWithoutMutatingPages(DatabaseFormat kind)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        MemoryPages source = CreateTree(format);
+        byte[][] original = source.Images.Values.Select(static page => page.ToArray()).ToArray();
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        Assert.Equal(3, source.Reads);
+        Assert.Equal<long>([3, 4, 5], records.Where(static record => record.Kind == "index-page").Select(static record => record.PageNumber).Order());
+        CompactIndexRecord[] leaves = records.Where(static record => record.Kind == "leaf-entry").ToArray();
+        Assert.Equal(3, leaves.Length);
+        Assert.Equal(new byte[] { 1, 2, 3 }, leaves[0].CanonicalKey);
+        Assert.Equal(9, leaves[0].TargetPageNumber);
+        Assert.Equal((byte)0, leaves[0].TargetRowIndex);
+        Assert.Equal(2, records.Count(static record => record.Role == "child"));
+        Assert.Contains(records, static record => record.Role == "next" && record.TargetPageNumber == 5);
+        Assert.Contains(records, static record => record.Role == "tail" && record.TargetPageNumber == 5);
+        Assert.All(records, static record => Assert.True(record.IsPinned));
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.False(terminal.TreeCompletenessProven);
+        Assert.NotNull(terminal.Coverage);
+        for (int i = 0; i < original.Length; i++)
+        {
+            Assert.Equal(original[i], source.Images.Values.ElementAt(i));
+        }
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    public async Task PrefixIncludingBookmarkAndChild_ReconstructsRawCanonicalFields(DatabaseFormat kind)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        byte[] root = new byte[format.PageSize];
+        root[0] = 3;
+        BinaryPrimitives.WriteUInt32LittleEndian(root.AsSpan(4, 4), 2);
+        root[format.IndexPage.PrefLenOffset] = 12;
+        byte[] first = [0x7F, 0x80, 0, 0, 1, 0, 0, 9, 2, 0, 0, 0, 4];
+        first.CopyTo(root, format.IndexPage.FirstEntryOffset);
+        root[format.IndexPage.FirstEntryOffset + 13] = 5;
+        root[format.IndexPage.BitmaskOffset + 1] = 0x60;
+        BinaryPrimitives.WriteUInt16LittleEndian(root.AsSpan(2, 2), checked((ushort)(format.PageSize - format.IndexPage.FirstEntryOffset - 14)));
+        var source = new MemoryPages(format.PageSize, new() { [3] = root, [4] = Leaf(format, []), [5] = Leaf(format, []) });
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord[] entries = records.Where(static record => record.Kind == "intermediate-entry").ToArray();
+        Assert.Equal(2, entries.Length);
+        Assert.All(entries, static record => Assert.Equal(new byte[] { 0x7F, 0x80, 0, 0, 1 }, record.CanonicalKey));
+        Assert.All(entries, static record => Assert.Equal(9, record.TargetPageNumber));
+        Assert.All(entries, static record => Assert.Equal((byte)2, record.TargetRowIndex));
+        Assert.Equal<long?>([4, 5], entries.Select(static record => record.ChildPageNumber));
+    }
+
+    [Theory]
+    [InlineData("FixedText/NativeFixedTextJet3Cp1252.mdb")]
+    [InlineData("FixedText/NativeFixedTextJet4.mdb")]
+    [InlineData("NorthwindTraders.accdb")]
+    public async Task NativeCatalogTrees_StreamKeysMatchingTheEstablishedNativeCodec(string fixture)
+    {
+        byte[] image = await File.ReadAllBytesAsync(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", fixture), Ct);
+        await using var stream = new MemoryStream(image, writable: false);
+        await using var file = DatabaseFile.ForReader(stream, image, ReadOnlyMemory<char>.Empty, string.Empty, leaveOpen: true, cancellationToken: Ct);
+        List<long> roots = await IndexLeafChain.ReadRealIndexRootsAsync(file, 2, Ct);
+        int pages = 0;
+        int entries = 0;
+        foreach (long root in roots.Where(static root => root > 0))
+        {
+            await CompactIndexAudit.ScanAsync(
+                file.Pages,
+                file.Format,
+                2,
+                root,
+                new(),
+                async (record, token) =>
+                {
+                    if (record.Kind == "index-page")
+                    {
+                        pages++;
+                    }
+
+                    if (record.Kind is "leaf-entry" or "intermediate-entry")
+                    {
+                        byte[] raw = await file.Pages.ReadPageCopyAsync(record.PageNumber, token);
+                        IndexEntry expected = record.Kind == "leaf-entry"
+                            ? IndexPageCodec.DecodeLeafEntries(file.Format.IndexPage, raw, file.Format.PageSize)[record.EntryIndex!.Value]
+                            : IndexPageCodec.DecodeIntermediateEntries(file.Format.IndexPage, raw, file.Format.PageSize)[record.EntryIndex!.Value].Entry;
+                        Assert.Equal(expected.Key, record.CanonicalKey);
+                        Assert.Equal(expected.DataPage, record.TargetPageNumber);
+                        Assert.Equal(expected.DataRow, record.TargetRowIndex);
+                        entries++;
+                    }
+                },
+                Ct);
+        }
+
+        Assert.True(pages > 0);
+        Assert.True(entries > 0);
+    }
+
+    [Fact]
+    public async Task NativeJet3CompressedBookmarkLeaf_PreservesEveryDuplicateKeyAndBookmark()
+    {
+        byte[] image = await File.ReadAllBytesAsync(TestDatabases.MdbtoolsNwind, Ct);
+        var format = JetFormat.FromHeader(image);
+        byte[] leaf = image.AsSpan(593 * format.PageSize, format.PageSize).ToArray();
+        List<IndexEntry> expected = IndexPageCodec.DecodeLeafEntries(format.IndexPage, leaf, format.PageSize);
+        long owner = BinaryPrimitives.ReadUInt32LittleEndian(leaf.AsSpan(4, 4));
+        var source = new MemoryPages(format.PageSize, new() { [593] = leaf }) { PageCount = image.Length / format.PageSize };
+        int entries = 0;
+        await CompactIndexAudit.ScanAsync(
+            source,
+            format,
+            owner,
+            593,
+            new(),
+            (record, _) =>
+            {
+                if (record.Kind == "leaf-entry")
+                {
+                    Assert.Equal(new byte[] { 0x7F, 0x80, 0, 0, 1 }, record.CanonicalKey);
+                    Assert.Equal(expected[entries].DataPage, record.TargetPageNumber);
+                    Assert.Equal(expected[entries].DataRow, record.TargetRowIndex);
+                    entries++;
+                }
+
+                return ValueTask.CompletedTask;
+            },
+            Ct);
+        Assert.Equal(249, entries);
+    }
+
+    [Theory]
+    [InlineData("owner")]
+    [InlineData("type")]
+    [InlineData("free-space")]
+    [InlineData("sentinel")]
+    [InlineData("extra-bit")]
+    [InlineData("prefix")]
+    [InlineData("row-pointer")]
+    [InlineData("child-pointer")]
+    [InlineData("header-pointer")]
+    [InlineData("order")]
+    [InlineData("empty-intermediate")]
+    public async Task MalformedTree_RefusesWithStructuredPageAndPreservesSource(string damage)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateTree(format);
+        byte[] root = source.Images[3];
+        switch (damage)
+        {
+            case "owner":
+                root[4] = 8;
+                break;
+            case "type":
+                root[0] = 1;
+                break;
+            case "free-space":
+                BinaryPrimitives.WriteUInt16LittleEndian(root.AsSpan(2, 2), ushort.MaxValue);
+                break;
+            case "sentinel":
+                TogglePayloadBit(format, root, format.PageSize - JetTypeInfo.Ru16(root, 2) - format.IndexPage.FirstEntryOffset);
+                break;
+            case "extra-bit":
+                TogglePayloadBit(format, root, format.PageSize - JetTypeInfo.Ru16(root, 2) - format.IndexPage.FirstEntryOffset + 1);
+                break;
+            case "prefix":
+                BinaryPrimitives.WriteUInt16LittleEndian(root.AsSpan(format.IndexPage.PrefLenOffset, 2), ushort.MaxValue);
+                break;
+            case "row-pointer":
+                root[format.IndexPage.FirstEntryOffset + 3] = 1;
+                break;
+            case "child-pointer":
+                root[format.IndexPage.FirstEntryOffset + 7] = 1;
+                break;
+            case "header-pointer":
+                BinaryPrimitives.WriteUInt32LittleEndian(root.AsSpan(format.IndexPage.TailPageOffset, 4), 1000);
+                break;
+            case "order":
+                source.Images[4] = Leaf(format, [new([2], 9, 0), new([1], 9, 1)]);
+                break;
+            default:
+                Array.Clear(root, format.IndexPage.BitmaskOffset, root.Length - format.IndexPage.BitmaskOffset);
+                BinaryPrimitives.WriteUInt16LittleEndian(root.AsSpan(2, 2), checked((ushort)(format.PageSize - format.IndexPage.FirstEntryOffset)));
+                BinaryPrimitives.WriteUInt32LittleEndian(root.AsSpan(format.IndexPage.TailPageOffset, 4), 0);
+                break;
+        }
+
+        byte[] original = root.ToArray();
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, format));
+        Assert.Equal(JetErrorCode.CorruptIndex, error.ErrorCode);
+        Assert.Equal(damage == "order" ? 4 : 3, error.ErrorInfo.PageNumber);
+        Assert.NotNull(error.ErrorInfo.Reason);
+        Assert.Equal(original, root);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RepeatedChild_RefusesCyclesAndSharedReachability(bool cycle)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateTree(format);
+        source.Images[3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 4), new(new([2], 9, 1), cycle ? 3 : 4)], 0, 0, 0);
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, format));
+        Assert.Equal(3, error.ErrorInfo.PageNumber);
+        Assert.Equal(1, source.Reads);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(6)]
+    public async Task TailCycles_RefuseSelfRootAndFirstDiscoveryAncestors(int target)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateTree(format);
+        source.Images[4] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 6)], 0, 0, 0);
+        source.Images[6] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 7)], 0, 0, target);
+        source.Images[7] = Leaf(format, []);
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, format));
+        Assert.Equal(6, error.ErrorInfo.PageNumber);
+    }
+
+    [Fact]
+    public async Task TailOnlyLeaf_IsReadAndValidatedWithTheSamePageBudget()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateTree(format);
+        BinaryPrimitives.WriteUInt32LittleEndian(source.Images[3].AsSpan(format.IndexPage.TailPageOffset, 4), 6);
+        source.Images[6] = Leaf(format, [new([3], 9, 3)]);
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        Assert.Equal(4, source.Reads);
+        Assert.Contains(records, static record => record.Kind == "leaf-entry" && record.PageNumber == 6);
+        source.Images[6][4] = 8;
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, format));
+        Assert.Equal(6, error.ErrorInfo.PageNumber);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxTreePages = 3 }));
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task EmptyIntermediateWithTail_TraversesTheKnownNavigableShape(DatabaseFormat kind)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        MemoryPages source = CreateTree(format);
+        byte[] root = Leaf(format, []);
+        root[0] = Constants.PageTypes.IndexIntermediate;
+        BinaryPrimitives.WriteUInt32LittleEndian(root.AsSpan(format.IndexPage.TailPageOffset, 4), 4);
+        source.Images[3] = root;
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        Assert.Equal(2, source.Reads);
+        Assert.Contains(records, static record => record.Kind == "leaf-entry" && record.PageNumber == 4);
+        Assert.DoesNotContain(records, static record => record.Kind == "intermediate-entry");
+    }
+
+    [Fact]
+    public async Task EqualKeyBookmarkOrder_IsPreservedWithoutInventingAnOrderingRule()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = new MemoryPages(format.PageSize, new() { [3] = Leaf(format, [new([1], 9, 5), new([1], 8, 1)]) });
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord[] entries = records.Where(static record => record.Kind == "leaf-entry").ToArray();
+        Assert.Equal<long?>([9, 8], entries.Select(static record => record.TargetPageNumber));
+        Assert.Equal<byte?>([5, 1], entries.Select(static record => record.TargetRowIndex));
+    }
+
+    [Theory]
+    [InlineData("working")]
+    [InlineData("pages")]
+    [InlineData("entries")]
+    [InlineData("references")]
+    [InlineData("records")]
+    [InlineData("canonical-bytes")]
+    [InlineData("lineage")]
+    public async Task Budgets_RefuseBeforeExceedingTheirAllowance(string limit)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateTree(format);
+        CompactIndexBudget budget = limit switch
+        {
+            "working" => new() { MaxWorkingBytes = 1 },
+            "pages" => new() { MaxTreePages = 1 },
+            "entries" => new() { MaxEntries = 1 },
+            "references" => new() { MaxReferences = 1 },
+            "records" => new() { MaxRecords = 1 },
+            "lineage" => new() { MaxLineageSteps = 1 },
+            _ => new() { MaxCanonicalBytes = 1 },
+        };
+        if (limit == "lineage")
+        {
+            source.Images[4] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 0), 6)], 0, 0, 5);
+            source.Images[6] = Leaf(format, []);
+        }
+
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, budget));
+        Assert.Equal(JetErrorCode.ValueTooLarge, error.ErrorCode);
+        if (limit == "working")
+        {
+            Assert.Equal(0, source.Reads);
+        }
+    }
+
+    [Fact]
+    public async Task CancellationAndRealIoFailures_PropagateWithoutTranslation()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateTree(format);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await CompactIndexAudit.ScanAsync(
+            source,
+            format,
+            2,
+            3,
+            new(),
+            async (_, _) => await cancellation.CancelAsync(),
+            cancellation.Token));
+        Assert.Equal(1, source.Reads);
+        var failure = new InvalidDataException("source read failed");
+        source = CreateTree(format);
+        source.Failure = failure;
+        InvalidDataException actual = await Assert.ThrowsAsync<InvalidDataException>(async () => await ScanAsync(source, format));
+        Assert.Same(failure, actual);
+    }
+
+    [Fact]
+    public async Task TruncatedPageAndChangingGeometry_RefuseWithoutSlicingPastTheRead()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        MemoryPages source = CreateTree(format);
+        source.Truncate = true;
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source, format));
+        source = CreateTree(format);
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactIndexAudit.ScanAsync(
+            source,
+            format,
+            2,
+            3,
+            new(),
+            (_, _) =>
+            {
+                source.PageCount++;
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+    }
+
+    private static MemoryPages CreateTree(JetFormat format)
+        => new(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1, 2, 4], 9, 1), 4), new(new([2], 9, 2), 5)], 0, 0, 5),
+            [4] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1, 2, 3], 9, 0), new([1, 2, 4], 9, 1)], 0, 5, 0, true),
+            [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([2], 9, 2)], 4, 0, 0, true),
+        });
+
+    private static byte[] Leaf(JetFormat format, IReadOnlyList<IndexEntry> entries)
+        => IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, entries, enablePrefixCompression: false);
+
+    private static void TogglePayloadBit(JetFormat format, byte[] page, int bit)
+        => page[format.IndexPage.BitmaskOffset + (bit / 8)] ^= checked((byte)(1 << (bit % 8)));
+
+    private static async Task<List<CompactIndexRecord>> ScanAsync(MemoryPages source, JetFormat format, CompactIndexBudget? budget = null)
+    {
+        var records = new List<CompactIndexRecord>();
+        await CompactIndexAudit.ScanAsync(
+            source,
+            format,
+            2,
+            3,
+            budget ?? new(),
+            (record, _) =>
+            {
+                records.Add(record);
+                return ValueTask.CompletedTask;
+            },
+            Ct);
+        return records;
+    }
+
+    private sealed class MemoryPages(int pageSize, Dictionary<long, byte[]> images) : IPageSource
+    {
+        public int PageSize => pageSize;
+
+        public long PageCount { get; set; } = 20;
+
+        public bool IsDisposed => false;
+
+        internal Dictionary<long, byte[]> Images { get; } = images;
+
+        internal int Reads { get; private set; }
+
+        internal Exception? Failure { get; set; }
+
+        internal bool Truncate { get; set; }
+
+        public ValueTask<byte[]> ReadPageAsync(long pageNumber, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            this.Reads++;
+            if (this.Failure is not null)
+            {
+                throw this.Failure;
+            }
+
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(this.Truncate ? 16 : pageSize);
+            if (!this.Truncate)
+            {
+                this.Images[pageNumber].CopyTo(buffer, 0);
+            }
+
+            return ValueTask.FromResult(buffer);
+        }
+
+        public void ThrowIfDisposed()
+        {
+        }
+
+        public void ThrowIfDisposedOrCancelled(CancellationToken cancellationToken) => cancellationToken.ThrowIfCancellationRequested();
+    }
+}

@@ -155,7 +155,14 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
             return mappedPages;
         }
 
-        long[] indexedPages = await this.ownerIndex.GetAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        OwnedPageIndex.Discovery indexed = await this.ownerIndex.GetDiscoveryAsync(tdefPage, cancellationToken).ConfigureAwait(false);
+        long[] indexedPages = indexed.Pages;
+        if (discovery.UnreadablePage is null && indexed.UnreadablePage is { } unreadablePage)
+        {
+            discovery.UnreadablePage = unreadablePage;
+            discovery.UnreadablePageType = indexed.UnreadablePageType;
+        }
+
         ReportDiscovery(tdefPage, discovery, requireCompletePages);
         if (canUseCache && discovery.UnreadablePage is null)
         {
@@ -561,7 +568,7 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
     {
         if (discovery.UnreadablePage is { } page)
         {
-            string reason = $"The owned-pages map of table definition page {owner} references page {page} with unrecognized type 0x{discovery.UnreadablePageType:X2} and matching ownership; complete content cannot be established.";
+            string reason = $"Table definition page {owner} has candidate page {page} with unrecognized type 0x{discovery.UnreadablePageType:X2} and matching ownership; complete content cannot be established.";
             if (requireCompletePages)
             {
                 throw new JetCorruptDataException(JetErrorCode.MalformedValue, "The table's owned pages cannot be traversed completely.", new JetErrorInfo { PageNumber = page, Reason = reason });

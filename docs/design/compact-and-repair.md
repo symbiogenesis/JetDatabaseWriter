@@ -82,10 +82,10 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; scan-owned uncached physical/catalog/TDEF/map inventory with storage admission, read/work/record limits and bounded serialization | S1: extend bounded traversal, collection accounting and cancellation to remaining row/LVAL/index discovery; qualify runtime/pool and caller-owned memory separately |
-| Preserve stored values | Strict write-back scans; refusal for unreadable mapped content; unreadable-LVAL refusal; bounded raw LVAL streaming | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; scan-owned uncached physical/catalog/TDEF/map inventory; bounded per-table raw-row streaming and per-root raw-index auditing | S1: compose aggregate row/LVAL/index discovery limits and collection accounting across all objects; qualify runtime/pool and caller-owned memory separately |
+| Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory and calculated-slot refusal; bounded raw row and LVAL streaming | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs | I2: verified tree ownership, shared roots, cross-TDEF index numbers and native key ordering; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key and reference observations | I2: complete tree ownership, shared-root/cross-TDEF proofs, separator fences, global ordering and a bounded raw-key tree builder; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -101,6 +101,26 @@ means. Failure can leave a partial destination, which must remain private and
 must never be published as a validated value. Following the declared payload
 length does not prove that trailing bytes or remaining chain pointers are
 disposable.
+
+`CompactRawRowReader` streams one table's stored row slices from physical owner
+headers, retaining the original header bookmark and moved-row location. It
+validates directory geometry, follows bounded same-owner overflow chains and
+refuses live-target aliases. Physical size, repeated reads, emitted rows,
+inspected slots and fixed working storage have separate limits. The awaited
+visitor borrows the source page; it must not retain that memory. This avoids
+field decoding and table snapshots, but does not prove missing ownership,
+incoming aliases, field/LVAL integrity or safe relocation. Overflow-header padding
+and unreachable deleted payloads require a separate preservation decision. Budgets
+apply to one table invocation; a whole-database driver must compose aggregate limits.
+
+`CompactIndexAudit` observes one root's raw stored keys, bookmarks and known
+index references with bounded collections and entry bytes. It validates page
+geometry/type/owner and in-page order without regenerating collation-sensitive
+keys. Its terminal record states the limited coverage and retains pinned
+storage. Reaching its observed graph is not a proof of separator fences,
+bookmark targets, global order, shared roots or incoming-reference ownership.
+Budgets apply to one root; orchestration and a raw-key tree builder remain open.
+These internal primitives do not extend the CLI inventory's completion contract.
 
 Logical TDEF chain writes retain the first four bytes of existing continuation
 headers on the same physical pages, while rewriting their next-page pointers.

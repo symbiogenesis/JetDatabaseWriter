@@ -88,6 +88,10 @@ index cases. For a wrong-type DATA page, both return only the faithful surviving
 `LastDiagnostics`, standard output or standard error. This baseline completeness
 gap is addressed for readable maps with an unknown page type and matching owner;
 strict reads refuse and lenient reads trace the incomplete result. The
-ordinary reader is not a managed-repair validator. Preserving page-ownership damage
-through usage-map fallback and auditing all independently reachable storage are
+ordinary reader is not a managed-repair validator. Physical owner-index fallback
+retains unknown-type candidates with matching ownership even when the map itself
+cannot be read. Strict reads and write-back refuse; lenient reads retain faithful
+survivors and report incompleteness on repeated scans. This does not establish
+completeness where the owner bytes themselves are damaged or a page has changed
+to another recognized type. Auditing all independently reachable storage remains
 necessary before using a successful scan as validation.

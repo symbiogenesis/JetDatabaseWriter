@@ -291,6 +291,9 @@ internal sealed class TableDataWriter(
                 newRow[update.Key] = update.Value;
             }
 
+            // Recalculation must not replace unreadable cached values that the
+            // caller did not assign; their loss needs an explicit repair decision.
+            UnreadableLongValue.ThrowIfAny(newRow, tableName);
             await constraints.ApplyUpdateAsync(tableName, tableDef, newRow, updateIndexes.Keys, cancellationToken).ConfigureAwait(false);
 
             // The row is deleted and re-inserted, so every carried MEMO / OLE

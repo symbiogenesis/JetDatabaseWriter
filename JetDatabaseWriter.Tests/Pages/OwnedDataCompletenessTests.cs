@@ -92,12 +92,21 @@ public sealed class OwnedDataCompletenessTests
     }
 
     [Theory]
-    [InlineData(DatabaseFormat.Jet3Mdb)]
-    [InlineData(DatabaseFormat.Jet4Mdb)]
-    [InlineData(DatabaseFormat.AceAccdb)]
-    public async Task UnrecognizedMappedDataPage_UpdateRefusesWithoutChangingSource(DatabaseFormat format)
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task UnrecognizedMappedDataPage_UpdateRefusesWithoutChangingSource(DatabaseFormat format, bool unreadableMap)
     {
         Image image = await CreateImageAsync(format);
+        if (unreadableMap)
+        {
+            int mapOffset = JetFormat.ForNewDatabase(format).TDef.UsedPages;
+            image.Bytes.AsSpan(checked((int)(image.Root * image.PageSize)) + mapOffset, 4).Clear();
+        }
+
         image.Bytes[checked((int)(image.DamagedPage * image.PageSize))] = 0x7F;
         await using var stream = new MemoryStream();
         await stream.WriteAsync(image.Bytes, Ct);
@@ -111,10 +120,18 @@ public sealed class OwnedDataCompletenessTests
         Assert.Equal(image.Bytes, stream.ToArray());
     }
 
-    [Fact]
-    public async Task UnrecognizedPageWrite_InvalidatesPreviouslyCachedOwnedPages()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnrecognizedPageWrite_InvalidatesPreviouslyCachedOwnedPages(bool unreadableMap)
     {
         Image image = await CreateImageAsync(DatabaseFormat.AceAccdb);
+        if (unreadableMap)
+        {
+            int mapOffset = JetFormat.ForNewDatabase(DatabaseFormat.AceAccdb).TDef.UsedPages;
+            image.Bytes.AsSpan(checked((int)(image.Root * image.PageSize)) + mapOffset, 4).Clear();
+        }
+
         await using var stream = new MemoryStream();
         await stream.WriteAsync(image.Bytes, Ct);
         stream.Position = 0;
@@ -128,6 +145,10 @@ public sealed class OwnedDataCompletenessTests
         JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
             await writer.Database.OwnedPages.GetOwnedDataPagesAsync(image.Root, Ct));
         Assert.Equal(image.DamagedPage, failure.ErrorInfo.PageNumber);
+
+        page[0] = Constants.PageTypes.Data;
+        await writer.Pager.WritePageAsync(image.DamagedPage, page, Ct);
+        Assert.Contains(image.DamagedPage, await writer.Database.OwnedPages.GetOwnedDataPagesAsync(image.Root, Ct));
     }
 
     [Fact]
@@ -163,6 +184,50 @@ public sealed class OwnedDataCompletenessTests
         using DataTable rows = await reader.ReadTableAsync("Items", cancellationToken: Ct);
 
         Assert.Equal(Enumerable.Range(1, 100), rows.Rows.Cast<DataRow>().Select(row => Assert.IsType<int>(row["Id"])).Order());
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    public async Task UnrecognizedOwnedPage_UnreadableMapFallbackRetainsIncompleteEvidence(DatabaseFormat format, bool strict)
+    {
+        Image image = await CreateImageAsync(format);
+        image.Bytes[checked((int)(image.DamagedPage * image.PageSize))] = 0x7F;
+        int mapOffset = JetFormat.ForNewDatabase(format).TDef.UsedPages;
+        image.Bytes.AsSpan(checked((int)(image.Root * image.PageSize)) + mapOffset, 4).Clear();
+        await using var messages = new StringWriter(CultureInfo.InvariantCulture);
+        using var listener = new TextWriterTraceListener(messages);
+        using var scope = new TestTraceScope(listener);
+        await using var stream = new MemoryStream(image.Bytes, writable: false);
+        await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, cancellationToken: Ct);
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            if (strict)
+            {
+                JetCorruptDataException failure = await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+                {
+                    using DataTable rows = await reader.ReadTableAsync("Items", cancellationToken: Ct);
+                });
+                Assert.Equal(image.DamagedPage, failure.ErrorInfo.PageNumber);
+            }
+            else
+            {
+                messages.GetStringBuilder().Clear();
+                using DataTable rows = await reader.ReadTableAsync("Items", cancellationToken: Ct);
+                Assert.Equal(image.UnaffectedIds, rows.Rows.Cast<DataRow>().Select(row => Assert.IsType<int>(row["Id"])).Order());
+                listener.Flush();
+                Assert.Contains("incomplete", messages.ToString(), StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(image.DamagedPage.ToString(CultureInfo.InvariantCulture), messages.ToString(), StringComparison.Ordinal);
+            }
+        }
+
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () =>
+            await reader.Database.OwnedPages.ForEachLiveTableRowAsync(image.Root, (_, _) => ValueTask.FromResult(true), Ct, requireCompleteRows: true));
     }
 
     private static async Task<Image> CreateImageAsync(DatabaseFormat format)

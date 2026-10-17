@@ -252,13 +252,15 @@ Native coverage uses `NativeSchemaDaoTests`, `NativeJet3SchemaRewriteTests`, `Co
 - Manual Access UI workflows remain supplemental for cases DAO cannot expose, such as saving an attachment back to disk through the UI.
 
 `OwnedDataCompletenessTests` verifies strict typed/string/count refusal for a
-mapped unknown page with matching ownership, lenient faithful survivors with an
-incomplete-table trace, strict write-back with unchanged bytes, warm writer-cache
-invalidation and cancellation. Stale row counts remain advisory. The native
-[damage controls](compact-and-repair-evidence.md) independently reproduce the
-mapped DATA-page fault and distinguish it from primary/secondary index damage;
-the Microsoft-authored inputs retain their hashes. This does not prove traversal
-completeness for missing/contradictory maps or damaged ownership.
+mapped or physically discovered unknown page with matching ownership, lenient
+faithful survivors with an incomplete-table trace, strict write-back with unchanged
+bytes, warm writer-cache invalidation, restoration and cancellation. Unknown-page
+evidence survives unreadable-map fallback and repeated reads. Stale row counts
+remain advisory. The native [damage controls](compact-and-repair-evidence.md)
+independently reproduce the mapped DATA-page fault and distinguish it from
+primary/secondary index damage; the Microsoft-authored inputs retain their hashes.
+This does not prove traversal completeness for missing map bits, recognized-type
+substitutions or damaged owner bytes.
 
 `CompactInventoryTests` checks bounded physical/catalog/TDEF/map observations,
 complete per-page hashes, pinned opaque content, cancellation, real I/O propagation
@@ -285,3 +287,25 @@ declared lengths before mutation. `NativeTDefChainPreservationTests` compares
 retained pages of DAO-authored wide tables and checks native reopen, insertion,
 compact and readback. These chain write-back checks do not establish complete
 generated-schema preservation or permission to relocate unknown metadata.
+
+`CompactRawRowReaderTests` checks exact opaque row payloads and original/moved
+bookmarks, bounded same-owner overflow traversal, live-target refusal, directory
+geometry, cycles, limits before I/O, cancellation, source changes and real I/O
+failures. Existing Jet3/Jet4/ACE overflow specimens exercise stored-byte agreement;
+this is a per-table physical owner-header scan, not a missing-owner or field-value
+completeness proof.
+
+`CompactIndexAuditTests` checks bounded raw keys/bookmarks and references,
+page/type/owner validation, prefix reconstruction, in-page key order, ambiguous
+child reachability, tail traversal, traversal limits, cancellation and I/O failure.
+Microsoft-authored catalog specimens and a compressed duplicate-key Jet3 leaf
+check agreement with the existing codec. The terminal record explicitly leaves
+whole-tree completeness unproven. These read-only observations neither regenerate
+keys nor authorize tree relocation/reclamation or settle separator, global-order,
+shared-root and cross-TDEF requirements.
+
+`LvalRowBoundsDecodePolicyTests` and `CalculatedLongValueDecodePolicyTests` check
+that malformed external directories and assigned calculated payloads produce
+contextual strict corruption, diagnosed lenient missing values and write refusal.
+These synthetic corruption cases do not establish native calculation-error
+semantics or the contents of lost values.

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.ValueDecoding;
 
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -60,8 +61,30 @@ internal sealed class LongValueDecoder(JetFormat format, ReaderPageCache pages, 
 
     private LvalRowLocation LocateLvalRow(int lvalPage, int lvalRow, byte[] page)
     {
+        if (page.Length < format.PageSize)
+        {
+            return new LvalRowLocation(page, 0, 0, "truncated LVAL page");
+        }
+
+        if (page[0] != Constants.PageTypes.Data)
+        {
+            return new LvalRowLocation(page, 0, 0, $"page {lvalPage} not data page");
+        }
+
+        int numRows = BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(format.DataPage.NumRows));
+        if (numRows > (format.PageSize - format.DataPage.RowsStart) / sizeof(ushort))
+        {
+            return new LvalRowLocation(page, 0, 0, "the LVAL row count exceeds its page directory capacity");
+        }
+
         RowBound[] rowDirectory = pages.GetRowDirectory(lvalPage, page);
-        return LongValueStore.LocateRow(lvalPage, lvalRow, page, format.DataPage, format.PageSize, rowDirectory);
+        LvalRowLocation location = LongValueStore.LocateRow(lvalPage, lvalRow, page, format.DataPage, format.PageSize, rowDirectory);
+        if (!location.Failed && location.Start < format.DataPage.RowsStart + (numRows * sizeof(ushort)))
+        {
+            return new LvalRowLocation(page, 0, 0, "the LVAL row overlaps its page header or row directory");
+        }
+
+        return location;
     }
 
     internal async ValueTask<string> ReadLongValueAsync(byte[] row, int start, int len, bool isOle, CancellationToken cancellationToken)
