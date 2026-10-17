@@ -628,7 +628,10 @@ public sealed class SchemaRewritePropertyPreservationTests
         {
             Assert.Equal(expected[i].ChunkType, actual[i].ChunkType);
             Assert.Equal(expected[i].SourceHeader, actual[i].SourceHeader);
-            Assert.True(expected[i].Entries.SequenceEqual(actual[i].Entries), $"Target '{expected[i].Name}': expected [{string.Join("; ", expected[i].Entries)}], got [{string.Join("; ", actual[i].Entries)}].");
+            if (!expected[i].Entries.SequenceEqual(actual[i].Entries))
+            {
+                Assert.Fail($"Target '{expected[i].Name}': expected [{string.Join("; ", expected[i].Entries)}], got [{string.Join("; ", actual[i].Entries)}].");
+            }
         }
     }
 

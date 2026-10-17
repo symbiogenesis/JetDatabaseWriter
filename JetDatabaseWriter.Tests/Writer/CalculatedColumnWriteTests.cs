@@ -1768,12 +1768,11 @@ public sealed class CalculatedColumnWriteTests
 
                 object stored = row[meta[i].Name];
                 object computed = values[i];
-                string label = $"{meta[i].Name} = {meta[i].CalculationExpression}";
                 if (stored is DBNull || computed is DBNull)
                 {
                     if (!(stored is DBNull && computed is DBNull))
                     {
-                        mismatches.Add($"{label}: stored {stored}, computed {computed}");
+                        mismatches.Add($"{meta[i].Name} = {meta[i].CalculationExpression}: stored {stored}, computed {computed}");
                     }
                 }
                 else if (stored is float or double or decimal)
@@ -1782,12 +1781,12 @@ public sealed class CalculatedColumnWriteTests
                     double actual = Convert.ToDouble(computed, CultureInfo.InvariantCulture);
                     if (Math.Abs(expected - actual) > Math.Max(1e-4, Math.Abs(expected) * 1e-6))
                     {
-                        mismatches.Add($"{label}: stored {expected}, computed {actual}");
+                        mismatches.Add($"{meta[i].Name} = {meta[i].CalculationExpression}: stored {expected}, computed {actual}");
                     }
                 }
                 else if (!Equals(stored, computed))
                 {
-                    mismatches.Add($"{label}: stored {stored} ({stored.GetType().Name}), computed {computed}");
+                    mismatches.Add($"{meta[i].Name} = {meta[i].CalculationExpression}: stored {stored} ({stored.GetType().Name}), computed {computed}");
                 }
             }
         }

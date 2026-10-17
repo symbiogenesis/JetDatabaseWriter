@@ -476,7 +476,7 @@ internal static class EmittedPageInvariantAssert
         int pageSize,
         int sourcePageNumber,
         long targetPageNumber,
-        byte[] expectedTypes,
+        ReadOnlySpan<byte> expectedTypes,
         string label)
     {
         if (targetPageNumber == 0)
@@ -492,7 +492,7 @@ internal static class EmittedPageInvariantAssert
         int pageSize,
         int sourcePageNumber,
         long targetPageNumber,
-        byte[] expectedTypes,
+        ReadOnlySpan<byte> expectedTypes,
         string label)
     {
         int pageCount = fileBytes.Length / pageSize;
