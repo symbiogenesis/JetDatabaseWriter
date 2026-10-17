@@ -1284,14 +1284,12 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 layout, format.PageSize, tdefPage, spliced, leafPrev, leafNext, leafTail);
             if (rebuilt != null)
             {
-                if (existingPageRewrites.ContainsKey(group.LeafPage))
+                if (!existingPageRewrites.TryAdd(group.LeafPage, rebuilt))
                 {
                     // Two groups targeted the same leaf — shouldn't happen
                     // (groups are keyed by leaf page). Defensive bail.
                     return false;
                 }
-
-                existingPageRewrites[group.LeafPage] = rebuilt;
 
                 IndexEntry newLast = spliced[^1];
                 if (IndexHelpers.CompareKeyBytes(newLast.Key, oldMaxKey) != 0)
@@ -1325,12 +1323,11 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 return false;
             }
 
-            if (existingPageRewrites.ContainsKey(group.LeafPage))
+            if (!existingPageRewrites.TryAdd(group.LeafPage, pageBytesAll[0]))
             {
                 return false;
             }
 
-            existingPageRewrites[group.LeafPage] = pageBytesAll[0];
             for (int p = 1; p < splitCount; p++)
             {
                 newPageAppends.Add(pageBytesAll[p]);
@@ -1382,16 +1379,16 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             // Walk the run rightwards from deadPage to find the first
             // non-emptying page (or 0 = chain terminus).
             long survRight = deadNext;
-            while (survRight > 0 && emptyingLeafSiblings.ContainsKey(survRight))
+            while (survRight > 0 && emptyingLeafSiblings.TryGetValue(survRight, out (long Prev, long Next) rightSibling))
             {
-                survRight = emptyingLeafSiblings[survRight].Next;
+                survRight = rightSibling.Next;
             }
 
             // Walk leftwards similarly.
             long survLeft = deadPrev;
-            while (survLeft > 0 && emptyingLeafSiblings.ContainsKey(survLeft))
+            while (survLeft > 0 && emptyingLeafSiblings.TryGetValue(survLeft, out (long Prev, long Next) leftSibling))
             {
-                survLeft = emptyingLeafSiblings[survLeft].Prev;
+                survLeft = leftSibling.Prev;
             }
 
             // Apply the patches at run boundaries (idempotent — multiple

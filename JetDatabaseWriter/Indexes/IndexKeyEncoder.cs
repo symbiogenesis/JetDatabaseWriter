@@ -449,12 +449,12 @@ internal static class IndexKeyEncoder
     /// <exception cref="ArgumentException">Thrown when <paramref name="value"/> cannot be coerced to a byte array.</exception>
     private static byte[] EncodeBinaryEntry(object value, bool ascending)
     {
-        byte[] data = value switch
+        ReadOnlySpan<byte> data = value switch
         {
             byte[] b => b,
-            ArraySegment<byte> seg => seg.ToArray(),
-            ReadOnlyMemory<byte> rom => rom.ToArray(),
-            Memory<byte> mem => mem.ToArray(),
+            ArraySegment<byte> seg => seg.AsSpan(),
+            ReadOnlyMemory<byte> rom => rom.Span,
+            Memory<byte> mem => mem.Span,
             _ => throw new ArgumentException(
                 $"Cannot coerce value of type {value.GetType().Name} to byte[] for Binary index key encoding.",
                 nameof(value)),
