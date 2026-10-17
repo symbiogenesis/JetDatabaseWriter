@@ -189,12 +189,11 @@ internal static class CalculatedColumnUtil
             return DBNull.Value;
         }
 
-        byte[] mantissa = payload.Slice(4, mantissaLen).ToArray();
-        FixCalculatedNumericByteOrder(mantissa);
-
         Span<byte> padded = stackalloc byte[12];
         padded.Clear();
-        mantissa.CopyTo(padded[(12 - mantissa.Length)..]);
+        Span<byte> mantissa = padded[(12 - mantissaLen)..];
+        payload.Slice(4, mantissaLen).CopyTo(mantissa);
+        FixCalculatedNumericByteOrder(mantissa);
 
         uint hi = BinaryPrimitives.ReadUInt32BigEndian(padded[..4]);
         uint mid = BinaryPrimitives.ReadUInt32BigEndian(padded.Slice(4, 4));
@@ -221,18 +220,18 @@ internal static class CalculatedColumnUtil
     private static int AlignToFour(int value)
         => value <= 0 ? 0 : (value + 3) / 4 * 4;
 
-    private static void FixCalculatedNumericByteOrder(byte[] bytes)
+    private static void FixCalculatedNumericByteOrder(Span<byte> bytes)
     {
         int pos = 0;
         if (bytes.Length % 8 != 0 && bytes.Length >= 4)
         {
-            Array.Reverse(bytes, 0, 4);
+            bytes[..4].Reverse();
             pos = 4;
         }
 
         for (; pos + 8 <= bytes.Length; pos += 8)
         {
-            Array.Reverse(bytes, pos, 8);
+            bytes.Slice(pos, 8).Reverse();
         }
     }
 }

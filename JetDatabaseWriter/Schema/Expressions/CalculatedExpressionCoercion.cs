@@ -14,6 +14,14 @@ internal static class CalculatedExpressionCoercion
     /// <summary>OLE Automation day 0, 1899-12-30, whose date part General Date text leaves out.</summary>
     private static readonly DateTime OleDateZero = new(1899, 12, 30);
 
+    private static readonly string[] DateParseFormats = [
+        "yyyy-MM-dd HH:mm:ss",
+        "yyyy-MM-dd",
+        "M/d/yyyy h:mm:ss tt",
+        "M/d/yyyy",
+        "MM/dd/yyyy",
+    ];
+
     internal static object CoerceResult(object? value, Type targetType, bool isCalculatedColumn = false)
     {
         if (IsNull(value))
@@ -351,16 +359,15 @@ internal static class CalculatedExpressionCoercion
             rounded = rounded.AddSeconds(1);
         }
 
-        string time = rounded.ToString("h:mm:ss tt", CultureInfo.InvariantCulture);
         if (rounded.Date == OleDateZero)
         {
-            return time;
+            return rounded.ToString("h:mm:ss tt", CultureInfo.InvariantCulture);
         }
 
         string date = rounded.Month.ToString(CultureInfo.InvariantCulture)
             + "/" + rounded.Day.ToString(CultureInfo.InvariantCulture)
             + "/" + rounded.Year.ToString(CultureInfo.InvariantCulture);
-        return rounded.TimeOfDay == TimeSpan.Zero ? date : date + " " + time;
+        return rounded.TimeOfDay == TimeSpan.Zero ? date : date + " " + rounded.ToString("h:mm:ss tt", CultureInfo.InvariantCulture);
     }
 
     /// <summary>
@@ -504,14 +511,7 @@ internal static class CalculatedExpressionCoercion
     /// <exception cref="FormatException">The text is not a date.</exception>
     internal static DateTime ParseDate(string text)
     {
-        string[] formats = [
-            "yyyy-MM-dd HH:mm:ss",
-            "yyyy-MM-dd",
-            "M/d/yyyy h:mm:ss tt",
-            "M/d/yyyy",
-            "MM/dd/yyyy",
-        ];
-        if (DateTime.TryParseExact(text, formats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out DateTime exact))
+        if (DateTime.TryParseExact(text, DateParseFormats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out DateTime exact))
         {
             return exact;
         }

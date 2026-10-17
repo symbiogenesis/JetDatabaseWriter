@@ -292,7 +292,7 @@ internal sealed class ColumnPropertyBlockBuilder
             ColumnPropertySourceChunk chunk = this.sourceChunks[chunkIndex];
             if (chunk.Names is not null)
             {
-                byte[] appendedNames = BuildNamePoolPayload(pools[chunkIndex].GetRange(chunk.Names.Length, pools[chunkIndex].Count - chunk.Names.Length), stringEncoding);
+                byte[] appendedNames = BuildNamePoolPayload(pools[chunkIndex], stringEncoding, chunk.Names.Length);
                 byte[] payload = new byte[AddPayloadLength(chunk.Payload.Length, appendedNames.Length, "name-pool payload")];
                 chunk.Payload.CopyTo(payload, 0);
                 appendedNames.CopyTo(payload, chunk.Payload.Length);
@@ -380,22 +380,22 @@ internal sealed class ColumnPropertyBlockBuilder
         return indices;
     }
 
-    private static byte[] BuildNamePoolPayload(List<string> names, Encoding encoding)
+    private static byte[] BuildNamePoolPayload(List<string> names, Encoding encoding, int startIndex = 0)
     {
-        int[] byteCounts = new int[names.Count];
+        int[] byteCounts = new int[names.Count - startIndex];
         int payloadLength = 0;
-        for (int nameIndex = 0; nameIndex < names.Count; nameIndex++)
+        for (int nameIndex = startIndex; nameIndex < names.Count; nameIndex++)
         {
             int byteCount = GetUInt16StringByteCount(encoding, names[nameIndex], "Property name");
-            byteCounts[nameIndex] = byteCount;
+            byteCounts[nameIndex - startIndex] = byteCount;
             payloadLength = AddPayloadLength(payloadLength, sizeof(ushort) + byteCount, "name-pool payload");
         }
 
         byte[] payload = new byte[payloadLength];
         int offset = 0;
-        for (int nameIndex = 0; nameIndex < names.Count; nameIndex++)
+        for (int nameIndex = startIndex; nameIndex < names.Count; nameIndex++)
         {
-            int byteCount = byteCounts[nameIndex];
+            int byteCount = byteCounts[nameIndex - startIndex];
             WriteLengthPrefixedEncodedString(payload, ref offset, encoding, names[nameIndex], byteCount);
         }
 

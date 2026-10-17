@@ -38,12 +38,10 @@ internal static class CalculatedExpressionFunctionRegistry
         foreach (string name in descriptor.Names)
         {
             string normalizedName = NormalizeFunctionName(name);
-            if (descriptors.ContainsKey(normalizedName))
+            if (!descriptors.TryAdd(normalizedName, descriptor))
             {
                 throw new InvalidOperationException($"Calculated-column function '{normalizedName}' is registered more than once.");
             }
-
-            descriptors.Add(normalizedName, descriptor);
         }
     }
 

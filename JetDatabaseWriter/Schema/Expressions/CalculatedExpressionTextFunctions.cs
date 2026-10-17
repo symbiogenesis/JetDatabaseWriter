@@ -141,22 +141,20 @@ internal static partial class CalculatedExpressionTextFunctions
             return start > text.Length ? string.Empty : text[(start - 1)..];
         }
 
-        string prefix = text[..(start - 1)];
-        string tail = text[(start - 1)..];
-        var builder = new StringBuilder(Math.Min(MaxGeneratedTextLength, prefix.Length + tail.Length));
-        AppendGeneratedText(builder, prefix);
+        var builder = new StringBuilder(Math.Min(MaxGeneratedTextLength, text.Length));
+        AppendGeneratedText(builder, text, 0, start - 1);
         int replacements = 0;
-        int position = 0;
-        while (position < tail.Length)
+        int position = start - 1;
+        while (position < text.Length)
         {
-            int found = tail.IndexOf(search, position, comparison);
+            int found = text.IndexOf(search, position, comparison);
             if (found < 0 || (count >= 0 && replacements >= count))
             {
-                AppendGeneratedText(builder, tail, position, tail.Length - position);
+                AppendGeneratedText(builder, text, position, text.Length - position);
                 break;
             }
 
-            AppendGeneratedText(builder, tail, position, found - position);
+            AppendGeneratedText(builder, text, position, found - position);
             AppendGeneratedText(builder, replacement);
             position = found + search.Length;
             replacements++;
