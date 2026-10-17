@@ -124,7 +124,10 @@ public sealed class TextSortOrderTests
                 byte[] rightIndex = EncodeIndexComparison(order, right);
                 int expected = Math.Sign(IndexPageCodec.CompareKeyBytes(leftIndex, rightIndex));
                 int actual = Math.Sign(collation.Compare(left, right));
-                Assert.True(expected == actual, $"Profile version={version}, hasVersion={hasVersion}, left=<{left}>, right=<{right}>, keys={Convert.ToHexString(leftIndex)}/{Convert.ToHexString(rightIndex)}, expected={expected}, actual={actual}.");
+                if (expected != actual)
+                {
+                    Assert.Fail($"Profile version={version}, hasVersion={hasVersion}, left=<{left}>, right=<{right}>, keys={Convert.ToHexString(leftIndex)}/{Convert.ToHexString(rightIndex)}, expected={expected}, actual={actual}.");
+                }
             }
         }
 

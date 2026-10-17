@@ -19,28 +19,31 @@ public sealed class ManagedImplementationTests
         foreach (MethodDefinitionHandle handle in metadata.MethodDefinitions)
         {
             MethodDefinition method = metadata.GetMethodDefinition(handle);
-            Assert.True(
-                (method.Attributes & MethodAttributes.PinvokeImpl) == 0,
-                $"Library method '{metadata.GetString(method.Name)}' imports native code.");
+            if ((method.Attributes & MethodAttributes.PinvokeImpl) != 0)
+            {
+                Assert.Fail($"Library method '{metadata.GetString(method.Name)}' imports native code.");
+            }
         }
 
         foreach (TypeDefinitionHandle handle in metadata.TypeDefinitions)
         {
             TypeDefinition type = metadata.GetTypeDefinition(handle);
-            Assert.True(
-                (type.Attributes & TypeAttributes.Import) == 0,
-                $"Library type '{metadata.GetString(type.Name)}' imports a COM implementation.");
+            if ((type.Attributes & TypeAttributes.Import) != 0)
+            {
+                Assert.Fail($"Library type '{metadata.GetString(type.Name)}' imports a COM implementation.");
+            }
         }
 
         foreach (TypeReferenceHandle handle in metadata.TypeReferences)
         {
             TypeReference type = metadata.GetTypeReference(handle);
-            Assert.False(
-                (metadata.GetString(type.Namespace) == "System.Runtime.InteropServices" &&
+            if ((metadata.GetString(type.Namespace) == "System.Runtime.InteropServices" &&
                  metadata.GetString(type.Name) == "NativeLibrary") ||
                 (metadata.GetString(type.Namespace) == "System.Diagnostics" &&
-                 metadata.GetString(type.Name) == "Process"),
-                $"The library delegates through {metadata.GetString(type.Namespace)}.{metadata.GetString(type.Name)}.");
+                 metadata.GetString(type.Name) == "Process"))
+            {
+                Assert.Fail($"The library delegates through {metadata.GetString(type.Namespace)}.{metadata.GetString(type.Name)}.");
+            }
         }
     }
 }

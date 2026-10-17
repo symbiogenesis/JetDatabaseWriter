@@ -439,9 +439,10 @@ internal static class EmittedPageInvariantAssert
     {
         for (int bitIndex = startBitInclusive; bitIndex < endBitExclusive; bitIndex++)
         {
-            Assert.False(
-                IsIndexBitSet(page, layout, bitIndex),
-                Message(pageNumber, $"Index bitmask has an unexpected set bit at payload offset {bitIndex}."));
+            if (IsIndexBitSet(page, layout, bitIndex))
+            {
+                Assert.Fail(Message(pageNumber, $"Index bitmask has an unexpected set bit at payload offset {bitIndex}."));
+            }
         }
     }
 
