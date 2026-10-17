@@ -172,7 +172,7 @@ internal static class IndexPlanner
     {
         if (hasBound)
         {
-            var values = new object?[equalityValues.Count + 1];
+            object?[] values = new object?[equalityValues.Count + 1];
             equalityValues.CopyTo(values);
             values[^1] = boundValue;
             return new IndexKeyBound(values, inclusive);
