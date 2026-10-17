@@ -102,12 +102,10 @@ public sealed class RowValues : IEnumerable<KeyValuePair<string, object?>>
     public void Add(string columnName, object? value)
     {
         Guard.NotNullOrEmpty(columnName, nameof(columnName));
-        if (this.values.ContainsKey(columnName))
+        if (!this.values.TryAdd(columnName, value))
         {
             throw new ArgumentException($"Column '{columnName}' has already been assigned.", nameof(columnName));
         }
-
-        this.values[columnName] = value;
     }
 
     /// <summary>Determines whether the named column has been assigned a value.</summary>

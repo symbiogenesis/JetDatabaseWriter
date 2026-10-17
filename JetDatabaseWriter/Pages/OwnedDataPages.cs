@@ -864,12 +864,11 @@ internal sealed class OwnedDataPages : IPageWriteObserver, IDisposable
         /// <param name="owner">The owning TDEF.</param>
         internal void Remove(long owner)
         {
-            if (!this.byOwner.TryGetValue(owner, out Dictionary<long, int>? dependencies))
+            if (!this.byOwner.Remove(owner, out Dictionary<long, int>? dependencies))
             {
                 return;
             }
 
-            this.byOwner.Remove(owner);
             foreach (long page in dependencies.Keys)
             {
                 Dictionary<long, int> owners = this.ByPage[page];
