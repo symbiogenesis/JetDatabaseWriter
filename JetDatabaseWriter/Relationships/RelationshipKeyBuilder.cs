@@ -47,12 +47,15 @@ internal static class RelationshipKeyBuilder
     {
         // Entirely Null foreign keys need no parent on insert/update, but
         // nullable parent keys still match Null children during cascades.
-        if (Array.TrueForAll(columnIndexes, index => index >= 0 && index < row.Length && row[index] is null or DBNull))
+        foreach (int index in columnIndexes)
         {
-            return null;
+            if (index < 0 || index >= row.Length || row[index] is not (null or DBNull))
+            {
+                return BuildKey(row, columnIndexes, definition);
+            }
         }
 
-        return BuildKey(row, columnIndexes, definition);
+        return null;
     }
 
     public static int[] GetFixedBinaryLengths(TableDef definition, int[] columnIndexes)

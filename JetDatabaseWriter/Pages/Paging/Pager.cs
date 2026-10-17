@@ -653,9 +653,9 @@ internal sealed class Pager : PageFile
 
         if (this.frames.Count == this.cacheSize)
         {
-            while (this.frames[this.clock[this.clockHand]].Referenced)
+            while (this.frames[this.clock[this.clockHand]] is { Referenced: true } candidate)
             {
-                this.frames[this.clock[this.clockHand]].Referenced = false;
+                candidate.Referenced = false;
                 this.clockHand = (this.clockHand + 1) % this.clock.Count;
             }
 

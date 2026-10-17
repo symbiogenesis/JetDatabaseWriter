@@ -42,10 +42,7 @@ internal sealed class RelationshipChildRowLocator(JetFormat format, IPageSource 
             foreach ((long dataPage, int rowIndex) in hits)
             {
                 long key = (dataPage << 16) | (uint)rowIndex;
-                if (!pendingByLocation.ContainsKey(key))
-                {
-                    pendingByLocation[key] = (dataPage, rowIndex, payload);
-                }
+                _ = pendingByLocation.TryAdd(key, (dataPage, rowIndex, payload));
             }
         }
 

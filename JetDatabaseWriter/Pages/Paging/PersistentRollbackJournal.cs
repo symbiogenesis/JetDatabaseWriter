@@ -86,7 +86,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
                 hash.GetHashAndReset().CopyTo(header, 56);
             }
 
-            Hash(header.AsSpan(0, 96).ToArray()).CopyTo(header, 96);
+            Hash(header, 96).CopyTo(header, 96);
             journal.Position = 0;
             journal.Write(header, 0, header.Length);
             journal.Flush(true);
@@ -288,7 +288,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
         long originalLength = BinaryPrimitives.ReadInt64LittleEndian(header.AsSpan(16));
         ValidatePageSize(pageSize);
         ValidateLength(originalLength);
-        if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header.AsSpan(0, 96).ToArray())) || !header.AsSpan(24, 32).SequenceEqual(Identity(databasePath)) || journal.Length < HeaderLength + originalLength)
+        if (!header.AsSpan(0, 8).SequenceEqual(Magic) || !header.AsSpan(96, 32).SequenceEqual(Hash(header, 96)) || !header.AsSpan(24, 32).SequenceEqual(Identity(databasePath)) || journal.Length < HeaderLength + originalLength)
         {
             throw new IOException("The recovery journal identity or header is invalid.");
         }
@@ -328,7 +328,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
 
         BinaryPrimitives.WriteInt64LittleEndian(record, offset);
         bytes.CopyTo(record.AsSpan(8, payloadLength));
-        Hash(record.AsSpan(0, record.Length - 32).ToArray()).CopyTo(record, record.Length - 32);
+        Hash(record, record.Length - 32).CopyTo(record, record.Length - 32);
         journal.Position = journal.Length;
         journal.Write(record, 0, record.Length);
         journal.Flush(true);
@@ -337,7 +337,7 @@ internal sealed class PersistentRollbackJournal : IDisposable
     private static long ReadRecord(FileStream journal, long position, byte[] record)
     {
         Read(journal, position, record, record.Length);
-        if (!record.AsSpan(record.Length - 32).SequenceEqual(Hash(record.AsSpan(0, record.Length - 32).ToArray())))
+        if (!record.AsSpan(record.Length - 32).SequenceEqual(Hash(record, record.Length - 32)))
         {
             throw new IOException("The recovery page record checksum is invalid.");
         }
@@ -369,16 +369,17 @@ internal sealed class PersistentRollbackJournal : IDisposable
             fullPath = fullPath.ToUpperInvariant();
         }
 
-        return Hash(Encoding.UTF8.GetBytes(fullPath));
+        byte[] bytes = Encoding.UTF8.GetBytes(fullPath);
+        return Hash(bytes, bytes.Length);
     }
 
-    private static byte[] Hash(byte[] bytes)
+    private static byte[] Hash(byte[] bytes, int length)
     {
 #if NET6_0_OR_GREATER
-        return SHA256.HashData(bytes);
+        return SHA256.HashData(bytes.AsSpan(0, length));
 #else
         using var hash = SHA256.Create();
-        return hash.ComputeHash(bytes);
+        return hash.ComputeHash(bytes, 0, length);
 #endif
     }
 

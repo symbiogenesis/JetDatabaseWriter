@@ -234,10 +234,7 @@ internal sealed class PagerTransaction
         SavepointFrame parent = this.savepoints.Peek();
         foreach (KeyValuePair<long, PriorImage> prior in frame.Priors)
         {
-            if (!parent.Priors.ContainsKey(prior.Key))
-            {
-                parent.Priors.Add(prior.Key, prior.Value);
-            }
+            _ = parent.Priors.TryAdd(prior.Key, prior.Value);
         }
     }
 
