@@ -17,7 +17,8 @@ using JetDatabaseWriter.ValueDecoding.Models;
 using Xunit;
 
 /// <summary>Native fixed Text descriptors and raw slots survive unrelated edits.</summary>
-public sealed class NativeFixedTextPreservationTests
+/// <param name="db">Caches native fixture bytes before each test takes its own writable copy.</param>
+public sealed class NativeFixedTextPreservationTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
     /// <summary>Gets native fixtures paired with every supported unrelated rewrite.</summary>
     public static TheoryData<string, string> Edits
@@ -42,8 +43,7 @@ public sealed class NativeFixedTextPreservationTests
     public async Task NativeFixedText_UnrelatedEditsPreserveDescriptorAndStoredBytes(string fileName, string operation)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", fileName);
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        await using MemoryStream stream = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         (ColumnInfo before, Dictionary<int, byte[]> beforeValues) = await ReadStorageAsync(stream, "FixedText", "Value");
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
@@ -116,8 +116,7 @@ public sealed class NativeFixedTextPreservationTests
     public async Task NativeFixedText_MalformedUnassignedSlotSurvivesEdits(string fileName, string operation, bool nullSlot)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", fileName);
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        await using MemoryStream stream = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         await DamageFixedTextAsync(stream, nullSlot ? 5 : 1);
         (ColumnInfo before, Dictionary<int, byte[]> beforeValues) = await ReadStorageAsync(stream, "FixedText", "Value");
         stream.Position = 0;
@@ -173,8 +172,7 @@ public sealed class NativeFixedTextPreservationTests
     public async Task NativeFixedText_ExplicitEqualAssignmentReencodesSlot(string fileName, bool nullSlot)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", fileName);
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        await using MemoryStream stream = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         int targetId = nullSlot ? 5 : 1;
         await DamageFixedTextAsync(stream, targetId);
         object assigned;
@@ -200,8 +198,7 @@ public sealed class NativeFixedTextPreservationTests
     public async Task NativeFixedText_ExplicitInvalidCodePageAssignmentRefusesWithoutMutation()
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", "NativeFixedTextJet3Cp932.mdb");
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        await using MemoryStream stream = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         await DamageFixedTextAsync(stream, 1);
         string assigned;
         stream.Position = 0;
@@ -237,8 +234,7 @@ public sealed class NativeFixedTextPreservationTests
     public async Task NativeFixedText_CascadeKeepsUnassignedMalformedSlot(string fileName, bool nullSlot, bool selfReference)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", fileName);
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        await using MemoryStream stream = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         int targetId = nullSlot ? 5 : 1;
         await DamageFixedTextAsync(stream, targetId);
         (ColumnInfo before, Dictionary<int, byte[]> beforeValues) = await ReadStorageAsync(stream, "FixedText", "Value");
@@ -327,8 +323,7 @@ public sealed class NativeFixedTextPreservationTests
     public async Task NativeFixedText_ScalarMetadataReaderPreservesLeadingBom(string fileName)
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "FixedText", fileName);
-        await using var stream = new MemoryStream();
-        await stream.WriteAsync(await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        await using MemoryStream stream = await db.CopyToStreamAsync(path, TestContext.Current.CancellationToken);
         stream.Position = 0;
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, TestContext.Current.CancellationToken))
         {

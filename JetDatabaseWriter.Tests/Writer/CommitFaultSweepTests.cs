@@ -89,7 +89,7 @@ public class CommitFaultSweepTests
                 catch (IOException)
                 {
                     Assert.True(stream.Faulted);
-                    Assert.Equal(baseline, stream.ToArray());
+                    Assert.Equal<byte>(baseline.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                     if (transaction is not null)
                     {
                         Assert.True(transaction.IsRolledBack);
@@ -139,7 +139,7 @@ public class CommitFaultSweepTests
 
         await Assert.ThrowsAsync<IOException>(async () => await transaction.CommitAsync(TestContext.Current.CancellationToken));
         Assert.True(transaction.IsRolledBack);
-        Assert.Equal(before, stream.ToArray());
+        Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
         await writer.InsertRowAsync("Items", [999, "After"], TestContext.Current.CancellationToken);
     }
 
@@ -239,9 +239,10 @@ public class CommitFaultSweepTests
     private static List<object[]> Rows()
     {
         var rows = new List<object[]>(100);
+        string text = new('x', 180);
         for (int i = 0; i < 100; i++)
         {
-            rows.Add([i, new string('x', 180)]);
+            rows.Add([i, text]);
         }
 
         return rows;

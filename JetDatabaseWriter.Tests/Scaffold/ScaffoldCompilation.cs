@@ -45,9 +45,11 @@ internal static class ScaffoldCompilation
     {
         List<string> all = [.. sources];
         (IReadOnlyList<Diagnostic> errors, IReadOnlyList<Diagnostic> warnings, Assembly? assembly) = Compile(all);
-        Assert.True(
-            errors.Count == 0 && warnings.Count == 0,
-            string.Join(Environment.NewLine, errors.Concat(warnings)) + Environment.NewLine + string.Join(Environment.NewLine + "----" + Environment.NewLine, all));
+        if (errors.Count != 0 || warnings.Count != 0)
+        {
+            Assert.Fail(string.Join(Environment.NewLine, errors.Concat(warnings)) + Environment.NewLine + string.Join(Environment.NewLine + "----" + Environment.NewLine, all));
+        }
+
         return assembly!;
     }
 

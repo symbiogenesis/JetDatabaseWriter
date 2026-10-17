@@ -90,6 +90,7 @@ public sealed class StatementSpillTests
     [Fact]
     public async Task TornWriteSweep_RestoresOriginalAndAllowsRetry()
     {
+        byte[] original = new byte[16 * 80];
         for (int fault = 1; fault <= 141; fault++)
         {
             await using var stream = new WriteFaultStream();
@@ -137,10 +138,10 @@ public sealed class StatementSpillTests
                 await pager.RollbackStatementAsync(transaction);
             }
 
-            Assert.Equal(new byte[16 * 80], stream.ToArray());
+            Assert.Equal<byte>(original.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
             Assert.False(pager.IsFaulted);
             await pager.WritePageAsync(1, page, TestContext.Current.CancellationToken);
-            Assert.Equal(37, stream.ToArray()[16]);
+            Assert.Equal(37, stream.GetBuffer().AsSpan(0, checked((int)stream.Length))[16]);
         }
     }
 

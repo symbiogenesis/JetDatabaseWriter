@@ -213,7 +213,8 @@ public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseC
         switch (statement)
         {
             case "Insert":
-                _ = await writer.InsertRowsAsync("T", Enumerable.Range(100, 8).Select(id => new object?[] { id, new string('b', 35000) }), Ct);
+                string note = new('b', 35000);
+                _ = await writer.InsertRowsAsync("T", Enumerable.Range(100, 8).Select(id => new object?[] { id, note }), Ct);
                 break;
             case "Update":
                 _ = await writer.UpdateRowsAsync("T", RowCriteria.All(), new RowValues { ["Note"] = new string('c', 36000) }, Ct);
