@@ -608,7 +608,6 @@ internal sealed class TableDataWriter(
         FkContext? fkContext,
         CancellationToken cancellationToken)
     {
-        var batchHintRows = new List<(RowLocation Loc, object[] Row)>();
         int inserted = 0;
 
         try
@@ -621,6 +620,8 @@ internal sealed class TableDataWriter(
                 tableName,
                 pendingRows,
                 cancellationToken).ConfigureAwait(false);
+
+            var batchHintRows = new List<(RowLocation Loc, object[] Row)>(pendingRows.Count);
 
             // Row and index writes remain private until statement write-back.
             foreach (object[] row in pendingRows)

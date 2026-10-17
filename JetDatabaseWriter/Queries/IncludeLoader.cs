@@ -519,6 +519,13 @@ internal static class IncludeLoader
     private static string? BuildKeyFromObject(object instance, IReadOnlyList<string> columns, TextSortOrder sortOrder)
     {
         var map = EntityMap.For(instance.GetType());
+        if (columns.Count == 1)
+        {
+            return map.FindByColumn(columns[0])?.Property is PropertyInfo property
+                ? Normalize(property.GetValue(instance), sortOrder)
+                : null;
+        }
+
         string[] parts = new string[columns.Count];
         for (int i = 0; i < columns.Count; i++)
         {
@@ -540,6 +547,12 @@ internal static class IncludeLoader
 
     private static string? BuildKeyFromRow(object?[] row, int[] keyIndices, TextSortOrder sortOrder)
     {
+        if (keyIndices.Length == 1)
+        {
+            int index = keyIndices[0];
+            return Normalize(index < row.Length ? row[index] : null, sortOrder);
+        }
+
         string[] parts = new string[keyIndices.Length];
         for (int i = 0; i < keyIndices.Length; i++)
         {
@@ -703,7 +716,8 @@ internal static class IncludeLoader
                 return true;
             }
 
-            if (col.Length > 2 && col.EndsWith("ID", StringComparison.Ordinal) && col[..^2] == nav)
+            if (col.Length > 2 && col.Length - 2 == nav.Length
+                && col.EndsWith("ID", StringComparison.Ordinal) && col.StartsWith(nav, StringComparison.Ordinal))
             {
                 return true;
             }

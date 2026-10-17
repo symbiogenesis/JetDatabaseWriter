@@ -279,6 +279,11 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
         }
 
         object[] row = writer(item);
+        if (!td.HasComplexColumns)
+        {
+            return row;
+        }
+
         long? sharedReference = null;
         string? sharedColumn = null;
         for (int i = 0; i < td.Columns.Count; i++)

@@ -31,6 +31,11 @@ internal sealed class RowShape : IEquatable<RowShape>
     /// <inheritdoc/>
     public bool Equals(RowShape? other)
     {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
         if (other == null || this.hashCode != other.hashCode || this.columns.Length != other.columns.Length)
         {
             return false;
