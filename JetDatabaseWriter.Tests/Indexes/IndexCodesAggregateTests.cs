@@ -156,7 +156,8 @@ public sealed class IndexCodesAggregateTests
 
         // Surface a structured report whether or not anything failed; xUnit
         // captures stdout per test so the report is visible in test logs.
-        TestContext.Current.SendDiagnosticMessage(BuildReport(fixturePath, report));
+        string aggregateReport = BuildReport(fixturePath, report);
+        TestContext.Current.SendDiagnosticMessage(aggregateReport);
 
         // Sanity: must have exercised something so a future filter regression
         // can't silently neutralise this.
@@ -174,7 +175,7 @@ public sealed class IndexCodesAggregateTests
         // failure message itself is the diagnostic.
         Assert.True(
             totalMismatched == 0 && totalCountMismatch == 0,
-            BuildReport(fixturePath, report));
+            aggregateReport);
     }
 
     private static string BuildReport(string fixturePath, List<IndexReport> report)

@@ -62,12 +62,12 @@ public sealed class CompactLongValueAuditTests
                             declaredBytes += record.DeclaredPayloadBytes;
                             if (record.Kind == "lval-column")
                             {
-                                Assert.Equal(original.ToArray(), record.RawBytes.ToArray());
+                                Assert.Equal<byte>(original.Span, record.RawBytes.Span);
                             }
                             else if (record.Kind == "lval-row")
                             {
                                 byte[] physical = await reader.ReadPageCopyAsync(record.PageNumber, recordToken);
-                                Assert.Equal(physical.AsSpan(record.RowStart, record.RawBytes.Length).ToArray(), record.RawBytes.ToArray());
+                                Assert.Equal<byte>(physical.AsSpan(record.RowStart, record.RawBytes.Length), record.RawBytes.Span);
                                 externalRows++;
                             }
                         },

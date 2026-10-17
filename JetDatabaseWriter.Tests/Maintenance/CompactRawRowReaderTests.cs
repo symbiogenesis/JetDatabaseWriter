@@ -41,7 +41,7 @@ public sealed class CompactRawRowReaderTests
             async (location, bytes, token) =>
             {
                 byte[] physical = await reader.ReadPageCopyAsync(location.DataPageNumber, token);
-                Assert.Equal(physical.AsSpan(location.RowStart, location.RowSize).ToArray(), bytes.ToArray());
+                Assert.Equal<byte>(physical.AsSpan(location.RowStart, location.RowSize), bytes.Span);
                 Assert.True(bookmarks.Add((location.PageNumber, location.RowIndex)));
             },
             Ct);
