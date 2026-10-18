@@ -365,10 +365,18 @@ public sealed class NativeJet3SchemaRewriteTests
             session.WorkDir,
             TimeSpan.FromMinutes(2));
         Assert.True(created.ExitCode == 0, $"DAO36 large row create failed: {created.StandardOutput}\n{created.StandardError}");
-        await using (AccessWriter writer = await session.OpenWriterAsync(TestContext.Current.CancellationToken))
+
+        // The assertion concerns the rewritten map's persisted format. Avoid
+        // including durable rollback-journal flushes for a thousand data pages.
+        await using var image = new MemoryStream();
+        await image.WriteAsync(await File.ReadAllBytesAsync(session.SourcePath, TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
+        image.Position = 0;
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(image, cancellationToken: TestContext.Current.CancellationToken))
         {
             await writer.AddColumnAsync("Longs", new ColumnDefinition("Added", typeof(int)), TestContext.Current.CancellationToken);
         }
+
+        await File.WriteAllBytesAsync(session.SourcePath, image.ToArray(), TestContext.Current.CancellationToken);
 
         await using (AccessReader harness = await TestDatabase.OpenReaderAsync(session.SourcePath, cancellationToken: TestContext.Current.CancellationToken))
         {

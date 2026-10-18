@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Tests.Pages;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -62,7 +63,13 @@ public sealed class NativeFreeMapGrowthTests
             originalPage = (await reader.Database.OwnedPages.GetOwnedDataPagesAsync(entry.TDefPage, Ct))[0];
         }
 
-        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(session.SourcePath, cancellationToken: Ct))
+        // This exercises page-map layout and native interoperability. Keep the
+        // managed mutation in memory so the filler does not measure durable
+        // rollback-journal flushes for every captured page.
+        await using var image = new MemoryStream();
+        await image.WriteAsync(await File.ReadAllBytesAsync(session.SourcePath, Ct), Ct);
+        image.Position = 0;
+        await using (AccessWriter writer = await TestDatabase.OpenWriterAsync(image, cancellationToken: Ct))
         {
             await writer.CreateTableAsync(
                 "Filler",
@@ -79,6 +86,8 @@ public sealed class NativeFreeMapGrowthTests
             int window = writer.Database.Format.IsJet3 ? 1_024 : 512;
             Assert.Contains(map.Pages, page => page >= originalPage + window);
         }
+
+        await File.WriteAllBytesAsync(session.SourcePath, image.ToArray(), Ct);
 
         string compact = AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.CompactedPath);
         string compactScript = $$"""

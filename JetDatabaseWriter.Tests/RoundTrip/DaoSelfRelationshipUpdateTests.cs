@@ -96,9 +96,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 $db.Relations.Append($rel)
             } finally { $db.Close() }
             """;
-        AssertDaoSucceeded(RunEngineScript(session, format, setup));
         string writerPath = session.CreateDatabasePath("writer");
-        File.Copy(session.SourcePath, writerPath);
         string assignedSql = assignment == "unchanged" ? string.Empty : ", [ParentId]=" + assignment;
         string sql = "UPDATE [Tree] SET [Id]=5" + assignedSql + " WHERE [Id]=1";
         string updateScript = $$"""
@@ -109,7 +107,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 Write-Output ('UPDATE=REFUSED:' + $codes[0])
             }
             """;
-        AccessRoundTripEnvironment.CompactResult native = RunDatabaseScript(session, format, session.SourcePath, updateScript);
+        AccessRoundTripEnvironment.CompactResult native = CreateAndUpdateNativeDatabase(session, format, writerPath, setup, updateScript);
         AssertDaoSucceeded(native);
         bool accepted = (cascade || !dependent) && assignment is not "1" and not "9" && (cascade || assignment != "unchanged");
         int refusalCode = !cascade && (dependent || assignment == "unchanged") ? 3200 : 3201;
@@ -156,11 +154,9 @@ public sealed class DaoSelfRelationshipUpdateTests
         }
 
         Assert.Equal(expected, await ReadRowsAsync(writerPath));
-        AssertDaoRows(session, format, writerPath, expected);
         string compacted = session.CreateDatabasePath("writer_compacted");
-        AssertDaoSucceeded(RunEngineScript(session, format, $"$engine.CompactDatabase({AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(writerPath)}, {AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compacted)})"));
+        AssertDaoRowsAndCompact(session, format, writerPath, compacted, expected);
         Assert.Equal(expected, await ReadRowsAsync(compacted));
-        AssertDaoRows(session, format, compacted, expected);
     }
 
     /// <summary>Composite self-updates preserve explicit caller keys, including references to another moved row.</summary>
@@ -219,9 +215,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 $db.Relations.Append($rel)
             } finally { $db.Close() }
             """;
-        AssertDaoSucceeded(RunEngineScript(session, format, setup));
         string writerPath = session.CreateDatabasePath("writer");
-        File.Copy(session.SourcePath, writerPath);
         string assignedSql = assignment == "unchanged" ? string.Empty : ", " + assignment;
         string sql = "UPDATE [Tree] SET [Id]=5" + assignedSql + " WHERE [Id]=1";
         string updateScript = $$"""
@@ -232,7 +226,7 @@ public sealed class DaoSelfRelationshipUpdateTests
                 Write-Output 'UPDATE=REFUSED:3201'
             }
             """;
-        AccessRoundTripEnvironment.CompactResult native = RunDatabaseScript(session, format, session.SourcePath, updateScript);
+        AccessRoundTripEnvironment.CompactResult native = CreateAndUpdateNativeDatabase(session, format, writerPath, setup, updateScript);
         AssertDaoSucceeded(native);
         bool accepted = assignment is not "ParentPart=1" and not "ParentId=1";
         Assert.Contains(accepted ? "UPDATE=ACCEPTED" : "UPDATE=REFUSED:3201", native.StdOut, StringComparison.Ordinal);
@@ -269,11 +263,9 @@ public sealed class DaoSelfRelationshipUpdateTests
         }
 
         Assert.Equal(expected, await ReadRowsAsync(writerPath));
-        AssertDaoRows(session, format, writerPath, expected);
         string compacted = session.CreateDatabasePath("writer_compacted");
-        AssertDaoSucceeded(RunEngineScript(session, format, $"$engine.CompactDatabase({AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(writerPath)}, {AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compacted)})"));
+        AssertDaoRowsAndCompact(session, format, writerPath, compacted, expected);
         Assert.Equal(expected, await ReadRowsAsync(compacted));
-        AssertDaoRows(session, format, compacted, expected);
     }
 
     private static AccessRoundTripEnvironment.CompactResult RunEngineScript(AccessRoundTripSession session, DatabaseFormat format, string script)
@@ -288,12 +280,19 @@ public sealed class DaoSelfRelationshipUpdateTests
         return new AccessRoundTripEnvironment.CompactResult(result.ExitCode, result.StandardOutput, result.StandardError);
     }
 
-    private static AccessRoundTripEnvironment.CompactResult RunDatabaseScript(AccessRoundTripSession session, DatabaseFormat format, string path, string script)
+    private static AccessRoundTripEnvironment.CompactResult CreateAndUpdateNativeDatabase(
+        AccessRoundTripSession session,
+        DatabaseFormat format,
+        string writerPath,
+        string setup,
+        string updateScript)
     {
         string body = $$"""
-            $db = $engine.OpenDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(path)}})
+            {{setup}}
+            [IO.File]::Copy({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath)}}, {{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(writerPath)}})
+            $db = $engine.OpenDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(session.SourcePath)}})
             try {
-                {{script}}
+                {{updateScript}}
             } finally { $db.Close() }
             """;
         return RunEngineScript(session, format, body);
@@ -310,24 +309,43 @@ public sealed class DaoSelfRelationshipUpdateTests
     private static void AssertDaoSucceeded(AccessRoundTripEnvironment.CompactResult result) =>
         Assert.True(result.ExitCode == 0, result.StdOut + result.StdErr);
 
-    private static void AssertDaoRows(AccessRoundTripSession session, DatabaseFormat format, string path, List<string> expected)
+    private static void AssertDaoRowsAndCompact(AccessRoundTripSession session, DatabaseFormat format, string path, string compacted, List<string> expected)
     {
         const string readScript = """
             $rs = $db.OpenRecordset('SELECT * FROM [Tree] ORDER BY [Id]', 4)
             try {
                 while (-not $rs.EOF) {
                     $values = for ($index = 0; $index -lt $rs.Fields.Count; $index++) { [string]$rs.Fields.Item($index).Value }
-                    Write-Output ('ROW=' + ($values -join '|'))
+                    Write-Output ($prefix + ($values -join '|'))
                     $rs.MoveNext()
                 }
             } finally { $rs.Close() }
             """;
-        AccessRoundTripEnvironment.CompactResult result = RunDatabaseScript(session, format, path, readScript);
+
+        // Keep every close/reopen and native row check, sharing only the host
+        // startup between consecutive native operations on this private file.
+        string script = $$"""
+            $prefix = 'BEFORE='
+            $db = $engine.OpenDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(path)}})
+            try {
+                {{readScript}}
+            } finally { $db.Close() }
+            $engine.CompactDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(path)}}, {{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compacted)}})
+            $prefix = 'AFTER='
+            $db = $engine.OpenDatabase({{AccessRoundTripEnvironment.ToPowerShellSingleQuotedLiteral(compacted)}})
+            try {
+                {{readScript}}
+            } finally { $db.Close() }
+            """;
+        AccessRoundTripEnvironment.CompactResult result = RunEngineScript(session, format, script);
         AssertDaoSucceeded(result);
-        Assert.Equal(expected.Count, result.StdOut.Split('\n').Count(line => line.StartsWith("ROW=", StringComparison.Ordinal)));
-        foreach (string row in expected)
+        foreach (string prefix in new[] { "BEFORE=", "AFTER=" })
         {
-            Assert.Contains("ROW=" + row, result.StdOut, StringComparison.Ordinal);
+            string[] actual = [.. result.StdOut.Split('\n')
+                .Where(line => line.StartsWith(prefix, StringComparison.Ordinal))
+                .Select(line => line[prefix.Length..].TrimEnd('\r'))
+                .Order(StringComparer.Ordinal)];
+            Assert.Equal(expected, actual);
         }
     }
 
