@@ -20,6 +20,7 @@ using Xunit;
 /// <c>TableImpl.positionAtRowData</c>). Every read follows the pointer, so the row
 /// is read once, at its original position.
 /// </summary>
+/// <param name="seeds">The database cache fixture.</param>
 public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixture<GeneratedDatabaseCache>
 {
     private const string TableName = "Items";
