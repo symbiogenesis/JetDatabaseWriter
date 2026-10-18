@@ -271,19 +271,7 @@ public sealed class IndexCodesAggregateTests
     }
 
     private static int CompareBytesUnsigned(byte[] a, byte[] b)
-    {
-        int min = Math.Min(a.Length, b.Length);
-        for (int i = 0; i < min; i++)
-        {
-            int diff = a[i] - b[i];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return a.Length - b.Length;
-    }
+        => a.AsSpan().SequenceCompareTo(b);
 
     private sealed class IndexReport
     {
