@@ -63,7 +63,8 @@ public sealed class NestedTransactionTests
             await using (JetTransaction inner = await writer.BeginTransactionAsync(Ct))
             {
                 await writer.CreateTableAsync("Temporary", [new("Id", typeof(int))], Ct);
-                List<object?[]> rows = [.. Enumerable.Range(0, 150).Select(_ => new object?[] { DBNull.Value, new string('x', 100) })];
+                string padding = new('x', 100);
+                List<object?[]> rows = [.. Enumerable.Range(0, 150).Select(_ => new object?[] { DBNull.Value, padding })];
                 await writer.InsertRowsAsync("Items", rows, Ct);
                 await inner.RollbackAsync(Ct);
             }
@@ -289,7 +290,8 @@ public sealed class NestedTransactionTests
         await using JetTransaction child = await writer.BeginTransactionAsync(Ct);
         await writer.InsertRowAsync("Items", [DBNull.Value, "child"], Ct);
         int childPages = child.JournaledPageCount;
-        List<object?[]> rows = [.. Enumerable.Range(0, 2000).Select(_ => new object?[] { DBNull.Value, new string('x', 200) })];
+        string padding = new('x', 200);
+        List<object?[]> rows = [.. Enumerable.Range(0, 2000).Select(_ => new object?[] { DBNull.Value, padding })];
         JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(() => writer.InsertRowsAsync("Items", rows, Ct).AsTask());
         Assert.Equal(JetErrorCode.JournalBudgetExceeded, error.ErrorCode);
         Assert.Equal(childPages, child.JournaledPageCount);

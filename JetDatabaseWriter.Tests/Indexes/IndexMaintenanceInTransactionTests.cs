@@ -134,10 +134,11 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
             await using JetTransaction? tx = mode == WriteMode.ExplicitCommit ? await writer.BeginTransactionAsync(this.ct) : null;
 
             var middle = new List<object?[]>(baseRows);
+            string padding = new('m', 150);
             for (int i = 0; i < baseRows; i++)
             {
                 int id = (i * 10) + 5;
-                middle.Add([id, new string('m', 150)]);
+                middle.Add([id, padding]);
                 expectedIds.Add(id);
             }
 
@@ -231,10 +232,11 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
             await writer.CreateRelationshipAsync(new RelationshipDefinition("ParentChild", parentTable, parentKey, ChildTable, ParentIdColumn), this.ct);
 
             WriterServices services = writer.Services;
+            string padding = new('p', 60);
             foreach (int id in expectedIds)
             {
                 int parentId = parentIds[id % parentIds.Count];
-                await writer.InsertRowAsync(ChildTable, [id, parentId, new string('p', 60)], this.ct);
+                await writer.InsertRowAsync(ChildTable, [id, parentId, padding], this.ct);
                 expectedParentIds.Add(id, parentId);
                 if (expectedParentIds.Count == 1)
                 {
@@ -346,10 +348,11 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
             await CreateKeyedTableAsync(writer, cancellationToken);
 
             var rows = new List<object?[]>(baseRows);
+            string padding = new('p', 150);
             for (int i = 0; i < baseRows; i++)
             {
                 int id = i * keyStep;
-                rows.Add([id, new string('p', 150)]);
+                rows.Add([id, padding]);
             }
 
             _ = await writer.InsertRowsAsync(TableName, rows, cancellationToken);
@@ -661,11 +664,12 @@ public sealed class IndexMaintenanceInTransactionTests(DatabaseCache cache, Gene
         // A batch whose rows need new data pages, then single inserts
         // packed into one key range of the multi-level primary key, so the
         // target leaf splits several times after the data-page appends.
-        var tail = new List<object?[]>();
+        var tail = new List<object?[]>(200);
+        string padding = new('t', 190);
         for (int i = 0; i < 200; i++)
         {
             int id = 10_000_000 + i;
-            tail.Add([id, new string('t', 190)]);
+            tail.Add([id, padding]);
             expectedIds.Add(id);
         }
 

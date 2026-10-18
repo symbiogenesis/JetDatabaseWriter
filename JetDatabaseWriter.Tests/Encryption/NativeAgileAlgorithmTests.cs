@@ -28,7 +28,8 @@ public sealed class NativeAgileAlgorithmTests
     [InlineData("SHA512", "SHA1", 256, 256, "ChainingModeCFB")]
     public async Task NativePageUsesDeclaredAlgorithms(string passwordHash, string dataHash, int passwordBits, int dataBits, string chaining)
     {
-        (byte[] header, byte[] salt, byte[] dataKey, uint encoding) = await CreateVariantHeaderAsync(passwordHash, dataHash, passwordBits, dataBits, chaining);
+        byte[] native = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
+        (byte[] header, byte[] salt, byte[] dataKey, uint encoding) = CreateVariantHeader(native, passwordHash, dataHash, passwordBits, dataBits, chaining);
         byte[] ivInput = new byte[20];
         salt.CopyTo(ivInput, 0);
         BinaryPrimitives.WriteUInt32LittleEndian(ivInput.AsSpan(16), encoding ^ 17u);
@@ -119,7 +120,7 @@ public sealed class NativeAgileAlgorithmTests
             }
         }
 
-        (byte[] header, byte[] salt, byte[] dataKey, uint encoding) = await CreateVariantHeaderAsync(passwordHash, dataHash, passwordBits, dataBits, chaining);
+        (byte[] header, byte[] salt, byte[] dataKey, uint encoding) = CreateVariantHeader(native, passwordHash, dataHash, passwordBits, dataBits, chaining);
         header.CopyTo(native, 0);
         for (int offset = 4096; offset < native.Length; offset += 4096)
         {
@@ -133,9 +134,8 @@ public sealed class NativeAgileAlgorithmTests
         return native;
     }
 
-    private static async Task<(byte[] Header, byte[] Salt, byte[] DataKey, uint Encoding)> CreateVariantHeaderAsync(string passwordHash, string dataHash, int passwordBits, int dataBits, string chaining)
+    private static (byte[] Header, byte[] Salt, byte[] DataKey, uint Encoding) CreateVariantHeader(byte[] native, string passwordHash, string dataHash, int passwordBits, int dataBits, string chaining)
     {
-        byte[] native = await File.ReadAllBytesAsync(Path.Combine(TestDatabases.EncryptedRoot, "NativeAceAgile.accdb"), TestContext.Current.CancellationToken);
         byte[] header = native.AsSpan(0, 4096).ToArray();
         byte[] salt = new byte[16];
         salt.AsSpan().Fill(0x12);
