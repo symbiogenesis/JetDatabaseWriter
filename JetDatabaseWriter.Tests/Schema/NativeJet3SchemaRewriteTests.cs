@@ -18,7 +18,6 @@ using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>Jet3 schema rewrites retain native catalog ownership and table permissions.</summary>
-[TestClass(DisableParallelization = true)]
 public sealed class NativeJet3SchemaRewriteTests
 {
     [Theory]

@@ -19,7 +19,6 @@ using JetDatabaseWriter.TestSupport;
 using Xunit;
 
 /// <summary>DAO3.6 independently establishes Jet3 Currency descriptors, keys and declaration limits.</summary>
-[TestClass(DisableParallelization = true)]
 public sealed class DaoJet3CurrencyDefinitionTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
