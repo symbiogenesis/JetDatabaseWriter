@@ -20,6 +20,7 @@ internal static class EmittedPageInvariantAssert
         Assert.Equal(0, fileBytes.Length % pageSize);
 
         int pageCount = fileBytes.Length / pageSize;
+        JetFormat? profile = null;
         var liveRowsByTdefPage = new Dictionary<int, int>();
         var rowCountsByTdefPage = new Dictionary<int, uint>();
 
@@ -44,7 +45,7 @@ internal static class EmittedPageInvariantAssert
             switch (page[0])
             {
                 case 0x01:
-                    DataPageSummary dataSummary = AssertDataPage(fileBytes, pageNumber, pageSize, format);
+                    DataPageSummary dataSummary = AssertDataPage(fileBytes, pageNumber, pageSize, profile ??= JetFormat.ForNewDatabase(format));
                     dataPagesChecked++;
                     if (dataSummary.ParentTdefPage > 0)
                     {
@@ -55,7 +56,7 @@ internal static class EmittedPageInvariantAssert
                     break;
 
                 case 0x02:
-                    if (AssertTdefPage(fileBytes, pageNumber, pageSize, format, rowCountsByTdefPage))
+                    if (AssertTdefPage(fileBytes, pageNumber, pageSize, profile ??= JetFormat.ForNewDatabase(format), rowCountsByTdefPage))
                     {
                         tdefHeadsChecked++;
                     }
@@ -64,7 +65,7 @@ internal static class EmittedPageInvariantAssert
 
                 case Constants.IndexLeafPage.PageTypeIntermediate:
                 case Constants.IndexLeafPage.PageTypeLeaf:
-                    AssertIndexPage(fileBytes, pageNumber, pageSize, format);
+                    AssertIndexPage(fileBytes, pageNumber, pageSize, profile ??= JetFormat.ForNewDatabase(format));
                     indexPagesChecked++;
                     break;
 
@@ -94,10 +95,10 @@ internal static class EmittedPageInvariantAssert
         }
     }
 
-    private static DataPageSummary AssertDataPage(byte[] fileBytes, int pageNumber, int pageSize, DatabaseFormat format)
+    private static DataPageSummary AssertDataPage(byte[] fileBytes, int pageNumber, int pageSize, JetFormat format)
     {
         ReadOnlySpan<byte> page = PageSpan(fileBytes, pageNumber, pageSize);
-        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
+        DataPageLayout layout = format.DataPage;
 
         Assert.Equal(0x01, page[1]);
         List<RowSlotInfo> rowSlots = AssertRowSlotDirectory(page, pageNumber, pageSize, layout);
@@ -105,7 +106,7 @@ internal static class EmittedPageInvariantAssert
         bool isLval = IsLvalPage(page);
         if (isLval)
         {
-            AssertLvalPage(page, pageNumber, pageSize, format, rowSlots);
+            AssertLvalPage(page, pageNumber, pageSize, format.Kind, rowSlots);
             return new DataPageSummary(ParentTdefPage: 0, LiveRowCount: 0);
         }
 
@@ -119,7 +120,7 @@ internal static class EmittedPageInvariantAssert
         bool isUsageMap = parentTdefPage == 0 && rowSlots.Count > 0;
         if (isUsageMap)
         {
-            AssertUsageMapPage(page, pageNumber, format, rowSlots);
+            AssertUsageMapPage(page, pageNumber, format.Kind, rowSlots);
         }
 
         int liveRows = 0;
@@ -276,11 +277,11 @@ internal static class EmittedPageInvariantAssert
         byte[] fileBytes,
         int pageNumber,
         int pageSize,
-        DatabaseFormat format,
+        JetFormat format,
         Dictionary<int, uint> rowCountsByTdefPage)
     {
         ReadOnlySpan<byte> page = PageSpan(fileBytes, pageNumber, pageSize);
-        TDefHeaderLayout layout = JetFormat.ForNewDatabase(format).TDef;
+        TDefHeaderLayout layout = format.TDef;
 
         Assert.Equal(0x01, page[1]);
 
@@ -309,7 +310,7 @@ internal static class EmittedPageInvariantAssert
         int columnStart = layout.BlockEnd + (numRealIdx * layout.RealIdxEntrySz);
         Assert.True(columnStart <= pageSize, Message(pageNumber, $"TDEF column descriptors start at {columnStart}, beyond page size {pageSize}."));
 
-        if (format != DatabaseFormat.Jet3Mdb)
+        if (!format.IsJet3)
         {
             Assert.Equal(Constants.TableDefinition.Jet4.FormatMagic, ReadInt32(page, 0x0C));
             int tdefLen = ReadInt32(page, 8);
@@ -317,7 +318,7 @@ internal static class EmittedPageInvariantAssert
             Assert.Equal(Math.Max(0, pageSize - tdefLen - 8), ReadUInt16(page, 2));
         }
 
-        for (int realIndex = 0; format != DatabaseFormat.Jet3Mdb && realIndex < numRealIdx; realIndex++)
+        for (int realIndex = 0; !format.IsJet3 && realIndex < numRealIdx; realIndex++)
         {
             int countOffset = layout.BlockEnd + (realIndex * layout.RealIdxEntrySz) + 4;
             if (countOffset + 4 > pageSize)
@@ -352,10 +353,10 @@ internal static class EmittedPageInvariantAssert
         return declaredCols == repeatedCols;
     }
 
-    private static void AssertIndexPage(byte[] fileBytes, int pageNumber, int pageSize, DatabaseFormat format)
+    private static void AssertIndexPage(byte[] fileBytes, int pageNumber, int pageSize, JetFormat format)
     {
         byte[] page = PageCopy(fileBytes, pageNumber, pageSize);
-        IndexPageLayout layout = JetFormat.ForNewDatabase(format).IndexPage;
+        IndexPageLayout layout = format.IndexPage;
         byte pageType = page[0];
 
         Assert.Equal(0x01, page[1]);
@@ -473,14 +474,14 @@ internal static class EmittedPageInvariantAssert
     private static void AssertIndexDataRowPointer(
         byte[] fileBytes,
         int pageSize,
-        DatabaseFormat format,
+        JetFormat format,
         int indexPageNumber,
         long dataPageNumber,
         byte rowIndex)
     {
         AssertPageType(fileBytes, pageSize, indexPageNumber, dataPageNumber, [0x01], "index data-row page");
 
-        DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
+        DataPageLayout layout = format.DataPage;
         ReadOnlySpan<byte> dataPage = PageSpan(fileBytes, checked((int)dataPageNumber), pageSize);
         int numRows = ReadUInt16(dataPage, layout.NumRows);
         if (rowIndex >= numRows)
