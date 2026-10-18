@@ -67,7 +67,7 @@ internal sealed class LogicalTDefChain
             while (pageNumber != 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (seen is not null && !seen.Add(pageNumber))
+                if (seen?.Add(pageNumber) == false)
                 {
                     throw new InvalidDataException($"TDEF chain contains a cycle at page {pageNumber}.");
                 }
@@ -114,6 +114,7 @@ internal sealed class LogicalTDefChain
 
                     output ??= new MemoryStream();
                     seen ??= [startPage];
+
                     // Geometric growth keeps assembly linear in the chain length;
                     // its capacity remains inside the caller's logical-byte budget.
                     int requiredLength = checked((int)output.Length + bytesToCopy);
@@ -146,7 +147,10 @@ internal sealed class LogicalTDefChain
         }
         finally
         {
-            output?.Dispose();
+            if (output is not null)
+            {
+                await output.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 

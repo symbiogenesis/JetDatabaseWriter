@@ -30,7 +30,15 @@ public sealed class LogicalTDefChainTests
         LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(10, PageSize, ReadAsync, Return, retainPageNumbers, this.ct, PageSize);
         Assert.NotNull(chain);
         Assert.Equal(expected, chain.Bytes);
-        Assert.Equal(retainPageNumbers ? new[] { 10L } : [], chain.PageNumbers);
+        if (retainPageNumbers)
+        {
+            Assert.Equal(10L, Assert.Single(chain.PageNumbers));
+        }
+        else
+        {
+            Assert.Empty(chain.PageNumbers);
+        }
+
         Assert.Equal(1, reads);
         Assert.Equal(1, returns);
 
@@ -60,12 +68,12 @@ public sealed class LogicalTDefChainTests
             await LogicalTDefChain.ReadAsync(10, PageSize, ReadAsync, Return, false, canceled.Token));
         Assert.Equal(1, returns);
 
-        ValueTask<byte[]> ReadAsync(long number, CancellationToken token)
+        async ValueTask<byte[]> ReadAsync(long number, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
             Assert.Equal(10, number);
-            canceled.Cancel();
-            return ValueTask.FromResult(borrowed);
+            await canceled.CancelAsync();
+            return borrowed;
         }
 
         void Return(byte[] page)

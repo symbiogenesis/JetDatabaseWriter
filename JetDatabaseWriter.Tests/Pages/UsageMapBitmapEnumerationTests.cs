@@ -25,7 +25,7 @@ public sealed class UsageMapBitmapEnumerationTests
         var format = JetFormat.ForNewDatabase(kind);
         byte[] map = new byte[format.PageSize];
         byte[] bitmap = reference ? new byte[format.PageSize] : map;
-        int start = 32;
+        const int start = 32;
         int size = reference ? 13 : format.PageSize - start;
         var row = new RowBound(0, start, size);
         map[start] = reference ? Constants.UsageMap.ReferenceMapType : Constants.UsageMap.InlineMapType;
@@ -42,9 +42,11 @@ public sealed class UsageMapBitmapEnumerationTests
             var expected = new List<long>();
             for (int bit = 0; bit < capacity; bit++)
             {
+                int byteIndex = bit / 8;
+                int bytePattern = byteIndex % 256;
                 bool marked = pattern switch
                 {
-                    0 => (((bit / 8) % 256) & (1 << (bit % 8))) != 0,
+                    0 => (bytePattern & (1 << (bit % 8))) != 0,
                     1 => bit == 0 || bit == 7 || bit == 8 || bit == capacity - 1,
                     _ => false,
                 };
