@@ -39,6 +39,9 @@ internal sealed class TDefImage
     /// <summary>Gets the retained logical byte length without copying the image.</summary>
     internal int LogicalByteLength => this.bytes.Length;
 
+    /// <summary>Gets a read-only view for comparisons without copying the immutable image.</summary>
+    internal ReadOnlySpan<byte> Bytes => this.bytes;
+
     internal IndexSectionAnchors? IndexSection { get; }
 
     internal IReadOnlyList<TDefIndexDescriptor> RealIndexes { get; }

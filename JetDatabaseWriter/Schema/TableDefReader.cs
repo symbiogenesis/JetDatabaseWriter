@@ -93,7 +93,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
     {
         if (!this.cacheResults || this.pages is Pager)
         {
-            return (await this.ReadChainAsync(startPage, cancellationToken).ConfigureAwait(false))?.Bytes;
+            return (await this.ReadChainAsync(startPage, cancellationToken, retainPageNumbers: false).ConfigureAwait(false))?.Bytes;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -152,8 +152,8 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
 
             if (this.VerifyOnHit)
             {
-                LogicalTDefChain? current = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken).ConfigureAwait(false);
-                if (current is null || !this.images.StructuralBytesEqual(cached.CopyBytes(), current.Bytes))
+                LogicalTDefChain? current = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken, retainPageNumbers: false).ConfigureAwait(false);
+                if (current is null || !this.images.StructuralBytesEqual(cached.Bytes, current.Bytes))
                 {
                     throw new InvalidDataException($"The cached table definition at page {tdefPage} is stale.");
                 }
@@ -164,7 +164,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         }
 
         long epoch = this.images.Epoch;
-        LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken).ConfigureAwait(false);
+        LogicalTDefChain? chain = await this.ReadChainAsync(tdefPage, remainingSchemaBytes, cancellationToken, retainPageNumbers: this.cacheResults).ConfigureAwait(false);
         TDefImage? image = TDefCodec.Parse(this.format, chain?.Bytes);
         if (chain is not null && image is null)
         {
@@ -218,10 +218,10 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
             new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = page, Reason = reason });
     }
 
-    private ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, CancellationToken cancellationToken)
-        => this.ReadChainAsync(startPage, this.MaxSchemaTraversalBytes, cancellationToken);
+    private ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, CancellationToken cancellationToken, bool retainPageNumbers = true)
+        => this.ReadChainAsync(startPage, this.MaxSchemaTraversalBytes, cancellationToken, retainPageNumbers);
 
-    private async ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, int remainingSchemaBytes, CancellationToken cancellationToken)
+    private async ValueTask<LogicalTDefChain?> ReadChainAsync(long startPage, int remainingSchemaBytes, CancellationToken cancellationToken, bool retainPageNumbers = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         int schemaBudget = Math.Min(this.MaxSchemaTraversalBytes, remainingSchemaBytes);
@@ -235,7 +235,7 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
             this.format.PageSize,
             this.pages.ReadPageAsync,
             PageBuffers.Return,
-            retainPageNumbers: true,
+            retainPageNumbers,
             cancellationToken,
             Math.Min(this.MaxLogicalBytes, schemaBudget),
             logicalByteLimitExceeded: schemaBudget <= this.MaxLogicalBytes ? () => SchemaBudgetExceeded(startPage) : null).ConfigureAwait(false);
