@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -23,7 +24,8 @@ using Xunit;
 /// regardless of whether the surgical path or the rebuild fallback
 /// actually runs.
 /// </summary>
-public sealed class IndexSurgicalCascadingIntermediateCollapseTests
+/// <param name="seeds">Caches indexed databases before each independent mutation scenario.</param>
+public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDatabaseCache seeds) : IClassFixture<GeneratedDatabaseCache>
 {
     private static readonly string[] CompositeKeyColumns = ["K1", "K2"];
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
@@ -31,32 +33,11 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
     [Fact]
     public async Task DeepTree_DeleteEmptiesEntireMidIntermediateSubtree_DataRoundTrips()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
         const int rowCount = 600;
         const int leftSubtreeRows = 60;
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "T",
-                [
-                    new ColumnDefinition("K1", typeof(string), maxLength: 255),
-                    new ColumnDefinition("K2", typeof(string), maxLength: 255),
-                    new ColumnDefinition("Tag", typeof(int)),
-                ],
-                [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                this.ct);
-
-            object[][] rows = new object[rowCount][];
-            for (int i = 0; i < rowCount; i++)
-            {
-                int tag = i < leftSubtreeRows ? 9 : (i % 5);
-                rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), tag];
-            }
-
-            await writer.InsertRowsAsync("T", rows, this.ct);
-        }
+        await using MemoryStream stream = await seeds.CopyToStreamAsync(
+            $"{rowCount}:{leftSubtreeRows}",
+            () => CreateLeftSubtreeSeedAsync(rowCount, leftSubtreeRows));
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -140,33 +121,12 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
     [Fact]
     public async Task DeepTree_DeleteThenReinsertAcrossCollapsedSubtree_DataRoundTrips()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
         const int rowCount = 600;
         const int leftSubtreeRows = 60;
         const int reinsertCount = 25;
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "T",
-                [
-                    new ColumnDefinition("K1", typeof(string), maxLength: 255),
-                    new ColumnDefinition("K2", typeof(string), maxLength: 255),
-                    new ColumnDefinition("Tag", typeof(int)),
-                ],
-                [new IndexDefinition("IX_K", CompositeKeyColumns)],
-                this.ct);
-
-            object[][] rows = new object[rowCount][];
-            for (int i = 0; i < rowCount; i++)
-            {
-                int tag = i < leftSubtreeRows ? 9 : (i % 5);
-                rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), tag];
-            }
-
-            await writer.InsertRowsAsync("T", rows, this.ct);
-        }
+        await using MemoryStream stream = await seeds.CopyToStreamAsync(
+            $"{rowCount}:{leftSubtreeRows}",
+            () => CreateLeftSubtreeSeedAsync(rowCount, leftSubtreeRows));
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -202,6 +162,35 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests
         {
             Assert.NotEqual(9, (int)r["Tag"]);
         }
+    }
+
+    private static async Task<byte[]> CreateLeftSubtreeSeedAsync(int rowCount, int leftSubtreeRows)
+    {
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [
+                    new ColumnDefinition("K1", typeof(string), maxLength: 255),
+                    new ColumnDefinition("K2", typeof(string), maxLength: 255),
+                    new ColumnDefinition("Tag", typeof(int)),
+                ],
+                [new IndexDefinition("IX_K", CompositeKeyColumns)],
+                cancellationToken);
+
+            object[][] rows = new object[rowCount][];
+            for (int i = 0; i < rowCount; i++)
+            {
+                int tag = i < leftSubtreeRows ? 9 : (i % 5);
+                rows[i] = [BuildKey(i, prefix: 'A'), BuildKey(i, prefix: 'M'), tag];
+            }
+
+            await writer.InsertRowsAsync("T", rows, cancellationToken);
+        }
+
+        return stream.ToArray();
     }
 
     private static string BuildKey(int n, char prefix)

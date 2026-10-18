@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -19,7 +20,8 @@ using Xunit;
 /// a fresh tree and leaves old pages orphaned (still typed) so the count
 /// strictly increases.
 /// </summary>
-public sealed class IndexSurgicalSingleLeafMutationTests
+/// <param name="seeds">Caches indexed databases before each independent mutation scenario.</param>
+public sealed class IndexSurgicalSingleLeafMutationTests(GeneratedDatabaseCache seeds) : IClassFixture<GeneratedDatabaseCache>
 {
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
@@ -138,24 +140,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
     [Fact]
     public async Task SurgicalDelete_FromMiddleLeaf_AppendsZeroIndexPages()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "T",
-                [new ColumnDefinition("Id", typeof(int))],
-                [new IndexDefinition("IX_Id", "Id")],
-                this.ct);
-
-            object[][] rows = new object[800][];
-            for (int i = 0; i < 800; i++)
-            {
-                rows[i] = [i + 1];
-            }
-
-            await writer.InsertRowsAsync("T", rows, this.ct);
-        }
+        await using MemoryStream stream = await seeds.CopyToStreamAsync("sequential-800", CreateSequentialKeySeedAsync);
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
@@ -302,24 +287,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // bails (cannot be a single-leaf rewrite); bulk rebuild handles
         // it. Verify only that the result is correct and the file is
         // readable — page-count delta is intentionally NOT asserted here.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "T",
-                [new ColumnDefinition("Id", typeof(int))],
-                [new IndexDefinition("IX_Id", "Id")],
-                this.ct);
-
-            object[][] rows = new object[800][];
-            for (int i = 0; i < 800; i++)
-            {
-                rows[i] = [i + 1];
-            }
-
-            await writer.InsertRowsAsync("T", rows, this.ct);
-        }
+        await using MemoryStream stream = await seeds.CopyToStreamAsync("sequential-800", CreateSequentialKeySeedAsync);
 
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
@@ -340,24 +308,7 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         // Build a tiny multi-leaf tree, then delete every row that lives on
         // one specific leaf → surgical path bails (empty-leaf underflow is
         // territory); the bulk rebuild path handles it and read-back stays correct.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
-        {
-            await writer.CreateTableAsync(
-                "T",
-                [new ColumnDefinition("Id", typeof(int))],
-                [new IndexDefinition("IX_Id", "Id")],
-                this.ct);
-
-            object[][] rows = new object[800][];
-            for (int i = 0; i < 800; i++)
-            {
-                rows[i] = [i + 1];
-            }
-
-            await writer.InsertRowsAsync("T", rows, this.ct);
-        }
+        await using MemoryStream stream = await seeds.CopyToStreamAsync("sequential-800", CreateSequentialKeySeedAsync);
 
         // Delete a contiguous range that covers a whole leaf (~400 rows).
         await using (AccessWriter writer = await OpenWriterAsync(stream))
@@ -372,6 +323,30 @@ public sealed class IndexSurgicalSingleLeafMutationTests
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt.Rows.Count);
+    }
+
+    private static async Task<byte[]> CreateSequentialKeySeedAsync()
+    {
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        {
+            await writer.CreateTableAsync(
+                "T",
+                [new ColumnDefinition("Id", typeof(int))],
+                [new IndexDefinition("IX_Id", "Id")],
+                cancellationToken);
+
+            object[][] rows = new object[800][];
+            for (int i = 0; i < 800; i++)
+            {
+                rows[i] = [i + 1];
+            }
+
+            await writer.InsertRowsAsync("T", rows, cancellationToken);
+        }
+
+        return stream.ToArray();
     }
 
     private static int CountIndexPages(byte[] fileBytes)
