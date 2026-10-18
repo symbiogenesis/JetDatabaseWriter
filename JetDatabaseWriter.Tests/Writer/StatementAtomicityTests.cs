@@ -17,7 +17,7 @@ using Xunit;
 /// <param name="generated">Caches generated statement fault seeds.</param>
 public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseCache generated) : IClassFixture<DatabaseCache>, IClassFixture<GeneratedDatabaseCache>
 {
-    // Bound each theory row while retaining every fault position across the shards.
+    /// <summary>Bounds each theory row while retaining every fault position across the shards.</summary>
     private const int FaultShardCount = 8;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -179,7 +179,7 @@ public sealed class StatementAtomicityTests(DatabaseCache db, GeneratedDatabaseC
         // Reuse the expandable buffer, but restore every byte and reopen the writer for each fault.
         stream.Position = 0;
         stream.SetLength(0);
-        stream.Write(original, 0, original.Length);
+        await stream.WriteAsync(original, Ct);
         stream.Position = 0;
         await using AccessWriter writer = await OpenAsync(stream, password);
         arm(stream);
