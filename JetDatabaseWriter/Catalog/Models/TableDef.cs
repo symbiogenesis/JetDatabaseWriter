@@ -11,6 +11,8 @@ using static JetDatabaseWriter.Enums.ColumnType;
 
 internal sealed class TableDef
 {
+    private Dictionary<string, int>? columnIndexesByName;
+
     /// <summary>Gets or sets the physical root page, when read from a database.</summary>
     internal long? TDefPageNumber { get; set; }
 
@@ -72,7 +74,15 @@ internal sealed class TableDef
     /// such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public int FindColumnIndex(string columnName) => this.FindColumnIndex(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+    public int FindColumnIndex(string columnName)
+    {
+        if (columnName is null)
+        {
+            return this.FindColumnIndex(static column => column.Name is null);
+        }
+
+        return this.columnIndexesByName is not null && this.columnIndexesByName.TryGetValue(columnName, out int index) ? index : -1;
+    }
 
     /// <summary>Returns the first column index matching a predicate, or -1.</summary>
     /// <param name="predicate">The column predicate.</param>
@@ -94,7 +104,11 @@ internal sealed class TableDef
     /// case-insensitively, or <see langword="null"/> when no such column exists.
     /// </summary>
     /// <param name="columnName">The column name.</param>
-    public ColumnInfo? FindColumn(string columnName) => this.Columns.FirstOrDefault(c => string.Equals(c.Name, columnName, StringComparison.OrdinalIgnoreCase));
+    public ColumnInfo? FindColumn(string columnName)
+    {
+        int index = this.FindColumnIndex(columnName);
+        return index >= 0 ? this.Columns[index] : null;
+    }
 
     /// <summary>
     /// Resolves <paramref name="columnNames"/> to their <see cref="ColumnInfo.ColNum"/>
@@ -171,12 +185,18 @@ internal sealed class TableDef
     private void InitializeColumnMetadata()
     {
         var clrTypes = new Type[this.Columns.Count];
+        var columnIndexes = new Dictionary<string, int>(this.Columns.Count, StringComparer.OrdinalIgnoreCase);
         bool hasVar = false;
         bool hasComplex = false;
         bool hasHyperlink = false;
         for (int i = 0; i < this.Columns.Count; i++)
         {
             ColumnInfo c = this.Columns[i];
+            if (c.Name is not null)
+            {
+                _ = columnIndexes.TryAdd(c.Name, i);
+            }
+
             Type clr = JetTypeInfo.ResolveClrType(c);
             clrTypes[i] = clr;
             if (!c.IsFixed)
@@ -195,6 +215,7 @@ internal sealed class TableDef
             }
         }
 
+        this.columnIndexesByName = columnIndexes;
         this.ClrTypes = Array.AsReadOnly(clrTypes);
         this.HasVarColumns = hasVar;
         this.HasComplexColumns = hasComplex;
