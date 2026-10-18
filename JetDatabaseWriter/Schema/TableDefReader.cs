@@ -209,6 +209,20 @@ internal sealed class TableDefReader : IDisposable, IPageWriteObserver
         => await this.ReadTableDefAsync(tdefPage, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException($"Table definition for '{tableName}' could not be read.");
 
+    /// <summary>Validates freshly read bytes, reusing a parse only for an exactly identical immutable image.</summary>
+    /// <param name="tdefPage">The root page.</param>
+    /// <param name="bytes">The complete current logical bytes.</param>
+    /// <returns>Whether the definition has no uncertain layout or index descriptors.</returns>
+    internal bool HasValidLayout(long tdefPage, byte[] bytes)
+    {
+        if (this.cacheResults && this.images.TryGet(tdefPage, out TDefImage? cached) && cached.Bytes.SequenceEqual(bytes))
+        {
+            return cached.Issues == TDefParseIssues.None;
+        }
+
+        return TDefCodec.Parse(this.format, bytes)?.Issues == TDefParseIssues.None;
+    }
+
     private static JetLimitationException SchemaBudgetExceeded(long page)
     {
         const string reason = "The combined table definitions exceed MaxSchemaTraversalBytes.";

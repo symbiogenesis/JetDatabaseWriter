@@ -251,6 +251,34 @@ public sealed class TableDefReaderTests
         Assert.NotSame(first, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
     }
 
+    /// <summary>Ownership validation checks changed bytes independently of a previously cached schema.</summary>
+    /// <param name="format">The database format.</param>
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task LayoutValidation_ChecksFreshBytesAgainstCachedImage(DatabaseFormat format)
+    {
+        await using MemoryStream stream = await CreateWideTableAsync(format);
+        await using AccessWriter writer = await TestDatabase.OpenWriterAsync(stream, cancellationToken: Ct);
+        TableDefReader tableDefs = writer.Database.TableDefs;
+        CatalogEntry? entry = await writer.Services.Catalog.GetCatalogEntryAsync(WideTable, Ct);
+        Assert.NotNull(entry);
+        TDefImage? image = await tableDefs.ReadImageAsync(entry.TDefPage, Ct);
+        Assert.NotNull(image);
+        byte[]? bytes = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct);
+        Assert.NotNull(bytes);
+        Assert.True(tableDefs.HasValidLayout(entry.TDefPage, bytes));
+
+        byte[] invalid = bytes.AsSpan().ToArray();
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(invalid.AsSpan(writer.Database.Format.TDef.NumRealIdx), -1);
+        Assert.False(tableDefs.HasValidLayout(entry.TDefPage, invalid));
+
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(writer.Database.Format.TDef.NumRows), uint.MaxValue);
+        Assert.True(tableDefs.HasValidLayout(entry.TDefPage, bytes));
+        Assert.Same(image, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
+    }
+
     /// <summary>
     /// A 32-bit field on the second page of a multi-page TDEF chain, written
     /// in place through the writer's file and read back through
