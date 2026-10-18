@@ -176,6 +176,7 @@ internal sealed class TableRewritePlanner(
         // A dropped column's unreadable value is projected away and does not block.
         var projectedRows = new List<object[]>(snapshot.Count);
         var projectedFixedText = new List<IReadOnlyDictionary<int, byte[]>?>(snapshot.Count);
+        Dictionary<string, int>? targetIndexes = null;
         foreach (LocatedRow row in snapshot)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -185,11 +186,19 @@ internal sealed class TableRewritePlanner(
             Dictionary<int, byte[]>? fixedTextBytes = null;
             if (row.FixedTextBytes is not null)
             {
+                if (targetIndexes is null)
+                {
+                    targetIndexes = new Dictionary<string, int>(newDefs.Count, StringComparer.OrdinalIgnoreCase);
+                    for (int index = 0; index < newDefs.Count; index++)
+                    {
+                        targetIndexes.TryAdd(newDefs[index].Name, index);
+                    }
+                }
+
                 foreach ((int sourceIndex, byte[] bytes) in row.FixedTextBytes)
                 {
                     string? targetName = mapColumnName(tableDef.Columns[sourceIndex].Name);
-                    int targetIndex = newDefs.FindIndex(column => string.Equals(column.Name, targetName, StringComparison.OrdinalIgnoreCase));
-                    if (targetIndex >= 0)
+                    if (targetName is not null && targetIndexes.TryGetValue(targetName, out int targetIndex))
                     {
                         fixedTextBytes ??= [];
                         fixedTextBytes.Add(targetIndex, bytes);
