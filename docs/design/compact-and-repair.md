@@ -62,8 +62,13 @@ per allowed catalog object, and sixteen times the per-definition byte allowance.
 These conservative allowances include collection capacity and simultaneous
 definition representations. Catalog discovery scans physical owner headers
 without constructing a whole-file ownership index or relying on map hints.
-Damaged ownership can still hide catalog identities; this scan does not prove
-catalog completeness or authorize reclaiming any page.
+Positive catalog owned-map members are cross-checked against their physical
+DATA type and catalog owner. A contradiction retains the reference observation
+and refuses inventory: the scanner cannot decide whether the hint is stale or
+the authoritative page header is damaged. Missing map bits still permit physical
+discovery. Damaged ownership without an identifying map member can still hide
+catalog identities; this scan does not prove catalog completeness or authorize
+reclaiming any page.
 Admission excludes caller/visitor allocations, runtime overhead and shared buffer-pool
 retention, and is not an exact heap guarantee. The scan owns uncached definition
 and ownership readers instead of populating caller caches. Report serialization
@@ -82,10 +87,10 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog coverage when physical ownership is damaged; qualify runtime/pool and caller-owned memory separately |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection and refusal of catalog-map/physical-owner contradictions; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and recover catalog identities when physical ownership is damaged, including missing or damaged map hints; qualify runtime/pool and caller-owned memory separately |
 | Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory and calculated-slot refusal; bounded raw row and LVAL streaming; complete defined LVAL-chain observations including trailing storage | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key observations with graph-cycle, inclusive entry-edge-only fence and observed leaf-chain order checks; bounded stored-key staging with disk-backed fences | I2: prove shared-root/cross-TDEF and incoming-reference ownership, complete tail/separator and bookmark validation, and connect staging to relocation/maps; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key observations with graph-cycle, inclusive entry-edge-only fence and observed leaf-chain order checks; explicit bounded same-owner bookmark-target validation; bounded stored-key staging with disk-backed fences | I2: prove shared-root/cross-TDEF and incoming-reference ownership, complete tail/separator and stored-key/row correspondence validation, and connect staging to relocation/maps; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -105,8 +110,13 @@ disposable.
 `CompactRawRowReader` streams one table's stored row slices from physical owner
 headers, retaining the original header bookmark and moved-row location. It
 validates directory geometry, follows bounded same-owner overflow chains and
-refuses live-target aliases. Physical size, repeated reads, emitted rows,
-inspected slots and fixed working storage have separate limits. The awaited
+refuses live-target aliases and shared moved-payload starts across live row
+identities. The tracker includes intermediate overflow rows and distinct deleted
+slots that name the same physical payload start. Its storage is admitted lazily
+before the first overflow target and released with the scan; scans without
+overflow retain only fixed storage. Physical size, repeated reads, emitted rows,
+inspected slots, tracked overflow targets and working storage have separate
+limits. The awaited
 visitor borrows the source page; it must not retain that memory. This avoids
 field decoding and table snapshots, but does not prove missing ownership,
 incoming aliases, field/LVAL integrity or safe relocation. Overflow-header padding
@@ -131,6 +141,17 @@ one reciprocal, closed, ordered sibling chain. All tail paths remain outside
 the entry-edge-only fences, including tails not proven to be aliases. Missing sibling observations do not establish global order.
 These internal primitives do not extend the CLI inventory's completion contract.
 
+`CompactIndexBookmarkAudit` composes raw index observations with an explicit
+target check for each leaf and intermediate entry. It verifies a same-owner
+live row header, complete row-directory geometry and bounded moved-row chains
+through deleted payload slots. Verified entries identify the resolved payload
+page and slot; only successful completion marks all observed bookmark targets
+validated. Repeated target reads, directory slots and simultaneous scratch
+storage are bounded and can share discovery-session accounting through
+`ScanIndexBookmarksAsync`. Raw-only scans retain separate coverage. Neither
+target validity nor a matching owner proves that the stored key describes that
+row, that all rows are indexed, or that targets have exclusive incoming owners.
+
 `CompactLongValueAudit` observes the entire supplied column slice and every
 complete row reached through defined external references, following chained
 pointers to null even after the descriptor's declared payload is covered. It
@@ -152,7 +173,8 @@ separate. `ScanInventoryAsync` shares inventory/catalog reads, object admission,
 schema
 bytes, diagnostics, map steps, references, observations and working storage with
 the session. `ScanDatabaseAsync` visits each discovered local definition, its
-raw rows and nonzero physical index roots, including the catalog and hidden
+raw rows and nonzero physical index roots with bookmark-target verification,
+including the catalog and hidden
 local tables. Inventory reservations remain held through those callbacks.
 Linked metadata stays pinned and is not followed. Long-value discovery remains
 explicit work in the awaited row visitor. A damaged owner can still hide an

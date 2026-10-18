@@ -18,9 +18,12 @@ internal sealed class CompactRawRowBudget
     /// <summary>Gets the total directory slots inspected, including deleted, empty and repeatedly read slots.</summary>
     public long MaxDirectorySlots { get; init; } = 268_435_456;
 
-    /// <summary>Gets the conservative allowance for fixed scan storage, excluding caller storage and pool retention.</summary>
+    /// <summary>Gets the maximum distinct physical overflow payloads retained for alias detection across this table scan.</summary>
+    public int MaxOverflowTargets { get; init; } = 65_536;
+
+    /// <summary>Gets the conservative allowance for fixed scan storage and overflow alias tracking, excluding caller storage and pool retention.</summary>
     /// <remarks>This is admission accounting, not an exact runtime heap measurement.</remarks>
-    public long MaxWorkingBytes { get; init; } = 1024 * 1024;
+    public long MaxWorkingBytes { get; init; } = 8 * 1024 * 1024;
 
     /// <summary>Gets the maximum overflow-pointer reads for one row.</summary>
     public int MaxOverflowHops { get; init; } = Constants.DataPage.MaxOverflowHops;

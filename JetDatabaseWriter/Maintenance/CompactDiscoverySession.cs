@@ -47,6 +47,7 @@ internal sealed class CompactDiscoverySession
         Guard.InRange(budget.MaxValueBytes, 0, LongValueDescriptor.MaxLength, nameof(budget));
         Guard.InRange(budget.MaxChainRows, 0, int.MaxValue, nameof(budget));
         Guard.Positive(budget.MaxDefinitionBytes, nameof(budget));
+        Guard.InRange(budget.MaxOverflowTargets, 0, int.MaxValue, nameof(budget));
         this.Accounting = new CompactDiscoveryAccounting(budget);
         this.format = format;
         this.budget = budget;
@@ -99,6 +100,7 @@ internal sealed class CompactDiscoverySession
     /// <remarks>
     /// Catalog-only links and opaque objects remain pinned and are never executed. The caller identifies long-value fields in the borrowed rows.
     /// Damaged ownership can hide identities, and the component audits do not prove complete discovery, global index validity or a valid compact result.
+    /// Index bookmarks are verified against live same-owner headers and bounded moved-row chains; stored-key/row correspondence remains unproven.
     /// Inventory and definition storage remain admitted throughout all awaited row, index and nested value callbacks.
     /// </remarks>
     internal async ValueTask ScanDatabaseAsync(
@@ -124,7 +126,7 @@ internal sealed class CompactDiscoverySession
                         token.ThrowIfCancellationRequested();
                         if (index.RootPage != 0)
                         {
-                            await this.ScanIndexCoreAsync(root, index.RootPage, indexVisitor, token).ConfigureAwait(false);
+                            await this.ScanIndexBookmarksCoreAsync(root, index.RootPage, indexVisitor, token).ConfigureAwait(false);
                         }
                     }
                 }).ConfigureAwait(false);
@@ -165,6 +167,26 @@ internal sealed class CompactDiscoverySession
         try
         {
             await this.ScanIndexCoreAsync(ownerTDefPage, rootPage, visitor, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref this.activeScan, 0);
+        }
+    }
+
+    /// <summary>Audits one index root and verifies that every observed bookmark resolves to a live row identity of its table.</summary>
+    /// <param name="ownerTDefPage">The expected table owner.</param>
+    /// <param name="rootPage">The native index root.</param>
+    /// <param name="visitor">The awaited observation consumer.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task completing after the tree and bookmark checks succeed.</returns>
+    /// <remarks>Read, directory, reference and working-storage allowances are shared with other session operations. Stored-key semantics and incoming ownership remain unproven.</remarks>
+    internal async ValueTask ScanIndexBookmarksAsync(long ownerTDefPage, long rootPage, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        this.EnterScan(cancellationToken);
+        try
+        {
+            await this.ScanIndexBookmarksCoreAsync(ownerTDefPage, rootPage, visitor, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -310,6 +332,7 @@ internal sealed class CompactDiscoverySession
                 MaxPages = this.budget.MaxPages,
                 MaxPageReads = this.budget.MaxPageReads,
                 MaxRows = this.budget.MaxRows,
+                MaxOverflowTargets = this.budget.MaxOverflowTargets,
                 MaxDirectorySlots = this.budget.MaxDirectorySlots,
                 MaxWorkingBytes = this.budget.MaxWorkingBytes,
             },
@@ -325,20 +348,43 @@ internal sealed class CompactDiscoverySession
             this.format,
             ownerTDefPage,
             rootPage,
+            this.CreateIndexBudget(),
+            visitor,
+            cancellationToken);
+    }
+
+    private ValueTask ScanIndexBookmarksCoreAsync(long ownerTDefPage, long rootPage, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, rootPage);
+        return CompactIndexBookmarkAudit.ScanAsync(
+            this.pages,
+            this.format,
+            ownerTDefPage,
+            rootPage,
+            this.CreateIndexBudget(),
             new()
             {
                 Accounting = this.Accounting,
-                MaxTreePages = checked((int)Math.Min(int.MaxValue, this.budget.MaxIndexPages)),
-                MaxEntries = this.budget.MaxIndexEntries,
-                MaxCanonicalBytes = this.budget.MaxIndexCanonicalBytes,
-                MaxReferences = this.budget.MaxReferences,
-                MaxGraphSteps = this.budget.MaxGraphSteps,
-                MaxRecords = this.budget.MaxRecords,
+                MaxPageReads = this.budget.MaxPageReads,
+                MaxDirectorySlots = this.budget.MaxDirectorySlots,
                 MaxWorkingBytes = this.budget.MaxWorkingBytes,
             },
             visitor,
             cancellationToken);
     }
+
+    private CompactIndexBudget CreateIndexBudget()
+        => new()
+        {
+            Accounting = this.Accounting,
+            MaxTreePages = checked((int)Math.Min(int.MaxValue, this.budget.MaxIndexPages)),
+            MaxEntries = this.budget.MaxIndexEntries,
+            MaxCanonicalBytes = this.budget.MaxIndexCanonicalBytes,
+            MaxReferences = this.budget.MaxReferences,
+            MaxGraphSteps = this.budget.MaxGraphSteps,
+            MaxRecords = this.budget.MaxRecords,
+            MaxWorkingBytes = this.budget.MaxWorkingBytes,
+        };
 
     private void EnterScan(CancellationToken cancellationToken)
     {

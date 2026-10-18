@@ -182,6 +182,150 @@ public sealed class CompactRawRowReaderTests
     }
 
     [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task Scan_SharedOverflowStorageRefusesBeforeDuplicatingPayload(DatabaseFormat databaseFormat, bool distinctTargetSlots)
+    {
+        var source = new SyntheticPages(databaseFormat);
+        source.SetPage(3, (0x4000, new byte[] { 0, 4, 0, 0 }), (0x4000, new byte[] { distinctTargetSlots ? (byte)1 : (byte)0, 4, 0, 0 }));
+        source.SetPage(4, (0x8000, new byte[] { 0xFE, 0xFF }), (0x8000, Array.Empty<byte>()));
+        if (distinctTargetSlots)
+        {
+            int directory = source.Format.DataPage.RowsStart;
+            source.Pages[4].AsSpan(directory, 2).CopyTo(source.Pages[4].AsSpan(directory + 2, 2));
+        }
+
+        int visits = 0;
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactRawRowReader.ScanAsync(
+            source,
+            source.Format,
+            2,
+            new(),
+            (_, _, _) =>
+            {
+                visits++;
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+
+        Assert.Equal(4, error.ErrorInfo.PageNumber);
+        Assert.Contains("shared", error.ErrorInfo.Reason, StringComparison.Ordinal);
+        Assert.Equal(1, visits);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Scan_SharedOverflowIntermediateOrTailRefuses(bool sharedIntermediate)
+    {
+        var source = new SyntheticPages(DatabaseFormat.Jet4Mdb);
+        source.SetPage(3, (0x4000, new byte[] { 0, 4, 0, 0 }), (0x4000, new byte[] { sharedIntermediate ? (byte)0 : (byte)1, 4, 0, 0 }));
+        source.SetPage(4, (0xC000, new byte[] { 0, 5, 0, 0 }), (0xC000, new byte[] { 0, 5, 0, 0 }));
+        source.SetPage(5, (0x8000, new byte[] { 0xFE, 0xFF }));
+
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source));
+
+        Assert.Equal(sharedIntermediate ? 4 : 5, error.ErrorInfo.PageNumber);
+        Assert.Contains("shared", error.ErrorInfo.Reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Scan_ReferencedDeletedOverflowPayloadCannotAliasLiveRow(DatabaseFormat databaseFormat)
+    {
+        SyntheticPages source = Overflow(databaseFormat, 0);
+        source.SetPage(4, (0, new byte[] { 0xFE, 0xFF }), (0x8000, Array.Empty<byte>()));
+        int directory = source.Format.DataPage.RowsStart;
+        ushort start = BinaryPrimitives.ReadUInt16LittleEndian(source.Pages[4].AsSpan(directory));
+        BinaryPrimitives.WriteUInt16LittleEndian(source.Pages[4].AsSpan(directory + 2), checked((ushort)(start | 0x8000)));
+        source.Pages[3][source.PageSize - 4] = 1;
+
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source));
+
+        Assert.Equal(4, error.ErrorInfo.PageNumber);
+        Assert.Contains("live", error.ErrorInfo.Reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task Scan_DistinctOverflowPayloadsOnSamePageKeepTheirIdentities(DatabaseFormat databaseFormat)
+    {
+        var source = new SyntheticPages(databaseFormat);
+        source.SetPage(3, (0x4000, new byte[] { 0, 4, 0, 0 }), (0x4000, new byte[] { 1, 4, 0, 0 }));
+        source.SetPage(4, (0x8000, new byte[] { 0xFE, 0xFF }), (0x8000, new byte[] { 0x80 }));
+
+        List<(RowLocation Location, byte[] Bytes)> rows = await ScanAsync(source);
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(new byte[] { 0xFE, 0xFF }, rows[0].Bytes);
+        Assert.Equal(new byte[] { 0x80 }, rows[1].Bytes);
+        Assert.Equal(0, rows[0].Location.RowIndex);
+        Assert.Equal(1, rows[1].Location.RowIndex);
+        Assert.All(rows, row => Assert.Equal(4, row.Location.DataPageNumber));
+        Assert.Equal(0, rows[0].Location.DataRowIndex);
+        Assert.Equal(1, rows[1].Location.DataRowIndex);
+    }
+
+    [Fact]
+    public async Task Scan_OverflowAliasTrackingSpansAllPhysicalHeaderPages()
+    {
+        var source = new SyntheticPages(DatabaseFormat.Jet4Mdb);
+        source.SetPage(3, (0x4000, new byte[] { 0, 5, 0, 0 }));
+        source.SetPage(4, (0x4000, new byte[] { 0, 5, 0, 0 }));
+        source.SetPage(5, (0x8000, new byte[] { 0xFE, 0xFF }));
+
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await ScanAsync(source));
+
+        Assert.Equal(5, error.ErrorInfo.PageNumber);
+        Assert.Contains("shared", error.ErrorInfo.Reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task Scan_OverflowTargetBudgetIncludesIntermediateRows(int maxTargets)
+    {
+        SyntheticPages source = Overflow(DatabaseFormat.Jet4Mdb, 2);
+
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () =>
+            await ScanAsync(source, new() { MaxOverflowTargets = maxTargets }));
+
+        Assert.Contains("MaxOverflowTargets", error.ErrorInfo.Reason, StringComparison.Ordinal);
+        Assert.Equal(4 + maxTargets, error.ErrorInfo.PageNumber);
+        Assert.Equal(2 + maxTargets, source.Reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Scan_OverflowTrackingReservationIsLazyAndUsesPhysicalCapacity(bool overflow)
+    {
+        SyntheticPages source = overflow ? Overflow(DatabaseFormat.Jet4Mdb, 0) : new(DatabaseFormat.Jet4Mdb);
+        if (!overflow)
+        {
+            source.SetPage(3, (0, new byte[] { 0xFE, 0xFF }));
+        }
+
+        int capacity = (source.Format.PageSize - source.Format.DataPage.RowsStart) / 2;
+        long fixedStorage = (3L * source.Format.PageSize) + (16L * capacity) + (64 * 1024);
+        long physicalTracking = 64L * source.PageCount * capacity;
+
+        List<(RowLocation Location, byte[] Bytes)> rows = await ScanAsync(
+            source,
+            new() { MaxOverflowTargets = int.MaxValue, MaxWorkingBytes = fixedStorage + (overflow ? physicalTracking : 0) });
+
+        Assert.Single(rows);
+    }
+
+    [Theory]
     [InlineData(0, "MaxPages")]
     [InlineData(1, "MaxWorkingBytes")]
     public async Task Scan_AdmissionRefusesBeforeIo(int kind, string reason)

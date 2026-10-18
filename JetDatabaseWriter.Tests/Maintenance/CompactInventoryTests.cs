@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Models;
@@ -48,6 +49,7 @@ public sealed class CompactInventoryTests
             {
                 if (record.Kind == "index-terminal")
                 {
+                    Assert.True(record.BookmarkTargetsValidated);
                     roots.Add((record.OwnerTDefPage, record.RootPageNumber));
                 }
 
@@ -62,6 +64,39 @@ public sealed class CompactInventoryTests
             roots.Order());
         Assert.Equal(rows.Values.Sum(), session.Accounting.Rows);
         Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DiscoverySession_DatabaseScanRefusesAnIndexBookmarkIntoIndexStorage(DatabaseFormat kind)
+    {
+        byte[] bytes = await CreateAsync(kind);
+        List<CompactStorageRecord> inventory = await ScanAsync(bytes);
+        long owner = Assert.Single(inventory, record => record.Kind == "catalog-object" && record.Name == "Items").OwnerTDefPage!.Value;
+        long root = Assert.Single(inventory, record => record.Role == "index-root" && record.OwnerTDefPage == owner).TargetPageNumber!.Value;
+        var format = JetFormat.ForNewDatabase(kind);
+        byte[] leaf = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, owner, [new([1], root, 0)], enablePrefixCompression: false);
+        leaf.CopyTo(bytes, checked((int)(root * format.PageSize)));
+        byte[] original = bytes.ToArray();
+        await using DatabaseFile file = Open(bytes);
+        var session = new CompactDiscoverySession(file.Pages, file.Format, new());
+        bool invalidTerminal = false;
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await session.ScanDatabaseAsync(
+            (_, _) => ValueTask.CompletedTask,
+            (_, _, _, _) => ValueTask.CompletedTask,
+            (record, _) =>
+            {
+                invalidTerminal |= record.Kind == "index-terminal" && record.RootPageNumber == root;
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+        Assert.Equal(JetErrorCode.CorruptIndex, error.ErrorCode);
+        Assert.Equal(root, error.ErrorInfo.PageNumber);
+        Assert.False(invalidTerminal);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+        Assert.Equal(original, bytes);
     }
 
     [Theory]
@@ -586,6 +621,44 @@ public sealed class CompactInventoryTests
         List<CompactStorageRecord> records = await ScanAsync(bytes);
         Assert.Equal(initial.Where(record => record.Kind == "catalog-object"), records.Where(record => record.Kind == "catalog-object"));
         Assert.Contains(records, record => record.Kind == "catalog-object" && record.Name == "Items");
+    }
+
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task Inventory_CatalogMapWithDamagedPhysicalOwnerRefusesCompleteDiscovery(DatabaseFormat format, bool anotherTableOwner)
+    {
+        byte[] bytes = await CreateAsync(format);
+        List<CompactStorageRecord> initial = await ScanAsync(bytes);
+        CompactStorageRecord item = Assert.Single(initial, record => record.Kind == "catalog-object" && record.Name == "Items");
+        Assert.Contains(initial, record => record.Role == "table-owned-member" && record.OwnerTDefPage == 2 && record.TargetPageNumber == item.PageNumber);
+        int pageSize = JetFormat.ForNewDatabase(format).PageSize;
+        int ownerOffset = checked(((int)item.PageNumber * pageSize) + 4);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(ownerOffset, 4), anotherTableOwner ? checked((uint)item.OwnerTDefPage!.Value) : 0);
+        byte[] original = SHA256.HashData(bytes);
+
+        await using DatabaseFile file = Open(bytes);
+        var records = new List<CompactStorageRecord>();
+        JetCorruptDataException error = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CompactStorageInventory.ScanAsync(
+            file.Pages,
+            file.Format,
+            file.TableDefs,
+            new(),
+            (record, _) =>
+            {
+                records.Add(record);
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+        Assert.Equal(JetErrorCode.CorruptCatalog, error.ErrorCode);
+        Assert.Equal(item.PageNumber, error.ErrorInfo.PageNumber);
+        Assert.Contains("catalog", error.ErrorInfo.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(records, record => record.Role == "table-owned-member" && record.OwnerTDefPage == 2 && record.TargetPageNumber == item.PageNumber);
+        Assert.Equal(original, SHA256.HashData(bytes));
     }
 
     [Fact]

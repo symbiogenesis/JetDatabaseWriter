@@ -36,6 +36,18 @@ internal sealed record CompactIndexRecord
     /// <summary>Gets the decoded intermediate child page.</summary>
     public long? ChildPageNumber { get; init; }
 
+    /// <summary>Gets a value indicating whether this entry's bookmark names a live same-owner row header and readable stored payload chain.</summary>
+    public bool BookmarkTargetValidated { get; init; }
+
+    /// <summary>Gets the resolved stored-payload page when this entry's bookmark target was validated.</summary>
+    public long? BookmarkDataPageNumber { get; init; }
+
+    /// <summary>Gets the resolved stored-payload slot when this entry's bookmark target was validated.</summary>
+    public int? BookmarkDataRowIndex { get; init; }
+
+    /// <summary>Gets a value indicating whether every observed leaf and intermediate bookmark target was validated; true only on a composed scan's successful terminal.</summary>
+    public bool BookmarkTargetsValidated { get; init; }
+
     /// <summary>Gets the explicit observation coverage on the terminal record.</summary>
     public string? Coverage { get; init; }
 

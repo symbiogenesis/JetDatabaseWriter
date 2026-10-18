@@ -445,7 +445,35 @@ internal static class CompactStorageInventory
                     }
 
                     await this.ReferenceAsync(source, offset, role + "-member", "bitmap-bit-" + bit, target, null, owner, null, cancellationToken).ConfigureAwait(false);
+                    if (owner == 2 && role == "table-owned")
+                    {
+                        await this.ValidateCatalogMapCandidateAsync(target, cancellationToken).ConfigureAwait(false);
+                    }
                 }
+            }
+        }
+
+        private async ValueTask ValidateCatalogMapCandidateAsync(long pageNumber, CancellationToken cancellationToken)
+        {
+            byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (page[0] != Constants.PageTypes.Data || Ru32(page, format.DataPage.TDefOff) != 2)
+                {
+                    // A positive map bit cannot prove ownership, but contradicting
+                    // physical evidence cannot prove that no catalog rows were lost.
+                    // Keep the emitted edge and refuse rather than reinterpret rows
+                    // or treat the physical-only discovery as a complete inventory.
+                    const string reason = "A catalog owned-data map member has a conflicting page type or physical owner; complete catalog discovery cannot be established.";
+                    throw new JetCorruptDataException(
+                        JetErrorCode.CorruptCatalog,
+                        reason,
+                        new JetErrorInfo { TableName = Constants.SystemTableNames.Objects, PageNumber = pageNumber, Reason = reason });
+                }
+            }
+            finally
+            {
+                PageBuffers.Return(page);
             }
         }
 

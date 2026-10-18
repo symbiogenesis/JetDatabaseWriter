@@ -34,6 +34,9 @@ internal sealed class CompactDiscoveryBudget
     /// <summary>Gets the total raw-row, inventory and long-value directory slots admitted, including repeated inspections.</summary>
     public long MaxDirectorySlots { get; init; } = 268_435_456;
 
+    /// <summary>Gets the maximum distinct physical payload starts tracked for overflow ownership during one table scan.</summary>
+    public int MaxOverflowTargets { get; init; } = 65_536;
+
     /// <summary>Gets the total long-value audit and copy invocation allowance.</summary>
     public long MaxLongValues { get; init; } = 8_388_608;
 

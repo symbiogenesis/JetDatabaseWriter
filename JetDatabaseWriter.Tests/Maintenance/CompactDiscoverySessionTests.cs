@@ -281,6 +281,88 @@ public sealed class CompactDiscoverySessionTests
         Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
     }
 
+    [Theory]
+    [InlineData("reads")]
+    [InlineData("slots")]
+    [InlineData("objects")]
+    public async Task VerifiedBookmarks_ShareSessionAllowancesAcrossRepeatedRoots(string limit)
+    {
+        var source = new MemoryPages();
+        source.Images[3] = IndexPageCodec.BuildLeafPage(source.Format.IndexPage, source.PageSize, 2, [new([1], 4, 0)], enablePrefixCompression: false);
+        source.AddRow(4, 2, [7, 8, 9]);
+        CompactDiscoveryBudget budget = limit switch
+        {
+            "reads" => new() { MaxPageReads = 3 },
+            "slots" => new() { MaxDirectorySlots = 1 },
+            _ => new() { MaxObjects = 1 },
+        };
+        var session = new CompactDiscoverySession(source, source.Format, budget);
+        int terminals = 0;
+        await session.ScanIndexBookmarksAsync(
+            2,
+            3,
+            (record, _) =>
+            {
+                if (record.Kind == "leaf-entry")
+                {
+                    Assert.True(record.BookmarkTargetValidated);
+                }
+
+                if (record.Kind == "index-terminal")
+                {
+                    Assert.True(record.BookmarkTargetsValidated);
+                    Assert.False(record.TreeCompletenessProven);
+                    terminals++;
+                }
+
+                return ValueTask.CompletedTask;
+            },
+            Ct);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanIndexBookmarksAsync(2, 3, IgnoreIndex, Ct));
+        Assert.Equal(1, terminals);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+        Assert.True(source.Reads <= budget.MaxPageReads);
+        Assert.Equal(1, session.Accounting.ReadCount(CompactDiscoveryCharge.DirectorySlots));
+    }
+
+    [Fact]
+    public async Task VerifiedBookmarks_PreserveReadFailureAndAllowRetryAfterReleasingAdmission()
+    {
+        var source = new MemoryPages();
+        source.Images[3] = IndexPageCodec.BuildLeafPage(source.Format.IndexPage, source.PageSize, 2, [new([1], 4, 0)], enablePrefixCompression: false);
+        source.AddRow(4, 2, [7]);
+        var session = new CompactDiscoverySession(source, source.Format, new());
+        var expected = new IOException("bookmark source failed");
+        source.Failure = expected;
+        IOException actual = await Assert.ThrowsAsync<IOException>(async () => await session.ScanIndexBookmarksAsync(2, 3, IgnoreIndex, Ct));
+        Assert.Same(expected, actual);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+        source.Failure = null;
+        await session.ScanIndexBookmarksAsync(2, 3, IgnoreIndex, Ct);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task RawRows_EnforceOverflowOwnershipCapacityAndReleaseLazyAdmission()
+    {
+        var source = new MemoryPages();
+        source.AddSlots(3, 2, (0x4000, new byte[] { 0, 4, 0, 0 }), (0x4000, new byte[] { 1, 4, 0, 0 }));
+        source.AddSlots(4, 2, (0x8000, new byte[] { 7 }), (0x8000, new byte[] { 8 }));
+        var session = new CompactDiscoverySession(source, source.Format, new() { MaxOverflowTargets = 1 });
+        int visits = 0;
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanRowsAsync(
+            2,
+            (_, _, _) =>
+            {
+                visits++;
+                return ValueTask.CompletedTask;
+            },
+            Ct));
+        Assert.Contains("MaxOverflowTargets", error.ErrorInfo.Reason, StringComparison.Ordinal);
+        Assert.Equal(1, visits);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
     private static ValueTask IgnoreRow(RowLocation location, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
         => ValueTask.CompletedTask;
 

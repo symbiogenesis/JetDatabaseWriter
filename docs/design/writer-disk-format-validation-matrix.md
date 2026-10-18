@@ -269,7 +269,10 @@ and structured refusal. It also checks total read/work/record limits, storage
 admission, short-page refusal, budget attribution through definition readers
 and isolation from caller definition caches.
 Inventory catalog scans use physical owner headers; row-count hints remain
-advisory. `storage-audit` consumes the stream into a bounded partial or completed
+advisory. Synthetic Jet3/Jet4/ACE owner damage with intact catalog map references
+requires a retained map edge and `CorruptCatalog` refusal. Missing map bits still
+permit physical discovery; positive map/owner conflicts are ambiguous evidence,
+not recovered objects. `storage-audit` consumes the stream into a bounded partial or completed
 NDJSON inventory with bounded record serialization. Every region remains pinned;
 neither this phase nor its completion marker proves full row/LVAL/index reachability or permits
 relocation, reclamation, repair or replacement.
@@ -292,7 +295,10 @@ generated-schema preservation or permission to relocate unknown metadata.
 `CompactRawRowReaderTests` checks exact opaque row payloads and original/moved
 bookmarks, bounded same-owner overflow traversal, live-target refusal, directory
 geometry, cycles, limits before I/O, cancellation, source changes and real I/O
-failures. Existing Jet3/Jet4/ACE overflow specimens exercise stored-byte agreement;
+failures. Shared intermediate/terminal payload starts across live headers and
+deleted slots aliasing live storage require refusal. Lazy tracking admission and
+target-count limits include distinct deleted slots naming one physical start.
+Existing Jet3/Jet4/ACE overflow specimens exercise stored-byte agreement;
 this is a per-table physical owner-header scan, not a missing-owner or field-value
 completeness proof.
 
@@ -305,6 +311,17 @@ check agreement with the existing codec. The terminal record explicitly leaves
 whole-tree completeness unproven. These read-only observations neither regenerate
 keys nor authorize tree relocation/reclamation or settle separator, global-order,
 shared-root and cross-TDEF requirements.
+
+`CompactIndexBookmarkAuditTests` adds explicit verification of same-owner live
+row headers and bounded deleted moved-row chains for leaf and intermediate
+bookmarks. Malformed targets/directories, aliases to live storage, cycles,
+truncation, changing geometry and exhausted read/slot/storage/hop allowances
+refuse without a terminal proof. `CompactNativeIndexCorpusTests` applies the
+composed verifier to every discovered physical index root in the existing native
+FixedText Jet3/Jet4, Northwind ACE, ComplexFields ACE and archived mdbtools Jet3
+fixtures. This establishes observed target readability for those files, not
+key/value correspondence, missing-entry detection, global ownership or native
+acceptance of a managed compact copy.
 
 `CompactLongValueAuditTests` checks preservation observations for complete column
 slices, defined external references and complete external rows, including
@@ -320,8 +337,11 @@ relocation.
 index roots and long values, shared page-read accounting, nested row/value
 storage admission, release after failure, cancellation and real I/O exception
 identity. These are synthetic composition checks. Whole-database enumeration,
-inventory/catalog lifetime, missing ownership and native compact-result
-validation remain separate requirements.
+inventory/catalog lifetime and verified index callbacks additionally run on
+generated Jet3/Jet4/ACE databases in `CompactInventoryTests`; a bookmark into
+index storage refuses the whole-database scan. Session-level target capacity and
+repeated bookmark scans share the existing read/directory/object limits.
+Missing ownership and native compact-result validation remain separate requirements.
 
 `LvalRowBoundsDecodePolicyTests` and `CalculatedLongValueDecodePolicyTests` check
 that malformed external directories and assigned calculated payloads produce

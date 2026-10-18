@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Exceptions;
@@ -42,6 +43,7 @@ internal static class CompactRawRowReader
         Guard.InRange(budget.MaxPageReads, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxRows, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxDirectorySlots, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxOverflowTargets, 0, int.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxWorkingBytes, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxOverflowHops, 1, Constants.DataPage.MaxOverflowHops, nameof(budget));
         pages.ThrowIfDisposedOrCancelled(cancellationToken);
@@ -81,7 +83,7 @@ internal static class CompactRawRowReader
         CancellationToken cancellationToken)
     {
         using IDisposable? admission = budget.Accounting?.ReserveWorkingBytes(reservation, ownerTDefPage);
-        await new Scanner(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity).RunAsync(cancellationToken).ConfigureAwait(false);
+        await new Scanner(pages, format, pageCount, ownerTDefPage, budget, visitor, capacity, reservation).RunAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static JetLimitationException Limit(long page, string reason)
@@ -97,7 +99,8 @@ internal static class CompactRawRowReader
         long owner,
         CompactRawRowBudget budget,
         Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor,
-        int capacity)
+        int capacity,
+        long reservation)
     {
         private readonly long pageCount = admittedPageCount;
         private readonly Directory physicalDirectory = new(capacity);
@@ -110,6 +113,14 @@ internal static class CompactRawRowReader
 
         internal async ValueTask RunAsync(CancellationToken cancellationToken)
         {
+            // No overflow tracking storage is admitted or allocated for a table
+            // containing only direct rows. The physical directory capacity is a
+            // conservative upper bound when the caller's target limit is larger.
+            int maxTargets = this.pageCount <= budget.MaxOverflowTargets / capacity
+                ? checked((int)(this.pageCount * capacity))
+                : budget.MaxOverflowTargets;
+            using var overflowTargets = new OverflowTargets(budget, maxTargets, reservation);
+
             // The first three format bootstrap pages are the header, global
             // usage-map storage and catalog definition, never table data pages.
             for (long number = 3; number < this.pageCount; number++)
@@ -154,7 +165,7 @@ internal static class CompactRawRowReader
                         RowBound bound = this.physicalDirectory.GetBound(row, format.PageSize);
                         if ((raw & Constants.DataPage.OverflowRowFlag) != 0)
                         {
-                            await this.VisitOverflowAsync(number, page, bound, cancellationToken).ConfigureAwait(false);
+                            await this.VisitOverflowAsync(number, page, bound, overflowTargets, cancellationToken).ConfigureAwait(false);
                         }
                         else
                         {
@@ -176,8 +187,9 @@ internal static class CompactRawRowReader
             this.CheckGeometry(owner);
         }
 
-        private async ValueTask VisitOverflowAsync(long headerNumber, byte[] headerPage, RowBound header, CancellationToken cancellationToken)
+        private async ValueTask VisitOverflowAsync(long headerNumber, byte[] headerPage, RowBound header, OverflowTargets overflowTargets, CancellationToken cancellationToken)
         {
+            overflowTargets.Admit(headerNumber);
             byte[] current = headerPage;
             RowBound pointer = header;
             long currentNumber = headerNumber;
@@ -241,6 +253,13 @@ internal static class CompactRawRowReader
                     {
                         throw Corrupt(targetPage, $"Overflow target slot {targetRow} has no stored payload.");
                     }
+
+                    if (this.overflowDirectory.HasLiveStart(pointer.RowStart, cancellationToken))
+                    {
+                        throw Corrupt(targetPage, $"Overflow target slot {targetRow} aliases a live row's stored payload.");
+                    }
+
+                    overflowTargets.Claim(targetPage, pointer.RowStart, format.PageSize);
 
                     // Access marks the moved payload deleted. It remains the
                     // original header's row and is never emitted independently.
@@ -363,6 +382,50 @@ internal static class CompactRawRowReader
         }
     }
 
+    private sealed class OverflowTargets(CompactRawRowBudget budget, int maximum, long fixedReservation) : IDisposable
+    {
+        private HashSet<long>? targets;
+        private IDisposable? admission;
+
+        public void Dispose() => this.admission?.Dispose();
+
+        internal void Admit(long number)
+        {
+            if (this.targets is not null)
+            {
+                return;
+            }
+
+            // Covers the HashSet's bucket/entry arrays, including both
+            // generations retained temporarily while a growing set resizes.
+            long storage = 64L * maximum;
+            if (storage > budget.MaxWorkingBytes - fixedReservation)
+            {
+                throw Limit(number, "The fixed raw-row storage and overflow tracking reservation exceed MaxWorkingBytes.");
+            }
+
+            this.admission = budget.Accounting?.ReserveWorkingBytes(storage, number);
+            this.targets = [];
+        }
+
+        internal void Claim(long number, int start, int pageSize)
+        {
+            long identity = (number * pageSize) + start;
+            HashSet<long> admitted = this.targets!;
+            if (admitted.Contains(identity))
+            {
+                throw Corrupt(number, "The overflow payload is shared by multiple reachable row pointers; row identity is ambiguous.");
+            }
+
+            if (admitted.Count >= maximum)
+            {
+                throw Limit(number, "The raw-row overflow tracking exceeds MaxOverflowTargets.");
+            }
+
+            _ = admitted.Add(identity);
+        }
+    }
+
     private sealed class Directory(int capacity)
     {
         internal int[] Raw { get; } = new int[capacity];
@@ -370,6 +433,21 @@ internal static class CompactRawRowReader
         internal int[] Sorted { get; } = new int[capacity];
 
         internal int Count { get; set; }
+
+        internal bool HasLiveStart(int start, CancellationToken cancellationToken)
+        {
+            for (int row = 0; row < this.Count; row++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if ((this.Raw[row] & Constants.DataPage.DeletedRowFlag) == 0
+                    && (this.Raw[row] & Constants.DataPage.RowOffsetMask) == start)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         internal RowBound GetBound(int row, int pageSize)
         {
