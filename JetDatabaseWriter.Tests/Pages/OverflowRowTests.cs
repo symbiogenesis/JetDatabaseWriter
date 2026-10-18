@@ -20,7 +20,7 @@ using Xunit;
 /// <c>TableImpl.positionAtRowData</c>). Every read follows the pointer, so the row
 /// is read once, at its original position.
 /// </summary>
-public sealed class OverflowRowTests
+public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixture<GeneratedDatabaseCache>
 {
     private const string TableName = "Items";
     private const int MinimumRows = 300;
@@ -149,7 +149,7 @@ public sealed class OverflowRowTests
     [MemberData(nameof(ValidLayouts))]
     public async Task SyntheticOverflowRow_IsReadOnce(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
     {
-        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, TableName, MinimumRows, primaryKey: false, this.ct);
+        byte[] bytes = await this.CopySeedAsync(format);
         List<int> expectedIds = await this.ReadIdsAsync(bytes, readMode);
 
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, layout, this.ct);
@@ -170,7 +170,7 @@ public sealed class OverflowRowTests
     [MemberData(nameof(CorruptLayouts))]
     public async Task CorruptOverflowPointer_SkipsTheRow(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
     {
-        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, TableName, MinimumRows, primaryKey: false, this.ct);
+        byte[] bytes = await this.CopySeedAsync(format);
         List<int> originalIds = await this.ReadIdsAsync(bytes, readMode);
 
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, layout, this.ct);
@@ -188,7 +188,7 @@ public sealed class OverflowRowTests
     [MemberData(nameof(CorruptLayouts))]
     public async Task CorruptOverflowPointer_TracesOnlyWithDiagnostics(DatabaseFormat format, OverflowRowLayout layout, PageReadOptimizationMode readMode)
     {
-        byte[] bytes = await SyntheticOverflowRows.CreateTableAsync(format, TableName, MinimumRows, primaryKey: false, this.ct);
+        byte[] bytes = await this.CopySeedAsync(format);
         int originalCount = (await this.ReadIdsAsync(bytes, readMode)).Count;
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, TableName, layout, this.ct);
         await using var messages = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
@@ -248,6 +248,11 @@ public sealed class OverflowRowTests
 
         return items;
     }
+
+    private ValueTask<byte[]> CopySeedAsync(DatabaseFormat format) =>
+        seeds.CopyToArrayAsync(
+            $"{format}/{TableName}/{MinimumRows}/no-primary-key",
+            () => SyntheticOverflowRows.CreateTableAsync(format, TableName, MinimumRows, primaryKey: false, CancellationToken.None).AsTask());
 
     private async ValueTask<AccessReader> OpenAsync(byte[] bytes, PageReadOptimizationMode readMode)
         => await AccessReader.OpenAsync(
