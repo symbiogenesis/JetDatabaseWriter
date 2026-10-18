@@ -180,31 +180,7 @@ internal static class UsageMap
             return false;
         }
 
-        int bitCapacity = bitmapBytes * 8;
-        for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
-        {
-            int byteOffset = rowBound.RowStart + Constants.UsageMap.InlineBitmapOffset + (bitIndex / 8);
-            byte bitMask = (byte)(1 << (bitIndex % 8));
-            if ((usageMapPage[byteOffset] & bitMask) == 0)
-            {
-                continue;
-            }
-
-            long pageNumber = (long)basePage + bitIndex;
-            if (pageNumber < minimumPageNumber || pageNumber >= totalPages)
-            {
-                if (strict)
-                {
-                    return false;
-                }
-
-                continue;
-            }
-
-            pageNumbers.Add(pageNumber);
-        }
-
-        return true;
+        return TryEnumerateBitmapPages(usageMapPage, rowBound.RowStart + Constants.UsageMap.InlineBitmapOffset, bitmapBytes, basePage, totalPages, minimumPageNumber, strict, pageNumbers);
     }
 
     internal static async ValueTask<bool> TryEnumerateReferencePagesAsync(
@@ -255,28 +231,9 @@ internal static class UsageMap
                     continue;
                 }
 
-                int bitCapacity = (pageSize - Constants.UsageMap.ReferenceMapBitmapOffset) * 8;
-                for (int bitIndex = 0; bitIndex < bitCapacity; bitIndex++)
+                if (!TryEnumerateBitmapPages(referencePage, Constants.UsageMap.ReferenceMapBitmapOffset, pageSize - Constants.UsageMap.ReferenceMapBitmapOffset, (long)pointerIndex * pagesPerMapPage, totalPages, minimumPageNumber, strict, pageNumbers))
                 {
-                    int byteOffset = Constants.UsageMap.ReferenceMapBitmapOffset + (bitIndex / 8);
-                    byte bitMask = (byte)(1 << (bitIndex % 8));
-                    if ((referencePage[byteOffset] & bitMask) == 0)
-                    {
-                        continue;
-                    }
-
-                    long pageNumber = ((long)pointerIndex * pagesPerMapPage) + bitIndex;
-                    if (pageNumber < minimumPageNumber || pageNumber >= totalPages)
-                    {
-                        if (strict)
-                        {
-                            return false;
-                        }
-
-                        continue;
-                    }
-
-                    pageNumbers.Add(pageNumber);
+                    return false;
                 }
             }
             finally
@@ -481,6 +438,43 @@ internal static class UsageMap
                 returnPage(bitmapPage);
             }
         }
+    }
+
+    private static bool TryEnumerateBitmapPages(byte[] bitmap, int offset, int byteCount, long basePage, long totalPages, long minimumPageNumber, bool strict, List<long> pageNumbers)
+    {
+        for (int index = 0; index < byteCount; index++)
+        {
+            int bits = bitmap[offset + index];
+            if (bits == 0)
+            {
+                continue;
+            }
+
+            long pageNumber = basePage + (index * 8);
+            do
+            {
+                if ((bits & 1) != 0)
+                {
+                    if (pageNumber < minimumPageNumber || pageNumber >= totalPages)
+                    {
+                        if (strict)
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        pageNumbers.Add(pageNumber);
+                    }
+                }
+
+                bits >>= 1;
+                pageNumber++;
+            }
+            while (bits != 0);
+        }
+
+        return true;
     }
 
     private static bool TryGetInlineBitOffset(byte[] usageMapPage, int rowStart, int rowSize, long pageNumber, out int byteOffset, out byte bitMask)

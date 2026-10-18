@@ -82,7 +82,7 @@ internal static class UsageMapOwnership
         var rowTargets = new Dictionary<long, List<int>>();
         var pageTargets = new Dictionary<long, List<int>>();
         var bitmapTargets = new Dictionary<long, List<int>>();
-        var targetPointers = new HashSet<UsageMapPointer>();
+        var targetReferences = new HashSet<uint>();
         for (int index = 0; index < ownerOffsets.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -96,7 +96,7 @@ internal static class UsageMapOwnership
 
             Proof proof = await ReadTargetProofAsync(format, pages, ownerTdefPage, pointer, cancellationToken).ConfigureAwait(false);
             proofs[index] = proof;
-            _ = targetPointers.Add(pointer);
+            _ = targetReferences.Add(((uint)pointer.PageNumber << 8) | (uint)pointer.RowIndex);
             AddTarget(rowTargets, ((long)pointer.PageNumber << 8) | (uint)pointer.RowIndex, index);
             AddTarget(pageTargets, pointer.PageNumber, index);
             foreach (long bitmap in proof.BitmapPages)
@@ -131,7 +131,7 @@ internal static class UsageMapOwnership
         }
 
         int maxCandidates = Math.Max(1, tableDefs.MaxLogicalBytes / 64);
-        var candidateRows = new HashSet<UsageMapPointer>(targetPointers);
+        var candidateRows = new HashSet<uint>(targetReferences);
         foreach (long root in roots)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -143,8 +143,7 @@ internal static class UsageMapOwnership
             }
 
             budget -= definition.Length;
-            TDefImage? image = TDefCodec.Parse(format, definition);
-            if (image is null || image.Issues != TDefParseIssues.None)
+            if (!tableDefs.HasValidLayout(root, definition))
             {
                 throw InvalidMap(root, "A local definition has uncertain map references.");
             }
@@ -160,38 +159,38 @@ internal static class UsageMapOwnership
 
                 uint reference = Ru32(definition, offset);
                 long pageNumber = reference >> 8;
-                if (rowTargets.TryGetValue(reference, out List<int>? rowMatches))
-                {
-                    foreach (int index in rowMatches)
-                    {
-                        if (root != ownerTdefPage || offset != ownerOffsets[index])
-                        {
-                            proofs[index].IsExclusiveRow = false;
-                        }
-                    }
-                }
-
-                if (pageTargets.TryGetValue(pageNumber, out List<int>? pageMatches))
-                {
-                    foreach (int index in pageMatches)
-                    {
-                        if (root != ownerTdefPage || offset != ownerOffsets[index])
-                        {
-                            proofs[index].IsDedicatedPage = false;
-                        }
-                    }
-                }
-
                 if (pageNumber > 1 && pageNumber < pages.PageCount)
                 {
-                    _ = candidateRows.Add(new UsageMapPointer(checked((int)(reference & 0xFF)), checked((int)pageNumber)));
+                    if (rowTargets.TryGetValue(reference, out List<int>? rowMatches))
+                    {
+                        foreach (int index in rowMatches)
+                        {
+                            if (root != ownerTdefPage || offset != ownerOffsets[index])
+                            {
+                                proofs[index].IsExclusiveRow = false;
+                            }
+                        }
+                    }
+
+                    if (pageTargets.TryGetValue(pageNumber, out List<int>? pageMatches))
+                    {
+                        foreach (int index in pageMatches)
+                        {
+                            if (root != ownerTdefPage || offset != ownerOffsets[index])
+                            {
+                                proofs[index].IsDedicatedPage = false;
+                            }
+                        }
+                    }
+
+                    _ = candidateRows.Add(reference);
                     if (candidateRows.Count > maxCandidates)
                     {
                         throw new JetLimitationException(JetErrorCode.ValueTooLarge, "The usage-map ownership reference budget is exceeded.");
                     }
                 }
 
-                if (bitmapTargets.TryGetValue(reference, out List<int>? bitmapMatches))
+                if (bitmapTargets.Count > 0 && bitmapTargets.TryGetValue(reference, out List<int>? bitmapMatches))
                 {
                     foreach (int index in bitmapMatches)
                     {
@@ -201,7 +200,7 @@ internal static class UsageMapOwnership
             }
         }
 
-        foreach (long pageNumber in candidateRows.Select(candidate => (long)candidate.PageNumber).Distinct())
+        foreach (long pageNumber in candidateRows.Select(candidate => (long)(candidate >> 8)).Distinct())
         {
             cancellationToken.ThrowIfCancellationRequested();
             byte[] candidate = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
@@ -215,8 +214,8 @@ internal static class UsageMapOwnership
                 int rowCount = Ru16(candidate, format.DataPage.NumRows);
                 for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
                 {
-                    var rowPointer = new UsageMapPointer(rowIndex, checked((int)pageNumber));
-                    if (!candidateRows.Contains(rowPointer)
+                    if (rowIndex > byte.MaxValue
+                        || !candidateRows.Contains(((uint)pageNumber << 8) | (uint)rowIndex)
                         || !TryGetReferencedRowBound(format, candidate, pageNumber, rowIndex, out RowBound row))
                     {
                         continue;
@@ -224,7 +223,7 @@ internal static class UsageMapOwnership
 
                     // Every target was strictly enumerated above. Other
                     // candidate rows need one validation for the whole batch.
-                    if (!targetPointers.Contains(rowPointer)
+                    if (!targetReferences.Contains(((uint)pageNumber << 8) | (uint)rowIndex)
                         && candidate[row.RowStart] is Constants.UsageMap.InlineMapType or Constants.UsageMap.ReferenceMapType)
                     {
                         if (collectOtherMembers)
@@ -255,7 +254,7 @@ internal static class UsageMapOwnership
                         {
                             foreach (int targetIndex in bitmapMatches)
                             {
-                                if (proofs[targetIndex].Pointer != rowPointer)
+                                if (proofs[targetIndex].Pointer != new UsageMapPointer(rowIndex, checked((int)pageNumber)))
                                 {
                                     proofs[targetIndex].HasExclusiveBitmapPages = false;
                                 }

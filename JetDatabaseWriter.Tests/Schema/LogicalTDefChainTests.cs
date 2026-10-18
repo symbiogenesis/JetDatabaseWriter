@@ -17,6 +17,65 @@ public sealed class LogicalTDefChainTests
     private readonly CancellationToken ct = TestContext.Current.CancellationToken;
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAsync_SinglePageRetainsExactBytesWithoutBorrowingReturnedBuffer(bool retainPageNumbers)
+    {
+        byte[] borrowed = new byte[PageSize + 17];
+        CreatePage(0).CopyTo(borrowed, 0);
+        borrowed.AsSpan(12).Fill(0xA7);
+        byte[] expected = borrowed.AsSpan(0, PageSize).ToArray();
+        int reads = 0;
+        int returns = 0;
+        LogicalTDefChain? chain = await LogicalTDefChain.ReadAsync(10, PageSize, ReadAsync, Return, retainPageNumbers, this.ct, PageSize);
+        Assert.NotNull(chain);
+        Assert.Equal(expected, chain.Bytes);
+        Assert.Equal(retainPageNumbers ? new[] { 10L } : [], chain.PageNumbers);
+        Assert.Equal(1, reads);
+        Assert.Equal(1, returns);
+
+        ValueTask<byte[]> ReadAsync(long number, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            Assert.Equal(10, number);
+            reads++;
+            return ValueTask.FromResult(borrowed);
+        }
+
+        void Return(byte[] page)
+        {
+            Assert.Same(borrowed, page);
+            Array.Fill(page, (byte)0xCC);
+            returns++;
+        }
+    }
+
+    [Fact]
+    public async Task ReadAsync_CancellationDuringSinglePageReadReturnsTheBuffer()
+    {
+        using var canceled = CancellationTokenSource.CreateLinkedTokenSource(this.ct);
+        byte[] borrowed = CreatePage(0);
+        int returns = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await LogicalTDefChain.ReadAsync(10, PageSize, ReadAsync, Return, false, canceled.Token));
+        Assert.Equal(1, returns);
+
+        ValueTask<byte[]> ReadAsync(long number, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            Assert.Equal(10, number);
+            canceled.Cancel();
+            return ValueTask.FromResult(borrowed);
+        }
+
+        void Return(byte[] page)
+        {
+            Assert.Same(borrowed, page);
+            returns++;
+        }
+    }
+
+    [Theory]
     [InlineData(57, false)]
     [InlineData(76, false)]
     [InlineData(88, false)]

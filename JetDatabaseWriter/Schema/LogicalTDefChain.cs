@@ -55,75 +55,99 @@ internal sealed class LogicalTDefChain
         }
 #endif
 
-        await using var output = new MemoryStream();
+        MemoryStream? output = null;
         List<long> physicalPages = [];
         List<uint> physicalHeaders = [];
-        HashSet<long> seen = [];
+        HashSet<long>? seen = null;
         long pageNumber = startPage;
         int pageIndex = 0;
 
-        while (pageNumber != 0)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!seen.Add(pageNumber))
+            while (pageNumber != 0)
             {
-                throw new InvalidDataException($"TDEF chain contains a cycle at page {pageNumber}.");
-            }
-
-            int bytesToCopy = pageIndex == 0 ? pageSizeBytes : pageSizeBytes - 8;
-            if (output.Length > (long)maxLogicalBytes - bytesToCopy)
-            {
-                throw logicalByteLimitExceeded?.Invoke()
-                    ?? new JetLimitationException(JetErrorCode.ValueTooLarge, "The table definition exceeds the configured byte budget.");
-            }
-
-            byte[] page = await readPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (page.Length < pageSizeBytes)
+                cancellationToken.ThrowIfCancellationRequested();
+                if (seen is not null && !seen.Add(pageNumber))
                 {
-                    throw new InvalidDataException($"TDEF page {pageNumber} is truncated.");
+                    throw new InvalidDataException($"TDEF chain contains a cycle at page {pageNumber}.");
                 }
 
-                if (page[0] != Constants.PageTypes.TableDefinition)
+                int bytesToCopy = pageIndex == 0 ? pageSizeBytes : pageSizeBytes - 8;
+                if ((output?.Length ?? 0) > (long)maxLogicalBytes - bytesToCopy)
                 {
-                    if (pageIndex == 0)
+                    throw logicalByteLimitExceeded?.Invoke()
+                        ?? new JetLimitationException(JetErrorCode.ValueTooLarge, "The table definition exceeds the configured byte budget.");
+                }
+
+                byte[] page = await readPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (page.Length < pageSizeBytes)
                     {
-                        return null;
+                        throw new InvalidDataException($"TDEF page {pageNumber} is truncated.");
                     }
 
-                    throw new InvalidDataException($"TDEF continuation page {pageNumber} has an invalid page type.");
-                }
+                    if (page[0] != Constants.PageTypes.TableDefinition)
+                    {
+                        if (pageIndex == 0)
+                        {
+                            return null;
+                        }
 
-                // Geometric growth keeps assembly linear in the chain length;
-                // its capacity remains inside the caller's logical-byte budget.
-                int requiredLength = checked((int)output.Length + bytesToCopy);
-                if (output.Capacity < requiredLength)
+                        throw new InvalidDataException($"TDEF continuation page {pageNumber} has an invalid page type.");
+                    }
+
+                    long nextPage = Ru32(page, 4);
+                    if (pageIndex == 0 && nextPage == 0)
+                    {
+                        // Most definitions occupy one page. Copy directly into
+                        // their owned image without a second assembly buffer.
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (retainPageNumbers)
+                        {
+                            physicalPages.Add(pageNumber);
+                            physicalHeaders.Add(Ru32(page, 0));
+                        }
+
+                        return new LogicalTDefChain(page.AsSpan(0, pageSizeBytes).ToArray(), physicalPages, physicalHeaders, pageSizeBytes);
+                    }
+
+                    output ??= new MemoryStream();
+                    seen ??= [startPage];
+                    // Geometric growth keeps assembly linear in the chain length;
+                    // its capacity remains inside the caller's logical-byte budget.
+                    int requiredLength = checked((int)output.Length + bytesToCopy);
+                    if (output.Capacity < requiredLength)
+                    {
+                        output.Capacity = (int)Math.Min(
+                            maxLogicalBytes,
+                            Math.Max(requiredLength, Math.Max(pageSizeBytes, (long)output.Capacity * 2)));
+                    }
+
+                    await output.WriteAsync(page.AsMemory(pageIndex == 0 ? 0 : 8, bytesToCopy), cancellationToken).ConfigureAwait(false);
+                    if (retainPageNumbers)
+                    {
+                        physicalPages.Add(pageNumber);
+                        physicalHeaders.Add(Ru32(page, 0));
+                    }
+
+                    pageNumber = nextPage;
+                    pageIndex++;
+                }
+                finally
                 {
-                    output.Capacity = (int)Math.Min(
-                        maxLogicalBytes,
-                        Math.Max(requiredLength, Math.Max(pageSizeBytes, (long)output.Capacity * 2)));
+                    returnPage(page);
                 }
-
-                await output.WriteAsync(page.AsMemory(pageIndex == 0 ? 0 : 8, bytesToCopy), cancellationToken).ConfigureAwait(false);
-                if (retainPageNumbers)
-                {
-                    physicalPages.Add(pageNumber);
-                    physicalHeaders.Add(Ru32(page, 0));
-                }
-
-                pageNumber = Ru32(page, 4);
-                pageIndex++;
             }
-            finally
-            {
-                returnPage(page);
-            }
+
+            return output is null
+                ? null
+                : new LogicalTDefChain(output.ToArray(), physicalPages, physicalHeaders, pageSizeBytes);
         }
-
-        return pageIndex == 0
-            ? null
-            : new LogicalTDefChain(output.ToArray(), physicalPages, physicalHeaders, pageSizeBytes);
+        finally
+        {
+            output?.Dispose();
+        }
     }
 
     internal static async ValueTask<LogicalTDefChain> ReadRequiredAsync(
