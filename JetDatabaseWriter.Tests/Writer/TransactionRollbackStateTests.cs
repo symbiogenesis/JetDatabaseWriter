@@ -65,7 +65,8 @@ public sealed class TransactionRollbackStateTests
             }
 
             JetTransaction tx = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
-            List<object?[]> pending = [.. Enumerable.Range(1000, transactionRows).Select(id => new object?[] { id, new string('x', 100) })];
+            string padding = new('x', 100);
+            List<object?[]> pending = [.. Enumerable.Range(1000, transactionRows).Select(id => new object?[] { id, padding })];
             _ = await writer.InsertRowsAsync("Items", pending, TestContext.Current.CancellationToken);
             await tx.RollbackAsync(TestContext.Current.CancellationToken);
 
@@ -357,7 +358,8 @@ public sealed class TransactionRollbackStateTests
         await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, transactionalOptions, leaveOpen: true, TestContext.Current.CancellationToken))
         {
             stream.FailOnWrite(1);
-            List<object?[]> tooManyPages = [.. Enumerable.Range(1000, 400).Select(id => new object?[] { id, new string('x', 100) })];
+            string padding = new('x', 100);
+            List<object?[]> tooManyPages = [.. Enumerable.Range(1000, 400).Select(id => new object?[] { id, padding })];
             _ = await Assert.ThrowsAsync<IOException>(async () =>
                 await writer.InsertRowsAsync("Items", tooManyPages, TestContext.Current.CancellationToken));
 

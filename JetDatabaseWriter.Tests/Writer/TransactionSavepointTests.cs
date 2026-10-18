@@ -30,7 +30,8 @@ public sealed class TransactionSavepointTests
         await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
         await writer.InsertRowAsync("Items", [1, "Before"], TestContext.Current.CancellationToken);
         int count = transaction.JournaledPageCount;
-        List<object?[]> rows = [.. Enumerable.Range(2, 2000).Select(id => new object?[] { id, new string('x', 200) })];
+        string padding = new('x', 200);
+        List<object?[]> rows = [.. Enumerable.Range(2, 2000).Select(id => new object?[] { id, padding })];
         JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(() => writer.InsertRowsAsync("Items", rows, TestContext.Current.CancellationToken).AsTask());
         Assert.Equal(JetErrorCode.JournalBudgetExceeded, error.ErrorCode);
         Assert.Equal(count, transaction.JournaledPageCount);

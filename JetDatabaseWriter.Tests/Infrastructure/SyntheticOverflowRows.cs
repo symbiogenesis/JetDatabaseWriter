@@ -218,6 +218,7 @@ internal static class SyntheticOverflowRows
             [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Name", typeof(string), maxLength: 100), .. extraColumns],
             primaryKey ? [new IndexDefinition("PrimaryKey", "Id") { IsPrimaryKey = true }] : [],
             cancellationToken);
+        string padding = new('x', 40);
         await writer.InsertRowsAsync(tableName, Enumerable.Range(1, minimumRows).Select(Row), cancellationToken);
 
         int nextId = minimumRows + 1;
@@ -230,7 +231,7 @@ internal static class SyntheticOverflowRows
         object[] Row(int id) =>
         [
             id,
-            $"Item {id:D4} " + new string('x', 40),
+            $"Item {id:D4} " + padding,
             .. extraValues?.Invoke(id) ?? Enumerable.Repeat<object>(DBNull.Value, extraColumns.Count),
         ];
     }

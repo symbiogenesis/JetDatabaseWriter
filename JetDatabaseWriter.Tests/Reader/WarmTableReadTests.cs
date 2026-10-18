@@ -254,9 +254,10 @@ public sealed class WarmTableReadTests : IDisposable
                 [new ColumnDefinition("Id", typeof(int)), new ColumnDefinition("Pad", typeof(string), maxLength: 200)],
                 [new IndexDefinition(IndexName, "Id")],
                 Ct);
+            string padding = new('-', 180);
             _ = await writer.InsertRowsAsync(
                 TableName,
-                Enumerable.Range(1, RowCount).Select(id => new object?[] { id, "pad-" + id.ToString("D4", CultureInfo.InvariantCulture) + new string('-', 180) }),
+                Enumerable.Range(1, RowCount).Select(id => new object?[] { id, "pad-" + id.ToString("D4", CultureInfo.InvariantCulture) + padding }),
                 Ct);
         }
 

@@ -150,7 +150,7 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
             Assert.Equal(uncancelled.Count, count);
         }
 
-        Assert.True(uncancelled.Bytes.AsSpan().SequenceEqual(stream.ToArray()), "The cancelled statement left the file different from an uncancelled run.");
+        Assert.True(uncancelled.Bytes.AsSpan().SequenceEqual(stream.GetBuffer().AsSpan(0, checked((int)stream.Length))), "The cancelled statement left the file different from an uncancelled run.");
         await AssertCompletedAsync(stream, format, statement);
     }
 
@@ -194,7 +194,7 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
             }
 
             Assert.True(cancellation.IsCancellationRequested, $"The token was not cancelled after read {nthRead} of {uncancelled.Reads}.");
-            byte[] actual = stream.ToArray();
+            ReadOnlySpan<byte> actual = stream.GetBuffer().AsSpan(0, checked((int)stream.Length));
             if (count is null)
             {
                 Assert.True(original.AsSpan().SequenceEqual(actual), $"A cancel after read {nthRead} of {uncancelled.Reads} threw but changed the file.");
@@ -233,7 +233,7 @@ public sealed class UpdateDeleteCancellationTests(DatabaseCache db) : IClassFixt
             Assert.Equal(writesBefore, stream.WriteCount);
         }
 
-        Assert.True(original.AsSpan().SequenceEqual(stream.ToArray()), "A statement called with a cancelled token changed the file.");
+        Assert.True(original.AsSpan().SequenceEqual(stream.GetBuffer().AsSpan(0, checked((int)stream.Length))), "A statement called with a cancelled token changed the file.");
     }
 
     private static IEnumerable<(DatabaseFormat Format, Statement Statement)> StatementCases()
