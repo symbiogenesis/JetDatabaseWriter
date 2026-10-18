@@ -167,14 +167,26 @@ internal static class EmittedPageInvariantAssert
             bool isEmpty = (raw & 0xC000) == 0xC000 && rowStart == previousStart;
             emptySlots[rowIndex] = isEmpty;
 
-            Assert.True(raw != 0, Message(pageNumber, $"Row slot {rowIndex} is zero within numRows={numRows}."));
-            Assert.True((raw & 0x2000) == 0, Message(pageNumber, $"Row slot {rowIndex} uses reserved marker bit 0x2000 (raw=0x{raw:X4})."));
-            Assert.True(
-                rowStart >= slotTableEnd && (rowStart < pageSize || (isEmpty && rowStart == pageSize)),
-                Message(pageNumber, $"Row slot {rowIndex} starts at {rowStart}, outside its payload bounds."));
-            Assert.True(
-                isEmpty || payloadStarts.Add(rowStart),
-                Message(pageNumber, $"Nonempty row slot {rowIndex} aliases payload start {rowStart}."));
+            if (raw == 0)
+            {
+                Assert.Fail(Message(pageNumber, $"Row slot {rowIndex} is zero within numRows={numRows}."));
+            }
+
+            if ((raw & 0x2000) != 0)
+            {
+                Assert.Fail(Message(pageNumber, $"Row slot {rowIndex} uses reserved marker bit 0x2000 (raw=0x{raw:X4})."));
+            }
+
+            bool isWithinPayloadBounds = rowStart >= slotTableEnd && (rowStart < pageSize || (isEmpty && rowStart == pageSize));
+            if (!isWithinPayloadBounds)
+            {
+                Assert.Fail(Message(pageNumber, $"Row slot {rowIndex} starts at {rowStart}, outside its payload bounds."));
+            }
+
+            if (!isEmpty && !payloadStarts.Add(rowStart))
+            {
+                Assert.Fail(Message(pageNumber, $"Nonempty row slot {rowIndex} aliases payload start {rowStart}."));
+            }
         }
 
         Array.Sort(starts);
@@ -192,7 +204,11 @@ internal static class EmittedPageInvariantAssert
             }
 
             int sortedIndex = Array.BinarySearch(starts, rowStart);
-            Assert.True(sortedIndex >= 0, Message(pageNumber, $"Row slot {rowIndex} start {rowStart} was not found after sorting."));
+            if (sortedIndex < 0)
+            {
+                Assert.Fail(Message(pageNumber, $"Row slot {rowIndex} start {rowStart} was not found after sorting."));
+            }
+
             while (sortedIndex + 1 < starts.Length && starts[sortedIndex + 1] == rowStart)
             {
                 sortedIndex++;
@@ -422,9 +438,10 @@ internal static class EmittedPageInvariantAssert
         {
             int entryStart = entryStarts[entryIndex];
             int entryEnd = entryIndex + 1 < entryStarts.Count ? entryStarts[entryIndex + 1] : payloadEnd;
-            Assert.True(
-                entryEnd - entryStart >= minimumEntryLength,
-                Message(pageNumber, $"Index entry {entryIndex} has length {entryEnd - entryStart}, below minimum {minimumEntryLength}."));
+            if (entryEnd - entryStart < minimumEntryLength)
+            {
+                Assert.Fail(Message(pageNumber, $"Index entry {entryIndex} has length {entryEnd - entryStart}, below minimum {minimumEntryLength}."));
+            }
         }
 
         return entryStarts;
@@ -466,9 +483,10 @@ internal static class EmittedPageInvariantAssert
         DataPageLayout layout = JetFormat.ForNewDatabase(format).DataPage;
         ReadOnlySpan<byte> dataPage = PageSpan(fileBytes, checked((int)dataPageNumber), pageSize);
         int numRows = ReadUInt16(dataPage, layout.NumRows);
-        Assert.True(
-            rowIndex < numRows,
-            Message(indexPageNumber, $"Index row pointer targets row {rowIndex} on data page {dataPageNumber}, but numRows={numRows}."));
+        if (rowIndex >= numRows)
+        {
+            Assert.Fail(Message(indexPageNumber, $"Index row pointer targets row {rowIndex} on data page {dataPageNumber}, but numRows={numRows}."));
+        }
     }
 
     private static void AssertOptionalPageType(
@@ -496,9 +514,10 @@ internal static class EmittedPageInvariantAssert
         string label)
     {
         int pageCount = fileBytes.Length / pageSize;
-        Assert.True(
-            targetPageNumber > 0 && targetPageNumber < pageCount,
-            Message(sourcePageNumber, $"{label} pointer {targetPageNumber} is outside valid page range 1..{pageCount - 1}."));
+        if (targetPageNumber <= 0 || targetPageNumber >= pageCount)
+        {
+            Assert.Fail(Message(sourcePageNumber, $"{label} pointer {targetPageNumber} is outside valid page range 1..{pageCount - 1}."));
+        }
 
         byte actualType = fileBytes[checked((int)targetPageNumber) * pageSize];
         foreach (byte expectedType in expectedTypes)
