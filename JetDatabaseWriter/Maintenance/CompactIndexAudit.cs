@@ -12,9 +12,10 @@ using JetDatabaseWriter.Pages.Paging;
 
 /// <summary>Observes bounded raw index-tree references and canonical keys without trusting allocation hints.</summary>
 /// <remarks>
-/// Completion covers one root's intermediate-entry children, intermediate tails and in-page key order only.
-/// Header sibling/tail references are retained but do not establish ownership. This does not
-/// validate bookmark target rows, separator fences, leaf-chain agreement, global key order,
+/// Completion covers one root's intermediate-entry children, intermediate tails, in-page key order
+/// and inclusive entry-edge-only separator fences. Observed leaf links are checked for decreasing keys;
+/// a separate terminal flag identifies one closed reciprocal chain containing every observed leaf.
+/// Header references and ordering proofs do not establish ownership. This does not validate bookmark target rows,
 /// shared roots, allocation maps or opaque incoming references. Every observation remains pinned.
 /// Repeated entry-child reachability and every cycle in the observed navigable graph are rejected.
 /// Acyclic entry/tail aliases remain observable; every distinct page is read at most once.
@@ -42,6 +43,7 @@ internal static class CompactIndexAudit
         Guard.Positive(budget.MaxTreePages, nameof(budget));
         Guard.InRange(budget.MaxEntries, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxCanonicalBytes, 1L, long.MaxValue, nameof(budget));
+        Guard.InRange(budget.MaxRetainedKeyBytes, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxReferences, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxGraphSteps, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxRecords, 1L, long.MaxValue, nameof(budget));
@@ -60,7 +62,13 @@ internal static class CompactIndexAudit
         long pageAllowance = Math.Min(budget.MaxTreePages, pageCount - 1);
         long entryAllowance = Math.Min(budget.MaxEntries, pageAllowance * format.PageSize);
         long edgeAllowance = Math.Min(budget.MaxReferences, entryAllowance + pageAllowance);
-        long storage = (384L * pageAllowance) + (16L * edgeAllowance) + (16L * format.PageSize) + 65_536;
+
+        // At most one separator buffer per entry child and two boundary buffers
+        // per leaf survive a page read. A canonical buffer can span two pages
+        // when the shared prefix is reconstructed. Array overhead is included
+        // in the per-node allowance; visitor copies remain caller-owned.
+        long retainedAllowance = Math.Min(budget.MaxRetainedKeyBytes, 6L * pageAllowance * format.PageSize);
+        long storage = (512L * pageAllowance) + (16L * edgeAllowance) + retainedAllowance + (16L * format.PageSize) + 65_536;
         if (storage > budget.MaxWorkingBytes)
         {
             throw Limit(rootPage, "The conservative index storage reservation exceeds MaxWorkingBytes.");
@@ -99,6 +107,7 @@ internal static class CompactIndexAudit
         private long references;
         private long graphSteps;
         private long records;
+        private long retainedKeyBytes;
 
         private static bool IsBitSet(IndexPageLayout layout, byte[] page, int bit)
             => (page[layout.BitmaskOffset + (bit / 8)] & (1 << (bit % 8))) != 0;
@@ -125,12 +134,15 @@ internal static class CompactIndexAudit
             }
 
             this.ValidateGraph(cancellationToken);
+            bool observedLeafChainOrdered = this.ValidateLeafLinks(cancellationToken);
 
             await this.EmitAsync(
                 this.Record("index-terminal", root) with
                 {
                     NavigableGraphAcyclic = true,
-                    Coverage = "One root's intermediate-entry children and intermediate tail references form an acyclic graph with no repeated entry-child ownership; in-page raw key order. Siblings, bookmark targets, fences, global order, allocation and incoming-reference ownership remain unverified.",
+                    EntryEdgeFencesValidated = true,
+                    ObservedLeafChainOrdered = observedLeafChainOrdered,
+                    Coverage = "One root's entry-child/intermediate-tail graph is acyclic with no repeated entry children. Stored keys satisfy in-page order and inclusive separator fences along entry-edge-only paths; all tail edges are excluded, including paths not proven to be aliases. Observed leaf links do not decrease keys; ObservedLeafChainOrdered additionally identifies one closed reciprocal chain containing every observed leaf. Bookmark targets, missing leaves, shared roots, allocation and incoming-reference ownership remain unverified.",
                 },
                 cancellationToken).ConfigureAwait(false);
         }
@@ -150,6 +162,10 @@ internal static class CompactIndexAudit
             IndexPageLayout layout = format.IndexPage;
             int end = this.ValidateBoundary(current, page, cancellationToken);
             bool intermediate = IndexPageCodec.IsIntermediate(page);
+            Node node = this.discovered[current];
+            node.IsIntermediate = intermediate;
+            node.PreviousPage = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(layout.PrevPageOffset, 4));
+            node.NextPage = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(layout.NextPageOffset, 4));
             int prefixLength = IndexPageCodec.ReadPrefixLength(layout, page);
             long tail = BinaryPrimitives.ReadUInt32LittleEndian(page.AsSpan(layout.TailPageOffset, 4));
             if (end == layout.FirstEntryOffset && (prefixLength != 0 || (intermediate && tail == 0)))
@@ -198,6 +214,14 @@ internal static class CompactIndexAudit
                 if (previous is { } previousEntry && previousEntry.AsSpan(0, previousEntry.Length - trailer).SequenceCompareTo(canonical.AsSpan(0, length - trailer)) > 0)
                 {
                     throw Corrupt(current, "Stored canonical index keys decrease within a page.");
+                }
+
+                if (!intermediate)
+                {
+                    long released = ordinal > 1 ? node.Maximum!.Value.Length + trailer : 0;
+                    this.RetainKey(current, canonical.Length, released);
+                    node.Minimum ??= canonical.AsMemory(0, length - trailer);
+                    node.Maximum = canonical.AsMemory(0, length - trailer);
                 }
 
                 await this.EntryAsync(current, ordinal, canonical, intermediate, cancellationToken).ConfigureAwait(false);
@@ -261,7 +285,8 @@ internal static class CompactIndexAudit
             if (child.HasValue)
             {
                 await this.EmitAsync(this.Record("index-reference", current) with { Role = "child", EntryIndex = ordinal, TargetPageNumber = child }, cancellationToken).ConfigureAwait(false);
-                this.Schedule(current, child.Value, isChild: true);
+                this.RetainKey(current, canonical.Length, 0);
+                this.Schedule(current, child.Value, isChild: true, canonical.AsMemory(0, keyLength));
             }
         }
 
@@ -291,7 +316,7 @@ internal static class CompactIndexAudit
             this.references++;
         }
 
-        private void Schedule(long current, long target, bool isChild)
+        private void Schedule(long current, long target, bool isChild, ReadOnlyMemory<byte>? separator = null)
         {
             if (target == current || target == root)
             {
@@ -318,6 +343,10 @@ internal static class CompactIndexAudit
                 }
 
                 node.EntryParent = current;
+                node.LowerBound = this.discovered[current].LastSeparator;
+                node.UpperBound = separator;
+                this.discovered[current].LastSeparator = separator;
+                this.discovered[current].EntryChildCount++;
             }
 
             this.discovered[current].Targets.Add(node);
@@ -341,6 +370,7 @@ internal static class CompactIndexAudit
 
                 if (current.NextTarget == current.Targets.Count)
                 {
+                    this.ValidateFences(current, cancellationToken);
                     current.State = 2;
                     stack.RemoveAt(stack.Count - 1);
                     continue;
@@ -358,6 +388,99 @@ internal static class CompactIndexAudit
                     stack.Add(target);
                 }
             }
+        }
+
+        private void ValidateFences(Node node, CancellationToken cancellationToken)
+        {
+            this.GraphStep(node.Page);
+            for (int i = 0; i < node.EntryChildCount; i++)
+            {
+                this.CheckSource(node.Page, cancellationToken);
+                this.GraphStep(node.Page);
+                Node child = node.Targets[i];
+                node.Minimum ??= child.Minimum;
+                if (child.Maximum.HasValue)
+                {
+                    node.Maximum = child.Maximum;
+                }
+            }
+
+            if ((node.Minimum.HasValue && node.LowerBound.HasValue && node.Minimum.Value.Span.SequenceCompareTo(node.LowerBound.Value.Span) < 0)
+                || (node.Maximum.HasValue && node.UpperBound.HasValue && node.Maximum.Value.Span.SequenceCompareTo(node.UpperBound.Value.Span) > 0))
+            {
+                throw Corrupt(node.Page, "Stored entry-edge-only subtree keys exceed their inclusive separator fences.");
+            }
+        }
+
+        private bool ValidateLeafLinks(CancellationToken cancellationToken)
+        {
+            Node? first = null;
+            int leaves = 0;
+            bool complete = true;
+            foreach (Node node in this.discovered.Values)
+            {
+                this.CheckSource(node.Page, cancellationToken);
+                this.GraphStep(node.Page);
+                if (node.IsIntermediate)
+                {
+                    continue;
+                }
+
+                leaves++;
+                if (node.PreviousPage == 0)
+                {
+                    complete &= first is null;
+                    first = node;
+                }
+
+                if (node.NextPage != 0 && this.discovered.TryGetValue(node.NextPage, out Node? next) && !next.IsIntermediate
+                    && node.Maximum.HasValue && next.Minimum.HasValue && node.Maximum.Value.Span.SequenceCompareTo(next.Minimum.Value.Span) > 0)
+                {
+                    throw Corrupt(node.Page, "Stored canonical keys decrease across an observed leaf sibling link.");
+                }
+            }
+
+            int visited = 0;
+            ReadOnlyMemory<byte>? previousMaximum = null;
+            Node? current = first;
+            while (current is not null && visited < leaves)
+            {
+                this.CheckSource(current.Page, cancellationToken);
+                this.GraphStep(current.Page);
+
+                // Empty leaves cannot hide a decrease between their nonempty neighbors.
+                if (previousMaximum.HasValue && current.Minimum.HasValue && previousMaximum.Value.Span.SequenceCompareTo(current.Minimum.Value.Span) > 0)
+                {
+                    throw Corrupt(current.Page, "Stored canonical keys decrease along the observed leaf sibling chain.");
+                }
+
+                previousMaximum = current.Maximum ?? previousMaximum;
+                visited++;
+                if (current.NextPage == 0)
+                {
+                    current = null;
+                }
+                else if (this.discovered.TryGetValue(current.NextPage, out Node? next) && !next.IsIntermediate && next.PreviousPage == current.Page)
+                {
+                    current = next;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            return complete && current is null && visited == leaves && leaves > 0;
+        }
+
+        private void RetainKey(long current, int length, long released)
+        {
+            if (length > budget.MaxRetainedKeyBytes - (this.retainedKeyBytes - released))
+            {
+                throw Limit(current, "The retained separator and boundary buffers exceed MaxRetainedKeyBytes.");
+            }
+
+            this.retainedKeyBytes += length - released;
         }
 
         private void GraphStep(long current)
@@ -421,6 +544,24 @@ internal static class CompactIndexAudit
             internal byte State { get; set; }
 
             internal int NextTarget { get; set; }
+
+            internal bool IsIntermediate { get; set; }
+
+            internal long PreviousPage { get; set; }
+
+            internal long NextPage { get; set; }
+
+            internal int EntryChildCount { get; set; }
+
+            internal ReadOnlyMemory<byte>? LowerBound { get; set; }
+
+            internal ReadOnlyMemory<byte>? UpperBound { get; set; }
+
+            internal ReadOnlyMemory<byte>? LastSeparator { get; set; }
+
+            internal ReadOnlyMemory<byte>? Minimum { get; set; }
+
+            internal ReadOnlyMemory<byte>? Maximum { get; set; }
         }
     }
 }

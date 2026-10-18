@@ -18,6 +18,18 @@
 
 `IndexMaintainer` owns key/metadata preparation and TDEF/usage-map finalization. Ordinary and catalog tree surgery belongs to `IndexBTreeEditor`; catalog insertion accepts an encoded entry after catalog policy has run. Staged leaf and cross-leaf plans validate append addresses and page ownership, and complete neighboring-page reads before the ordered append, neighbor, leaf and ancestor writes. The intermediate rewrite context owns deepest-first pending operations, collapse, replacement/max propagation and split-tail staging; root publication is a separate step. The incremental metadata state carries pending root changes across TDEF refreshes; its finalization links reservations through usage maps and TDEF writes inside the existing caller-owned transaction.
 
+`CompactRawIndexBuilder` is a separate bounded staging path. It consumes ordered
+stored keys and relocated bookmarks without invoking collation encoders, packs
+one page group at a time, and alternates two caller-owned fence streams for
+successive levels. The streams may be files; repeated fence I/O and output are
+bounded separately from in-memory admission. It emits decrypted index pages,
+leaves every stream caller-owned, and returns an explicitly unvalidated result
+only after flushing and a final cancellation check. Private partial output is
+not publication evidence. Tree ownership, usage maps, destination encryption,
+relocation and whole-database validation belong to the compact-copy driver.
+See the [Compact & Repair plan](compact-and-repair.md) for the precise boundary
+and the validation matrix for controlled native index-byte acceptance.
+
 ## Descriptor preservation during schema rewrites
 
 Add/Drop/Rename retains surviving physical and logical index descriptors by

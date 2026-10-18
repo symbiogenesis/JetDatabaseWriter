@@ -42,6 +42,13 @@ internal sealed record CompactIndexRecord
     /// <summary>Gets a value indicating whether all observed navigable edges were proven acyclic; true only on a successful terminal record.</summary>
     public bool NavigableGraphAcyclic { get; init; }
 
+    /// <summary>Gets a value indicating whether keys reached solely through entry-child edges satisfy inclusive separator fences; all tail edges are excluded, including non-alias paths.</summary>
+    public bool EntryEdgeFencesValidated { get; init; }
+
+    /// <summary>Gets a value indicating whether every observed leaf belongs to one closed, reciprocal sibling chain in nondecreasing key order.</summary>
+    /// <remarks>This covers observed leaves only; missing ownership or incoming references remain unverified.</remarks>
+    public bool ObservedLeafChainOrdered { get; init; }
+
     /// <summary>Gets a value indicating whether complete tree validity and incoming-reference ownership have been proven.</summary>
     public bool TreeCompletenessProven { get; }
 

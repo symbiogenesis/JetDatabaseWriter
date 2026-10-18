@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
+using JetDatabaseWriter.LongValues;
 using JetDatabaseWriter.Maintenance;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Pages;
@@ -19,6 +20,210 @@ using Xunit;
 
 public sealed class CompactInventoryTests
 {
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb)]
+    [InlineData(DatabaseFormat.Jet4Mdb)]
+    [InlineData(DatabaseFormat.AceAccdb)]
+    public async Task DiscoverySession_EnumeratesDiscoveredTablesAndIndexRoots(DatabaseFormat format)
+    {
+        byte[] bytes = await CreateAsync(format);
+        await using DatabaseFile file = Open(bytes);
+        var session = new CompactDiscoverySession(file.Pages, file.Format, new());
+        var storage = new List<CompactStorageRecord>();
+        var rows = new Dictionary<long, int>();
+        var roots = new List<(long Owner, long Root)>();
+        await session.ScanDatabaseAsync(
+            (record, _) =>
+            {
+                storage.Add(record);
+                Assert.True(session.Accounting.ActiveWorkingBytes > 0);
+                return ValueTask.CompletedTask;
+            },
+            (owner, _, _, _) =>
+            {
+                rows[owner] = rows.GetValueOrDefault(owner) + 1;
+                return ValueTask.CompletedTask;
+            },
+            (record, _) =>
+            {
+                if (record.Kind == "index-terminal")
+                {
+                    roots.Add((record.OwnerTDefPage, record.RootPageNumber));
+                }
+
+                return ValueTask.CompletedTask;
+            },
+            Ct);
+        CompactStorageRecord item = Assert.Single(storage, record => record.Kind == "catalog-object" && record.Name == "Items");
+        Assert.Equal(1, rows[item.OwnerTDefPage!.Value]);
+        Assert.True(rows[2] > 0);
+        Assert.Equal(
+            storage.Where(record => record.Role == "index-root").Select(record => (record.OwnerTDefPage!.Value, record.TargetPageNumber!.Value)).Order(),
+            roots.Order());
+        Assert.Equal(rows.Values.Sum(), session.Accounting.Rows);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Theory]
+    [InlineData("catalog")]
+    [InlineData("schema")]
+    [InlineData("maps")]
+    [InlineData("diagnostics")]
+    [InlineData("references")]
+    [InlineData("records")]
+    [InlineData("reads")]
+    [InlineData("slots")]
+    public async Task DiscoverySession_RepeatedInventoryConsumesOneAllowance(string kind)
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        Array.Resize(ref bytes, bytes.Length + 4096);
+        bytes[^4096] = 0x7F;
+        await using DatabaseFile file = Open(bytes);
+        var measured = new CompactDiscoverySession(file.Pages, file.Format, new());
+        await measured.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct);
+        CompactDiscoveryCharge charge = kind switch
+        {
+            "catalog" => CompactDiscoveryCharge.CatalogObjects,
+            "schema" => CompactDiscoveryCharge.SchemaBytes,
+            "maps" => CompactDiscoveryCharge.MapSteps,
+            "diagnostics" => CompactDiscoveryCharge.Diagnostics,
+            "references" => CompactDiscoveryCharge.References,
+            "records" => CompactDiscoveryCharge.Records,
+            "reads" => CompactDiscoveryCharge.PageReads,
+            _ => CompactDiscoveryCharge.DirectorySlots,
+        };
+        long limit = measured.Accounting.ReadCount(charge);
+        Assert.True(limit > 0);
+        CompactDiscoveryBudget budget = kind switch
+        {
+            "catalog" => new() { MaxCatalogObjects = limit },
+            "schema" => new() { MaxSchemaBytes = limit },
+            "maps" => new() { MaxMapSteps = limit },
+            "diagnostics" => new() { MaxDiagnostics = limit },
+            "references" => new() { MaxReferences = limit },
+            "records" => new() { MaxRecords = limit },
+            "reads" => new() { MaxPageReads = limit },
+            _ => new() { MaxDirectorySlots = limit },
+        };
+        var session = new CompactDiscoverySession(file.Pages, file.Format, budget);
+        await session.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(limit, session.Accounting.ReadCount(charge));
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task DiscoverySession_InventoryAdmissionIncludesAwaitedValueOperation()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var source = new ObservedPageSource(file.Pages);
+        var budget = new CompactDiscoveryBudget
+        {
+            MaxDefinitionBytes = 4096,
+            MaxCatalogObjects = 16,
+            MaxWorkingBytes = (4 * 1024 * 1024) + (16 * 1024) + (4096 * 16) + 100_000,
+            MaxChainRows = 1,
+        };
+        byte[] column = LongValueStore.WrapInlineLongValue([9, 8, 7])!;
+        await using var destination = new MemoryStream();
+        var standalone = new CompactDiscoverySession(source, file.Format, budget);
+        await standalone.CopyLongValueAsync(column, destination, Ct);
+        var session = new CompactDiscoverySession(source, file.Format, budget);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanInventoryAsync(
+            async (_, token) => await session.CopyLongValueAsync(column, destination, token),
+            Ct));
+        Assert.Equal(new byte[] { 9, 8, 7 }, destination.ToArray());
+        Assert.Equal(0, source.Reads);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task DiscoverySession_DatabaseRowVisitorRetainsInventoryAndRowAdmission()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var budget = new CompactDiscoveryBudget
+        {
+            MaxDefinitionBytes = 4096,
+            MaxCatalogObjects = 16,
+            MaxWorkingBytes = (4 * 1024 * 1024) + (16 * 1024) + (4096 * 16) + 200_000,
+            MaxChainRows = 1,
+        };
+        byte[] column = LongValueStore.WrapInlineLongValue([9, 8, 7])!;
+        await using var destination = new MemoryStream();
+        var session = new CompactDiscoverySession(file.Pages, file.Format, budget);
+        int visits = 0;
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanDatabaseAsync(
+            (_, _) => ValueTask.CompletedTask,
+            async (_, _, _, token) =>
+            {
+                visits++;
+                await session.CopyLongValueAsync(column, destination, token);
+            },
+            (_, _) => ValueTask.CompletedTask,
+            Ct));
+        Assert.Equal(1, visits);
+        Assert.Empty(destination.ToArray());
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+        await session.CopyLongValueAsync(column, destination, Ct);
+        Assert.Equal(new byte[] { 9, 8, 7 }, destination.ToArray());
+    }
+
+    [Fact]
+    public async Task DiscoverySession_FailedInventoryRetainsReadAndRecordCharges()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var failure = new IOException("inventory visitor failed");
+        var session = new CompactDiscoverySession(file.Pages, file.Format, new() { MaxRecords = 2 });
+        IOException actual = await Assert.ThrowsAsync<IOException>(async () => await session.ScanInventoryAsync(
+            (record, _) => record.Kind == "page" ? ValueTask.FromException(failure) : ValueTask.CompletedTask,
+            Ct));
+        Assert.Same(failure, actual);
+        Assert.Equal(1, session.Accounting.PageReads);
+        Assert.Equal(2, session.Accounting.ReadCount(CompactDiscoveryCharge.Records));
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(1, session.Accounting.PageReads);
+    }
+
+    [Fact]
+    public async Task DiscoverySession_MalformedCatalogRowKeepsItsAdmissionCharge()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        List<CompactStorageRecord> records = await ScanAsync(bytes);
+        CompactStorageRecord first = records.First(record => record.Kind == "catalog-object");
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        int pageOffset = checked((int)first.PageNumber * format.PageSize);
+        Assert.True(UsageMap.TryGetRowBound(bytes.AsSpan(pageOffset, format.PageSize), format.DataPage, format.PageSize, first.TargetRowIndex!.Value, out JetDatabaseWriter.Pages.Models.RowBound row));
+        Assert.False(row.IsOverflowPointer);
+        bytes.AsSpan(pageOffset + row.RowStart, row.RowSize).Clear();
+        await using DatabaseFile file = Open(bytes);
+        var session = new CompactDiscoverySession(file.Pages, file.Format, new() { MaxCatalogObjects = 1 });
+        await Assert.ThrowsAsync<JetCorruptDataException>(async () => await session.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(1, session.Accounting.ReadCount(CompactDiscoveryCharge.CatalogObjects));
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(1, session.Accounting.ReadCount(CompactDiscoveryCharge.CatalogObjects));
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
+    [Fact]
+    public async Task DiscoverySession_InventoryAndRawScansSharePhysicalReadAllowance()
+    {
+        byte[] bytes = await CreateAsync(DatabaseFormat.Jet4Mdb);
+        await using DatabaseFile file = Open(bytes);
+        var measured = new CompactDiscoverySession(file.Pages, file.Format, new());
+        await measured.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct);
+        var source = new ObservedPageSource(file.Pages);
+        var session = new CompactDiscoverySession(source, file.Format, new() { MaxPageReads = measured.Accounting.PageReads });
+        await session.ScanInventoryAsync((_, _) => ValueTask.CompletedTask, Ct);
+        await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanRowsAsync(2, (_, _, _) => ValueTask.CompletedTask, Ct));
+        Assert.Equal(measured.Accounting.PageReads, source.Reads);
+        Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
+    }
+
     [Theory]
     [InlineData(DatabaseFormat.Jet3Mdb)]
     [InlineData(DatabaseFormat.Jet4Mdb)]

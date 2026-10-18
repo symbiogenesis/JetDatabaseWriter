@@ -12,6 +12,8 @@ using JetDatabaseWriter.LongValues.Models;
 using JetDatabaseWriter.Pages;
 using JetDatabaseWriter.Pages.Models;
 using JetDatabaseWriter.Pages.Paging;
+using JetDatabaseWriter.Schema;
+using JetDatabaseWriter.Schema.Models;
 using JetDatabaseWriter.ValueDecoding;
 
 /// <summary>Composes bounded raw discovery and staging copies across multiple tables, roots and values.</summary>
@@ -25,6 +27,7 @@ internal sealed class CompactDiscoverySession
 {
     private readonly JetFormat format;
     private readonly CompactDiscoveryBudget budget;
+    private readonly IPageSource source;
     private readonly DiscoveryPageSource pages;
     private int activeScan;
     private int activeValue;
@@ -43,9 +46,11 @@ internal sealed class CompactDiscoverySession
         Guard.InRange(budget.MaxPages, 1L, long.MaxValue, nameof(budget));
         Guard.InRange(budget.MaxValueBytes, 0, LongValueDescriptor.MaxLength, nameof(budget));
         Guard.InRange(budget.MaxChainRows, 0, int.MaxValue, nameof(budget));
+        Guard.Positive(budget.MaxDefinitionBytes, nameof(budget));
         this.Accounting = new CompactDiscoveryAccounting(budget);
         this.format = format;
         this.budget = budget;
+        this.source = pages;
         pages.ThrowIfDisposed();
         int pageSize = pages.PageSize;
         long pageCount = pages.PageCount;
@@ -66,6 +71,70 @@ internal sealed class CompactDiscoverySession
     /// <summary>Gets the session's cumulative work and current storage admission.</summary>
     internal CompactDiscoveryAccounting Accounting { get; }
 
+    /// <summary>Inventories physical storage and discovered catalog identities using the session's persistent allowances.</summary>
+    /// <param name="visitor">The awaited observation consumer, which may audit or copy a long value.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task completing after the bounded inventory succeeds.</returns>
+    /// <remarks>Missing ownership can hide catalog identities. Successful inventory never proves complete discovery or permission to reclaim storage.</remarks>
+    internal async ValueTask ScanInventoryAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        Guard.NotNull(visitor, nameof(visitor));
+        this.EnterScan(cancellationToken);
+        try
+        {
+            await this.ScanInventoryCoreAsync(visitor, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref this.activeScan, 0);
+        }
+    }
+
+    /// <summary>Inventories the source and streams raw rows and index trees for every discovered local definition, including the catalog.</summary>
+    /// <param name="storageVisitor">The awaited inventory observation consumer.</param>
+    /// <param name="rowVisitor">Consumes each borrowed row with its owning definition; it may audit or copy identified long values before returning.</param>
+    /// <param name="indexVisitor">The awaited raw-index observation consumer.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task completing after all discovered local tables and defined index roots have been scanned.</returns>
+    /// <remarks>
+    /// Catalog-only links and opaque objects remain pinned and are never executed. The caller identifies long-value fields in the borrowed rows.
+    /// Damaged ownership can hide identities, and the component audits do not prove complete discovery, global index validity or a valid compact result.
+    /// Inventory and definition storage remain admitted throughout all awaited row, index and nested value callbacks.
+    /// </remarks>
+    internal async ValueTask ScanDatabaseAsync(
+        Func<CompactStorageRecord, CancellationToken, ValueTask> storageVisitor,
+        Func<long, RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> rowVisitor,
+        Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
+        CancellationToken cancellationToken)
+    {
+        Guard.NotNull(storageVisitor, nameof(storageVisitor));
+        Guard.NotNull(rowVisitor, nameof(rowVisitor));
+        Guard.NotNull(indexVisitor, nameof(indexVisitor));
+        this.EnterScan(cancellationToken);
+        try
+        {
+            await this.ScanInventoryCoreAsync(
+                storageVisitor,
+                cancellationToken,
+                async (root, image, token) =>
+                {
+                    await this.ScanRowsCoreAsync(root, (location, bytes, rowToken) => rowVisitor(root, location, bytes, rowToken), token).ConfigureAwait(false);
+                    foreach (TDefIndexDescriptor index in image.RealIndexes)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (index.RootPage != 0)
+                        {
+                            await this.ScanIndexCoreAsync(root, index.RootPage, indexVisitor, token).ConfigureAwait(false);
+                        }
+                    }
+                }).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref this.activeScan, 0);
+        }
+    }
+
     /// <summary>Streams one table's raw rows using allowances retained across every invocation.</summary>
     /// <param name="ownerTDefPage">The expected table owner.</param>
     /// <param name="visitor">The awaited borrowed-row consumer, which may copy or audit a long value.</param>
@@ -76,22 +145,7 @@ internal sealed class CompactDiscoverySession
         this.EnterScan(cancellationToken);
         try
         {
-            this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, ownerTDefPage);
-            await CompactRawRowReader.ScanAsync(
-                this.pages,
-                this.format,
-                ownerTDefPage,
-                new()
-                {
-                    Accounting = this.Accounting,
-                    MaxPages = this.budget.MaxPages,
-                    MaxPageReads = this.budget.MaxPageReads,
-                    MaxRows = this.budget.MaxRows,
-                    MaxDirectorySlots = this.budget.MaxDirectorySlots,
-                    MaxWorkingBytes = this.budget.MaxWorkingBytes,
-                },
-                visitor,
-                cancellationToken).ConfigureAwait(false);
+            await this.ScanRowsCoreAsync(ownerTDefPage, visitor, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -110,25 +164,7 @@ internal sealed class CompactDiscoverySession
         this.EnterScan(cancellationToken);
         try
         {
-            this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, rootPage);
-            await CompactIndexAudit.ScanAsync(
-                this.pages,
-                this.format,
-                ownerTDefPage,
-                rootPage,
-                new()
-                {
-                    Accounting = this.Accounting,
-                    MaxTreePages = checked((int)Math.Min(int.MaxValue, this.budget.MaxIndexPages)),
-                    MaxEntries = this.budget.MaxIndexEntries,
-                    MaxCanonicalBytes = this.budget.MaxIndexCanonicalBytes,
-                    MaxReferences = this.budget.MaxReferences,
-                    MaxGraphSteps = this.budget.MaxGraphSteps,
-                    MaxRecords = this.budget.MaxRecords,
-                    MaxWorkingBytes = this.budget.MaxWorkingBytes,
-                },
-                visitor,
-                cancellationToken).ConfigureAwait(false);
+            await this.ScanIndexCoreAsync(ownerTDefPage, rootPage, visitor, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -233,6 +269,76 @@ internal sealed class CompactDiscoverySession
 
     private static JetCorruptDataException Corrupt(long page, string reason)
         => new(JetErrorCode.MalformedValue, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
+
+    private async ValueTask ScanInventoryCoreAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null)
+    {
+        int schemaBytes = checked((int)Math.Min(int.MaxValue, this.budget.MaxSchemaBytes));
+        using var definitions = new TableDefReader(this.source, this.format, cacheResults: false, this.budget.MaxDefinitionBytes, schemaBytes);
+        await CompactStorageInventory.ScanAsync(
+            this.source,
+            this.format,
+            definitions,
+            new()
+            {
+                Accounting = this.Accounting,
+                MaxPages = this.budget.MaxPages,
+                MaxObjects = checked((int)Math.Min(int.MaxValue, this.budget.MaxCatalogObjects)),
+                MaxReferences = this.budget.MaxReferences,
+                MaxDiagnostics = checked((int)Math.Min(int.MaxValue, this.budget.MaxDiagnostics)),
+                MaxSchemaBytes = schemaBytes,
+                MaxPageReads = this.budget.MaxPageReads,
+                MaxMapSteps = this.budget.MaxMapSteps,
+                MaxRecords = this.budget.MaxRecords,
+                MaxWorkingBytes = this.budget.MaxWorkingBytes,
+            },
+            visitor,
+            cancellationToken,
+            definitionVisitor).ConfigureAwait(false);
+        this.pages.CheckGeometry(0, cancellationToken);
+    }
+
+    private ValueTask ScanRowsCoreAsync(long ownerTDefPage, Func<RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, ownerTDefPage);
+        return CompactRawRowReader.ScanAsync(
+            this.pages,
+            this.format,
+            ownerTDefPage,
+            new()
+            {
+                Accounting = this.Accounting,
+                MaxPages = this.budget.MaxPages,
+                MaxPageReads = this.budget.MaxPageReads,
+                MaxRows = this.budget.MaxRows,
+                MaxDirectorySlots = this.budget.MaxDirectorySlots,
+                MaxWorkingBytes = this.budget.MaxWorkingBytes,
+            },
+            visitor,
+            cancellationToken);
+    }
+
+    private ValueTask ScanIndexCoreAsync(long ownerTDefPage, long rootPage, Func<CompactIndexRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken)
+    {
+        this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, rootPage);
+        return CompactIndexAudit.ScanAsync(
+            this.pages,
+            this.format,
+            ownerTDefPage,
+            rootPage,
+            new()
+            {
+                Accounting = this.Accounting,
+                MaxTreePages = checked((int)Math.Min(int.MaxValue, this.budget.MaxIndexPages)),
+                MaxEntries = this.budget.MaxIndexEntries,
+                MaxCanonicalBytes = this.budget.MaxIndexCanonicalBytes,
+                MaxReferences = this.budget.MaxReferences,
+                MaxGraphSteps = this.budget.MaxGraphSteps,
+                MaxRecords = this.budget.MaxRecords,
+                MaxWorkingBytes = this.budget.MaxWorkingBytes,
+            },
+            visitor,
+            cancellationToken);
+    }
 
     private void EnterScan(CancellationToken cancellationToken)
     {

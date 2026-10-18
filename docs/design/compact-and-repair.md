@@ -82,10 +82,10 @@ in the corresponding TODO item.
 
 | Requirement | Existing foundation | Remaining dependency |
 |---|---|---|
-| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; scan-owned uncached physical/catalog/TDEF/map inventory; shared raw-row/LVAL/index discovery accounting and simultaneous storage admission | S1: integrate discovery sessions with whole-database enumeration and inventory/catalog lifetime; complete remaining public-scan accounting; qualify runtime/pool and caller-owned memory separately |
+| Bound discovery before allocating | Per-definition and aggregate catalog limits; bounded usage-map ownership inspection; uncached physical/catalog/TDEF/map inventory; one session accounts inventory, catalog and raw-row/LVAL/index work and simultaneous storage through local-table orchestration | S1: complete remaining public-scan accounting and catalog coverage when physical ownership is damaged; qualify runtime/pool and caller-owned memory separately |
 | Preserve stored values | Strict write-back scans; retained unknown-page evidence through owner-index fallback; malformed LVAL directory and calculated-slot refusal; bounded raw row and LVAL streaming; complete defined LVAL-chain observations including trailing storage | S3/F8 and the bounded raw-copy part of I6: distinguish native error envelopes, Null and damaged values; preserve raw unassigned row fields; integrate streamed rows and LVALs into compact copy |
 | Preserve metadata and identities | Immutable raw TDEF images; original table-root publication; catalog field preservation; retained continuation headers and original trailing padding during chain writes | S7/S9: complete schema-rewrite descriptor/header/trailer preservation and inventory application, security, replication and unknown objects |
-| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key and reference observations with complete observed-graph cycle checks | I2: complete tree ownership, shared-root/cross-TDEF proofs, separator fences, global ordering and a bounded raw-key tree builder; F9 only where keys must be regenerated |
+| Rebuild indexes and maps | Native table/index/LVAL map maintenance; conservative alias proofs; bounded raw-key observations with graph-cycle, inclusive entry-edge-only fence and observed leaf-chain order checks; bounded stored-key staging with disk-backed fences | I2: prove shared-root/cross-TDEF and incoming-reference ownership, complete tail/separator and bookmark validation, and connect staging to relocation/maps; F9 only where keys must be regenerated |
 | Validate native behavior | DAO36 Jet3 and DAO120 Jet4/ACE helpers and Microsoft-authored fixtures | E1/E2: healthy and deliberately damaged fixture comparisons for the managed result, with reopen, reads and constraint checks |
 | Replace the source safely | Private staging, flushed backups and process-interruption tests | E4/F6 and the file-recovery part of I15: coordination, recovery discovery, namespace persistence and actual power-interruption evidence |
 
@@ -116,17 +116,20 @@ enumerate all tables and use the shared session accounting described below.
 
 `CompactIndexAudit` observes one root's raw stored keys, bookmarks and known
 index references with bounded collections and entry bytes. It validates page
-geometry/type/owner and in-page order without regenerating collation-sensitive
-keys. Its terminal record states the limited coverage and retains pinned
-storage. Reaching its observed graph is not a proof of separator fences,
-bookmark targets, global order, shared roots or incoming-reference ownership.
+geometry/type/owner, in-page key order and inclusive entry-edge-only key ranges
+without regenerating collation-sensitive keys. Its terminal record separates
+the range and sibling-chain proofs from acyclicity and retains pinned storage.
+Bookmark targets, complete tail routing, shared roots and incoming-reference
+ownership remain unverified.
 Every cycle in the observed entry-child/intermediate-tail graph is rejected by a
 bounded iterative walk, including cycles crossing tail aliases in separate
 branches. Acyclic tail/entry aliases remain observable. Terminal acyclicity does
 not prove exclusive page ownership or complete tree validity.
-Standalone budgets apply to one root; whole-database orchestration and a raw-key
-tree builder remain open. These internal primitives do not extend the CLI
-inventory's completion contract.
+Standalone budgets apply to one root. A successful terminal separately records
+inclusive entry-edge-only fence checks and whether every observed leaf belongs to
+one reciprocal, closed, ordered sibling chain. All tail paths remain outside
+the entry-edge-only fences, including tails not proven to be aliases. Missing sibling observations do not establish global order.
+These internal primitives do not extend the CLI inventory's completion contract.
 
 `CompactLongValueAudit` observes the entire supplied column slice and every
 complete row reached through defined external references, following chained
@@ -145,9 +148,16 @@ observation counters persist across calls and failures. Conservative storage
 reservations cover simultaneous scans, including a value operation awaited from
 a row visitor, and release on completion or failure. Runtime overhead, shared-pool
 retention and caller-owned buffers, streams and retained observations are
-separate. The caller must enumerate every required object and value: a session
-does not discover those identities, prove whole-database coverage or validate a
-compact result. Inventory/catalog accounting still has its own lifetime.
+separate. `ScanInventoryAsync` shares inventory/catalog reads, object admission,
+schema
+bytes, diagnostics, map steps, references, observations and working storage with
+the session. `ScanDatabaseAsync` visits each discovered local definition, its
+raw rows and nonzero physical index roots, including the catalog and hidden
+local tables. Inventory reservations remain held through those callbacks.
+Linked metadata stays pinned and is not followed. Long-value discovery remains
+explicit work in the awaited row visitor. A damaged owner can still hide an
+object; this orchestration does not prove complete database coverage or validate
+a compact result. Cumulative allowances persist after failures and repeated scans.
 
 Logical TDEF chain writes retain the first four bytes of existing continuation
 headers on the same physical pages, while rewriting their next-page pointers.
@@ -158,9 +168,17 @@ uninterpreted reference can survive relocation or a generated schema rewrite.
 
 Index prefix compression can include row bookmarks and intermediate child-page
 pointers. Changing page numbers can change compressed entry lengths, so a
-same-page pointer patch can overflow. The compact-copy engine needs a bounded
-raw-key tree builder and disk-backed relocation/fence records, preserving stored
-canonical keys when possible instead of regenerating collation-sensitive keys.
+same-page pointer patch can overflow. `CompactRawIndexBuilder` appends a fresh
+tree to an explicitly private, page-aligned destination from ordered stored
+canonical keys and caller-supplied relocated bookmarks. It recompresses keys
+with the native codecs, holds one page group, and alternates two caller-owned
+disk-capable fence streams between levels. Entry, canonical-byte, page, output,
+repeated fence-I/O, level and working-storage limits apply. Invalid order,
+out-of-range pointers, oversized entries and nonreducing levels refuse.
+Completion requires flush and cancellation checks and returns an unvalidated
+staging result. Failure may leave private partial bytes. Whole-database
+relocation records, index/map ownership, native acceptance beyond controlled
+trees and destination validation remain required before publication.
 
 Individual attachment editing/history (R8), query planning, cache performance,
 benchmarks and the custom-stream recovery contract are not prerequisites for a

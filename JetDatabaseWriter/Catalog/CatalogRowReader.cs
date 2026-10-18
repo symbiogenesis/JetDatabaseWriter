@@ -33,9 +33,10 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     /// <param name="maxEntries">The maximum number of catalog entries to inspect.</param>
     /// <param name="maxNameLength">The maximum retained catalog name length.</param>
     /// <param name="scanPhysicalPages">Whether to stream catalog owner headers without materializing ownership indexes.</param>
+    /// <param name="admitRow">Optional work admission before decoding or retaining each live catalog identity.</param>
     /// <exception cref="JetLimitationException">The catalog or complex discovery metadata budget is exceeded.</exception>
     /// <exception cref="JetCorruptDataException">The catalog is missing a required field, a live row has malformed required values, or its row directory and overflow pointers cannot be completely traversed.</exception>
-    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue, int maxNameLength = int.MaxValue, bool scanPhysicalPages = false)
+    internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue, int maxNameLength = int.MaxValue, bool scanPhysicalPages = false, Action<RowLocation>? admitRow = null)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
         ColumnInfo? parentIdColumn = msys.FindColumn("ParentId");
@@ -55,6 +56,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
                 2,
                 (row, _) =>
                 {
+                    admitRow?.Invoke(row.Location);
                     if (result.Count >= maxSchemaEntries)
                     {
                         const string reason = "The catalog row count exceeds the MaxSchemaTraversalBytes entry limit.";

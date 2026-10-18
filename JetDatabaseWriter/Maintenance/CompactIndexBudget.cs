@@ -15,10 +15,13 @@ internal sealed class CompactIndexBudget
     /// <summary>Gets the aggregate reconstructed entry byte allowance, including bookmarks and child pointers.</summary>
     public long MaxCanonicalBytes { get; init; } = 1024 * 1024 * 1024;
 
+    /// <summary>Gets the maximum bytes in canonical buffers retained for separator and leaf-boundary proofs, including pointer trailers.</summary>
+    public long MaxRetainedKeyBytes { get; init; } = 64 * 1024 * 1024;
+
     /// <summary>Gets the maximum nonzero header, child and bookmark reference observations.</summary>
     public long MaxReferences { get; init; } = 8_388_608;
 
-    /// <summary>Gets the maximum graph node and edge inspections used to reject every navigable reference cycle.</summary>
+    /// <summary>Gets the maximum node, edge, separator and leaf-link inspections used by graph and ordering proofs.</summary>
     public long MaxGraphSteps { get; init; } = 67_108_864;
 
     /// <summary>Gets the maximum visitor records.</summary>

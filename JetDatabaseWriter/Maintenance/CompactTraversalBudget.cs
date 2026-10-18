@@ -3,6 +3,9 @@ namespace JetDatabaseWriter.Maintenance;
 /// <summary>Hard limits for the physical, catalog, definition and map inventory phase.</summary>
 internal sealed class CompactTraversalBudget
 {
+    /// <summary>Gets optional whole-session counters and simultaneous storage admission.</summary>
+    internal CompactDiscoveryAccounting? Accounting { get; init; }
+
     /// <summary>Gets the maximum physical file size in pages, checked before traversal.</summary>
     public long MaxPages { get; init; } = 1_048_576;
 

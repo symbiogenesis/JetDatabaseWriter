@@ -62,7 +62,7 @@ public sealed class CompactDiscoverySessionTests
             "entries" => new() { MaxIndexEntries = 1 },
             "canonical" => new() { MaxIndexCanonicalBytes = 5 },
             "references" => new() { MaxReferences = 1 },
-            "graph" => new() { MaxGraphSteps = 1 },
+            "graph" => new() { MaxGraphSteps = 4 },
             _ => new() { MaxRecords = 3 },
         };
         var session = new CompactDiscoverySession(source, source.Format, budget);
