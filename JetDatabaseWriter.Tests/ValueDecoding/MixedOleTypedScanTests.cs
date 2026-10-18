@@ -22,6 +22,8 @@ using static JetDatabaseWriter.Enums.ColumnType;
 /// <summary>Mixed scalar/OLE scans retain complete playlist definitions in one enumeration.</summary>
 public sealed class MixedOleTypedScanTests
 {
+    private static readonly string NotesText = new('n', 4096);
+
     [Fact]
     public void HybridPlan_BindsStoredOleBytesAndScalars_ButRejectsUnsupportedBindings()
     {
@@ -217,7 +219,7 @@ public sealed class MixedOleTypedScanTests
             100,
             primaryKey: false,
             [new("Filter", typeof(byte[])), new("SortOrder", typeof(byte[])), new("Notes", typeof(string))],
-            id => [Payload(id % 2 == 0 ? 600 : 23), Payload(id % 2 == 0 ? 9000 : 31), new string('n', 4096)],
+            id => [Payload(id % 2 == 0 ? 600 : 23), Payload(id % 2 == 0 ? 9000 : 31), NotesText],
             Ct);
         List<PlaylistRow> expected;
         await using (var original = new MemoryStream(bytes, writable: false))
@@ -302,7 +304,7 @@ public sealed class MixedOleTypedScanTests
         {
             Assert.Equal(expected[i].Id, actual[i].Id);
             Assert.Equal(expected[i].Notes, actual[i].Notes);
-            Assert.Equal(new string('n', 4096), actual[i].Notes);
+            Assert.Equal(NotesText, actual[i].Notes);
         }
     }
 
@@ -397,14 +399,14 @@ public sealed class MixedOleTypedScanTests
             await writer.InsertRowsAsync(
                 "Playlists",
                 [
-                    [1, "Static", DBNull.Value, DBNull.Value, new string('n', 4096)],
-                    [2, "Empty", Array.Empty<byte>(), Array.Empty<byte>(), new string('n', 4096)],
-                    [3, "Inline", Payload(23), Payload(31), new string('n', 4096)],
-                    [4, "Single", Payload(600), Payload(700), new string('n', 4096)],
-                    [5, "Chained", Payload(12_000), Payload(13_000), new string('n', 4096)],
-                    [6, "Mixed", Payload(45), Payload(10_000), new string('n', 4096)],
-                    [7, "Sort only", DBNull.Value, Payload(4096), new string('n', 4096)],
-                    [8, "Deleted", Payload(700), Payload(900), new string('n', 4096)],
+                    [1, "Static", DBNull.Value, DBNull.Value, NotesText],
+                    [2, "Empty", Array.Empty<byte>(), Array.Empty<byte>(), NotesText],
+                    [3, "Inline", Payload(23), Payload(31), NotesText],
+                    [4, "Single", Payload(600), Payload(700), NotesText],
+                    [5, "Chained", Payload(12_000), Payload(13_000), NotesText],
+                    [6, "Mixed", Payload(45), Payload(10_000), NotesText],
+                    [7, "Sort only", DBNull.Value, Payload(4096), NotesText],
+                    [8, "Deleted", Payload(700), Payload(900), NotesText],
                 ],
                 Ct);
             Assert.Equal(1, await writer.DeleteRowsAsync("Playlists", "Id", 8, Ct));

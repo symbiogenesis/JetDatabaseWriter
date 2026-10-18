@@ -156,8 +156,10 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
             stream.Position = 0;
             await using (AccessWriter writer = await AccessWriter.OpenAsync(stream, new AccessWriterOptions { UseLockFile = false }, leaveOpen: true, this.ct))
             {
-                var rows = new List<RowValues>();
-                for (int rowNumber = 0; rowNumber < (i == 0 ? 4000 : 40); rowNumber++)
+                int batchSize = i == 0 ? 4000 : 40;
+                string data = FormattableString.Invariant($"z{i}");
+                var rows = new List<RowValues>(batchSize);
+                for (int rowNumber = 0; rowNumber < batchSize; rowNumber++)
                 {
                     var row = new RowValues();
                     foreach ((string name, object? value) in template)
@@ -166,7 +168,7 @@ public sealed class IndexTreeReclamationTests(DatabaseCache cache) : IClassFixtu
                     }
 
                     row["id"] = (i == 0 ? 10_000 : 14_000 + ((i - 1) * 40)) + rowNumber;
-                    row["data"] = FormattableString.Invariant($"z{i}");
+                    row["data"] = data;
                     rows.Add(row);
                 }
 

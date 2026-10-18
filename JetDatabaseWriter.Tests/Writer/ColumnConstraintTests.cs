@@ -1202,7 +1202,7 @@ public sealed class ColumnConstraintTests
             _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () => await writer.InsertRowAsync(table, [1, -1], TestContext.Current.CancellationToken));
         }
 
-        Assert.Equal(before, stream.ToArray());
+        Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
 
         await using AccessReader reader = await OpenReaderAsync(stream);
         DataTable dt = await reader.ReadTableAsync(table, cancellationToken: TestContext.Current.CancellationToken);
@@ -1376,7 +1376,7 @@ public sealed class ColumnConstraintTests
                     int pages = transaction.JournaledPageCount;
                     Assert.True(pages > 0);
                     _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault));
-                    Assert.Equal(original, stream.ToArray());
+                    Assert.Equal<byte>(original.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                     Assert.Equal(pages, transaction.JournaledPageCount);
                     Assert.False(transaction.IsCommitted);
                     Assert.False(transaction.IsRolledBack);
@@ -1386,13 +1386,13 @@ public sealed class ColumnConstraintTests
                 else
                 {
                     _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault));
-                    Assert.Equal(original, stream.ToArray());
+                    Assert.Equal<byte>(original.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                     await using JetTransaction transaction = await writer.BeginTransactionAsync(TestContext.Current.CancellationToken);
                     await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
                     await transaction.RollbackAsync(TestContext.Current.CancellationToken);
                 }
 
-                Assert.Equal(original, stream.ToArray());
+                Assert.Equal<byte>(original.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
             }
 
             await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
@@ -1473,24 +1473,24 @@ public sealed class ColumnConstraintTests
                 int pages = transaction.JournaledPageCount;
                 Assert.True(pages > 0);
                 _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false, predicateId: 7));
-                Assert.Equal(refused, stream.ToArray());
+                Assert.Equal<byte>(refused.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                 Assert.Equal(pages, transaction.JournaledPageCount);
                 Assert.False(transaction.IsCommitted);
                 Assert.False(transaction.IsRolledBack);
                 Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 7, new Dictionary<string, object?> { ["Id"] = 8 }, TestContext.Current.CancellationToken));
                 await transaction.RollbackAsync(TestContext.Current.CancellationToken);
-                Assert.Equal(refused, stream.ToArray());
+                Assert.Equal<byte>(refused.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                 if (mode != WriteMode.ExplicitCommit)
                 {
                     _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
-                    Assert.Equal(refused, stream.ToArray());
+                    Assert.Equal<byte>(refused.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                 }
             }
         }
 
         // Restoring just the rule allows a real insert to verify the durable AutoNumber rewind.
         supported.CopyTo(stream.GetBuffer(), ruleOffset);
-        Assert.Equal(original, stream.ToArray());
+        Assert.Equal<byte>(original.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
         await using (AccessWriter writer = await OpenWriterAsync(stream))
         {
             await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
@@ -1558,7 +1558,7 @@ public sealed class ColumnConstraintTests
                     int pages = transaction.JournaledPageCount;
                     Assert.True(pages > 0);
                     _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: true));
-                    Assert.Equal(before, stream.ToArray());
+                    Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                     Assert.Equal(pages, transaction.JournaledPageCount);
                     Assert.False(transaction.IsCommitted);
                     Assert.False(transaction.IsRolledBack);
@@ -1567,12 +1567,12 @@ public sealed class ColumnConstraintTests
                     Assert.Equal(1, await writer.UpdateRowsAsync(table, "Id", 3, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken));
                     Assert.Equal(0, await writer.UpdateRowsAsync(table, "Id", 4, new Dictionary<string, object?> { ["Score"] = 1 }, TestContext.Current.CancellationToken));
                     await transaction.RollbackAsync(TestContext.Current.CancellationToken);
-                    Assert.Equal(before, stream.ToArray());
+                    Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                 }
                 else
                 {
                     _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: true));
-                    Assert.Equal(before, stream.ToArray());
+                    Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                     await writer.InsertRowAsync(table, [DbDefault.Value, 1], TestContext.Current.CancellationToken);
                 }
             }
@@ -1636,7 +1636,7 @@ public sealed class ColumnConstraintTests
                     attemptedIds.Clear();
                     _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
                     Assert.Equal<int>([1], attemptedIds);
-                    Assert.Equal(before, stream.ToArray());
+                    Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                 }
             }
 
@@ -1649,7 +1649,7 @@ public sealed class ColumnConstraintTests
                 attemptedIds.Clear();
                 _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
                 Assert.Equal<int>([1], attemptedIds);
-                Assert.Equal(before, stream.ToArray());
+                Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
                 Assert.Equal(pages, transaction.JournaledPageCount);
                 Assert.False(transaction.IsCommitted);
                 Assert.False(transaction.IsRolledBack);
@@ -1657,12 +1657,12 @@ public sealed class ColumnConstraintTests
 
             Assert.Equal(1, await writer.UpdateRowsAsync("Control", "Id", 2, new Dictionary<string, object?> { ["Score"] = 3 }, TestContext.Current.CancellationToken));
             await transaction.RollbackAsync(TestContext.Current.CancellationToken);
-            Assert.Equal(before, stream.ToArray());
+            Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
 
             attemptedIds.Clear();
             _ = await Assert.ThrowsAsync<JetValidationRuleException>(() => RefuseMutationAsync(writer, table, surface, badDefault: false));
             Assert.Equal<int>([1], attemptedIds);
-            Assert.Equal(before, stream.ToArray());
+            Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
             await writer.InsertRowAsync("Control", [DbDefault.Value, 4], TestContext.Current.CancellationToken);
         }
 
@@ -1698,7 +1698,7 @@ public sealed class ColumnConstraintTests
             byte[] before = stream.ToArray();
             _ = await Assert.ThrowsAsync<JetValidationRuleException>(async () =>
                 await writer.InsertRowAsync(table, [0m], TestContext.Current.CancellationToken));
-            Assert.Equal(before, stream.ToArray());
+            Assert.Equal<byte>(before.AsSpan(), stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
             await writer.InsertRowAsync(table, [DbDefault.Value], TestContext.Current.CancellationToken);
         }
 
