@@ -32,11 +32,6 @@ internal enum CompactDiscoveryCharge
 /// <summary>Owns cumulative counters and simultaneous working-storage admission for one discovery session.</summary>
 internal sealed class CompactDiscoveryAccounting
 {
-#if NET9_0_OR_GREATER
-    private readonly Lock sync = new();
-#else
-    private readonly object sync = new();
-#endif
     private readonly long[] counts = new long[19];
     private readonly long[] limits;
     private readonly long maxWorkingBytes;
@@ -70,16 +65,7 @@ internal sealed class CompactDiscoveryAccounting
     internal long PageReads => this.ReadCount(CompactDiscoveryCharge.PageReads);
 
     /// <summary>Gets the currently admitted working storage.</summary>
-    internal long ActiveWorkingBytes
-    {
-        get
-        {
-            lock (this.sync)
-            {
-                return this.activeWorkingBytes;
-            }
-        }
-    }
+    internal long ActiveWorkingBytes => Volatile.Read(ref this.activeWorkingBytes);
 
     /// <summary>Charges work before its allocation, I/O, traversal or delivery. Failed operations retain their charges.</summary>
     /// <param name="charge">The cumulative work category.</param>
@@ -90,14 +76,9 @@ internal sealed class CompactDiscoveryAccounting
     {
         Guard.InRange(count, 0L, long.MaxValue, nameof(count));
         int index = (int)charge;
-        lock (this.sync)
+        if (!TryAddWithinLimit(ref this.counts[index], count, this.limits[index]))
         {
-            if (count > this.limits[index] - this.counts[index])
-            {
-                throw Limit(page, $"The aggregate discovery allowance for {charge} is exhausted.");
-            }
-
-            this.counts[index] += count;
+            throw Limit(page, $"The aggregate discovery allowance for {charge} is exhausted.");
         }
     }
 
@@ -109,14 +90,9 @@ internal sealed class CompactDiscoveryAccounting
     internal IDisposable ReserveWorkingBytes(long bytes, long page = 0)
     {
         Guard.InRange(bytes, 0L, long.MaxValue, nameof(bytes));
-        lock (this.sync)
+        if (!TryAddWithinLimit(ref this.activeWorkingBytes, bytes, this.maxWorkingBytes))
         {
-            if (bytes > this.maxWorkingBytes - this.activeWorkingBytes)
-            {
-                throw Limit(page, "The aggregate discovery working-storage reservation exceeds MaxWorkingBytes.");
-            }
-
-            this.activeWorkingBytes += bytes;
+            throw Limit(page, "The aggregate discovery working-storage reservation exceeds MaxWorkingBytes.");
         }
 
         return new Reservation(this, bytes);
@@ -125,24 +101,29 @@ internal sealed class CompactDiscoveryAccounting
     /// <summary>Reads one cumulative allowance without resetting it.</summary>
     /// <param name="charge">The work category to inspect.</param>
     /// <returns>The amount already charged.</returns>
-    internal long ReadCount(CompactDiscoveryCharge charge)
-    {
-        lock (this.sync)
-        {
-            return this.counts[(int)charge];
-        }
-    }
+    internal long ReadCount(CompactDiscoveryCharge charge) => Volatile.Read(ref this.counts[(int)charge]);
 
     private static JetLimitationException Limit(long page, string reason)
         => new(JetErrorCode.ValueTooLarge, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
 
-    private void Release(long bytes)
+    private static bool TryAddWithinLimit(ref long value, long amount, long limit)
     {
-        lock (this.sync)
+        while (true)
         {
-            this.activeWorkingBytes -= bytes;
+            long current = Volatile.Read(ref value);
+            if (amount > limit - current)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref value, current + amount, current) == current)
+            {
+                return true;
+            }
         }
     }
+
+    private void Release(long bytes) => Interlocked.Add(ref this.activeWorkingBytes, -bytes);
 
     private sealed class Reservation(CompactDiscoveryAccounting owner, long bytes) : IDisposable
     {
