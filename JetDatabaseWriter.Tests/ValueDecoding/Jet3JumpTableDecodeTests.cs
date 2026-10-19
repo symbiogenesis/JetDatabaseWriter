@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -175,7 +176,7 @@ public sealed class Jet3JumpTableDecodeTests
         }
 
         byte[] row = Jet3RowTrailerReference.BuildRow(
-            BitConverter.GetBytes(7),
+            [7, 0, 0, 0],
             fixedColumnCount: 1,
             [Encoding.ASCII.GetBytes(a), Encoding.ASCII.GetBytes(b), Encoding.ASCII.GetBytes(c)],
             [0x03, 0x01]);
@@ -211,7 +212,7 @@ public sealed class Jet3JumpTableDecodeTests
         var columns = new List<ColumnInfo>();
         for (int i = 0; i < fixedLongCount; i++)
         {
-            BitConverter.GetBytes(i + 1).CopyTo(fixedArea, i * 4);
+            BinaryPrimitives.WriteInt32LittleEndian(fixedArea.AsSpan(i * 4), i + 1);
             columns.Add(new ColumnInfo
             {
                 Type = ColumnType.LongIntegerType,
@@ -261,7 +262,7 @@ public sealed class Jet3JumpTableDecodeTests
         {
             ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(rowFields, page, rowStart, row.Length, layout, columns[i]);
             Assert.Equal(ColumnSliceKind.Fixed, slice.Kind);
-            Assert.Equal(i + 1, BitConverter.ToInt32(page, rowStart + slice.DataStart));
+            Assert.Equal(i + 1, BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(rowStart + slice.DataStart)));
         }
 
         for (int i = 0; i < varLengths.Length; i++)
@@ -293,14 +294,14 @@ public sealed class Jet3JumpTableDecodeTests
         byte[] file = ms.GetBuffer();
         int pageStart = checked((int)location.PageNumber * Jet3PageSize);
         Assert.Equal(0x01, file[pageStart]);
-        Assert.Equal(1, BitConverter.ToUInt16(file, pageStart + 8));
+        Assert.Equal(1, BinaryPrimitives.ReadUInt16LittleEndian(file.AsSpan(pageStart + 8)));
         Assert.Equal(0, location.RowIndex);
 
         int rowStart = Jet3PageSize - row.Length;
         Array.Clear(file, pageStart + 12, Jet3PageSize - 12);
         row.CopyTo(file, pageStart + rowStart);
-        BitConverter.GetBytes(checked((ushort)rowStart)).CopyTo(file, pageStart + 10);
-        BitConverter.GetBytes(checked((ushort)(rowStart - 12))).CopyTo(file, pageStart + 2);
+        BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(pageStart + 10), checked((ushort)rowStart));
+        BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(pageStart + 2), checked((ushort)(rowStart - 12)));
     }
 
     private static string Pattern(char first, int length)

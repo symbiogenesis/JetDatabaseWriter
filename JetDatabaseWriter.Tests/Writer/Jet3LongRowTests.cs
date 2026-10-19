@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Writer;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -498,6 +499,7 @@ public sealed class Jet3LongRowTests
         row.CopyTo(page, rowStart);
         RowFieldSizes rowFields = JetFormat.ForNewDatabase(DatabaseFormat.Jet3Mdb).RowFields;
         Assert.True(RowDecodePlan.TryParseRowLayout(rowFields, page, rowStart, row.Length, tableDef.HasVarColumns, out RowLayout layout));
+        Span<byte> integerBytes = stackalloc byte[sizeof(int)];
         for (int i = 0; i < tableDef.Columns.Count; i++)
         {
             ColumnSlice slice = RowDecodePlan.ResolveColumnSlice(rowFields, page, rowStart, row.Length, layout, tableDef.Columns[i]);
@@ -507,8 +509,18 @@ public sealed class Jet3LongRowTests
                 continue;
             }
 
-            byte[] expected = values[i] as byte[] ?? BitConverter.GetBytes((int)values[i]);
-            Assert.Equal(expected, page.AsSpan(rowStart + slice.DataStart, slice.DataLen).ToArray());
+            scoped ReadOnlySpan<byte> expected;
+            if (values[i] is byte[] binary)
+            {
+                expected = binary;
+            }
+            else
+            {
+                BinaryPrimitives.WriteInt32LittleEndian(integerBytes, (int)values[i]);
+                expected = integerBytes;
+            }
+
+            Assert.Equal<byte>(expected, page.AsSpan(rowStart + slice.DataStart, slice.DataLen));
         }
     }
 
@@ -586,7 +598,7 @@ public sealed class Jet3LongRowTests
             (row, _) =>
             {
                 byte[] bytes = row.Page.AsSpan(row.Location.RowStart, row.Location.RowSize).ToArray();
-                rows.Add(keyed ? BitConverter.ToInt32(bytes, 1) : rows.Count, bytes);
+                rows.Add(keyed ? BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(1)) : rows.Count, bytes);
                 return new ValueTask<bool>(true);
             },
             cancellationToken);

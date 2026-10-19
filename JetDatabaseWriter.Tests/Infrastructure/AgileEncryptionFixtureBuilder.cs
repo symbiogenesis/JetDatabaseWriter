@@ -218,7 +218,7 @@ internal static class AgileEncryptionFixtureBuilder
         }
 
         byte[] result = new byte[8 + paddedSegmentTotal];
-        BitConverter.TryWriteBytes(result.AsSpan(0, 8), (long)innerAccdb.Length);
+        BinaryPrimitives.WriteInt64LittleEndian(result, innerAccdb.Length);
 
         // Reuse a single Aes instance across all segments; only the IV changes.
         using var aes = Aes.Create();
@@ -270,7 +270,7 @@ internal static class AgileEncryptionFixtureBuilder
     {
         Span<byte> data = stackalloc byte[keyDataSalt.Length + 4];
         keyDataSalt.CopyTo(data);
-        BitConverter.TryWriteBytes(data[keyDataSalt.Length..], segmentIndex);
+        BinaryPrimitives.WriteInt32LittleEndian(data[keyDataSalt.Length..], segmentIndex);
 
         Span<byte> hash = stackalloc byte[Constants.AgileEncryption.HashBytes];
         SHA512.HashData(data, hash);
@@ -360,7 +360,7 @@ internal static class AgileEncryptionFixtureBuilder
         h.CopyTo(iter[4..]);
         for (int i = 0; i < p.SpinCount; i++)
         {
-            BitConverter.TryWriteBytes(iter[..4], i);
+            BinaryPrimitives.WriteInt32LittleEndian(iter, i);
             SHA512.HashData(iter, h);
             h.CopyTo(iter[4..]);
         }
@@ -542,9 +542,9 @@ internal static class AgileEncryptionFixtureBuilder
         Span<byte> e = sector.AsSpan(offset, Constants.CompoundFile.DirEntrySize);
         e.Clear();
         e[0x42] = 0x00; // unallocated
-        BitConverter.TryWriteBytes(e.Slice(0x44, 4), Constants.CompoundFile.FreeSect);
-        BitConverter.TryWriteBytes(e.Slice(0x48, 4), Constants.CompoundFile.FreeSect);
-        BitConverter.TryWriteBytes(e.Slice(0x4C, 4), Constants.CompoundFile.FreeSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44, 4), Constants.CompoundFile.FreeSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48, 4), Constants.CompoundFile.FreeSect);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C, 4), Constants.CompoundFile.FreeSect);
     }
 
     private static void WriteDirEntry(
@@ -570,18 +570,18 @@ internal static class AgileEncryptionFixtureBuilder
 
         nameBytes.CopyTo(e);
         ushort nameLen = (ushort)(nameBytes.Length + 2); // include UTF-16 NUL terminator
-        BitConverter.TryWriteBytes(e.Slice(0x40, 2), nameLen);
+        BinaryPrimitives.WriteUInt16LittleEndian(e.Slice(0x40, 2), nameLen);
 
         e[0x42] = objectType;
         e[0x43] = 0x01; // black (red-black tree color)
 
-        BitConverter.TryWriteBytes(e.Slice(0x44, 4), leftSibling);
-        BitConverter.TryWriteBytes(e.Slice(0x48, 4), rightSibling);
-        BitConverter.TryWriteBytes(e.Slice(0x4C, 4), child);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x44, 4), leftSibling);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x48, 4), rightSibling);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x4C, 4), child);
 
-        BitConverter.TryWriteBytes(e.Slice(0x74, 4), startSector);
-        BitConverter.TryWriteBytes(e.Slice(0x78, 4), sizeLow);
-        BitConverter.TryWriteBytes(e.Slice(0x7C, 4), sizeHigh);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x74, 4), startSector);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x78, 4), sizeLow);
+        BinaryPrimitives.WriteUInt32LittleEndian(e.Slice(0x7C, 4), sizeHigh);
     }
 
     // ═══════════════════════════════════════════════════════════════════

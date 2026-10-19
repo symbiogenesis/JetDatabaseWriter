@@ -593,7 +593,7 @@ public sealed class MultiPageTDefIndexMaintenanceTests : IDisposable
             Assert.NotNull(entry);
 
             byte[] firstTdefPage = await db.Pages.ReadPageCopyAsync(entry.TDefPage, this.ct);
-            Assert.NotEqual(0, BitConverter.ToInt32(firstTdefPage, 4));
+            Assert.NotEqual(0, BinaryPrimitives.ReadInt32LittleEndian(firstTdefPage.AsSpan(4)));
 
             TableDef tableDef = await db.TableDefs.ReadRequiredTableDefAsync(entry.TDefPage, TableName, this.ct);
             byte[]? td = await db.TableDefs.ReadTDefBytesAsync(entry.TDefPage, this.ct);

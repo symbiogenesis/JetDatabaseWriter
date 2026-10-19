@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.Buffers.Binary;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
@@ -22,10 +23,10 @@ public sealed class TDefPageBuilderTests
             format);
         var builder = new TDefPageBuilder(format, null!);
         byte[] page = builder.BuildTDefPage(tableDef);
-        int end = BitConverter.ToInt32(page, 8) + 8;
-        Assert.Equal(ushort.MaxValue, BitConverter.ToUInt16(page, end - 10));
+        int end = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(8)) + 8;
+        Assert.Equal(ushort.MaxValue, BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(end - 10)));
         Assert.Equal(new byte[8], page.AsSpan(end - 8, 8).ToArray());
-        Assert.Equal(format.PageSize - end, BitConverter.ToUInt16(page, 2));
+        Assert.Equal(format.PageSize - end, BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(2)));
     }
 
     [Fact]

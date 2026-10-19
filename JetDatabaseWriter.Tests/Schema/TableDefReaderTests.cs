@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -246,7 +247,7 @@ public sealed class TableDefReaderTests
         Assert.Equal(10u, (await tableDefs.ReadTableCountersAsync(entry.TDefPage, Ct))?.RowCount);
         LogicalTDefChain chain = await tableDefs.ReadTDefChainAsync(entry.TDefPage, Ct);
         int logicalOffset = writer.Database.Format.PageSize + 8;
-        int original = BitConverter.ToInt32(chain.Bytes, logicalOffset);
+        int original = BinaryPrimitives.ReadInt32LittleEndian(chain.Bytes.AsSpan(logicalOffset));
         await writer.Services.TDefWriter.WriteInt32Async(entry.TDefPage, logicalOffset, original ^ 1, Ct);
         Assert.NotSame(first, await tableDefs.ReadImageAsync(entry.TDefPage, Ct));
     }
@@ -318,7 +319,7 @@ public sealed class TableDefReaderTests
         // offset 16 of the continuation page.
         int logicalOffset = pageSize + 8;
         long continuationPage = chain.PageNumbers[1];
-        int original = BitConverter.ToInt32(chain.Bytes, logicalOffset);
+        int original = BinaryPrimitives.ReadInt32LittleEndian(chain.Bytes.AsSpan(logicalOffset));
         byte[] fileBefore = stream.ToArray();
 
         JetTransaction? tx = inTransaction ? await harness.Services.Transactions.BeginTransactionAsync(Ct) : null;
@@ -326,8 +327,8 @@ public sealed class TableDefReaderTests
 
         byte[]? logical = await tableDefs.ReadTDefBytesAsync(entry.TDefPage, Ct);
         Assert.NotNull(logical);
-        Assert.Equal(patched, BitConverter.ToInt32(logical, logicalOffset));
-        Assert.Equal(patched, BitConverter.ToInt32(await db.Pages.ReadPageCopyAsync(continuationPage, Ct), 16));
+        Assert.Equal(patched, BinaryPrimitives.ReadInt32LittleEndian(logical.AsSpan(logicalOffset)));
+        Assert.Equal(patched, BinaryPrimitives.ReadInt32LittleEndian((await db.Pages.ReadPageCopyAsync(continuationPage, Ct)).AsSpan(16)));
         int onDiskOffset = checked((int)(continuationPage * pageSize)) + 16;
         if (tx is not null)
         {
@@ -335,7 +336,7 @@ public sealed class TableDefReaderTests
             await tx.CommitAsync(Ct);
         }
 
-        Assert.Equal(patched, BitConverter.ToInt32(stream.ToArray(), onDiskOffset));
+        Assert.Equal(patched, BinaryPrimitives.ReadInt32LittleEndian(stream.ToArray().AsSpan(onDiskOffset)));
 
         await harness.Services.TDefWriter.WriteInt32Async(entry.TDefPage, logicalOffset, original, Ct);
         TableDef after = await tableDefs.ReadRequiredTableDefAsync(entry.TDefPage, WideTable, Ct);

@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Tests.Schema;
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -210,7 +211,7 @@ public sealed class EmptyDatabaseBootstrapGoldenTests
             byte[] page = await harness.ReadPageCopyAsync(pageNumber, Ct);
             Assert.Equal(0x02, page[0]);
             chain.AddRange(page);
-            pageNumber = BitConverter.ToInt32(page, 4);
+            pageNumber = BinaryPrimitives.ReadInt32LittleEndian(page.AsSpan(4));
         }
 
         return [.. chain];
