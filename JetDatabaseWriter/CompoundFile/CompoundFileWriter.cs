@@ -23,9 +23,8 @@ using JetDatabaseWriter.Infrastructure;
 ///   • Directory entries stored in regular directory sectors.
 /// </para>
 /// <para>
-/// The directory red-black tree is laid out as an ascending right-sibling
-/// chain, which is a valid representation accepted by Microsoft Office and
-/// the <see cref="CompoundFileReader"/> in this assembly.
+/// The directory uses a median-balanced, all-black binary search tree with
+/// native MS-CFB name ordering. The format permits every node to be black.
 /// </para>
 /// </summary>
 internal static class CompoundFileWriter

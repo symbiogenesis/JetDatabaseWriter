@@ -107,6 +107,7 @@ public sealed class CompoundFileDirectoryTreeTests
         Assert.Equal([first, second], ReadTree(CompoundFileWriter.Build(entries), entries.Length));
         Assert.Equal([first, second], ReadTree(CompoundFileWriter.BuildOfficeCrypto(entries), entries.Length));
     }
+
     /// <summary>Names must be stored exactly and fit the native directory entry.</summary>
     /// <param name="name">An unrepresentable or forbidden name.</param>
     [Theory]
