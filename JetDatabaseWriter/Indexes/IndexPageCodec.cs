@@ -1009,19 +1009,7 @@ internal static class IndexPageCodec
     /// <param name="left">The left value.</param>
     /// <param name="right">The right.</param>
     public static int CompareKeyBytes(byte[] left, byte[] right)
-    {
-        int length = Math.Min(left.Length, right.Length);
-        for (int offset = 0; offset < length; offset++)
-        {
-            int difference = left[offset] - right[offset];
-            if (difference != 0)
-            {
-                return difference;
-            }
-        }
-
-        return left.Length - right.Length;
-    }
+        => left.AsSpan().SequenceCompareTo(right);
 
     /// <summary>Validates every leaf entry and layout before multi-page packing chooses capacity fallbacks.</summary>
     /// <param name="layout">The layout for this phase.</param>
