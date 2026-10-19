@@ -264,43 +264,22 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
 
     private static long FindContiguousRun(List<long> freePages, int pageCount)
     {
-        if (freePages.Count == 0)
+        long runStart = -1;
+        long previousPage = -1;
+        int runLength = 0;
+        foreach (long pageNumber in freePages)
         {
-            return -1;
-        }
-
-        freePages.Sort();
-        long runStart = freePages[0];
-        long previousPage = freePages[0];
-        int runLength = 1;
-        if (pageCount == 1)
-        {
-            return runStart;
-        }
-
-        for (int freePageIndex = 1; freePageIndex < freePages.Count; freePageIndex++)
-        {
-            long pageNumber = freePages[freePageIndex];
-            if (pageNumber == previousPage)
+            if (runLength == 0 || pageNumber != previousPage + 1)
             {
-                continue;
+                runStart = pageNumber;
+                runLength = 0;
             }
 
-            if (pageNumber == previousPage + 1)
-            {
-                runLength++;
-                previousPage = pageNumber;
-                if (runLength >= pageCount)
-                {
-                    return runStart;
-                }
-
-                continue;
-            }
-
-            runStart = pageNumber;
             previousPage = pageNumber;
-            runLength = 1;
+            if (++runLength == pageCount)
+            {
+                return runStart;
+            }
         }
 
         return -1;
@@ -334,7 +313,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
         await this.PreflightGlobalMapAsync(cancellationToken).ConfigureAwait(false);
         if (this.cachedFreePages is not null && this.freePageGeneration == pager.InvalidationGeneration)
         {
-            return [.. this.cachedFreePages];
+            return this.cachedFreePages;
         }
 
         byte[] globalPage = await this.ReadGlobalUsageMapPageAsync(cancellationToken).ConfigureAwait(false);
@@ -365,7 +344,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             List<long> reusable = await this.FilterPhysicallyReusablePagesAsync(mappedFreePages, cancellationToken).ConfigureAwait(false);
             this.cachedFreePages = reusable;
             this.freePageGeneration = pager.InvalidationGeneration;
-            return [.. reusable];
+            return reusable;
         }
         finally
         {
@@ -380,6 +359,7 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
             return mappedFreePages;
         }
 
+        // Usage-map bitmaps enumerate distinct pages in ascending order; filtering preserves it.
         var reusablePages = new List<long>(mappedFreePages.Count);
         foreach (long pageNumber in mappedFreePages)
         {
@@ -438,11 +418,14 @@ internal sealed class PageAllocator(JetFormat format, Pager pager, AccessWriterO
 
         if (this.cachedFreePages is not null)
         {
-            _ = this.cachedFreePages.Remove(pageNumber);
-            if (free)
+            int index = this.cachedFreePages.BinarySearch(pageNumber);
+            if (free && index < 0)
             {
-                this.cachedFreePages.Add(pageNumber);
-                this.cachedFreePages.Sort();
+                this.cachedFreePages.Insert(~index, pageNumber);
+            }
+            else if (!free && index >= 0)
+            {
+                this.cachedFreePages.RemoveAt(index);
             }
         }
     }
