@@ -1,7 +1,7 @@
 namespace JetDatabaseWriter.Indexes;
 
-using System;
 using System.Collections.Generic;
+using System.Linq;
 using JetDatabaseWriter.Indexes.Models;
 
 /// <summary>
@@ -10,6 +10,8 @@ using JetDatabaseWriter.Indexes.Models;
 /// </summary>
 internal static class IndexEntrySplicer
 {
+    private static readonly IComparer<byte[]> KeyComparer = Comparer<byte[]>.Create(IndexPageCodec.CompareKeyBytes);
+
     /// <summary>
     /// Builds the post-mutation entry list by inserting <paramref name="adds"/>
     /// and removing every entry whose row pointer matches <paramref name="removes"/>.
@@ -56,25 +58,8 @@ internal static class IndexEntrySplicer
 
         working.AddRange(adds);
 
-        var indexed = new (IndexEntry Entry, int Order)[working.Count];
-        for (int i = 0; i < working.Count; i++)
-        {
-            indexed[i] = (working[i], i);
-        }
-
-        Array.Sort(indexed, static (left, right) =>
-        {
-            int compare = IndexPageCodec.CompareKeyBytes(left.Entry.Key, right.Entry.Key);
-            return compare != 0 ? compare : left.Order - right.Order;
-        });
-
-        var result = new List<IndexEntry>(indexed.Length);
-        foreach ((IndexEntry entry, _) in indexed)
-        {
-            result.Add(entry);
-        }
-
-        return result;
+        // OrderBy is stable: existing equal keys precede additions, whose input order is retained.
+        return working.OrderBy(static entry => entry.Key, KeyComparer).ToList();
     }
 
     private static long EncodePointer(long page, byte row) => (page << 8) | row;

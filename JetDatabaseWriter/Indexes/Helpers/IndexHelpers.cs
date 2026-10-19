@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Indexes.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
@@ -821,18 +822,8 @@ internal static class IndexHelpers
         List<DecodedIntermediateEntry> original,
         List<IntermediateOp> ops)
     {
-        // Stable sort by OriginalIndex; declaration order preserved within ties.
-        var indexed = new (IntermediateOp Op, int Order)[ops.Count];
-        for (int i = 0; i < ops.Count; i++)
-        {
-            indexed[i] = (ops[i], i);
-        }
-
-        Array.Sort(indexed, static (a, b) =>
-        {
-            int c = a.Op.OriginalIndex - b.Op.OriginalIndex;
-            return c != 0 ? c : a.Order - b.Order;
-        });
+        // OrderBy is stable, preserving declaration order for the same original index.
+        IntermediateOp[] ordered = ops.OrderBy(static operation => operation.OriginalIndex).ToArray();
 
         var result = new List<DecodedIntermediateEntry>(original.Count + ops.Count);
         int opCursor = 0;
@@ -841,9 +832,9 @@ internal static class IndexHelpers
             // Consume any ops at this original index.
             bool replaced = false;
             bool removed = false;
-            while (opCursor < indexed.Length && indexed[opCursor].Op.OriginalIndex == origIdx)
+            while (opCursor < ordered.Length && ordered[opCursor].OriginalIndex == origIdx)
             {
-                IntermediateOp op = indexed[opCursor].Op;
+                IntermediateOp op = ordered[opCursor];
                 opCursor++;
                 switch (op.Type)
                 {
