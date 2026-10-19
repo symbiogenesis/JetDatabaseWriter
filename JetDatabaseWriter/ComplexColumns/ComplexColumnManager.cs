@@ -96,7 +96,7 @@ internal sealed class ComplexColumnManager(
     /// All templates are zero-row, zero-index tables; their <c>MSysObjects.Id</c>
     /// (= TDEF page) is what <c>MSysComplexColumns.ComplexTypeObjectID</c> points at.
     /// </summary>
-    private static readonly (string Name, ColumnDefinition[] Columns)[] ComplexTypeTemplates =
+    private static readonly Lazy<(string Name, ColumnDefinition[] Columns)[]> ComplexTypeTemplates = new(static () =>
     [
         ValueTemplate(Constants.ComplexTypeNames.UnsignedByte, typeof(byte)),
         ValueTemplate(Constants.ComplexTypeNames.Short, typeof(short)),
@@ -107,7 +107,7 @@ internal sealed class ComplexColumnManager(
         ValueTemplate(Constants.ComplexTypeNames.Decimal, typeof(decimal)),
         ValueTemplate(Constants.ComplexTypeNames.Text, typeof(string), ComplexTypeTemplateTextLength),
         AttachmentTemplate(Constants.ComplexTypeNames.Attachment),
-    ];
+    ]);
 
     private static (string Name, ColumnDefinition[] Columns) ValueTemplate(
         string name,
@@ -237,7 +237,7 @@ internal sealed class ComplexColumnManager(
             throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage, error);
         }
 
-        ColumnDefinition[] requiredColumns = ComplexTypeTemplates.First(t => t.Name == templateName).Columns;
+        ColumnDefinition[] requiredColumns = ComplexTypeTemplates.Value.First(t => t.Name == templateName).Columns;
         if (template is null || template.Columns.Count != requiredColumns.Length)
         {
             throw InvalidComplexTypeTemplate(column.Name, templateName, templatePage);
@@ -277,8 +277,9 @@ internal sealed class ComplexColumnManager(
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     private async ValueTask CreateMSysComplexTypeTemplatesAsync(CancellationToken cancellationToken)
     {
-        var tableArtifacts = new List<CatalogTableArtifact>(ComplexTypeTemplates.Length);
-        foreach ((string name, ColumnDefinition[] cols) in ComplexTypeTemplates)
+        (string Name, ColumnDefinition[] Columns)[] templates = ComplexTypeTemplates.Value;
+        var tableArtifacts = new List<CatalogTableArtifact>(templates.Length);
+        foreach ((string name, ColumnDefinition[] cols) in templates)
         {
             tableArtifacts.Add(new CatalogTableArtifact(
                 name,
