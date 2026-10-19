@@ -29,6 +29,15 @@ P:System.Threading.Tasks.ValueTask`1.Result;Await the ValueTask instead of synch
 M:System.Threading.Tasks.Task.RunSynchronously;Use direct synchronous code or await asynchronous work instead of running a task synchronously.
 M:System.Threading.Tasks.Task.RunSynchronously(System.Threading.Tasks.TaskScheduler);Use direct synchronous code or await asynchronous work instead of running a task synchronously.
 
+M:System.Runtime.CompilerServices.TaskAwaiter.GetResult;Await the task; suppress only at a required synchronous callback boundary or a test that deliberately blocks.
+M:System.Runtime.CompilerServices.TaskAwaiter`1.GetResult;Await the task; suppress only at a required synchronous callback boundary or a test that deliberately blocks.
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable.ConfiguredTaskAwaiter.GetResult;Await the task; suppress only at a required synchronous callback boundary or a test that deliberately blocks.
+M:System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1.ConfiguredTaskAwaiter.GetResult;Await the task; suppress only at a required synchronous callback boundary or a test that deliberately blocks.
+M:System.Runtime.CompilerServices.ValueTaskAwaiter.GetResult;Await the ValueTask instead of synchronously consuming a potentially incomplete operation.
+M:System.Runtime.CompilerServices.ValueTaskAwaiter`1.GetResult;Await the ValueTask instead of synchronously consuming a potentially incomplete operation.
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable.ConfiguredValueTaskAwaiter.GetResult;Await the ValueTask instead of synchronously consuming a potentially incomplete operation.
+M:System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1.ConfiguredValueTaskAwaiter.GetResult;Await the ValueTask instead of synchronously consuming a potentially incomplete operation.
+
 // Process termination APIs.
 M:System.Environment.FailFast(System.String);Let top-level exception handling/logging handle fatal failures.
 M:System.Environment.FailFast(System.String,System.Exception);Let top-level exception handling/logging handle fatal failures.
@@ -116,6 +125,57 @@ P:System.Diagnostics.ProcessStartInfo.Arguments;Use ProcessStartInfo.ArgumentLis
 T:System.Activator;Use dependency injection, typed factories, or explicit constructors instead of reflection activation.
 M:System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(System.Type);Use explicit constructors or typed factories so object invariants are initialized.
 M:System.Runtime.Serialization.FormatterServices.GetUninitializedObject(System.Type);Use explicit constructors or typed factories so object invariants are initialized.
+
+// Multi-byte file-format values must not depend on host endianness.
+// For floating-point values on netstandard2.1, convert through their integer bits.
+M:System.BitConverter.GetBytes(System.Char);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.Double);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.Half);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.Int128);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.Int16);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.Int64);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.Single);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.UInt128);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.UInt16);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.UInt32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.GetBytes(System.UInt64);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToChar(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToChar(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToDouble(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToDouble(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToHalf(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToHalf(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt128(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt128(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt16(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt16(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt32(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt32(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt64(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToInt64(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToSingle(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToSingle(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt128(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt128(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt16(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt16(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt32(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt32(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt64(System.Byte[],System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.ToUInt64(System.ReadOnlySpan{System.Byte});Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Char);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Double);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Half);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Int128);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Int16);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Int32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Int64);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.Single);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.UInt128);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.UInt16);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.UInt32);Use BinaryPrimitives with the byte order required by the file format.
+M:System.BitConverter.TryWriteBytes(System.Span{System.Byte},System.UInt64);Use BinaryPrimitives with the byte order required by the file format.
 
 // Text encodings must be explicit and match the database format or declared code page.
 P:System.Text.Encoding.Default;Use an explicit encoding or the database's declared code page instead of the runtime default.

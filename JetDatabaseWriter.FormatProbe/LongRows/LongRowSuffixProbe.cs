@@ -5706,50 +5706,24 @@ internal static class LongRowSuffixProbe
     {
         FormatProbeArtifacts.WriteAllText(scriptPath, script);
 
-        var psi = new ProcessStartInfo(powerShellPath)
+        string fullScriptPath = Path.GetFullPath(scriptPath);
+        PowerShellRunResult result = PowerShellProcessRunner.Run(
+            powerShellPath,
+            ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fullScriptPath],
+            timeout,
+            workingDirectory: Path.GetDirectoryName(fullScriptPath));
+        string stderr = result.StandardError;
+        if (result.TimedOut)
         {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            WorkingDirectory = Path.GetDirectoryName(scriptPath) ?? Environment.CurrentDirectory,
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-ExecutionPolicy");
-        psi.ArgumentList.Add("Bypass");
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(scriptPath);
-
-        using Process process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"Failed to start PowerShell host '{powerShellPath}'.");
-        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
-        Task<string> stderrTask = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            TryKill(process);
-            process.WaitForExit();
-            string timeoutStdout = stdoutTask.GetAwaiter().GetResult();
-            string timeoutStderr = stderrTask.GetAwaiter().GetResult();
-            return (-1, timeoutStdout, timeoutStderr + $"{Environment.NewLine}[timeout after {timeout.TotalSeconds:N0}s]");
+            stderr += $"{Environment.NewLine}[timeout after {timeout.TotalSeconds:N0}s]";
         }
 
-        string stdout = stdoutTask.GetAwaiter().GetResult();
-        string stderr = stderrTask.GetAwaiter().GetResult();
-        return (process.ExitCode, stdout, stderr);
-    }
+        if (!result.OutputComplete)
+        {
+            stderr += $"{Environment.NewLine}[output capture did not complete before the drain timeout]";
+        }
 
-    private static void TryKill(Process process)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException)
-        {
-        }
-        catch (NotSupportedException)
-        {
-        }
+        return (result.OutputComplete ? result.ExitCode : -1, result.StandardOutput, stderr);
     }
 
     private static string PowerShellLiteral(string value) =>
