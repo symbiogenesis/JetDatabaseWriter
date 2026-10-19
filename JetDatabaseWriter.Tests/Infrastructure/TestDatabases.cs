@@ -278,33 +278,28 @@ internal static class TestDatabases
     /// <see cref="AesEncrypted"/> is left out: it is a compacted copy of
     /// <see cref="NorthwindTraders"/>, so it would only repeat Northwind's rows.
     /// </summary>
-    public static TheoryData<string> All =>
-        ToTheoryData(InRepoDatabases.Where(static p => p != AesEncrypted && IsReadable(p)));
+    public static ValueTask<TheoryData<string>> All =>
+        ToReadableTheoryDataAsync(InRepoDatabases.Where(static p => p != AesEncrypted));
 
     /// <summary>Gets the smaller in-repo databases (skips any that can't be opened).</summary>
-    public static TheoryData<string> Small => ToTheoryData(
-        new[] { NorthwindTraders, AdventureWorks, Jet3Test, FixedTextTestV2007 }
-            .Where(IsReadable));
+    public static ValueTask<TheoryData<string>> Small => ToReadableTheoryDataAsync(
+        [NorthwindTraders, AdventureWorks, Jet3Test, FixedTextTestV2007]);
 
     /// <summary>Gets the baseline Jackcess test databases (one per Access version).</summary>
-    public static TheoryData<string> Jackcess => ToTheoryData(
-        new[] { TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019 }
-            .Where(IsReadable));
+    public static ValueTask<TheoryData<string>> Jackcess => ToReadableTheoryDataAsync(
+        [TestV1997, TestV2000, TestV2003, TestV2007, TestV2010, ExtDateTestV2019]);
 
     /// <summary>Gets the Jackcess complexDataTest fixtures (V2007 + V2010).</summary>
-    public static TheoryData<string> ComplexData => ToTheoryData(
-        new[] { ComplexDataTestV2007, ComplexDataTestV2010 }
-            .Where(IsReadable));
+    public static ValueTask<TheoryData<string>> ComplexData => ToReadableTheoryDataAsync(
+        [ComplexDataTestV2007, ComplexDataTestV2010]);
 
     /// <summary>Gets the Jackcess testPromotion fixtures (V2000–V2010).</summary>
-    public static TheoryData<string> Promotion => ToTheoryData(
-        new[] { TestPromotionV2000, TestPromotionV2003, TestPromotionV2007, TestPromotionV2010 }
-            .Where(IsReadable));
+    public static ValueTask<TheoryData<string>> Promotion => ToReadableTheoryDataAsync(
+        [TestPromotionV2000, TestPromotionV2003, TestPromotionV2007, TestPromotionV2010]);
 
     /// <summary>Gets the Jackcess delColTest fixtures (V1997–V2010).</summary>
-    public static TheoryData<string> DelCol => ToTheoryData(
-        new[] { DelColTestV1997, DelColTestV2000, DelColTestV2003, DelColTestV2007, DelColTestV2010 }
-            .Where(IsReadable));
+    public static ValueTask<TheoryData<string>> DelCol => ToReadableTheoryDataAsync(
+        [DelColTestV1997, DelColTestV2000, DelColTestV2003, DelColTestV2007, DelColTestV2010]);
 
     /// <summary>
     /// Gets every Jackcess fixture that exists on disk and can be opened by the reader.
@@ -312,8 +307,7 @@ internal static class TestDatabases
     /// outside the current reader scope (encrypted, query-only, calculated fields,
     /// etc.).
     /// </summary>
-    public static TheoryData<string> JackcessAll => ToTheoryData(
-        AllJackcessDatabases.Where(IsReadable));
+    public static ValueTask<TheoryData<string>> JackcessAll => ToReadableTheoryDataAsync(AllJackcessDatabases);
 
     /// <summary>
     /// Gets every Jackcess fixture that exists on disk, regardless of whether
@@ -324,7 +318,7 @@ internal static class TestDatabases
         AllJackcessDatabases.Where(File.Exists));
 
     /// <summary>
-    /// Gets all known database files that exist on disk, without an IsReadable check.
+    /// Gets all known database files that exist on disk, without a readability check.
     /// Use this when you need to assert something about files that may fail to open
     /// (e.g., verifying they are not password-protected).
     /// </summary>
@@ -347,31 +341,6 @@ internal static class TestDatabases
 
         return AccessReader.OpenAsync(path, options, cancellationToken);
     }
-
-    /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
-    /// <param name="path">Path to the file.</param>
-    internal static bool IsReadable(string path) =>
-        ReadableCache.GetOrAdd(path, static p =>
-        {
-            if (!File.Exists(p))
-            {
-                return false;
-            }
-
-            try
-            {
-                return Task.Run(async () =>
-                {
-                    await using AccessReader r = await AccessReader.OpenAsync(p, new AccessReaderOptions { UseLockFile = false });
-                    return true;
-                }).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-                when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JetLimitationException)
-            {
-                return false;
-            }
-        });
 
     /// <summary>Returns true when the file exists and can be opened by the reader (not encrypted, not corrupt).</summary>
     /// <param name="path">Path to the file.</param>
@@ -400,6 +369,20 @@ internal static class TestDatabases
             ReadableCache.TryAdd(path, false);
             return false;
         }
+    }
+
+    private static async ValueTask<TheoryData<string>> ToReadableTheoryDataAsync(IEnumerable<string> paths)
+    {
+        var data = new TheoryData<string>();
+        foreach (string path in paths)
+        {
+            if (await IsReadableAsync(path, TestContext.Current.CancellationToken))
+            {
+                data.Add(path);
+            }
+        }
+
+        return data;
     }
 
     private static TheoryData<string> ToTheoryData(IEnumerable<string> paths)

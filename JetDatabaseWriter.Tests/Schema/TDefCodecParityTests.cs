@@ -21,7 +21,7 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 /// <param name="db">Caches the relationship host fixtures.</param>
 public sealed class TDefCodecParityTests(DatabaseCache db) : IClassFixture<DatabaseCache>
 {
-    public static TheoryData<string> Fixtures => TestDatabases.JackcessAll;
+    public static ValueTask<TheoryData<string>> Fixtures => TestDatabases.JackcessAll;
 
     public static TheoryData<string> ProjectFixtures =>
     [

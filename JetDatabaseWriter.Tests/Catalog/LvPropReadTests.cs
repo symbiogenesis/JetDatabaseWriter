@@ -151,15 +151,18 @@ public sealed class LvPropReadTests
 
     /// <summary>Gets every Access-authored fixture the reader can open.</summary>
     /// <returns>The fixture paths.</returns>
-    public static TheoryData<string> AccessAuthoredFixtures()
+    public static async ValueTask<TheoryData<string>> AccessAuthoredFixtures()
     {
         var data = new TheoryData<string>();
         IEnumerable<string> paths = new[] { TestDatabases.NorthwindTraders, TestDatabases.AdventureWorks, TestDatabases.Jet3Test, TestDatabases.ComplexFields }
             .Concat(TestDatabases.AllJackcessDatabases)
             .Concat([TestDatabases.MdbtoolsNwind, TestDatabases.MdbtoolsASampleDatabase, TestDatabases.MdbtoolsDateTestDatabase]);
-        foreach (string path in paths.Where(TestDatabases.IsReadable))
+        foreach (string path in paths)
         {
-            data.Add(path);
+            if (await TestDatabases.IsReadableAsync(path, TestContext.Current.CancellationToken))
+            {
+                data.Add(path);
+            }
         }
 
         return data;

@@ -33,7 +33,7 @@ public sealed class DelimitedTextReaderFuzzTests
     /// </summary>
     [Trait("Category", "Fuzz")]
     [Fact(Explicit = true)]
-    public async Task FuzzDelimitedTextReader() => RunFuzzIteration(await FuzzInput.ReadAsync(TestContext.Current.CancellationToken));
+    public async Task FuzzDelimitedTextReader() => await RunFuzzIterationAsync(await FuzzInput.ReadAsync(TestContext.Current.CancellationToken));
 
     /// <summary>
     /// Empty single-column records need explicit field syntax to survive EOF and mixed line endings.
@@ -42,7 +42,7 @@ public sealed class DelimitedTextReaderFuzzTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void RoundTripGeneratedRows_EmptySingleColumnRecords_PreservesRowCount(bool mixedLineEndings)
+    public async Task RoundTripGeneratedRows_EmptySingleColumnRecords_PreservesRowCount(bool mixedLineEndings)
     {
         // FuzzRandom consumes one big-endian integer per choice: delimiter, row/column counts,
         // raggedness, then field lengths and optional line endings.
@@ -53,7 +53,7 @@ public sealed class DelimitedTextReaderFuzzTests
             System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(input.AsSpan(index * sizeof(int)), choices[index]);
         }
 
-        RunFuzzIteration(input);
+        await RunFuzzIterationAsync(input);
     }
 
     /// <summary>
@@ -69,38 +69,38 @@ public sealed class DelimitedTextReaderFuzzTests
     [InlineData("", "\r", 1)]
     [InlineData("previous\r", "\n", 2)]
     [InlineData("previous\r", "\r\n", 2)]
-    public void RoundTripEmptySingleColumnRecord_PreservesRow(string prefix, string lineEnding, int expectedRowCount)
+    public async Task RoundTripEmptySingleColumnRecord_PreservesRow(string prefix, string lineEnding, int expectedRowCount)
     {
         string source = prefix + EscapeField(string.Empty, ',') + lineEnding;
 
-        List<string[]> rows = ReadAll(source, ',');
+        List<string[]> rows = await ReadAllAsync(source, ',');
 
         Assert.Equal(expectedRowCount, rows.Count);
         Assert.Equal([string.Empty], rows[^1]);
     }
 
-    private static void RunFuzzIteration(byte[] fuzzedBytes)
+    private static async Task RunFuzzIterationAsync(byte[] fuzzedBytes)
     {
         var random = FuzzRandom.Create(fuzzedBytes);
         char delimiter = Delimiters[random.Next(Delimiters.Length)];
 
-        TryParseRawInput(fuzzedBytes, delimiter);
-        RoundTripGeneratedRows(random, delimiter);
+        await TryParseRawInputAsync(fuzzedBytes, delimiter);
+        await RoundTripGeneratedRowsAsync(random, delimiter);
     }
 
-    private static void TryParseRawInput(byte[] fuzzedBytes, char delimiter)
+    private static async Task TryParseRawInputAsync(byte[] fuzzedBytes, char delimiter)
     {
         string source = Encoding.UTF8.GetString(fuzzedBytes);
         try
         {
-            _ = ReadAll(source, delimiter);
+            _ = await ReadAllAsync(source, delimiter);
         }
         catch (InvalidDataException)
         {
         }
     }
 
-    private static void RoundTripGeneratedRows(FuzzRandom random, char delimiter)
+    private static async Task RoundTripGeneratedRowsAsync(FuzzRandom random, char delimiter)
     {
         string[] lineEndings = ["\r\n", "\n", "\r"];
         int rowCount = random.Next(0, MaxGeneratedRows + 1);
@@ -131,7 +131,7 @@ public sealed class DelimitedTextReaderFuzzTests
             }
         }
 
-        List<string[]> actualRows = ReadAll(source.ToString(), delimiter);
+        List<string[]> actualRows = await ReadAllAsync(source.ToString(), delimiter);
         if (actualRows.Count != expectedRows.Count)
         {
             throw new InvalidDataException("Delimited text fuzz round-trip returned an unexpected row count.");
@@ -146,7 +146,7 @@ public sealed class DelimitedTextReaderFuzzTests
         }
     }
 
-    private static List<string[]> ReadAll(string source, char delimiter)
+    private static async Task<List<string[]>> ReadAllAsync(string source, char delimiter)
     {
         using var stringReader = new StringReader(source);
         using var reader = new DelimitedTextReader(
@@ -158,7 +158,7 @@ public sealed class DelimitedTextReaderFuzzTests
         var records = new List<string[]>();
         while (true)
         {
-            DelimitedTextRecord? record = reader.ReadRecordAsync(default).AsTask().GetAwaiter().GetResult();
+            DelimitedTextRecord? record = await reader.ReadRecordAsync(TestContext.Current.CancellationToken);
             if (record is not { } current)
             {
                 return records;

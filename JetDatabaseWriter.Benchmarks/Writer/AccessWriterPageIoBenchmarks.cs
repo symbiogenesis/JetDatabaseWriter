@@ -109,6 +109,7 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     // BenchmarkDotNet 0.15.8 requires synchronous iteration hooks. These adapters
     // run outside measurement, on its worker thread without a synchronization context.
 
+#pragma warning disable RS0030 // BenchmarkDotNet requires synchronous iteration hooks; the bridge runs outside measurement.
     /// <summary>Opens an unmeasured fresh image for the new-database workloads.</summary>
     [IterationSetup(Targets = [nameof(NewAccdb_Bulk999), nameof(NewAccdb_Single), nameof(NewAccdb_Update), nameof(NewAccdb_Delete), nameof(NewAccdb_AddColumn)])]
     public void SetupNewIteration() => this.PrepareIterationAsync(this.baseline, warmInsert: false).GetAwaiter().GetResult();
@@ -124,6 +125,7 @@ public class AccessWriterPageIoBenchmarks : IAsyncDisposable
     /// <summary>Records page counts and disposes the iteration's resources outside measurement.</summary>
     [IterationCleanup]
     public void CleanupIteration() => this.DisposeAsync().AsTask().GetAwaiter().GetResult();
+#pragma warning restore RS0030
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()

@@ -41,9 +41,7 @@ using JetDatabaseWriter.Exceptions;
 /// growing delay — starting at <see cref="InitialPollIntervalMilliseconds"/> and
 /// capped at <see cref="MaxPollIntervalMilliseconds"/> — before retrying, until
 /// the configured timeout elapses. The backoff schedule and timeout accounting
-/// live in <see cref="PollBackoff"/>. The synchronous entry point
-/// (<see cref="AcquirePageLock"/>) bridges onto that same async primitive once at
-/// the call boundary instead of maintaining a duplicate blocking loop.
+/// live in <see cref="PollBackoff"/>.
 /// </para>
 /// </remarks>
 internal sealed class JetByteRangeLock
@@ -99,32 +97,6 @@ internal sealed class JetByteRangeLock
     /// dispatch through a non-nullable field without per-call null checks.
     /// </summary>
     public static JetByteRangeLock Disabled { get; } = new(fileStream: null, enabled: false, lockTimeoutMs: 0);
-
-    /// <summary>
-    /// Acquires an exclusive byte-range lock on the database page at
-    /// <paramref name="pageNumber"/>, blocking up to the configured timeout.
-    /// Returns a disposable that releases the lock when disposed; on a disabled
-    /// instance returns a no-op sentinel.
-    /// </summary>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <exception cref="IOException">Thrown if the lock cannot be acquired within the timeout.</exception>
-    public IDisposable AcquirePageLock(long pageNumber, int pageSize)
-    {
-        if (!this.IsEnabled)
-        {
-            return NoOpDisposable.Instance;
-        }
-
-        long offset = pageNumber * pageSize;
-
-        // Bridge this synchronous entry point onto the single async acquisition
-        // primitive exactly once, at the call boundary. AcquireBlockingAsync uses
-        // ConfigureAwait(false) throughout, so blocking here cannot deadlock on a
-        // captured synchronization context.
-        this.AcquireBlockingAsync(offset, pageSize, CancellationToken.None).AsTask().GetAwaiter().GetResult();
-        return new ReleaseToken(this, offset, pageSize);
-    }
 
     /// <summary>
     /// Asynchronously acquires an exclusive byte-range lock on the database page at
@@ -263,9 +235,9 @@ internal sealed class JetByteRangeLock
     }
 
     /// <summary>
-    /// Exponential-backoff schedule shared by the synchronous and asynchronous
-    /// acquisition loops. Derives a deadline from the configured timeout and
-    /// yields capped, deadline-clamped retry delays.
+    /// Exponential-backoff schedule for the asynchronous acquisition loop.
+    /// Derives a deadline from the configured timeout and yields capped,
+    /// deadline-clamped retry delays.
     /// </summary>
     /// <param name="timeoutMilliseconds">Maximum milliseconds to keep polling before the schedule reports a timeout.</param>
     private struct PollBackoff(int timeoutMilliseconds)

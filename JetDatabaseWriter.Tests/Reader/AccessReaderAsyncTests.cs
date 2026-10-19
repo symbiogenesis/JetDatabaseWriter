@@ -79,7 +79,9 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
             if (Interlocked.Exchange(ref progressObserved, 1) == 0)
             {
                 readReachedProgress.TrySetResult(null);
+#pragma warning disable RS0030 // Hold the synchronous progress callback so disposal is tested while the read remains in flight.
                 releaseRead.Task.GetAwaiter().GetResult();
+#pragma warning restore RS0030
             }
         });
 
@@ -134,7 +136,9 @@ public class AccessReaderAsyncTests(DatabaseCache db) : IClassFixture<DatabaseCa
             if (Interlocked.Exchange(ref progressObserved, 1) == 0)
             {
                 outerOperationReachedNestedCall.TrySetResult(null);
+#pragma warning disable RS0030 // Hold the synchronous progress callback so disposal is tested while the read remains in flight.
                 releaseOuterOperation.Task.GetAwaiter().GetResult();
+#pragma warning restore RS0030
             }
         });
 
