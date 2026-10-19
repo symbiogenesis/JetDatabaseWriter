@@ -35,7 +35,7 @@ internal static class OleObjectDecoder
     private const string PackageClassName = "Package";
 
     /// <summary>The ANSI code page Access writes OLE header and package strings in.</summary>
-    private static readonly Encoding Ansi = CreateAnsiEncoding();
+    private static readonly Lazy<Encoding> Ansi = new(CreateAnsiEncoding);
 
     /// <summary>
     /// Parses the stored bytes of an OLE Object value; see <see cref="OleObjectValue.Parse(byte[])"/>.
@@ -254,7 +254,7 @@ internal static class OleObjectDecoder
 
         ReadOnlySpan<byte> text = header.Slice(offset, length);
         int terminator = text.IndexOf((byte)0);
-        return Ansi.GetString(terminator >= 0 ? text[..terminator] : text);
+        return Ansi.Value.GetString(terminator >= 0 ? text[..terminator] : text);
     }
 
     private static Encoding CreateAnsiEncoding()
@@ -329,7 +329,7 @@ internal static class OleObjectDecoder
             }
 
             int terminator = bytes.IndexOf((byte)0);
-            value = Ansi.GetString(terminator >= 0 ? bytes[..terminator] : bytes);
+            value = Ansi.Value.GetString(terminator >= 0 ? bytes[..terminator] : bytes);
             return true;
         }
 
@@ -344,7 +344,7 @@ internal static class OleObjectDecoder
                 return false;
             }
 
-            value = Ansi.GetString(this.data.Slice(this.position, terminator));
+            value = Ansi.Value.GetString(this.data.Slice(this.position, terminator));
             this.position += terminator + 1;
             return true;
         }
