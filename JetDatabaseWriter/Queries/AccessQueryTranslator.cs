@@ -33,6 +33,7 @@ internal static class AccessQueryTranslator
     /// boundary is reference-equal to <paramref name="expression"/> the whole query runs in
     /// the engine and there is no tail.
     /// </returns>
+    /// <exception cref="NotSupportedException">The query source is not a constant expression.</exception>
     public static (AccessQueryPlan Plan, Expression Boundary) Translate(Expression expression)
     {
         // The stack yields the operators from the source outward without making query
