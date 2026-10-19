@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Threading;
 using JetDatabaseWriter.Catalog.Models;
 using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Infrastructure;
@@ -27,6 +28,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     where T : new()
 {
     private static readonly MaterializerCache<Materializers> Cache = new();
+    private static readonly Lazy<Dictionary<string, Accessor>> PropertyMapCache = new(BuildPropertyMap, LazyThreadSafetyMode.PublicationOnly);
 
     /// <summary>
     /// Gets the column name to accessor map, built from <see cref="EntityMap"/> on
@@ -34,7 +36,7 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     /// error, such as two properties naming one column, surfaces as its own exception
     /// instead of a <see cref="TypeInitializationException"/> that poisons the type.
     /// </summary>
-    private static Dictionary<string, Accessor> PropertyMap => field ??= BuildPropertyMap();
+    private static Dictionary<string, Accessor> PropertyMap => PropertyMapCache.Value;
 
     /// <summary>
     /// Returns a boolean mask the same length as <paramref name="headers"/> indicating
@@ -99,6 +101,11 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     internal static Func<object?[], T> Build(TableDef td)
     {
         Materializers entry = Cache.Get(td.Shape, static () => new Materializers());
+        if (entry.Read is { } read)
+        {
+            return read;
+        }
+
         lock (entry)
         {
             return entry.Read ??= BuildUncached(td.Columns.Select(static column => column.Name).ToArray(), td.ClrTypes);
@@ -113,6 +120,11 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
         where TDelegate : class
     {
         Materializers entry = Cache.Get(shape, static () => new Materializers());
+        if (entry.DirectInitialized)
+        {
+            return (TDelegate?)entry.Direct;
+        }
+
         lock (entry)
         {
             if (!entry.DirectInitialized)
@@ -131,6 +143,11 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     internal static HybridRowDecodePlan<T>? GetHybrid(RowShape shape, Func<HybridRowDecodePlan<T>?> create)
     {
         Materializers entry = Cache.Get(shape, static () => new Materializers());
+        if (entry.HybridInitialized)
+        {
+            return entry.Hybrid;
+        }
+
         lock (entry)
         {
             if (!entry.HybridInitialized)
@@ -146,6 +163,11 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     private static Func<object?[], T> GetRead(RowShape shape, IReadOnlyList<string> headers, IReadOnlyList<Type>? types)
     {
         Materializers entry = Cache.Get(shape, static () => new Materializers());
+        if (entry.Read is { } read)
+        {
+            return read;
+        }
+
         lock (entry)
         {
             return entry.Read ??= BuildUncached(headers, types);
@@ -272,10 +294,13 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
     {
         Guard.NotNull(td, nameof(td));
         Materializers entry = Cache.Get(td.Shape, static () => new Materializers());
-        Func<T, object[]> writer;
-        lock (entry)
+        Func<T, object[]>? writer = entry.Write;
+        if (writer is null)
         {
-            writer = entry.Write ??= BuildToRow(td);
+            lock (entry)
+            {
+                writer = entry.Write ??= BuildToRow(td);
+            }
         }
 
         object[] row = writer(item);
@@ -446,19 +471,36 @@ internal static class RowMapper<[DynamicallyAccessedMembers(DynamicallyAccessedM
         return map;
     }
 
+    /// <summary>Publishes compiled values and null decoder refusals once so warm lookups need no entry lock.</summary>
     private sealed class Materializers
     {
-        internal Func<object?[], T>? Read { get; set; }
+        internal Func<object?[], T>? Read
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
 
-        internal Func<T, object[]>? Write { get; set; }
+        internal Func<T, object[]>? Write
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
 
         internal object? Direct { get; set; }
 
-        internal bool DirectInitialized { get; set; }
+        internal bool DirectInitialized
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
 
         internal HybridRowDecodePlan<T>? Hybrid { get; set; }
 
-        internal bool HybridInitialized { get; set; }
+        internal bool HybridInitialized
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
     }
 
     /// <summary>
