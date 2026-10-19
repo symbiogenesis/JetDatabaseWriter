@@ -2,7 +2,7 @@
 
 Status: active reference
 Date: 2026-06-16
-Last updated: 2026-10-15
+Last updated: 2026-10-19
 
 This note is the single, canonical description of the synchronization model used
 by [AccessReader](../../JetDatabaseWriter/AccessReader.cs),
@@ -33,14 +33,32 @@ its transaction journal and plaintext frame cache.
 | `frameSync` | `Pager` | Frame dictionary, CLOCK bookkeeping, counters and invalidation generation; memory only |
 | `ioGate` | `StreamPageStore` | Seek-based reads, writes, length changes and flushes; positional reads bypass it |
 | Per-page and commit locks | `JetByteRangeLock` | Advisory cross-process page writes and transaction replay |
-| `insertPageHintLock` | `DataPageInserter` | Insert-page hint; memory only |
 | `ownedMapSetsLock` | `CatalogOwnedMapPolicy` | Writable and refused TDEF sets; memory only |
 | `ownedDataPagesCacheLock` | `OwnedDataPages` | Per-table owned-page cache and writer observer state; memory only |
 | `cacheLock` | `TDefImageCache` | Parsed TDEF images, physical chain dependencies and publication epoch; memory only |
 | `TableCatalog.schemas` monitor | TableCatalog | Schema publication and catalog generation; memory only |
-| Owned-page index initializer | `AsyncLazyInitializer` in `OwnedDataPages` | One reader whole-file discovery pass |
-| `AsyncReentrantOperationGate.stateLock` | Reader operation gate | Drain bookkeeping; memory only |
+| `gate` and `sync` | `OwnedPageIndex` | Serializes whole-file discovery; publishes ownership maps and invalidation epochs under a memory-only leaf lock |
+| `operationsDrained` atomic publication | Reader operation gate | Publishes the one-time disposal drain notification |
 | Lock-file slot | `LockFileCoordinator` | `.ldb` / `.laccdb` slot held until disposal finishes |
+
+The insert-page hint belongs to the writer's `mutationGate` flow, including
+transaction snapshots and restoration. Initial database construction uses an
+unpublished writer. The hint needs no additional lock.
+
+`RowMapper<T>` retains the bounded materializer cache's LRU lock and per-entry
+locks for first compilation. Published read/write delegates and decoder
+initialization flags use acquire/release accesses, so initialized entries skip
+the per-entry lock. A published flag also caches a null decoder refusal;
+factory failures leave initialization retryable. The immutable property map
+uses `Lazy<T>` with `PublicationOnly` for safe publication without caching
+factory exceptions.
+
+`CompactDiscoveryAccounting` admits each independent work category and its
+working-storage reservations with bounded `Interlocked.CompareExchange` loops.
+Reads use `Volatile.Read`, and reservation disposal releases bytes exactly once
+with atomic exchanges and addition. These counters expose no cross-category
+snapshot. Attachment content admission still uses a lock because its content
+and decoding-work allowances must succeed or fail together.
 
 ## Constraint identity during schema changes
 
@@ -86,7 +104,7 @@ lock, then takes the store's `ioGate` for seek/write. The page lock is
 released after the store gate. AES transforms never run under the store gate.
 A physical read releases the store gate before decoding.
 
-`frameSync`, `aesGate` and the other memory locks are leaves: no awaits or store
+`frameSync` and the other memory locks are leaves: no awaits or store
 calls while holding them. Invalidation takes only `frameSync`, increments a
 generation and drops every frame. A load that began under an older generation
 cannot retain its bytes after invalidation.
@@ -113,7 +131,7 @@ spans the open database lifetime.
 
 ```
 BeginTransactionAsync
-  └─ JournalGate lease (frameGate, then IoGate) ──▶ capture writer state (insertPageHintLock, ownedMapSetsLock briefly)
+  └─ JournalGate lease (frameGate, then IoGate) ──▶ capture writer state (ownedMapSetsLock briefly)
               ──▶ gate.Attach(journal); set ActiveTransaction ──▶ dispose the lease
 
 work phase (row encode, index maintenance, page allocation)
@@ -121,7 +139,7 @@ work phase (row encode, index maintenance, page allocation)
      attached journal and buffers into it while holding frameGate and briefly IoGate for the
      buffer swap. Private statements spill bounded batches outside IoGate;
      the first spill acquires the commit sentinel, retained through completion or undo.
-  └─ insertPageHintLock and ownedMapSetsLock may be taken briefly (leaf, memory only;
+  └─ ownedMapSetsLock may be taken briefly (leaf, memory only;
      the owned-map policy's MSysObjects scan runs outside its lock). The writer caches structural TDEF images and table schemas. Those images, its owner index and validated table-page results follow logical page writes;
      observer updates take only a leaf lock and never read through the pager.
 
@@ -142,14 +160,15 @@ RollbackTransactionAsync  (auto-commit calls it when the work throws)
   └─ JournalGate lease (frameGate, then IoGate) ──▶ gate.Detach() ──▶ dispose the lease
        ──▶ restore any early spills under frameGate, outside IoGate
        ──▶ restore writer state (catalog invalidated,
-                insertPageHintLock and ownedMapSetsLock briefly, constraint registry)
+                insert hint, ownedMapSetsLock briefly, constraint registry)
 ```
 
 The commit-lock sentinel is "outer" only in the sense that it spans the replay
 window; it is acquired **after** `IoGate` has been released, so it never nests
 outside an already-held `IoGate`. Capturing and restoring the writer state is
-memory-only, so the leaf `insertPageHintLock` and `ownedMapSetsLock`, one after
-the other, protect those caches; frame invalidation briefly takes `frameSync` there.
+memory-only. The outer `mutationGate` protects the insert hint and constraint
+registry; the owned-map policy briefly takes its leaf `ownedMapSetsLock`.
+Frame invalidation briefly takes `frameSync` there.
 A commit that fails before replay restores any early spills. If a stream write
 or flush fails during replay, the pager restores the raw before-images and
 original file length while holding `frameGate` and the commit sentinel. After
@@ -185,7 +204,7 @@ enter the same gate.
 
 ```
 operationGate lease  (reentrant: nested reader calls on the same async flow join the root)
-  └─ per page read: store ioGate ──▶ seek/read ──▶ release store ioGate ──▶ aesGate decrypt (AES files only)
+  └─ per page read: store ioGate ──▶ seek/read ──▶ release store ioGate ──▶ page-codec decode
        (a path-opened reader's uncached FileStream reads instead use a
         positionless RandomAccess read that bypasses store ioGate)
   └─ table-scan read-ahead: the next data page's read runs alongside the
@@ -194,7 +213,7 @@ operationGate lease  (reentrant: nested reader calls on the same async flow join
   └─ TDEF image cache: cacheLock (leaf, memory only; the chain is read
      before the lock is taken)
   └─ owned-page index build (the first table whose usage map fails validation):
-       ownedDataPageIndex gate ──▶ ReadPageAsync for every page from 3 to the end of file
+       OwnedPageIndex.gate ──▶ ReadUncachedPageAsync for every page from 3 to the end of file
        (each takes store ioGate on the seek-and-read path) ──▶ release the gate
        (other operations that need the index await the gate for the whole pass)
 ```
@@ -208,7 +227,7 @@ lock listed here, and still overlap them with decode. That queue adds no lock
 to this hierarchy and cannot close a deadlock cycle, because it never waits on
 a library lock: a queued read waits only for the reads ahead of it, and each
 of those completes without taking one. Library gates are held while the OS
-reads: the operation lease across every read, the `ownedDataPageIndex` gate
+reads: the operation lease across every read, `OwnedPageIndex.gate`
 across the whole-file pass, and `store ioGate` across each read on the seek-and-read
 path. The library only ever awaits them (`WaitAsync`, or the disposal drain)
 and never blocks a thread on one, so a read queued in the kernel can delay the
@@ -240,6 +259,13 @@ operationGate.TryBeginDispose(out waitForOperations)
   └─ operationGate.CompleteDispose()
 ```
 
+The reader gate publishes its drain completion source once with
+`Interlocked.Exchange`, then checks the active-operation count. The final
+operation decrements that count with `Interlocked.Decrement`, then reads the
+completion source with `Volatile.Read`. The full fences ensure that either
+disposal observes zero operations or the final operation observes the published
+notification; both may safely try to complete it.
+
 Writer — `DisposeAsync` ([AccessWriter.cs](../../JetDatabaseWriter/AccessWriter.cs)) waits for `mutationGate` and checks disposal again under the gate before teardown:
 
 ```
@@ -257,14 +283,13 @@ lockFileCoordinator.DisposeAfterAsync(
 |-----------|-----------|--------------------------|
 | `operationGate` | Yes | `AsyncLocal<int> operationDepth`; nested calls on one async flow join the active root operation |
 | `mutationGate` | No | `AsyncLocal` rejects same-flow writer callback re-entry before the semaphore wait |
-| `ownedDataPageIndex` gate | No | Binary `SemaphoreSlim(1,1)` — the index build only reads pages; it must never ask for the owned-page index itself |
+| `OwnedPageIndex.gate` | No | Binary `SemaphoreSlim(1,1)` — the index build only reads pages; it must never ask for the owned-page index itself |
 | `frameGate` / store `ioGate` | No | Binary semaphores; never re-enter on the same flow |
 | `IoGate` | No | Binary `SemaphoreSlim(1,1)` — re-entering on the same flow self-deadlocks; never hold it, or a `Pager.JournalGate` lease, across a `*PageAsync` call |
 | `ByteRangeLock` per-page | No | OS advisory byte-range lock; re-locking the same range blocks |
-| `insertPageHintLock` | No | Plain `lock`; leaf only |
-| `ownedMapSetsLock` | No | Plain `lock`; leaf only |
-| `ownedDataPagesCacheLock` | No | Plain `lock`; leaf only |
-| `TDefImageCache.cacheLock` | No | Plain `lock`; leaf only |
+| `ownedMapSetsLock` | Yes | Synchronous `lock`; keep as a leaf |
+| `ownedDataPagesCacheLock` | Yes | Synchronous `lock`; keep as a leaf |
+| `TDefImageCache.cacheLock` | Yes | Synchronous `lock`; keep as a leaf |
 
 ## Writer-owned caches and the exclusive-writer assumption
 
@@ -283,9 +308,11 @@ open:
 | Constraint lists, AutoNumber `NextAutoValue` and complex-reference counters | `ConstraintRegistry` | Re-registered by schema changes; restored on a rollback. Successful commit recovery restores them too. If recovery fails, counters stay above values that may be on disk and the writer refuses further mutations. |
 | Enforced relationships, which every insert, update and delete checks | `RelationshipCatalogStore` | Every `MSysRelationships` write through the store (create, drop or rename a relationship, rename a key column), and whenever `TableCatalog.Generation` has moved on since the set was loaded, so a rollback or failed commit reloads it. |
 
-All of these are memory-only, so restoring or dropping them takes no lock
-beyond the leaf `insertPageHintLock`, `ownedMapSetsLock`, `ownedDataPagesCacheLock` and `frameSync`; the generation
-counters use `Interlocked`.
+All of these are memory-only. Under `mutationGate`, restoring or dropping the
+insert hint and constraint registry needs no additional lock. The other caches
+take their respective leaf locks, including `ownedMapSetsLock`,
+`ownedDataPagesCacheLock`, `TDefImageCache.cacheLock`, `TableCatalog.schemas` and
+`frameSync`; the generation counters use `Interlocked`.
 
 A writer opened by path holds the file with `FileShare.Read`, so no other
 process can open it for writing while the writer is open. A writer opened on a
@@ -326,19 +353,19 @@ access bypasses that coordination, cached and newly read pages can disagree.
 2. Never hold `IoGate`, or a `Pager.JournalGate` lease, when calling
    `ReadPageAsync` / `WritePageAsync` / `AppendPageAsync` — they take the gate
    themselves on their gated paths.
-3. Keep `insertPageHintLock`, `ownedMapSetsLock`, `ownedDataPagesCacheLock`, `TDefImageCache.cacheLock`,
-   `frameSync` and `aesGate` as leaf locks: pure in-memory work, no `await` and no other lock acquired while held.
+3. Keep `ownedMapSetsLock`, `ownedDataPagesCacheLock`, `TDefImageCache.cacheLock`,
+   `frameSync` and `OwnedPageIndex.sync` as leaf locks: pure in-memory work, no `await` and no other lock acquired while held.
 4. Physical writes take the per-page byte-range lock before the store gate; never hold the journal `IoGate` across store I/O.
 5. The cross-process locks (`LockFileCoordinator` slot, `ByteRangeLock`
    commit-lock) are lifetime- or transaction-scoped, not per-page; do not fold
    them into the per-operation nesting.
+6. Access the insert-page hint only within the writer's serialized mutation
+   flow or unpublished initialization.
 
 ## Why these are not consolidated
 
-The audit suggested collapsing the insert-page cache lock (then a
-`ReaderWriterLockSlim`), the `SemaphoreSlim`, and the operation gate behind one
-async primitive. We deliberately keep them
-separate because their responsibilities do not actually overlap:
+The store gate, reader operation gate and memory-cache locks remain separate
+because they protect different lifetimes and invariants:
 
 - **The store `ioGate`** serializes *backing-stream I/O*. It must be an async-aware mutex
   because it is held across real `await`ed reads/writes/flushes.
@@ -346,14 +373,13 @@ separate because their responsibilities do not actually overlap:
   unbounded concurrent reentrant operations and only blocks *new* top-level
   operations once disposal starts. Merging it into the store gate would serialize
   reads that are intentionally allowed to overlap.
-- **`insertPageHintLock`** guards a two-field insert-page hint cache
-  (`TryGetCachedInsertPageNumber` / `SetCachedInsertPageNumber` in
-  [DataPageInserter.cs](../../JetDatabaseWriter/Pages/DataPageInserter.cs)).
-  It is a pure-memory leaf lock with no I/O; routing it through the I/O mutex
-  would add contention for no benefit.
+- **Memory-cache locks** protect coupled state such as eviction lists,
+  dictionaries and invalidation generations. They are short leaf critical
+  sections without I/O. Concurrent collections alone cannot make those
+  multi-field updates atomic.
 
 A single "do everything" primitive would conflate I/O serialization, a
 read-concurrency drain, and a memory-cache guard — increasing contention and
-coupling. The genuine simplification went the other way: the insert-page cache
-moved from the writer facade into `DataPageInserter`, its only consumer, and its
-`ReaderWriterLockSlim` became a plain `lock`, which also removed a disposal step.
+coupling. Writer-only state such as the insert-page hint instead uses the
+existing mutation flow, and independent scalar state uses atomic operations
+where no compound invariant requires a lock.
