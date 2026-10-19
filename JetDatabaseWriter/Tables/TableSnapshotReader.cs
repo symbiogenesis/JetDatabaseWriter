@@ -41,25 +41,6 @@ using static JetDatabaseWriter.Schema.JetTypeInfo;
 internal sealed class TableSnapshotReader(JetFormat format, IPageSource pages, TableDefReader tableDefs, OwnedDataPages ownedPages, RowDecoder rows, CatalogReader catalog)
 {
     /// <summary>
-    /// Returns the values of a snapshot row with <see langword="null"/> cells
-    /// replaced by <see cref="DBNull.Value"/>, matching the writer's row-array
-    /// convention.
-    /// </summary>
-    /// <param name="row">The snapshot row.</param>
-    internal static object[] GetDbNullNormalizedItemArray(DataRow row)
-    {
-        Guard.NotNull(row, nameof(row));
-
-        object?[] values = row.ItemArray;
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] ??= DBNull.Value;
-        }
-
-        return (object[])values;
-    }
-
-    /// <summary>
     /// Decodes every live row of the table rooted at <paramref name="tdefPage"/>,
     /// each paired with the location it was decoded from, in the page and row
     /// order of <see cref="OwnedDataPages.ForEachLiveTableRowAsync"/>. A live

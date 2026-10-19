@@ -77,8 +77,8 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
             this.ct);
 
         using DataTable data = await reader.ReadTableAsync("Table1", cancellationToken: this.ct);
-        List<object[]> rows = await CollectAsync(reader.Rows("Table1", cancellationToken: this.ct));
-        List<string[]> stringRows = await CollectAsync(reader.RowsAsStrings("Table1", cancellationToken: this.ct));
+        List<object[]> rows = await reader.Rows("Table1", cancellationToken: this.ct).ToListAsync(this.ct);
+        List<string[]> stringRows = await reader.RowsAsStrings("Table1", cancellationToken: this.ct).ToListAsync(this.ct);
         using DataTable strings = await reader.ReadTableAsStringsAsync("Table1", cancellationToken: this.ct);
         long realCount = await reader.GetRealRowCountAsync("Table1", this.ct);
 
@@ -129,7 +129,7 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
                     continue;
                 }
 
-                List<object[]> hits = await CollectAsync(reader.SeekRowsAsync("Table1", index.Name, [row[column]], this.ct));
+                List<object[]> hits = await reader.SeekRowsAsync("Table1", index.Name, [row[column]], this.ct).ToListAsync(this.ct);
                 Assert.True(
                     index == primaryKey ? hits.Count == 1 : hits.Count >= 1,
                     $"Seeking {row[column]} through '{index.Name}' found {hits.Count} rows.");
@@ -239,17 +239,6 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
         return data;
     }
 
-    private static async ValueTask<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)
-    {
-        var items = new List<T>();
-        await foreach (T item in source)
-        {
-            items.Add(item);
-        }
-
-        return items;
-    }
-
     private ValueTask<byte[]> CopySeedAsync(DatabaseFormat format) =>
         seeds.CopyToArrayAsync(
             $"{format}/{TableName}/{MinimumRows}/no-primary-key",
@@ -265,7 +254,7 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
     private async ValueTask<List<int>> ReadIdsAsync(byte[] bytes, PageReadOptimizationMode readMode)
     {
         await using AccessReader reader = await this.OpenAsync(bytes, readMode);
-        return [.. (await CollectAsync(reader.Rows(TableName, cancellationToken: this.ct))).Select(row => (int)row[0])];
+        return [.. (await reader.Rows(TableName, cancellationToken: this.ct).ToListAsync(this.ct)).Select(row => (int)row[0])];
     }
 
     private async ValueTask<Dictionary<string, long>> CountThroughReadApisAsync(byte[] bytes, PageReadOptimizationMode readMode)
@@ -274,8 +263,8 @@ public sealed class OverflowRowTests(GeneratedDatabaseCache seeds) : IClassFixtu
         var counts = new Dictionary<string, long>(StringComparer.Ordinal)
         {
             ["GetRealRowCountAsync"] = await reader.GetRealRowCountAsync(TableName, this.ct),
-            ["Rows"] = (await CollectAsync(reader.Rows(TableName, cancellationToken: this.ct))).Count,
-            ["RowsAsStrings"] = (await CollectAsync(reader.RowsAsStrings(TableName, cancellationToken: this.ct))).Count,
+            ["Rows"] = (await reader.Rows(TableName, cancellationToken: this.ct).ToListAsync(this.ct)).Count,
+            ["RowsAsStrings"] = (await reader.RowsAsStrings(TableName, cancellationToken: this.ct).ToListAsync(this.ct)).Count,
         };
 
         using (DataTable typed = await reader.ReadTableAsync(TableName, cancellationToken: this.ct))

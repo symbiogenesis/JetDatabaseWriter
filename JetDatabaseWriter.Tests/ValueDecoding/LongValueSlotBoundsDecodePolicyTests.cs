@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
 using System.Buffers.Binary;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -79,9 +78,9 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
             await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
             if (strict)
             {
-                InvalidDataException strings = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)));
-                InvalidDataException typed = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct)));
-                InvalidDataException poco = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct)));
+                InvalidDataException strings = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+                InvalidDataException typed = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+                InvalidDataException poco = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 InvalidDataException table = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
                 Assert.Contains("Value", strings.Message, StringComparison.Ordinal);
                 Assert.IsType<InvalidDataException>(strings.InnerException);
@@ -90,19 +89,19 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
                 Assert.Equal(poco.Message, table.Message);
                 if (ole)
                 {
-                    InvalidDataException hybrid = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(reader.Rows<OleRow>("Values", cancellationToken: ct)));
+                    InvalidDataException hybrid = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows<OleRow>("Values", cancellationToken: ct).ToListAsync(ct));
                     Assert.Equal(typed.Message, hybrid.Message);
                 }
             }
             else
             {
-                Assert.Null(Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[2]);
-                Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[2]);
-                Assert.Null(Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
+                Assert.Null(Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[2]);
+                Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[2]);
+                Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
                 Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[2]);
                 if (ole)
                 {
-                    Assert.Null(Assert.Single(await CollectAsync(reader.Rows<OleRow>("Values", cancellationToken: ct))).Value);
+                    Assert.Null(Assert.Single(await reader.Rows<OleRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
                 }
 
                 listener.Flush();
@@ -293,17 +292,6 @@ public sealed class LongValueSlotBoundsDecodePolicyTests
         }
 
         Assert.Fail("The created database must contain the long-value row.");
-    }
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
     }
 
     private sealed class ThrowingTraceListener : TraceListener

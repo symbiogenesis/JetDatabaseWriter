@@ -3,6 +3,7 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Models;
@@ -24,9 +25,9 @@ public sealed class CalculatedNullReadTests
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table1", ct);
         ColumnMetadata calculated = Assert.Single(columns, column => column.Name == "DateNormalCalc");
         Assert.True(calculated.IsCalculated);
-        List<object[]> typed = await CollectAsync(reader.Rows("Table1", cancellationToken: ct));
-        List<string[]> strings = await CollectAsync(reader.RowsAsStrings("Table1", cancellationToken: ct));
-        List<DateRow> pocos = await CollectAsync(reader.Rows<DateRow>("Table1", cancellationToken: ct));
+        List<object[]> typed = await reader.Rows("Table1", cancellationToken: ct).ToListAsync(ct);
+        List<string[]> strings = await reader.RowsAsStrings("Table1", cancellationToken: ct).ToListAsync(ct);
+        List<DateRow> pocos = await reader.Rows<DateRow>("Table1", cancellationToken: ct).ToListAsync(ct);
         Assert.Equal(typed.Count, strings.Count);
         Assert.Equal(typed.Count, pocos.Count);
         int nullCount = 0;
@@ -48,17 +49,6 @@ public sealed class CalculatedNullReadTests
         }
 
         Assert.True(nullCount > 0, "The native fixture must exercise a null cached calculation.");
-    }
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
     }
 
     private sealed class DateRow

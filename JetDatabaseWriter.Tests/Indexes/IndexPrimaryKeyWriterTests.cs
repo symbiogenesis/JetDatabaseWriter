@@ -30,10 +30,10 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task CreateTable_WithSingleColumnPrimaryKey_ViaIndexDefinition_RoundTrips()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         const string tableName = "Pk_Single";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -45,7 +45,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
@@ -59,10 +59,10 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task CreateTable_WithSingleColumnPrimaryKey_ViaColumnFlag_SynthesizesNamedPrimaryKey()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         const string tableName = "Pk_ColFlag";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -73,7 +73,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
@@ -86,10 +86,10 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task CreateTable_WithCompositePrimaryKey_RoundTripsAllKeyColumnsInOrder()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         const string tableName = "Pk_Composite";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -104,7 +104,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
@@ -119,10 +119,10 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task CreateTable_WithCompositePrimaryKey_ViaColumnFlags_PreservesDeclarationOrder()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         const string tableName = "Pk_CompositeFlag";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -134,7 +134,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         IndexMetadata pk = Assert.Single(indexes);
@@ -146,10 +146,10 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task CreateTable_PrimaryKeyColumns_AreForcedNonNullable()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         const string tableName = "Pk_NonNull";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             // Default IsNullable=true on the Id column; the PK shortcut must override it to false.
             await writer.CreateTableAsync(
@@ -161,7 +161,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<ColumnMetadata> meta = await reader.GetColumnMetadataAsync(tableName, TestContext.Current.CancellationToken);
         ColumnMetadata id = meta.Single(c => c.Name == "Id");
         ColumnMetadata name = meta.Single(c => c.Name == "Name");
@@ -172,10 +172,10 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task CreateTable_PrimaryKeyAlongsideRegularIndex_BothEmitted()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
         const string tableName = "Pk_PlusIx";
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 tableName,
@@ -190,7 +190,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync(tableName, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, indexes.Count);
@@ -207,7 +207,7 @@ public sealed class IndexPrimaryKeyWriterTests
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -236,7 +236,7 @@ public sealed class IndexPrimaryKeyWriterTests
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -267,7 +267,7 @@ public sealed class IndexPrimaryKeyWriterTests
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -310,7 +310,7 @@ public sealed class IndexPrimaryKeyWriterTests
     {
         await using MemoryStream stream = await CreateFreshStreamAsync(format);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -342,9 +342,9 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task PrimaryKey_SurvivesAddColumn()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -358,7 +358,7 @@ public sealed class IndexPrimaryKeyWriterTests
             await writer.AddColumnAsync("T", new ColumnDefinition("Note", typeof(string), maxLength: 50), this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
         IndexMetadata pk = Assert.Single(indexes);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
@@ -368,9 +368,9 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task PrimaryKey_DroppedWhenAnyKeyColumnIsDropped()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -387,7 +387,7 @@ public sealed class IndexPrimaryKeyWriterTests
             await writer.DropColumnAsync("T", "LineNo", this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
         Assert.Empty(indexes);
     }
@@ -395,9 +395,9 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task PrimaryKey_RemapsRenamedKeyColumn()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -407,7 +407,7 @@ public sealed class IndexPrimaryKeyWriterTests
             await writer.RenameColumnAsync("T", "Id", "Identifier", this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
         IndexMetadata pk = Assert.Single(indexes);
         Assert.Equal(IndexKind.PrimaryKey, pk.Kind);
@@ -420,9 +420,9 @@ public sealed class IndexPrimaryKeyWriterTests
         // Multi-column non-PK indexes are accepted and emitted (live B-tree
         // maintenance applies when every key column type is supported by
         // IndexKeyEncoder).
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -434,7 +434,7 @@ public sealed class IndexPrimaryKeyWriterTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<IndexMetadata> indexes = await reader.ListIndexesAsync("T", TestContext.Current.CancellationToken);
         IndexMetadata ix = Assert.Single(indexes);
         Assert.Equal(IndexKind.Normal, ix.Kind);
@@ -444,8 +444,8 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task IndexDefinition_RejectsTwoPrimaryKeys()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
@@ -464,8 +464,8 @@ public sealed class IndexPrimaryKeyWriterTests
     [Fact]
     public async Task ColumnFlag_AndExplicitPrimaryKeyIndex_AreMutuallyExclusive()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<ArgumentException>(async () =>
             await writer.CreateTableAsync(
@@ -581,41 +581,5 @@ public sealed class IndexPrimaryKeyWriterTests
 
         ms.Position = 0;
         return ms;
-    }
-
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
     }
 }

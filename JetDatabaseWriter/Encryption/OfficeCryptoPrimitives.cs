@@ -8,8 +8,6 @@ internal static class OfficeCryptoPrimitives
 {
     public const int Sha1HashBytes = 20;
 
-    public const int Sha256HashBytes = 32;
-
     public const int Sha512HashBytes = 64;
 
     /// <summary>Returns the digest size of a supported Office provider hash.</summary>
@@ -102,20 +100,6 @@ internal static class OfficeCryptoPrimitives
         if (!ok || bytesWritten != Sha512HashBytes)
         {
             throw new CryptographicException("SHA-512 hash computation failed.");
-        }
-    }
-
-    public static void HashSha256(ReadOnlySpan<byte> source, Span<byte> destination)
-    {
-#if NET6_0_OR_GREATER
-        bool ok = SHA256.TryHashData(source, destination, out int bytesWritten);
-#else
-        using var sha = SHA256.Create();
-        bool ok = sha.TryComputeHash(source, destination, out int bytesWritten);
-#endif
-        if (!ok || bytesWritten != Sha256HashBytes)
-        {
-            throw new CryptographicException("SHA-256 hash computation failed.");
         }
     }
 

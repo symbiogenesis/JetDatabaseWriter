@@ -7,7 +7,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -37,9 +36,9 @@ public sealed class IndexSurgicalLeafMergeTests
         // Tag=0 must preserve the remaining Tag=1 rows without appending
         // index pages; the sparse unique-key cases below force full leaves
         // to detach and verify their reclamation.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -66,7 +65,7 @@ public sealed class IndexSurgicalLeafMergeTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Tag", 0, this.ct);
             Assert.Equal(400, deleted);
@@ -80,7 +79,7 @@ public sealed class IndexSurgicalLeafMergeTests
         // bulk also APPENDS a fresh tree, surgical does not).
         Assert.Equal(idxBefore, idxAfter);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt.Rows.Count);
@@ -105,9 +104,9 @@ public sealed class IndexSurgicalLeafMergeTests
         // surgical path). What we DO assert is that, regardless of which
         // path runs, the post-state is correct: 800 surviving rows, no
         // Tag=1 entries left, and a navigable tree.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -130,13 +129,13 @@ public sealed class IndexSurgicalLeafMergeTests
             await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Tag", 1, this.ct);
             Assert.Equal(400, deleted);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(800, dt.Rows.Count);
@@ -164,12 +163,12 @@ public sealed class IndexSurgicalLeafMergeTests
         // to point at the surviving (former middle) leaf. Surgical engages
         // → zero new index pages appended, and the detached leaf is returned
         // to the allocator after the live root and usage map are linked.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
         const int total = 1200;
         const int leftAndMidCount = 802; // matches the bulk builder split
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -193,7 +192,7 @@ public sealed class IndexSurgicalLeafMergeTests
         (long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength) treeBefore = await this.ReadMergeSnapshotAsync(stream);
 
         const int expectedDeletes = total - leftAndMidCount; // 398
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Region", "C", this.ct);
             Assert.Equal(expectedDeletes, deleted);
@@ -203,7 +202,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore - 1, idxAfter);
         await this.AssertDetachedTailReclaimedAsync(stream, treeBefore, leftAndMidCount);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(leftAndMidCount, dt.Rows.Count);
@@ -222,9 +221,9 @@ public sealed class IndexSurgicalLeafMergeTests
         // DeleteRowsAsync(T, "Desc", "DEL") removes 400 rows spread evenly
         // across both leaves of the IX_Id index → cross-leaf change-set
         // with no per-leaf underflow. cross-leaf surgical in-place rewrites both leaves.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -246,7 +245,7 @@ public sealed class IndexSurgicalLeafMergeTests
 
         int idxBefore = CountIndexPages(stream.ToArray());
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Desc", "DEL", this.ct);
             Assert.Equal(400, deleted);
@@ -255,7 +254,7 @@ public sealed class IndexSurgicalLeafMergeTests
         int idxAfter = CountIndexPages(stream.ToArray());
         Assert.Equal(idxBefore, idxAfter);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(400, dt.Rows.Count);
@@ -278,9 +277,9 @@ public sealed class IndexSurgicalLeafMergeTests
         // alignment), the index can still be read back AND a subsequent
         // mutation succeeds (the chain pointers were patched correctly
         // either way).
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -303,13 +302,13 @@ public sealed class IndexSurgicalLeafMergeTests
             await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.DeleteRowsAsync("T", "Tag", 1, this.ct);
             await writer.InsertRowAsync("T", [0, 9999], this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(801, dt.Rows.Count);
@@ -350,12 +349,12 @@ public sealed class IndexSurgicalLeafMergeTests
         // at the surviving (former leftmost) leaf, with tail_page
         // recomputed to that leaf's page number. Single-entry intermediates
         // are valid — the cursor descends through their lone child pointer.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
         const int total = 800;
         const int leftLeafCount = 401; // matches the bulk builder split
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -379,7 +378,7 @@ public sealed class IndexSurgicalLeafMergeTests
         (long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength) treeBefore = await this.ReadMergeSnapshotAsync(stream);
 
         const int expectedDeletes = total - leftLeafCount; // 399
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Region", "B", this.ct);
             Assert.Equal(expectedDeletes, deleted);
@@ -389,7 +388,7 @@ public sealed class IndexSurgicalLeafMergeTests
         Assert.Equal(idxBefore - 1, idxAfter);
         await this.AssertDetachedTailReclaimedAsync(stream, treeBefore, leftLeafCount);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(leftLeafCount, dt.Rows.Count);
@@ -413,42 +412,6 @@ public sealed class IndexSurgicalLeafMergeTests
         }
 
         return n;
-    }
-
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
     }
 
     private async Task<(long Root, long Tail, HashSet<long> Pages, List<IndexEntry> Entries, long FileLength)> ReadMergeSnapshotAsync(MemoryStream stream)

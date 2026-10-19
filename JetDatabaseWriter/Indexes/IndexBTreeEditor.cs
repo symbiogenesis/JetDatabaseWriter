@@ -47,7 +47,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] leaf = await this.ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
+            byte[] leaf = await pager.ReadPageCopyAsync(walkPage, cancellationToken).ConfigureAwait(false);
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return false;
@@ -205,24 +205,6 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
     /// <param name="layout">The layout.</param>
     private static long ReadLastChildPointer(byte[] page, int pageSize, IndexPageLayout layout)
         => IndexPageCodec.ReadLastChildPointer(layout, page, pageSize);
-
-    /// <summary>
-    /// Reads a page through the writer cache and returns a caller-owned clone.
-    /// </summary>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
-    {
-        byte[] pageBytes = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return (byte[])pageBytes.Clone();
-        }
-        finally
-        {
-            PageBuffers.Return(pageBytes);
-        }
-    }
 
     /// <summary>
     /// Reserves precomputed append addresses through the global allocator and writes their pages.
@@ -515,7 +497,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         for (int depth = 0; depth < 16; depth++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await this.ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pager.ReadPageCopyAsync(current, cancellationToken).ConfigureAwait(false);
 
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -571,7 +553,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             return false;
         }
 
-        byte[] tailLeaf = await this.ReadAndClonePageAsync(tailLeafPage, cancellationToken).ConfigureAwait(false);
+        byte[] tailLeaf = await pager.ReadPageCopyAsync(tailLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (tailLeaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
@@ -729,7 +711,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             }
         }
 
-        byte[] leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+        byte[] leaf = await pager.ReadPageCopyAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
@@ -847,7 +829,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         for (int depth = 0; depth < 32; depth++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] page = await this.ReadAndClonePageAsync(current, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pager.ReadPageCopyAsync(current, cancellationToken).ConfigureAwait(false);
 
             if (page[0] == Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -1199,7 +1181,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            byte[] leaf = await this.ReadAndClonePageAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
+            byte[] leaf = await pager.ReadPageCopyAsync(group.LeafPage, cancellationToken).ConfigureAwait(false);
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 return false;
@@ -1881,7 +1863,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             }
         }
 
-        byte[] leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+        byte[] leaf = await pager.ReadPageCopyAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
         if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
         {
@@ -1916,7 +1898,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             }
 
             targetLeafPage = nextLeaf;
-            leaf = await this.ReadAndClonePageAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
+            leaf = await pager.ReadPageCopyAsync(targetLeafPage, cancellationToken).ConfigureAwait(false);
 
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
@@ -2010,7 +1992,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
                 byte[]? nextLeafBytes = null;
                 if (leafNext > 0)
                 {
-                    nextLeafBytes = await this.ReadAndClonePageAsync(leafNext, cancellationToken).ConfigureAwait(false);
+                    nextLeafBytes = await pager.ReadPageCopyAsync(leafNext, cancellationToken).ConfigureAwait(false);
                     IndexPageCodec.WritePrevPage(layout, nextLeafBytes, plan.PageNumbers[splitCount - 1]);
                 }
 
@@ -2140,7 +2122,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
         foreach ((long page, long previous) in previousPointers)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            byte[] bytes = await this.ReadAndClonePageAsync(page, cancellationToken).ConfigureAwait(false);
+            byte[] bytes = await pager.ReadPageCopyAsync(page, cancellationToken).ConfigureAwait(false);
             IndexPageCodec.WritePrevPage(layout, bytes, previous);
             staged.Add(page, bytes);
         }
@@ -2150,7 +2132,7 @@ internal sealed class IndexBTreeEditor(JetFormat format, Pager pager, TDefWriter
             cancellationToken.ThrowIfCancellationRequested();
             if (!staged.TryGetValue(page, out byte[]? bytes))
             {
-                bytes = await this.ReadAndClonePageAsync(page, cancellationToken).ConfigureAwait(false);
+                bytes = await pager.ReadPageCopyAsync(page, cancellationToken).ConfigureAwait(false);
                 staged.Add(page, bytes);
             }
 

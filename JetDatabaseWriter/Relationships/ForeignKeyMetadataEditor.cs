@@ -295,7 +295,7 @@ internal sealed class ForeignKeyMetadataEditor(
             fkAllocates = false;
             fkRealIdxNum = fkSharedSlot;
         }
-        else if (pkAllocates && ColumnNumbersEqual(pkColumnNumbers, fkColumnNumbers))
+        else if (pkAllocates && pkColumnNumbers.AsSpan().SequenceEqual(fkColumnNumbers))
         {
             fkAllocates = false;
             fkRealIdxNum = pkRealIdxNum;
@@ -635,24 +635,6 @@ internal sealed class ForeignKeyMetadataEditor(
         }
 
         return false;
-    }
-
-    private static bool ColumnNumbersEqual(int[] left, int[] right)
-    {
-        if (left.Length != right.Length)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < left.Length; i++)
-        {
-            if (left[i] != right[i])
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static int NextLogicalIdxNumber(IndexLayout lay, byte[] td, in FkTDefLayout layout)

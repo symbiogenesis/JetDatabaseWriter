@@ -593,31 +593,6 @@ internal sealed class RelationshipManager(
     // frees the page. A schema rewrite does not call it: CompleteRewriteAsync
     // re-links the partners to the rebuilt table instead.
 
-    /// <summary>
-    /// Returns the names of the relationships whose <c>MSysRelationships</c>
-    /// rows name <paramref name="tableName"/> as their primary or foreign
-    /// table, whether or not they enforce referential integrity, distinct and
-    /// sorted (case-insensitive). Empty when the database has no
-    /// <c>MSysRelationships</c> table.
-    /// </summary>
-    /// <param name="tableName">The table name (case-insensitive).</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    /// <returns>The relationship names.</returns>
-    internal async ValueTask<IReadOnlyList<string>> FindRelationshipNamesForTableAsync(string tableName, CancellationToken cancellationToken)
-    {
-        var names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (RelationshipRowSnapshot row in await this.CollectAllRelationshipRowsAsync(cancellationToken).ConfigureAwait(false))
-        {
-            if (string.Equals(row.SzObject, tableName, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(row.SzReferencedObject, tableName, StringComparison.OrdinalIgnoreCase))
-            {
-                _ = names.Add(row.SzRelationship);
-            }
-        }
-
-        return [.. names];
-    }
-
     /// <summary>Plans relationships to remove with a table, refusing enforced relationships to another table.</summary>
     /// <param name="tableName">The table being dropped.</param>
     /// <param name="cancellationToken">The cancellation token.</param>

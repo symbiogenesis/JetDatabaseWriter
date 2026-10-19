@@ -99,19 +99,8 @@ public sealed class LongValueWriteBackTests
         return data;
     }
 
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndWriteModes()
-    {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
-        foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
-        {
-            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
-            {
-                data.Add(format, mode);
-            }
-        }
-
-        return data;
-    }
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndWriteModes() =>
+        WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     [Theory]
     [MemberData(nameof(FormatsAndPayloads))]

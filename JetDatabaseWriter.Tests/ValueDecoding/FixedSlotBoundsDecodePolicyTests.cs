@@ -2,10 +2,10 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
 using System.Buffers.Binary;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Catalog.Models;
@@ -95,12 +95,12 @@ public sealed class FixedSlotBoundsDecodePolicyTests
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
         if (strict)
         {
-            JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)));
-            JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct)));
-            JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct)));
+            JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+            JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+            JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
             if (withPayload)
             {
-                JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
+                JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<HybridValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 Assert.Equal(strings.Message, hybrid.Message);
             }
 
@@ -114,12 +114,12 @@ public sealed class FixedSlotBoundsDecodePolicyTests
         }
         else
         {
-            Assert.Equal(string.Empty, Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[0]);
-            Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[0]);
-            Assert.Null(Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
+            Assert.Equal(string.Empty, Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+            Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+            Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
             if (withPayload)
             {
-                HybridValueRow hybrid = Assert.Single(await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
+                HybridValueRow hybrid = Assert.Single(await reader.Rows<HybridValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 Assert.Null(hybrid.Value);
                 Assert.Equal(new byte[] { 1, 2, 3 }, hybrid.Payload);
             }
@@ -226,17 +226,6 @@ public sealed class FixedSlotBoundsDecodePolicyTests
         {
             traceScope.Dispose();
         }
-    }
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
     }
 
     private sealed class ValueRow

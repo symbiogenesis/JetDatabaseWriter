@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -59,8 +60,8 @@ public sealed class MixedOleTypedScanTests
         await using MemoryStream original = await CreateAsync(format);
         await using var stream = new FaultingMemoryStream(original.ToArray());
         await using AccessReader reader = await OpenAsync(stream, cacheSize);
-        List<PlaylistRow> expected = await CollectAsync(reader.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct));
-        List<PlaylistRow> actual = await CollectAsync(reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct));
+        List<PlaylistRow> expected = await reader.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct);
+        List<PlaylistRow> actual = await reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct);
         IReadOnlyList<PlaylistRow> materialized = await reader.ReadTableAsync<PlaylistRow>("Playlists", cancellationToken: Ct);
         Assert.Equal(expected.Count, materialized.Count);
         for (int i = 0; i < expected.Count; i++)
@@ -114,7 +115,7 @@ public sealed class MixedOleTypedScanTests
             await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await enumeration.MoveNextAsync());
         }
 
-        Assert.Equal(7, (await CollectAsync(reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct))).Count);
+        Assert.Equal(7, (await reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct)).Count);
     }
 
     [Theory]
@@ -162,8 +163,8 @@ public sealed class MixedOleTypedScanTests
         await using var stream = new MemoryStream(bytes, writable: false);
         await using (AccessReader strict = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0 }, leaveOpen: true, cancellationToken: Ct))
         {
-            InvalidDataException fallback = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(strict.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct)));
-            InvalidDataException hybrid = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(strict.Rows<PlaylistRow>("Playlists", cancellationToken: Ct)));
+            InvalidDataException fallback = await Assert.ThrowsAsync<InvalidDataException>(async () => await strict.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct));
+            InvalidDataException hybrid = await Assert.ThrowsAsync<InvalidDataException>(async () => await strict.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct));
             Assert.Equal(fallback.Message, hybrid.Message);
             Assert.Contains("Filter", hybrid.Message, StringComparison.Ordinal);
             Assert.NotNull(hybrid.InnerException);
@@ -176,12 +177,12 @@ public sealed class MixedOleTypedScanTests
         try
         {
             await using AccessReader lenient = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 1, StrictParsing = false }, leaveOpen: true, cancellationToken: Ct);
-            List<PlaylistRow> expected = await CollectAsync(lenient.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct));
+            List<PlaylistRow> expected = await lenient.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct);
             listener.Flush();
             string fallbackDiagnostic = messages.ToString();
             Assert.Contains("column 'Filter' is unreadable and was returned as a missing value", fallbackDiagnostic, StringComparison.Ordinal);
             messages.GetStringBuilder().Clear();
-            List<PlaylistRow> actual = await CollectAsync(lenient.Rows<PlaylistRow>("Playlists", cancellationToken: Ct));
+            List<PlaylistRow> actual = await lenient.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct);
             Assert.Equal(expected.Count, actual.Count);
             for (int i = 0; i < expected.Count; i++)
             {
@@ -225,13 +226,13 @@ public sealed class MixedOleTypedScanTests
         await using (var original = new MemoryStream(bytes, writable: false))
         await using (AccessReader reader = await OpenAsync(original, 0))
         {
-            expected = await CollectAsync(reader.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct));
+            expected = await reader.Services.Tables.RowsWithDecoder<PlaylistRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct);
         }
 
         _ = await SyntheticOverflowRows.MoveRowAsync(bytes, "Playlists", layout, Ct);
         await using var stream = new MemoryStream(bytes, writable: false);
         await using AccessReader moved = await OpenAsync(stream, 1);
-        List<PlaylistRow> actual = await CollectAsync(moved.Rows<PlaylistRow>("Playlists", cancellationToken: Ct));
+        List<PlaylistRow> actual = await moved.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct);
         Assert.Equal(expected.Count, actual.Count);
         for (int i = 0; i < expected.Count; i++)
         {
@@ -259,7 +260,7 @@ public sealed class MixedOleTypedScanTests
         await using var stream = new FaultingMemoryStream(bytes);
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 0, PageReadOptimizationMode = PageReadOptimizationMode.Disabled, StrictParsing = strict }, leaveOpen: true, cancellationToken: Ct);
         stream.FailureOffset = checked((descriptor.FirstDp >> 8) * pageSize);
-        IOException failure = await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct)));
+        IOException failure = await Assert.ThrowsAsync<IOException>(async () => await reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct));
         Assert.Same(stream.Failure, failure);
     }
 
@@ -297,8 +298,8 @@ public sealed class MixedOleTypedScanTests
     {
         await using MemoryStream stream = await CreateAsync(DatabaseFormat.AceAccdb);
         await using AccessReader reader = await OpenAsync(stream, 0);
-        List<NotesRow> expected = await CollectAsync(reader.Services.Tables.RowsWithDecoder<NotesRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct));
-        List<NotesRow> actual = await CollectAsync(reader.Rows<NotesRow>("Playlists", cancellationToken: Ct));
+        List<NotesRow> expected = await reader.Services.Tables.RowsWithDecoder<NotesRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct);
+        List<NotesRow> actual = await reader.Rows<NotesRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct);
         Assert.Equal(expected.Count, actual.Count);
         for (int i = 0; i < expected.Count; i++)
         {
@@ -333,7 +334,7 @@ public sealed class MixedOleTypedScanTests
         }
 
         stream.FailureOffset = -1;
-        Assert.Equal(7, (await CollectAsync(reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct))).Count);
+        Assert.Equal(7, (await reader.Rows<PlaylistRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct)).Count);
     }
 
     [Fact]
@@ -341,8 +342,8 @@ public sealed class MixedOleTypedScanTests
     {
         await using MemoryStream stream = await CreateAsync(DatabaseFormat.AceAccdb);
         await using AccessReader reader = await OpenAsync(stream, 0);
-        ArgumentException expected = await Assert.ThrowsAsync<ArgumentException>(async () => await CollectAsync(reader.Services.Tables.RowsWithDecoder<ThrowingRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct)));
-        ArgumentException actual = await Assert.ThrowsAsync<ArgumentException>(async () => await CollectAsync(reader.Rows<ThrowingRow>("Playlists", cancellationToken: Ct)));
+        ArgumentException expected = await Assert.ThrowsAsync<ArgumentException>(async () => await reader.Services.Tables.RowsWithDecoder<ThrowingRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct));
+        ArgumentException actual = await Assert.ThrowsAsync<ArgumentException>(async () => await reader.Rows<ThrowingRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct));
         Assert.Equal(expected.Message, actual.Message);
     }
 
@@ -357,8 +358,8 @@ public sealed class MixedOleTypedScanTests
         }
 
         await using AccessReader reader = await OpenAsync(stream, 0);
-        SetterOrderRow expected = Assert.Single(await CollectAsync(reader.Services.Tables.RowsWithDecoder<SetterOrderRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct)));
-        SetterOrderRow actual = Assert.Single(await CollectAsync(reader.Rows<SetterOrderRow>("Playlists", cancellationToken: Ct)));
+        SetterOrderRow expected = Assert.Single(await reader.Services.Tables.RowsWithDecoder<SetterOrderRow>("Playlists", forceProjection: true, progress: null, cancellationToken: Ct).ToListAsync(Ct));
+        SetterOrderRow actual = Assert.Single(await reader.Rows<SetterOrderRow>("Playlists", cancellationToken: Ct).ToListAsync(Ct));
         Assert.Equal(expected.Id, actual.Id);
         Assert.Equal(expected.Filter, actual.Filter);
         Assert.Equal(expected.Name, actual.Name);
@@ -430,17 +431,6 @@ public sealed class MixedOleTypedScanTests
         }
 
         return bytes;
-    }
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
     }
 
     [SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "Projection preserves stored OLE bytes.")]

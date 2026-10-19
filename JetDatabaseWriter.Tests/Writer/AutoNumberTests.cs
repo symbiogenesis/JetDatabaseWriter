@@ -56,22 +56,8 @@ public sealed class AutoNumberTests(DatabaseCache db) : IClassFixture<DatabaseCa
     }
 
     /// <summary>Gets every format in every write mode: <c>plain</c>, <c>transactional</c> and <c>explicit</c>.</summary>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes
-    {
-        get
-        {
-            var data = new TheoryData<DatabaseFormat, WriteMode>();
-            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
-            {
-                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
-                {
-                    data.Add(format, mode);
-                }
-            }
-
-            return data;
-        }
-    }
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes =>
+        WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     /// <summary>Gets every format.</summary>
     public static TheoryData<DatabaseFormat> Formats => [DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb];

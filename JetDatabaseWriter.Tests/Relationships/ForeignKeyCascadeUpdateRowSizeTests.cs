@@ -55,19 +55,8 @@ public sealed class ForeignKeyCascadeUpdateRowSizeTests(DatabaseCache db) : ICla
 
     /// <summary>Gets every format in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes()
-    {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
-        foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
-        {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
-            {
-                data.Add(format, mode);
-            }
-        }
-
-        return data;
-    }
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes() =>
+        WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     /// <summary>Gets every write mode.</summary>
     /// <returns>The write modes.</returns>

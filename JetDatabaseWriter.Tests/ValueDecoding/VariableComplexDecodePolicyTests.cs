@@ -68,14 +68,14 @@ public sealed class VariableComplexDecodePolicyTests
         await using AccessReader reader = await OpenAsync(stream, strict, ct);
         if (strict)
         {
-            JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct)));
-            JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)));
-            JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct)));
+            JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+            JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+            JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
             JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
             JetCorruptDataException stringTable = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsStringsAsync("Values", cancellationToken: ct));
             JetCorruptDataException query = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Query<ValueRow>("Values").Where(row => row.Id == 1).ToListAsync(ct));
-            JetCorruptDataException seek = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.SeekRowsAsync("Values", "PrimaryKey", [1], ct)));
-            JetCorruptDataException typedSeek = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.FromIndex<ValueRow>("Values", "PrimaryKey").WhereEquals(1).ToRowsAsync(ct)));
+            JetCorruptDataException seek = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.SeekRowsAsync("Values", "PrimaryKey", [1], ct).ToListAsync(ct));
+            JetCorruptDataException typedSeek = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.FromIndex<ValueRow>("Values", "PrimaryKey").WhereEquals(1).ToRowsAsync(ct).ToListAsync(ct));
             Assert.Equal(JetErrorCode.MalformedValue, typed.ErrorCode);
             Assert.Equal("Value", typed.ErrorInfo.ColumnName);
             Assert.Equal(typed.Message, strings.Message);
@@ -146,12 +146,12 @@ public sealed class VariableComplexDecodePolicyTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         await using MemoryStream stream = await CreateFixtureAsync(withItem: true, ct);
         await using AccessReader reader = await OpenAsync(stream, strict, ct);
-        byte[] value = Assert.IsType<byte[]>(Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[1]);
+        byte[] value = Assert.IsType<byte[]>(Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[1]);
         AttachmentRecord item = Assert.Single(ComplexCellValue.ReadAttachments(value));
         Assert.Equal("value.txt", item.FileName);
         Assert.Equal(new byte[] { 11, 22, 33 }, item.FileData);
-        Assert.Equal(value, Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
-        Assert.Equal("data:application/octet-stream;base64," + Convert.ToBase64String(value), Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[1]);
+        Assert.Equal(value, Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
+        Assert.Equal("data:application/octet-stream;base64," + Convert.ToBase64String(value), Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[1]);
     }
 
     private static async Task<MemoryStream> CreateFixtureAsync(bool withItem, CancellationToken ct)
@@ -236,27 +236,16 @@ public sealed class VariableComplexDecodePolicyTests
 
     private static async Task AssertMissingAsync(AccessReader reader, CancellationToken ct)
     {
-        Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[1]);
-        Assert.Equal(string.Empty, Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[1]);
-        Assert.Null(Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
+        Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[1]);
+        Assert.Equal(string.Empty, Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[1]);
+        Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
         Assert.Null(Assert.Single(await reader.Query<ValueRow>("Values").Where(row => row.Id == 1).ToListAsync(ct)).Value);
-        Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.SeekRowsAsync("Values", "PrimaryKey", [1], ct)))[1]);
-        Assert.Null(Assert.Single(await CollectAsync(reader.FromIndex<ValueRow>("Values", "PrimaryKey").WhereEquals(1).ToRowsAsync(ct))).Value);
+        Assert.Equal(DBNull.Value, Assert.Single(await reader.SeekRowsAsync("Values", "PrimaryKey", [1], ct).ToListAsync(ct))[1]);
+        Assert.Null(Assert.Single(await reader.FromIndex<ValueRow>("Values", "PrimaryKey").WhereEquals(1).ToRowsAsync(ct).ToListAsync(ct)).Value);
         using DataTable table = await reader.ReadTableAsync("Values", cancellationToken: ct);
         Assert.Equal(DBNull.Value, Assert.Single(table.Rows.Cast<DataRow>())[1]);
         using DataTable stringTable = await reader.ReadTableAsStringsAsync("Values", cancellationToken: ct);
         Assert.Equal(string.Empty, Assert.Single(stringTable.Rows.Cast<DataRow>())[1]);
-    }
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
     }
 
 #pragma warning disable CA1812 // Public row materialization constructs the projection target.

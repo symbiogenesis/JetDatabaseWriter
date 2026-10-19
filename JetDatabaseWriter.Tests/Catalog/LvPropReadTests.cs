@@ -68,19 +68,8 @@ public sealed class LvPropReadTests
 
     /// <summary>Gets every writer-created format in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes()
-    {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
-        foreach (DatabaseFormat format in Formats)
-        {
-            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
-            {
-                data.Add(format, mode);
-            }
-        }
-
-        return data;
-    }
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes() =>
+        WriteModes.Combine(Formats);
 
     /// <summary>Gets every writer-created format, rewrite and write mode.</summary>
     /// <returns>The format, rewrite and write-mode triples.</returns>

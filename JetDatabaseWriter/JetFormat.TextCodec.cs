@@ -144,31 +144,6 @@ internal sealed partial class JetFormat
     }
 
     /// <summary>
-    /// Decodes Jet4 text from a span-backed buffer. Array-backed reader hot paths
-    /// use the byte-array overload so compressed strings can be built directly.
-    /// </summary>
-    /// <param name="bytes">The bytes.</param>
-    /// <param name="start">The start.</param>
-    /// <param name="len">The length in bytes.</param>
-    /// <returns>The decoded string.</returns>
-    internal static string DecodeJet4Text(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        if (len < 2)
-        {
-            return string.Empty;
-        }
-
-        if (bytes[start] == 0xFF && bytes[start + 1] == 0xFE)
-        {
-            return DecompressJet4(bytes, start + 2, len - 2);
-        }
-
-        // Plain UCS-2 LE — length must be even
-        int evenLen = len & ~1;
-        return evenLen > 0 ? DecodeUtf16LE(bytes.Slice(start, evenLen)) : string.Empty;
-    }
-
-    /// <summary>
     /// Decodes the JET4 "compressed unicode" encoding.
     /// A 0x00 byte toggles between 1-byte compressed (ASCII) and 2-byte
     /// uncompressed (UCS-2) mode.
@@ -182,34 +157,6 @@ internal sealed partial class JetFormat
         // Fast path: if no 0x00 byte appears in the data, the entire string
         // is compressed Latin-1 with no mode switches. This is the overwhelming
         // majority of text values in real Jet4 databases.
-        int end = start + len;
-        bool allCompressed = true;
-        for (int index = start; index < end; index++)
-        {
-            if (bytes[index] == 0x00)
-            {
-                allCompressed = false;
-                break;
-            }
-        }
-
-        if (allCompressed)
-        {
-            return CreateFromCompressed(bytes, start, len);
-        }
-
-        return DecompressJet4Slow(bytes, start, len);
-    }
-
-    /// <summary>
-    /// Decodes the JET4 "compressed unicode" encoding from a span-backed buffer.
-    /// </summary>
-    /// <param name="bytes">The bytes.</param>
-    /// <param name="start">The start.</param>
-    /// <param name="len">The length in bytes.</param>
-    /// <returns>The decompressed string.</returns>
-    private static string DecompressJet4(ReadOnlySpan<byte> bytes, int start, int len)
-    {
         int end = start + len;
         bool allCompressed = true;
         for (int index = start; index < end; index++)
@@ -245,17 +192,6 @@ internal sealed partial class JetFormat
             });
 #endif
 
-    private static string CreateFromCompressed(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        char[] chars = new char[len];
-        for (int index = 0; index < len; index++)
-        {
-            chars[index] = (char)bytes[start + index];
-        }
-
-        return new string(chars);
-    }
-
     private static string DecompressJet4Slow(byte[] bytes, int start, int len)
     {
         int charCount = CountDecompressedChars(bytes, start, len);
@@ -263,15 +199,6 @@ internal sealed partial class JetFormat
             charCount,
             (Bytes: bytes, Start: start, Length: len),
             static (chars, state) => FillDecompressed(state.Bytes, state.Start, state.Length, chars));
-    }
-
-    private static string DecompressJet4Slow(ReadOnlySpan<byte> bytes, int start, int len)
-    {
-        // Two-pass: count output chars first, then fill directly into char[].
-        int charCount = CountDecompressedChars(bytes, start, len);
-        char[] chars = new char[charCount];
-        FillDecompressed(bytes, start, len, chars);
-        return new string(chars);
     }
 
     private static int CountDecompressedChars(ReadOnlySpan<byte> bytes, int start, int len)

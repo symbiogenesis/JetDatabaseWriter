@@ -7,9 +7,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Exceptions;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -26,9 +26,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task SingleInsert_DuplicateAgainstExisting_ThrowsAndLeavesTableUnchanged()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int))],
@@ -46,7 +46,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
         // Table should still contain exactly the two rows successfully inserted.
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(2, dt.Rows.Count);
@@ -55,11 +55,11 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task SingleInsert_DuplicateAgainstExistingMultiLevelIndex_ThrowsBeforeWrite()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
         const int rowCount = 1500;
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int))],
@@ -79,7 +79,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount, dt.Rows.Count);
@@ -88,9 +88,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task SingleInsert_MemoDuplicateAgainstExisting_ThrowsBeforeWrite()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Body", typeof(string))],
@@ -104,7 +104,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         Assert.Contains("before any row was written", ex.Message, StringComparison.Ordinal);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Single(dt.Rows);
@@ -113,9 +113,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task SingleInsert_DuplicateAgainstExisting_DoesNotConsumeAutoIncrement()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [
@@ -135,7 +135,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         // Next successful insert should use Id=3, not Id=4.
         await writer.InsertRowAsync("T", [DBNull.Value, 300], this.ct);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         int[] ids = dt.Rows.Cast<DataRow>().Select(r => (int)r["Id"]).Order().ToArray();
@@ -145,9 +145,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task BatchInsert_IntraBatchDuplicate_ThrowsAndPersistsNoRows()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -170,7 +170,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         }
 
         // Re-open and confirm the batch was fully rolled back.
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Empty(dt.Rows);
@@ -179,9 +179,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task GenericBatchInsert_IntraBatchDuplicate_DoesNotConsumeAutoIncrement()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [
@@ -203,7 +203,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
 
         await writer.InsertRowAsync("T", new UniqueTagRow { Tag = 300 }, this.ct);
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         DataRow row = Assert.Single(dt.Rows.Cast<DataRow>());
         Assert.Equal(1, row["Id"]);
@@ -213,9 +213,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task UpdateRows_CreatesDuplicate_ThrowsAndLeavesTableUnchanged()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -246,7 +246,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
         }
 
         // Reopen and confirm the original Code value survived.
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         var codeById = dt.Rows.Cast<DataRow>().ToDictionary(r => (int)r["Id"], r => (int)r["Code"]);
@@ -258,9 +258,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task MultiColumnUniqueIndex_DuplicateComposite_Throws()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [
@@ -281,9 +281,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task PrimaryKey_DuplicateInsert_ThrowsBeforeWrite()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
         await writer.CreateTableAsync(
             "T",
             [new ColumnDefinition("Id", typeof(int)) { IsPrimaryKey = true }],
@@ -299,9 +299,9 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     [Fact]
     public async Task NonUniqueIndex_DuplicateInsert_IsAllowed()
     {
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -320,7 +320,7 @@ public sealed class IndexPreWriteUniqueEnforcementTests
                 this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(3, dt.Rows.Count);
@@ -331,41 +331,5 @@ public sealed class IndexPreWriteUniqueEnforcementTests
     private sealed class UniqueTagRow
     {
         public int Tag { get; set; }
-    }
-
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
     }
 }

@@ -56,10 +56,10 @@ public sealed class CalculatedNumericDecodePolicyTests
             await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
             if (strict)
             {
-                JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)));
-                JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct)));
-                JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct)));
-                JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
+                JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
+                JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<HybridValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
                 Assert.Equal(JetErrorCode.MalformedValue, strings.ErrorCode);
                 Assert.Equal("Value", strings.ErrorInfo.ColumnName);
@@ -72,10 +72,10 @@ public sealed class CalculatedNumericDecodePolicyTests
             }
             else
             {
-                Assert.Equal(string.Empty, Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[0]);
-                Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[0]);
-                Assert.Null(Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
-                HybridValueRow hybrid = Assert.Single(await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
+                Assert.Equal(string.Empty, Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+                Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+                Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
+                HybridValueRow hybrid = Assert.Single(await reader.Rows<HybridValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 Assert.Null(hybrid.Value);
                 Assert.Equal(new byte[] { 1, 2, 3 }, hybrid.Payload);
                 Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[0]);
@@ -130,9 +130,9 @@ public sealed class CalculatedNumericDecodePolicyTests
         await using MemoryStream stream = await CreateDatabaseAsync(nullValue ? null : 0m, ct);
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
-        Assert.Equal(nullValue ? string.Empty : "0", Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[0]);
-        Assert.Equal(nullValue ? DBNull.Value : 0m, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[0]);
-        Assert.Equal(nullValue ? null : 0m, Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
+        Assert.Equal(nullValue ? string.Empty : "0", Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+        Assert.Equal(nullValue ? DBNull.Value : 0m, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+        Assert.Equal(nullValue ? null : 0m, Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
     }
 
     [Theory]
@@ -143,9 +143,9 @@ public sealed class CalculatedNumericDecodePolicyTests
         CancellationToken ct = TestContext.Current.CancellationToken;
         decimal[] expected = [19230.7692307692m, -0.0192307692307692m, 0m, 1.92307692307692m];
         await using AccessReader reader = await AccessReader.OpenAsync(TestDatabases.CalcFieldTestV2010, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, ct);
-        List<object[]> rows = await CollectAsync(reader.Rows("Table1", cancellationToken: ct));
-        List<string[]> strings = await CollectAsync(reader.RowsAsStrings("Table1", cancellationToken: ct));
-        List<NativeValueRow> pocos = await CollectAsync(reader.Rows<NativeValueRow>("Table1", cancellationToken: ct));
+        List<object[]> rows = await reader.Rows("Table1", cancellationToken: ct).ToListAsync(ct);
+        List<string[]> strings = await reader.RowsAsStrings("Table1", cancellationToken: ct).ToListAsync(ct);
+        List<NativeValueRow> pocos = await reader.Rows<NativeValueRow>("Table1", cancellationToken: ct).ToListAsync(ct);
         IReadOnlyList<ColumnMetadata> columns = await reader.GetColumnMetadataAsync("Table1", ct);
         ColumnMetadata weeklySalary = Assert.Single(columns, column => column.Name == "WeeklySalary");
         Assert.True(weeklySalary.IsCalculated);
@@ -239,17 +239,6 @@ public sealed class CalculatedNumericDecodePolicyTests
         }
 
         Assert.Fail("The created database must contain the calculated Numeric row.");
-    }
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
     }
 
     private sealed class HybridValueRow

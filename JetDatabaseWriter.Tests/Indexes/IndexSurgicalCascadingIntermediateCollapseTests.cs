@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Models;
 using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
@@ -39,13 +38,13 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDat
             $"{rowCount}:{leftSubtreeRows}",
             () => CreateLeftSubtreeSeedAsync(rowCount, leftSubtreeRows));
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             int deleted = await writer.DeleteRowsAsync("T", "Tag", 9, this.ct);
             Assert.Equal(leftSubtreeRows, deleted);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows, dt.Rows.Count);
@@ -75,9 +74,9 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDat
         // its entries, so the surgical maintenance path needs to either
         // collapse entire subtrees in-place or fall back to the bulk
         // rebuild — either way the resulting index must be readable.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -99,12 +98,12 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDat
             await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.DeleteRowsAsync("T", "Tag", 1, this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(25, dt.Rows.Count);
@@ -128,12 +127,12 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDat
             $"{rowCount}:{leftSubtreeRows}",
             () => CreateLeftSubtreeSeedAsync(rowCount, leftSubtreeRows));
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.DeleteRowsAsync("T", "Tag", 9, this.ct);
         }
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             object[][] reins = new object[reinsertCount][];
             for (int i = 0; i < reinsertCount; i++)
@@ -144,7 +143,7 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDat
             await writer.InsertRowsAsync("T", reins, this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable dt = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.NotNull(dt);
         Assert.Equal(rowCount - leftSubtreeRows + reinsertCount, dt.Rows.Count);
@@ -167,8 +166,8 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDat
     private static async Task<byte[]> CreateLeftSubtreeSeedAsync(int rowCount, int leftSubtreeRows)
     {
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -204,41 +203,5 @@ public sealed class IndexSurgicalCascadingIntermediateCollapseTests(GeneratedDat
         }
 
         return sb.ToString();
-    }
-
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
     }
 }

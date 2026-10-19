@@ -72,7 +72,7 @@ public sealed class ReadSurfaceConsistencyTests
         await using AccessReader reader = await OpenReaderAsync(ms, this.ct);
 
         IReadOnlyList<DocumentRow> read = await reader.ReadTableAsync<DocumentRow>("Documents", cancellationToken: this.ct);
-        List<DocumentRow> streamed = await CollectAsync(reader.Rows<DocumentRow>("Documents", cancellationToken: this.ct));
+        List<DocumentRow> streamed = await reader.Rows<DocumentRow>("Documents", cancellationToken: this.ct).ToListAsync(this.ct);
 
         Assert.Equal([1, 2, 3], read.Select(row => row.Id));
         Assert.Equal(streamed.Select(row => row.Id), read.Select(row => row.Id));
@@ -88,7 +88,7 @@ public sealed class ReadSurfaceConsistencyTests
         await using AccessReader reader = await OpenReaderAsync(ms, this.ct);
 
         IReadOnlyList<DocumentFilesRow> read = await reader.ReadTableAsync<DocumentFilesRow>("Documents", cancellationToken: this.ct);
-        List<DocumentFilesRow> streamed = await CollectAsync(reader.Rows<DocumentFilesRow>("Documents", cancellationToken: this.ct));
+        List<DocumentFilesRow> streamed = await reader.Rows<DocumentFilesRow>("Documents", cancellationToken: this.ct).ToListAsync(this.ct);
 
         Assert.Equal([1, 2, 3], read.Select(row => row.Id));
         Assert.Equal(streamed.Select(row => row.Files), read.Select(row => row.Files));
@@ -132,7 +132,7 @@ public sealed class ReadSurfaceConsistencyTests
         await using AccessReader reader = await OpenReaderAsync(ms, this.ct);
 
         IReadOnlyList<TagRow> read = await reader.ReadTableAsync<TagRow>("Tags", cancellationToken: this.ct);
-        List<TagRow> streamed = await CollectAsync(reader.Rows<TagRow>("Tags", cancellationToken: this.ct));
+        List<TagRow> streamed = await reader.Rows<TagRow>("Tags", cancellationToken: this.ct).ToListAsync(this.ct);
 
         Assert.Equal([1, 2], read.Select(row => row.Id));
         Assert.Equal(streamed.Select(row => row.Labels), read.Select(row => row.Labels));
@@ -166,7 +166,7 @@ public sealed class ReadSurfaceConsistencyTests
         await using AccessReader reader = await OpenReaderAsync(counting, this.ct);
         counting.Reset();
 
-        List<DocSummaryRow> read = await CollectAsync(reader.Rows<DocSummaryRow>("Docs", cancellationToken: this.ct));
+        List<DocSummaryRow> read = await reader.Rows<DocSummaryRow>("Docs", cancellationToken: this.ct).ToListAsync(this.ct);
 
         AssertSummaries(expected, read);
         AssertSkippedAttachments(counting, "Rows<T>");
@@ -220,7 +220,7 @@ public sealed class ReadSurfaceConsistencyTests
         counting.Reset();
 
         // Id is the primary key, so the predicate is read through the index.
-        List<DocSummaryRow> read = await CollectAsync(reader.Rows<DocSummaryRow>("Docs", row => row.Id == 7, cancellationToken: this.ct));
+        List<DocSummaryRow> read = await reader.Rows<DocSummaryRow>("Docs", row => row.Id == 7, cancellationToken: this.ct).ToListAsync(this.ct);
 
         AssertSummaries([expected.Single(row => (int)row[0] == 7)], read);
         AssertSkippedAttachments(counting, "Rows<T>(predicate)");
@@ -231,13 +231,13 @@ public sealed class ReadSurfaceConsistencyTests
     public async Task ReadTableGeneric_AccessAuthoredComplexTables_UnboundColumnsMatchRows(string fixture, string table)
     {
         await using AccessReader reader = await AccessReader.OpenAsync(fixture, new AccessReaderOptions { UseLockFile = false }, this.ct);
-        List<object[]> rows = await CollectAsync(reader.Rows(table, cancellationToken: this.ct));
+        List<object[]> rows = await reader.Rows(table, cancellationToken: this.ct).ToListAsync(this.ct);
         Assert.NotEmpty(rows);
 
         if (table == "Documents")
         {
             IReadOnlyList<ComplexFieldsDocumentRow> read = await reader.ReadTableAsync<ComplexFieldsDocumentRow>(table, cancellationToken: this.ct);
-            List<ComplexFieldsDocumentRow> streamed = await CollectAsync(reader.Rows<ComplexFieldsDocumentRow>(table, cancellationToken: this.ct));
+            List<ComplexFieldsDocumentRow> streamed = await reader.Rows<ComplexFieldsDocumentRow>(table, cancellationToken: this.ct).ToListAsync(this.ct);
             Assert.Equal(rows.Select(row => row[0]), read.Select(row => (object)row.Id));
             Assert.Equal(rows.Select(row => row[1] as string), read.Select(row => row.Title));
             Assert.Equal(read.Select(row => (row.Id, row.Title)), streamed.Select(row => (row.Id, row.Title)));
@@ -245,7 +245,7 @@ public sealed class ReadSurfaceConsistencyTests
         else
         {
             IReadOnlyList<ComplexDataTestRow> read = await reader.ReadTableAsync<ComplexDataTestRow>(table, cancellationToken: this.ct);
-            List<ComplexDataTestRow> streamed = await CollectAsync(reader.Rows<ComplexDataTestRow>(table, cancellationToken: this.ct));
+            List<ComplexDataTestRow> streamed = await reader.Rows<ComplexDataTestRow>(table, cancellationToken: this.ct).ToListAsync(this.ct);
             Assert.Equal(rows.Select(row => row[0] as string), read.Select(row => row.Id));
             Assert.Equal(rows.Select(row => row[2] as string), read.Select(row => row.Memo));
             Assert.Equal(read.Select(row => (row.Id, row.Memo)), streamed.Select(row => (row.Id, row.Memo)));
@@ -311,8 +311,8 @@ public sealed class ReadSurfaceConsistencyTests
         await using AccessReader reader = await OpenReaderAsync(ms, this.ct);
 
         long realCount = await reader.GetRealRowCountAsync(TableName, this.ct);
-        List<object[]> rows = await CollectAsync(reader.Rows(TableName, cancellationToken: this.ct));
-        List<string[]> stringRows = await CollectAsync(reader.RowsAsStrings(TableName, cancellationToken: this.ct));
+        List<object[]> rows = await reader.Rows(TableName, cancellationToken: this.ct).ToListAsync(this.ct);
+        List<string[]> stringRows = await reader.RowsAsStrings(TableName, cancellationToken: this.ct).ToListAsync(this.ct);
 
         Assert.Equal(rows.Count, realCount);
         Assert.Equal(rows.Count, stringRows.Count);
@@ -392,17 +392,6 @@ public sealed class ReadSurfaceConsistencyTests
         Assert.True(
             counting.BytesRead < attachmentBytes / 4,
             $"{read} read {counting.BytesRead} bytes; the attachments it does not bind take {attachmentBytes}.");
-    }
-
-    private static async ValueTask<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)
-    {
-        var items = new List<T>();
-        await foreach (T item in source)
-        {
-            items.Add(item);
-        }
-
-        return items;
     }
 
     /// <summary>
@@ -554,7 +543,7 @@ public sealed class ReadSurfaceConsistencyTests
     {
         await using var ms = new MemoryStream(bytes, writable: false);
         await using AccessReader reader = await OpenReaderAsync(ms, this.ct);
-        List<object[]> rows = await CollectAsync(reader.Rows("Docs", cancellationToken: this.ct));
+        List<object[]> rows = await reader.Rows("Docs", cancellationToken: this.ct).ToListAsync(this.ct);
         Assert.Equal(DocCount, rows.Count);
         Assert.All(rows, row => Assert.IsType<byte[]>(row[3]));
         Assert.All(rows, row => Assert.IsType<byte[]>(row[4]));
@@ -566,10 +555,10 @@ public sealed class ReadSurfaceConsistencyTests
         var counts = new Dictionary<string, long>(StringComparer.Ordinal)
         {
             ["GetRealRowCountAsync"] = await reader.GetRealRowCountAsync(TableName, this.ct),
-            ["Rows"] = (await CollectAsync(reader.Rows(TableName, cancellationToken: this.ct))).Count,
-            ["Rows<T>"] = (await CollectAsync(reader.Rows<ItemRow>(TableName, cancellationToken: this.ct))).Count,
-            ["Rows<T> (projected)"] = (await CollectAsync(reader.Rows<IdOnlyRow>(TableName, cancellationToken: this.ct))).Count,
-            ["RowsAsStrings"] = (await CollectAsync(reader.RowsAsStrings(TableName, cancellationToken: this.ct))).Count,
+            ["Rows"] = (await reader.Rows(TableName, cancellationToken: this.ct).ToListAsync(this.ct)).Count,
+            ["Rows<T>"] = (await reader.Rows<ItemRow>(TableName, cancellationToken: this.ct).ToListAsync(this.ct)).Count,
+            ["Rows<T> (projected)"] = (await reader.Rows<IdOnlyRow>(TableName, cancellationToken: this.ct).ToListAsync(this.ct)).Count,
+            ["RowsAsStrings"] = (await reader.RowsAsStrings(TableName, cancellationToken: this.ct).ToListAsync(this.ct)).Count,
             ["ReadTableAsync<T>"] = (await reader.ReadTableAsync<ItemRow>(TableName, cancellationToken: this.ct)).Count,
             ["ReadTableAsync<T> (projected)"] = (await reader.ReadTableAsync<IdOnlyRow>(TableName, cancellationToken: this.ct)).Count,
         };

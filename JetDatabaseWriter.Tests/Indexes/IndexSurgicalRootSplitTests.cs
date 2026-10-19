@@ -7,7 +7,6 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
@@ -41,9 +40,9 @@ public sealed class IndexSurgicalRootSplitTests
         // the tree grows in height, exercising the root-split path. Validate
         // the full index is reachable from the root after EACH batch so a
         // committed root corruption cannot be masked by a later rebuild.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -71,7 +70,7 @@ public sealed class IndexSurgicalRootSplitTests
         int expected = 100;
         for (int b = 0; b < 150; b++)
         {
-            await using (AccessWriter writer = await OpenWriterAsync(stream))
+            await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
             {
                 // Each batch spreads across 8 dense sub-ranges (cross-leaf)
                 // at mid-leaf offsets, so several leaves split at once and the
@@ -99,9 +98,9 @@ public sealed class IndexSurgicalRootSplitTests
         // multi-level tree, then apply one cross-leaf insert batch that splits
         // several leaves at once, and verify the whole index stays reachable
         // and uniform-depth.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -124,7 +123,7 @@ public sealed class IndexSurgicalRootSplitTests
         int expected = 120;
         await AssertIndexFullyReachableFromRootAsync(stream, "IX_K", this.ct, expected);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             // 16 interleaved keys spread across the whole range → splits many
             // leaves in one cross-leaf batch, maximising upward cascade.
@@ -157,7 +156,7 @@ public sealed class IndexSurgicalRootSplitTests
         CancellationToken ct,
         int? expectedRowCount = null)
     {
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
 
         int rowCount = expectedRowCount
             ?? (await reader.ReadTableAsync("T", cancellationToken: ct)).Rows.Count;
@@ -249,41 +248,5 @@ public sealed class IndexSurgicalRootSplitTests
         }
 
         return sb.ToString();
-    }
-
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
     }
 }

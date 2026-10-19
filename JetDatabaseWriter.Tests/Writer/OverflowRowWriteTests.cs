@@ -54,22 +54,8 @@ public sealed class OverflowRowWriteTests
         "SyntheticJet3");
 
     /// <summary>Gets every format with each write mode that keeps its change.</summary>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndCommittedModes
-    {
-        get
-        {
-            var data = new TheoryData<DatabaseFormat, WriteMode>();
-            foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
-            {
-                foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
-                {
-                    data.Add(format, mode);
-                }
-            }
-
-            return data;
-        }
-    }
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndCommittedModes =>
+        WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     /// <summary>Gets each shared write mode and a local rollback flag.</summary>
     public static TheoryData<WriteMode, bool> Modes => new() { { WriteMode.Direct, false }, { WriteMode.AutoCommit, false }, { WriteMode.ExplicitCommit, false }, { WriteMode.ExplicitCommit, true } };

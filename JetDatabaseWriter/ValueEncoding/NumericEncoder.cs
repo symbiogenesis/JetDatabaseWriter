@@ -97,26 +97,4 @@ internal static class NumericEncoder
         return magnitudeLength == 0
             || magnitude.TryWriteBytes(output[(16 - magnitudeLength)..], out _, isUnsigned: true, isBigEndian: true);
     }
-
-    /// <summary>
-    /// Counts the decimal digits of the unsigned 96-bit mantissa whose
-    /// little-endian bytes were produced by <see cref="Decompose"/>, clamped
-    /// to <c>1..28</c> (the range Access stores in the NUMERIC precision byte).
-    /// </summary>
-    /// <param name="mantissaLe">The mantissa le.</param>
-    public static byte ComputePrecision(ReadOnlySpan<byte> mantissaLe)
-    {
-        int lo = Ri32(mantissaLe, 0);
-        int mid = Ri32(mantissaLe, 4);
-        int hi = Ri32(mantissaLe, 8);
-        decimal mantissa = new(lo, mid, hi, isNegative: false, scale: 0);
-        byte precision = 1;
-        while (mantissa >= 10m)
-        {
-            mantissa = decimal.Truncate(mantissa / 10m);
-            precision++;
-        }
-
-        return precision > 28 ? (byte)28 : precision;
-    }
 }

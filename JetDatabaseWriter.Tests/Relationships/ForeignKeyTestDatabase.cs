@@ -30,19 +30,8 @@ internal static class ForeignKeyTestDatabase
 
     /// <summary>Gets every format in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
-    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes()
-    {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
-        foreach (DatabaseFormat format in new[] { DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb })
-        {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
-            {
-                data.Add(format, mode);
-            }
-        }
-
-        return data;
-    }
+    public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes() =>
+        WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     /// <summary>
     /// Returns a database with an <c>MSysRelationships</c> table and none of
@@ -168,18 +157,8 @@ internal static class ForeignKeyTestDatabase
     /// <param name="mode">How the writer runs the operations.</param>
     /// <param name="work">The operations.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-    public static async Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
-    {
-        if (mode != WriteMode.ExplicitCommit)
-        {
-            await work();
-            return;
-        }
-
-        await using JetTransaction tx = await writer.BeginTransactionAsync(Ct);
-        await work();
-        await tx.CommitAsync(Ct);
-    }
+    public static Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
+        => WriteModes.RunAsync(writer, mode, work, Ct);
 
     /// <summary>
     /// Writes an enforced one-column relationship straight into

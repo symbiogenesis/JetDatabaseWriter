@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
 using System.Buffers.Binary;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -118,10 +117,10 @@ public sealed class RowDecodeParityTests
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
         if (strict)
         {
-            JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)));
-            JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct)));
-            JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct)));
-            JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
+            JetCorruptDataException strings = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+            JetCorruptDataException typed = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+            JetCorruptDataException poco = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
+            JetCorruptDataException hybrid = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.Rows<HybridValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
             JetCorruptDataException table = await Assert.ThrowsAsync<JetCorruptDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
             Assert.Equal(typed.Message, hybrid.Message);
             Assert.Equal(typed.Message, table.Message);
@@ -134,10 +133,10 @@ public sealed class RowDecodeParityTests
         }
         else
         {
-            Assert.Equal(string.Empty, Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[2]);
-            Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[2]);
-            Assert.Null(Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
-            HybridValueRow hybrid = Assert.Single(await CollectAsync(reader.Rows<HybridValueRow>("Values", cancellationToken: ct)));
+            Assert.Equal(string.Empty, Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[2]);
+            Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[2]);
+            Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
+            HybridValueRow hybrid = Assert.Single(await reader.Rows<HybridValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
             Assert.Null(hybrid.Value);
             Assert.Equal(new byte[] { 1, 2, 3 }, hybrid.Payload);
             Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[2]);
@@ -161,9 +160,9 @@ public sealed class RowDecodeParityTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
-        Assert.Equal(string.Empty, Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[0]);
-        Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[0]);
-        Assert.Null(Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
+        Assert.Equal(string.Empty, Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+        Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[0]);
+        Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
     }
 
     [Theory]
@@ -182,9 +181,9 @@ public sealed class RowDecodeParityTests
         await using var stream = new FailingReadStream(original.ToArray());
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
         stream.FailReads = true;
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct))));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct))));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)));
     }
 
     private sealed class FailingReadStream(byte[] bytes) : MemoryStream(bytes, writable: false)
@@ -195,17 +194,6 @@ public sealed class RowDecodeParityTests
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => this.FailReads ? ValueTask.FromException<int>(this.Failure) : base.ReadAsync(buffer, cancellationToken);
-    }
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
     }
 
     private sealed class HybridValueRow

@@ -29,10 +29,16 @@ internal static class PageBuffers
     internal static async ValueTask<byte[]> ReadPageCopyAsync(this IPageSource pages, long pageNumber, CancellationToken cancellationToken = default)
     {
         byte[] pooled = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        byte[] copy = new byte[pages.PageSize];
-        Buffer.BlockCopy(pooled, 0, copy, 0, pages.PageSize);
-        Return(pooled);
-        return copy;
+        try
+        {
+            byte[] copy = new byte[pages.PageSize];
+            Buffer.BlockCopy(pooled, 0, copy, 0, pages.PageSize);
+            return copy;
+        }
+        finally
+        {
+            Return(pooled);
+        }
     }
 
     /// <summary>Reads a scan page without filling the writer cache.</summary>

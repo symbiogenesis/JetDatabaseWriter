@@ -66,7 +66,7 @@ internal static class IndexPageCodec
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
     {
-        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength))
+        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out int prefLen))
         {
             throw new IndexCapacityException(nameof(entries), "Leaf page capacity exceeded.");
         }
@@ -88,15 +88,8 @@ internal static class IndexPageCodec
             nextPage,
             tailPage);
 
-        int prefLen = enablePrefixCompression ? ComputeSharedPrefixLength(entries) : 0;
-        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
-        {
-            prefLen = maxPrefixLength.Value;
-        }
-
         if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
         {
-            prefLen = Math.Min(prefLen, byte.MaxValue);
             page[layout.PrefLenOffset] = (byte)prefLen;
         }
         else
@@ -237,7 +230,7 @@ internal static class IndexPageCodec
         long tailPage,
         bool enablePrefixCompression,
         int? maxPrefixLength = null)
-        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
+        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength, out _)
             ? BuildLeafPage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, enablePrefixCompression, maxPrefixLength)
             : null;
 
@@ -264,7 +257,7 @@ internal static class IndexPageCodec
         long tailPage,
         int? maxPrefixLength = null)
     {
-        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength))
+        if (!CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength, out int prefLen))
         {
             throw new IndexCapacityException(nameof(entries), "Intermediate page capacity exceeded.");
         }
@@ -290,15 +283,8 @@ internal static class IndexPageCodec
             nextPage,
             tailPage);
 
-        int prefLen = ComputeIntermediatePrefixLength(entries);
-        if (maxPrefixLength.HasValue && prefLen > maxPrefixLength.Value)
-        {
-            prefLen = maxPrefixLength.Value;
-        }
-
         if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
         {
-            prefLen = Math.Min(prefLen, byte.MaxValue);
             page[layout.PrefLenOffset] = (byte)prefLen;
         }
         else
@@ -379,7 +365,7 @@ internal static class IndexPageCodec
         long nextPage,
         long tailPage,
         int? maxPrefixLength = null)
-        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength)
+        => CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry.Entry, static entry => entry.ChildPage, prevPage, nextPage, tailPage, true, maxPrefixLength, out _)
             ? BuildIntermediatePage(layout, pageSize, parentTdefPage, entries, prevPage, nextPage, tailPage, maxPrefixLength)
             : null;
 
@@ -1043,7 +1029,7 @@ internal static class IndexPageCodec
     /// <param name="parentTdefPage">The parentTdefPage for this phase.</param>
     /// <param name="entries">The entries for this phase.</param>
     internal static void ValidateLeafMetadata(IndexPageLayout layout, int pageSize, long parentTdefPage, IReadOnlyList<IndexEntry> entries)
-        => _ = CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, 0, 0, 0, false, null);
+        => _ = CanBuildPage(layout, pageSize, parentTdefPage, entries, static entry => entry, null, 0, 0, 0, false, null, out _);
 
     private static bool CanBuildPage<T>(
         IndexPageLayout layout,
@@ -1056,7 +1042,8 @@ internal static class IndexPageCodec
         long nextPage,
         long tailPage,
         bool enablePrefixCompression,
-        int? maxPrefixLength)
+        int? maxPrefixLength,
+        out int prefix)
     {
         Guard.NotNull(entries, nameof(entries));
         if (pageSize <= layout.FirstEntryOffset || pageSize - layout.FirstEntryOffset > ushort.MaxValue)
@@ -1114,7 +1101,7 @@ internal static class IndexPageCodec
             sharedPrefix = matched;
         }
 
-        int prefix = enablePrefixCompression ? Math.Min(sharedPrefix, ushort.MaxValue) : 0;
+        prefix = enablePrefixCompression ? Math.Min(sharedPrefix, ushort.MaxValue) : 0;
         prefix = Math.Min(prefix, maxPrefixLength ?? prefix);
         if (layout.PrefLenOffset == Constants.IndexLeafPage.Jet3.PrefLenOffset)
         {
@@ -1218,56 +1205,6 @@ internal static class IndexPageCodec
         {
             page[sentinelByteOffset] |= (byte)(1 << (sentinelBitIndex % 8));
         }
-    }
-
-    private static int ComputeSharedPrefixLength(IReadOnlyList<IndexEntry> entries)
-    {
-        if (entries.Count < 2)
-        {
-            return 0;
-        }
-
-        byte[] first = entries[0].Key;
-        int prefixLength = first.Length;
-        for (int i = 1; i < entries.Count && prefixLength > 0; i++)
-        {
-            byte[] other = entries[i].Key;
-            int max = Math.Min(prefixLength, other.Length);
-            int j = 0;
-            while (j < max && first[j] == other[j])
-            {
-                j++;
-            }
-
-            prefixLength = j;
-        }
-
-        return Math.Min(prefixLength, 0xFFFF);
-    }
-
-    private static int ComputeIntermediatePrefixLength(IReadOnlyList<DecodedIntermediateEntry> entries)
-    {
-        if (entries.Count < 2)
-        {
-            return 0;
-        }
-
-        byte[] first = entries[0].Entry.Key;
-        int prefixLength = first.Length;
-        for (int i = 1; i < entries.Count && prefixLength > 0; i++)
-        {
-            byte[] other = entries[i].Entry.Key;
-            int max = Math.Min(prefixLength, other.Length);
-            int j = 0;
-            while (j < max && first[j] == other[j])
-            {
-                j++;
-            }
-
-            prefixLength = j;
-        }
-
-        return Math.Min(prefixLength, 0xFFFF);
     }
 
     private static bool TryDecodeLeafEntriesCore(

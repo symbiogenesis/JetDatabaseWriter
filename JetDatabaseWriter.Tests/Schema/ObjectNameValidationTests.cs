@@ -81,19 +81,8 @@ public sealed class ObjectNameValidationTests
 
     /// <summary>Gets every writer-created format in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
-    public static TheoryData<DatabaseFormat, WriteMode> AllFormatsAndModes()
-    {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
-        foreach (DatabaseFormat format in Formats)
-        {
-            foreach (WriteMode mode in new[] { WriteMode.Direct, WriteMode.AutoCommit, WriteMode.ExplicitCommit })
-            {
-                data.Add(format, mode);
-            }
-        }
-
-        return data;
-    }
+    public static TheoryData<DatabaseFormat, WriteMode> AllFormatsAndModes() =>
+        WriteModes.Combine(Formats);
 
     [Theory]
     [MemberData(nameof(FormatsAndInvalidNames))]

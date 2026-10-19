@@ -42,7 +42,7 @@ internal static class AccessObjectName
             return "it is empty";
         }
 
-        if (IsAllWhiteSpace(name))
+        if (string.IsNullOrWhiteSpace(name))
         {
             return "it contains only white space";
         }
@@ -165,19 +165,6 @@ internal static class AccessObjectName
         }
 
         return escaped?.ToString() ?? name;
-    }
-
-    private static bool IsAllWhiteSpace(string name)
-    {
-        foreach (char c in name)
-        {
-            if (!char.IsWhiteSpace(c))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static bool IsControl(char c) => c is <= '\u001F' or '\u007F';

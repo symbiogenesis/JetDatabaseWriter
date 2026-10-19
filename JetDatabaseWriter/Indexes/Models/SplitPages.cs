@@ -21,6 +21,4 @@ internal class SplitPages : List<List<IndexEntry>>
         : base(pages)
     {
     }
-
-    public IndexEntry GetLastEntry(int pageIndex) => this[pageIndex][^1];
 }

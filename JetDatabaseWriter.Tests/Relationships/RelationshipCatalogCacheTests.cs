@@ -37,12 +37,12 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
     /// <summary>Gets every format in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
     public static TheoryData<DatabaseFormat, WriteMode> FormatsAndModes() =>
-        Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
+        WriteModes.Combine(DatabaseFormat.Jet3Mdb, DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     /// <summary>Gets Jet4 and ACCDB in every write mode.</summary>
     /// <returns>The format and write-mode pairs.</returns>
     public static TheoryData<DatabaseFormat, WriteMode> Jet4AndAccdbModes() =>
-        Combine(DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
+        WriteModes.Combine(DatabaseFormat.Jet4Mdb, DatabaseFormat.AceAccdb);
 
     /// <summary>Gets every format.</summary>
     /// <returns>The formats.</returns>
@@ -345,20 +345,6 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
             $"A second no-match delete on {table} read {counting.BytesRead} bytes of a {ms.Length}-byte file.");
     }
 
-    private static TheoryData<DatabaseFormat, WriteMode> Combine(params DatabaseFormat[] formats)
-    {
-        var data = new TheoryData<DatabaseFormat, WriteMode>();
-        foreach (DatabaseFormat format in formats)
-        {
-            foreach (WriteMode mode in Enum.GetValues<WriteMode>())
-            {
-                data.Add(format, mode);
-            }
-        }
-
-        return data;
-    }
-
     private static AccessWriterOptions WriterOptions(WriteMode mode) => new()
     {
         UseLockFile = false,
@@ -372,18 +358,8 @@ public sealed class RelationshipCatalogCacheTests(DatabaseCache db) : IClassFixt
         return await AccessWriter.OpenAsync(ms, WriterOptions(mode), leaveOpen: true, Ct);
     }
 
-    private static async Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
-    {
-        if (mode != WriteMode.ExplicitCommit)
-        {
-            await work();
-            return;
-        }
-
-        await using JetTransaction tx = await writer.BeginTransactionAsync(Ct);
-        await work();
-        await tx.CommitAsync(Ct);
-    }
+    private static Task RunAsync(AccessWriter writer, WriteMode mode, Func<Task> work)
+        => WriteModes.RunAsync(writer, mode, work, Ct);
 
     /// <summary>Checks that inserting a child whose parent does not exist is rejected by the relationship.</summary>
     /// <param name="writer">The writer.</param>

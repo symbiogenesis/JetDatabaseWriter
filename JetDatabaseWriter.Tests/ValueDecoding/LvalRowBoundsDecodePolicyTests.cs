@@ -2,7 +2,6 @@ namespace JetDatabaseWriter.Tests.ValueDecoding;
 
 using System;
 using System.Buffers.Binary;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -77,9 +76,9 @@ public sealed class LvalRowBoundsDecodePolicyTests
             await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: ct);
             if (strict)
             {
-                InvalidDataException typed = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct)));
-                InvalidDataException strings = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)));
-                InvalidDataException poco = await Assert.ThrowsAsync<InvalidDataException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct)));
+                InvalidDataException typed = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct));
+                InvalidDataException strings = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct));
+                InvalidDataException poco = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct));
                 InvalidDataException natural = await Assert.ThrowsAsync<InvalidDataException>(async () => await ReadNaturalProjectionAsync(reader, ole, ct));
                 InvalidDataException table = await Assert.ThrowsAsync<InvalidDataException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct));
                 Assert.Contains("Value", typed.Message, StringComparison.Ordinal);
@@ -90,9 +89,9 @@ public sealed class LvalRowBoundsDecodePolicyTests
             }
             else
             {
-                Assert.Equal(DBNull.Value, Assert.Single(await CollectAsync(reader.Rows("Values", cancellationToken: ct)))[1]);
-                Assert.Null(Assert.Single(await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct)))[1]);
-                Assert.Null(Assert.Single(await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))).Value);
+                Assert.Equal(DBNull.Value, Assert.Single(await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct))[1]);
+                Assert.Null(Assert.Single(await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct))[1]);
+                Assert.Null(Assert.Single(await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value);
                 Assert.Null(await ReadNaturalProjectionAsync(reader, ole, ct));
                 Assert.Equal(DBNull.Value, Assert.Single((await reader.ReadTableAsync("Values", cancellationToken: ct)).Rows.Cast<System.Data.DataRow>())[1]);
                 listener.Flush();
@@ -135,9 +134,9 @@ public sealed class LvalRowBoundsDecodePolicyTests
             leaveOpen: true,
             cancellationToken: ct);
         stream.FailureOffset = LongValueStore.PageNumber(descriptor.FirstDp) * profile.PageSize;
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.Rows("Values", cancellationToken: ct))));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.RowsAsStrings("Values", cancellationToken: ct))));
-        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await CollectAsync(reader.Rows<ValueRow>("Values", cancellationToken: ct))));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.Rows("Values", cancellationToken: ct).ToListAsync(ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.RowsAsStrings("Values", cancellationToken: ct).ToListAsync(ct)));
+        Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.Rows<ValueRow>("Values", cancellationToken: ct).ToListAsync(ct)));
         Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await ReadNaturalProjectionAsync(reader, ole, ct)));
         Assert.Same(stream.Failure, await Assert.ThrowsAsync<IOException>(async () => await reader.ReadTableAsync("Values", cancellationToken: ct)));
     }
@@ -171,19 +170,8 @@ public sealed class LvalRowBoundsDecodePolicyTests
 
     private static async Task<object?> ReadNaturalProjectionAsync(AccessReader reader, bool ole, CancellationToken ct)
         => ole
-            ? Assert.Single(await CollectAsync(reader.Rows<OleRow>("Values", cancellationToken: ct))).Value
-            : Assert.Single(await CollectAsync(reader.Rows<MemoRow>("Values", cancellationToken: ct))).Value;
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
-    }
+            ? Assert.Single(await reader.Rows<OleRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value
+            : Assert.Single(await reader.Rows<MemoRow>("Values", cancellationToken: ct).ToListAsync(ct)).Value;
 
     private sealed class ValueRow
     {

@@ -81,8 +81,8 @@ public sealed class MixedOleScalarTypeTests
 
         stream.Position = 0;
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, PageCacheSize = 1 }, leaveOpen: true, cancellationToken: Ct);
-        List<ScalarRow> expected = await CollectAsync(Rows<ScalarRow>(reader, hybrid: false));
-        List<ScalarRow> actual = await CollectAsync(Rows<ScalarRow>(reader, hybrid: true));
+        List<ScalarRow> expected = await Rows<ScalarRow>(reader, hybrid: false).ToListAsync(Ct);
+        List<ScalarRow> actual = await Rows<ScalarRow>(reader, hybrid: true).ToListAsync(Ct);
         Assert.Equal(3, actual.Count);
         for (int i = 0; i < expected.Count; i++)
         {
@@ -101,8 +101,8 @@ public sealed class MixedOleScalarTypeTests
         Assert.Null(actual[2].GuidValue);
         Assert.Null(actual[2].OleValue);
 
-        List<WidenedRow> widenedExpected = await CollectAsync(Rows<WidenedRow>(reader, hybrid: false));
-        List<WidenedRow> widened = await CollectAsync(Rows<WidenedRow>(reader, hybrid: true));
+        List<WidenedRow> widenedExpected = await Rows<WidenedRow>(reader, hybrid: false).ToListAsync(Ct);
+        List<WidenedRow> widened = await Rows<WidenedRow>(reader, hybrid: true).ToListAsync(Ct);
         Assert.Equal(widenedExpected.Count, widened.Count);
         for (int i = 0; i < widened.Count; i++)
         {
@@ -169,15 +169,15 @@ public sealed class MixedOleScalarTypeTests
         await using AccessReader reader = await AccessReader.OpenAsync(stream, new AccessReaderOptions { UseLockFile = false, StrictParsing = strict }, leaveOpen: true, cancellationToken: Ct);
         if (strict)
         {
-            JetLimitationException expected = await Assert.ThrowsAsync<JetLimitationException>(async () => await CollectAsync(Rows<NumericRow>(reader, hybrid: false)));
-            JetLimitationException actual = await Assert.ThrowsAsync<JetLimitationException>(async () => await CollectAsync(Rows<NumericRow>(reader, hybrid: true)));
+            JetLimitationException expected = await Assert.ThrowsAsync<JetLimitationException>(async () => await Rows<NumericRow>(reader, hybrid: false).ToListAsync(Ct));
+            JetLimitationException actual = await Assert.ThrowsAsync<JetLimitationException>(async () => await Rows<NumericRow>(reader, hybrid: true).ToListAsync(Ct));
             Assert.Equal(expected.ErrorCode, actual.ErrorCode);
             Assert.Equal(expected.Message, actual.Message);
         }
         else
         {
-            NumericRow expected = Assert.Single(await CollectAsync(Rows<NumericRow>(reader, hybrid: false)));
-            NumericRow actual = Assert.Single(await CollectAsync(Rows<NumericRow>(reader, hybrid: true)));
+            NumericRow expected = Assert.Single(await Rows<NumericRow>(reader, hybrid: false).ToListAsync(Ct));
+            NumericRow actual = Assert.Single(await Rows<NumericRow>(reader, hybrid: true).ToListAsync(Ct));
             Assert.Null(actual.Amount);
             Assert.Equivalent(expected, actual, strict: true);
             Assert.Equal(payload, actual.OleValue);
@@ -191,17 +191,6 @@ public sealed class MixedOleScalarTypeTests
         => hybrid
             ? reader.Rows<T>("Values", cancellationToken: Ct)
             : reader.Services.Tables.RowsWithDecoder<T>("Values", forceProjection: true, progress: null, cancellationToken: Ct);
-
-    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> rows)
-    {
-        var result = new List<T>();
-        await foreach (T row in rows)
-        {
-            result.Add(row);
-        }
-
-        return result;
-    }
 
     [SuppressMessage("Performance", "CA1819:Properties should not return arrays", Justification = "OLE bindings preserve stored bytes.")]
     private sealed class NumericRow

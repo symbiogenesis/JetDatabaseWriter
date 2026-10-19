@@ -307,27 +307,6 @@ internal sealed class IndexMaintainer(
     }
 
     /// <summary>
-    /// Reads <paramref name="pageNumber"/> through the page cache and returns
-    /// a freshly cloned, caller-owned copy of the bytes. The cache buffer is
-    /// returned to the pool before this method returns, so callers must not
-    /// retain any reference to the original buffer.
-    /// </summary>
-    /// <param name="pageNumber">The page number.</param>
-    /// <param name="cancellationToken">A token used to cancel the operation.</param>
-    private async ValueTask<byte[]> ReadAndClonePageAsync(long pageNumber, CancellationToken cancellationToken)
-    {
-        byte[] pageBytes = await pager.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return (byte[])pageBytes.Clone();
-        }
-        finally
-        {
-            PageBuffers.Return(pageBytes);
-        }
-    }
-
-    /// <summary>
     /// Parsed snapshot of the per-table TDEF bytes needed by the index
     /// maintenance paths: the logical TDEF chain (every page of a wide
     /// table's definition, stitched into one buffer that remembers its
@@ -929,7 +908,7 @@ internal sealed class IndexMaintainer(
                     continue;
                 }
 
-                byte[] page = await this.ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+                byte[] page = await pager.ReadPageCopyAsync(pageNumber, cancellationToken).ConfigureAwait(false);
                 if (Ri32(page, 4) != tdefPage)
                 {
                     throw CreateCorruptCatalogIndexException(pageNumber, catalog.Catalog.GetNameOrFallback(indexNumber), "The index page belongs to another table.");
@@ -1679,7 +1658,7 @@ internal sealed class IndexMaintainer(
                 continue;
             }
 
-            byte[] page = await this.ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] page = await pager.ReadPageCopyAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             if (Ri32(page, 4) != tdefPage)
             {
                 return null;
@@ -1996,7 +1975,7 @@ internal sealed class IndexMaintainer(
                 return false;
             }
 
-            byte[] rootPage = await this.ReadAndClonePageAsync(firstDp, cancellationToken).ConfigureAwait(false);
+            byte[] rootPage = await pager.ReadPageCopyAsync(firstDp, cancellationToken).ConfigureAwait(false);
 
             if (preserveStoredKeys)
             {
@@ -2210,7 +2189,7 @@ internal sealed class IndexMaintainer(
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
-                    byte[] leaf = await this.ReadAndClonePageAsync(walkPage, cancellationToken).ConfigureAwait(false);
+                    byte[] leaf = await pager.ReadPageCopyAsync(walkPage, cancellationToken).ConfigureAwait(false);
 
                     if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
                     {
@@ -2300,7 +2279,7 @@ internal sealed class IndexMaintainer(
                 throw new JetCorruptDataException("The preserved catalog index contains an invalid leaf chain.");
             }
 
-            byte[] leaf = await this.ReadAndClonePageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
+            byte[] leaf = await pager.ReadPageCopyAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             if (leaf[0] != Constants.IndexLeafPage.PageTypeLeaf)
             {
                 throw new JetCorruptDataException("The preserved catalog index chain contains a non-leaf page.");

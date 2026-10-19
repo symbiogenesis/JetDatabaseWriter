@@ -6,10 +6,10 @@ using System.Data;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using JetDatabaseWriter.Enums;
 using JetDatabaseWriter.Indexes;
 using JetDatabaseWriter.Indexes.Models;
 using JetDatabaseWriter.Models;
+using JetDatabaseWriter.Tests.Infrastructure;
 using Xunit;
 
 /// <summary>
@@ -53,8 +53,8 @@ public sealed class IndexTailPageAppendTests
         // byte[] maps to Ole (0x0B). Microsoft Access does not permit
         // CREATE INDEX on OLE Object columns; the writer must surface that
         // up-front instead of silently emitting an empty schema-only leaf.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
 
         NotSupportedException ex = await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.CreateTableAsync(
@@ -77,8 +77,8 @@ public sealed class IndexTailPageAppendTests
         // whole index must be rejected — the engine cannot encode a sort
         // key for the OLE column, so a partial composite key would sort
         // incorrectly.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using AccessWriter writer = await OpenWriterAsync(stream);
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
+        await using AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken);
 
         await Assert.ThrowsAsync<NotSupportedException>(async () =>
             await writer.CreateTableAsync(
@@ -96,8 +96,8 @@ public sealed class IndexTailPageAppendTests
     {
         // The rejection must be scoped to IndexDefinition validation; OLE
         // columns themselves remain a fully supported column type.
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "OleColumnSupported",
@@ -108,7 +108,7 @@ public sealed class IndexTailPageAppendTests
                 TestContext.Current.CancellationToken);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         IReadOnlyList<ColumnMetadata> cols = await reader.GetColumnMetadataAsync(
             "OleColumnSupported", TestContext.Current.CancellationToken);
         Assert.Equal(2, cols.Count);
@@ -179,9 +179,9 @@ public sealed class IndexTailPageAppendTests
         // regression to bulk rebuild would allocate ~50 fresh leaf + intermediate
         // pages, growing the file by hundreds of KB.
         const int initialRows = 700;
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -200,7 +200,7 @@ public sealed class IndexTailPageAppendTests
 
         long sizeAfterBulk = stream.Length;
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             // Strictly-greater-than current tree max. Triggers the tail-page append
             // append-only fast path.
@@ -220,7 +220,7 @@ public sealed class IndexTailPageAppendTests
             $"Expected append-only fast path to grow the file by ≤ 4 pages; grew by {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
         // Row count must still be correct after the append.
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows + 1, rowsRead.Rows.Count);
     }
@@ -236,9 +236,9 @@ public sealed class IndexTailPageAppendTests
         // fall-back path (single-leaf splice single-leaf splice, multi-level rebuild
         // bulk rebuild) can fire depending on tree shape.
         const int initialRows = 1400;
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -257,7 +257,7 @@ public sealed class IndexTailPageAppendTests
             await writer.InsertRowsAsync("T", rows, this.ct);
         }
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             // Falls into a gap (id = 5 is well below the tree max) — fails
             // the tail-page append append predicate and routes through the existing
@@ -265,7 +265,7 @@ public sealed class IndexTailPageAppendTests
             await writer.InsertRowAsync("T", [5], this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal((initialRows / 2) + 1, rowsRead.Rows.Count);
     }
@@ -279,9 +279,9 @@ public sealed class IndexTailPageAppendTests
         // generous bound: 16 fresh data pages + 16 misc = 32 pages.
         const int initialRows = 700;
         const int appends = 50;
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -300,7 +300,7 @@ public sealed class IndexTailPageAppendTests
 
         long sizeAfterBulk = stream.Length;
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             for (int j = 0; j < appends; j++)
             {
@@ -313,7 +313,7 @@ public sealed class IndexTailPageAppendTests
             growth <= 32 * Constants.PageSizes.Jet4,
             $"Expected {appends} append-only inserts to stay on the fast path; total growth {growth} bytes ({growth / Constants.PageSizes.Jet4} pages).");
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows + appends, rowsRead.Rows.Count);
     }
@@ -326,9 +326,9 @@ public sealed class IndexTailPageAppendTests
         // value (i.e. they ended up in the correct on-disk row, not lost
         // or duplicated).
         const int initialRows = 700;
-        await using MemoryStream stream = await CreateFreshAccdbStreamAsync();
+        await using MemoryStream stream = await InMemoryAccessDatabase.CreateFreshAceAccdbStreamAsync(TestContext.Current.CancellationToken);
 
-        await using (AccessWriter writer = await OpenWriterAsync(stream))
+        await using (AccessWriter writer = await InMemoryAccessDatabase.OpenWriterAsync(stream, TestContext.Current.CancellationToken))
         {
             await writer.CreateTableAsync(
                 "T",
@@ -350,7 +350,7 @@ public sealed class IndexTailPageAppendTests
             await writer.InsertRowAsync("T", [initialRows + 2], this.ct);
         }
 
-        await using AccessReader reader = await OpenReaderAsync(stream);
+        await using AccessReader reader = await InMemoryAccessDatabase.OpenReaderAsync(stream, TestContext.Current.CancellationToken);
         DataTable rowsRead = await reader.ReadTableAsync("T", cancellationToken: this.ct);
         Assert.Equal(initialRows + 3, rowsRead.Rows.Count);
 
@@ -368,40 +368,4 @@ public sealed class IndexTailPageAppendTests
 
     private static int ReadI32(byte[] b, int o) =>
         b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24);
-
-    private static async ValueTask<MemoryStream> CreateFreshAccdbStreamAsync()
-    {
-        var ms = new MemoryStream();
-        await using (AccessWriter writer = await AccessWriter.CreateDatabaseAsync(
-            ms,
-            DatabaseFormat.AceAccdb,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken))
-        {
-        }
-
-        ms.Position = 0;
-        return ms;
-    }
-
-    private static ValueTask<AccessWriter> OpenWriterAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessWriter.OpenAsync(
-            stream,
-            new AccessWriterOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
-
-    private static ValueTask<AccessReader> OpenReaderAsync(MemoryStream stream)
-    {
-        stream.Position = 0;
-        return AccessReader.OpenAsync(
-            stream,
-            new AccessReaderOptions { UseLockFile = false },
-            leaveOpen: true,
-            TestContext.Current.CancellationToken);
-    }
 }
