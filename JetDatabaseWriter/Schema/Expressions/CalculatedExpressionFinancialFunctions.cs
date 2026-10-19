@@ -10,16 +10,16 @@ internal static class CalculatedExpressionFinancialFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "FV", 3, 5, static function => FinancialFutureValue(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "PV", 3, 5, static function => FinancialPresentValue(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "PMT", 3, 5, static function => FinancialPayment(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "NPER", 3, 5, static function => FinancialPeriods(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "IPMT", 4, 6, static function => FinancialInterestPayment(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "PPMT", 4, 6, static function => FinancialPrincipalPayment(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "DDB", 4, 5, static function => FinancialDoubleDecliningBalance(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "SLN", 3, 3, static function => (ToDouble(function.Arg(0)) - ToDouble(function.Arg(1))) / ToDouble(function.Arg(2))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "SYD", 4, 4, static function => FinancialSumOfYearsDepreciation(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Financial, "RATE", 3, 6, static function => FinancialRate(function)));
+        AddFunction(functions, "FV", 3, 5, static function => FinancialFutureValue(function));
+        AddFunction(functions, "PV", 3, 5, static function => FinancialPresentValue(function));
+        AddFunction(functions, "PMT", 3, 5, static function => FinancialPayment(function));
+        AddFunction(functions, "NPER", 3, 5, static function => FinancialPeriods(function));
+        AddFunction(functions, "IPMT", 4, 6, static function => FinancialInterestPayment(function));
+        AddFunction(functions, "PPMT", 4, 6, static function => FinancialPrincipalPayment(function));
+        AddFunction(functions, "DDB", 4, 5, static function => FinancialDoubleDecliningBalance(function));
+        AddFunction(functions, "SLN", 3, 3, static function => (ToDouble(function.Arg(0)) - ToDouble(function.Arg(1))) / ToDouble(function.Arg(2)));
+        AddFunction(functions, "SYD", 4, 4, static function => FinancialSumOfYearsDepreciation(function));
+        AddFunction(functions, "RATE", 3, 6, static function => FinancialRate(function));
     }
 
     private static double FinancialFutureValue(CalculatedFunctionInvocation function)

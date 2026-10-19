@@ -100,16 +100,13 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         => new(JetErrorCode.IndexesUnmaintainable, $"Unique indexes on table '{tableName}' cannot be enforced: {reason}. The table is unchanged.", new JetErrorInfo { TableName = tableName, Reason = reason });
 
     /// <summary>
-    /// Encodes the composite index key for one row using a previously
-    /// computed canonical numeric scale per key column.
+    /// Encodes the composite index key for one row using each column's declared scale.
     /// </summary>
     /// <param name="descriptor">The descriptor.</param>
     /// <param name="row">The row values or row bytes.</param>
-    /// <param name="numericTargetScales">The numeric target scales.</param>
     internal byte[] EncodeCompositeKeyForUniqueCheck(
         UniqueIndexDescriptor descriptor,
-        object[] row,
-        int[] numericTargetScales)
+        object[] row)
     {
         bool legacyNumeric = format.LegacyNumericIndexKeys;
         int keyCount = descriptor.KeyColumns.Count;
@@ -121,12 +118,11 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
             return col.Type == NumericType
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[0], legacyNumeric)
+                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
                 : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
         }
 
         // Multi-column: encode into per-column spans then concatenate.
-        Span<int> lengths = stackalloc int[keyCount];
         byte[][] perColumn = new byte[keyCount][];
         int totalLen = 0;
         for (int k = 0; k < keyCount; k++)
@@ -135,9 +131,8 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             object cell = snapIdx < row.Length ? row[snapIdx] : DBNull.Value;
             object? value = cell is null or DBNull ? null : cell;
             perColumn[k] = col.Type == NumericType
-                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, (byte)numericTargetScales[k], legacyNumeric)
+                ? IndexKeyEncoder.EncodeNumericEntryAtDeclaredScale(value, ascending, col.NumericScale, legacyNumeric)
                 : IndexKeyEncoder.EncodeColumnEntry(format, col, value, ascending);
-            lengths[k] = perColumn[k].Length;
             totalLen += perColumn[k].Length;
         }
 
@@ -146,7 +141,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         for (int k = 0; k < keyCount; k++)
         {
             perColumn[k].AsSpan().CopyTo(composite.AsSpan(offset));
-            offset += lengths[k];
+            offset += perColumn[k].Length;
         }
 
         return composite;
@@ -183,7 +178,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         // Keep Numeric and Memo indexes on the full-table snapshot path:
         // Numeric needs descriptor-scale validation, and Memo/Hyperlink
         // values may require LVAL traversal outside the fast path.
-        if (RequiresSnapshotForPreInsert(descriptors) || !CanUseCursorFastPath(descriptors))
+        if (RequiresSnapshotForPreInsert(descriptors))
         {
             List<LocatedRow> existingRows = await snapshots.ReadRowsAsync(tdefPage, cancellationToken).ConfigureAwait(false);
             this.CheckUniqueIndexesCore(tableName, descriptors, existingRows, pendingRows, replaceAtRowIndex: null);
@@ -214,11 +209,9 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
             this.ReadIndexPageOwnedAsync,
             format.PageSize);
 
-        int[][] numericScales = new int[descriptors.Count][];
         var seenSets = new HashSet<byte[]>[descriptors.Count];
         for (int d = 0; d < descriptors.Count; d++)
         {
-            numericScales[d] = BuildNumericScales(descriptors[d]);
             seenSets[d] = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
         }
 
@@ -234,7 +227,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
                     continue;
                 }
 
-                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p], numericScales[d]);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingRows[p]);
 
                 if (!seenSets[d].Add(key)
                     || await cursor.ContainsKeyAsync(descriptor.RootPage, key, cancellationToken).ConfigureAwait(false))
@@ -313,6 +306,11 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
     {
         foreach (UniqueIndexDescriptor descriptor in descriptors)
         {
+            if (descriptor.RootPage <= 0)
+            {
+                return true;
+            }
+
             foreach (KeyColumnInfo keyColumn in descriptor.KeyColumns)
             {
                 if (keyColumn.Col.Type is NumericType or MemoType)
@@ -323,31 +321,6 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
         }
 
         return false;
-    }
-
-    private static bool CanUseCursorFastPath(IReadOnlyList<UniqueIndexDescriptor> descriptors)
-    {
-        foreach (UniqueIndexDescriptor descriptor in descriptors)
-        {
-            if (descriptor.RootPage <= 0)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static int[] BuildNumericScales(UniqueIndexDescriptor descriptor)
-    {
-        int[] scales = new int[descriptor.KeyColumns.Count];
-        for (int k = 0; k < descriptor.KeyColumns.Count; k++)
-        {
-            ColumnInfo kCol = descriptor.KeyColumns[k].Col;
-            scales[k] = kCol.Type == NumericType ? kCol.NumericScale : -1;
-        }
-
-        return scales;
     }
 
     /// <summary>
@@ -374,13 +347,6 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
 
         foreach (UniqueIndexDescriptor descriptor in descriptors)
         {
-            int[] numericTargetScales = new int[descriptor.KeyColumns.Count];
-            for (int k = 0; k < descriptor.KeyColumns.Count; k++)
-            {
-                ColumnInfo kCol = descriptor.KeyColumns[k].Col;
-                numericTargetScales[k] = kCol.Type == NumericType ? kCol.NumericScale : -1;
-            }
-
             var seen = new HashSet<byte[]>(ByteArrayEqualityComparer.Instance);
 
             for (int r = 0; r < existingRowCount; r++)
@@ -394,7 +360,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
                     continue;
                 }
 
-                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow, numericTargetScales);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, effectiveRow);
 
                 if (!seen.Add(key))
                 {
@@ -409,7 +375,7 @@ internal sealed class UniqueIndexChecker(JetFormat format, IPageSource pageSourc
                     continue;
                 }
 
-                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p], numericTargetScales);
+                byte[] key = this.EncodeCompositeKeyForUniqueCheck(descriptor, pendingInsertRows[p]);
 
                 if (!seen.Add(key))
                 {

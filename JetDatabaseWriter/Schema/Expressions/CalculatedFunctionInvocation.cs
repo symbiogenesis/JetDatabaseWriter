@@ -5,13 +5,10 @@ using System.Collections.Generic;
 
 internal readonly struct CalculatedFunctionInvocation(
     string name,
-    string normalizedName,
     IReadOnlyList<CalculatedExpressionNode> args,
     CalculatedExpressionEvaluationContext context)
 {
     public string Name { get; } = name;
-
-    public string NormalizedName { get; } = normalizedName;
 
     public int Count => args.Count;
 

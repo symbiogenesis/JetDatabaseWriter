@@ -58,7 +58,7 @@ public sealed class CalculatedExpressionDatePrecisionTests
         var table = new TableDef { Columns = [new ColumnInfo { Name = "Calc" }] };
         var constraints = new List<ColumnConstraint>
         {
-            new() { Name = "Calc", ClrType = typeof(T), IsCalculated = true, CalculationExpression = expression, CalculatedExpressionPlan = CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false) },
+            new() { Name = "Calc", ClrType = typeof(T), IsCalculated = true, CalculationExpression = expression, CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false) },
         };
         object[] values = [DBNull.Value];
         CalculatedExpressionEvaluator.Apply(table, constraints, values, force: false);

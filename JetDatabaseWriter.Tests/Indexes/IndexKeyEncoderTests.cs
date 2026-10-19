@@ -1104,13 +1104,6 @@ public sealed class IndexKeyEncoderTests
     }
 
     [Fact]
-    public void Numeric_ComputeMaxNumericScale_ReturnsHighestScaleAcrossValues()
-    {
-        object?[] values = [1m, 1.5m, null, 1.50m, 0.001m, DBNull.Value];
-        Assert.Equal(3, IndexKeyEncoder.ComputeMaxNumericScale(values));
-    }
-
-    [Fact]
     public void Numeric_AcceptsBoxedNumericTypes()
     {
         // Integer and double inputs route through the existing ToDecimal helper.

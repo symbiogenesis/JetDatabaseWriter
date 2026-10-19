@@ -11,27 +11,27 @@ internal static class CalculatedExpressionDateTimeFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATE", 0, 0, static _ => CurrentAccessLocalDateTime().Date, "TODAY"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "NOW", 0, 0, static _ => CurrentAccessLocalDateTime()));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIME", 0, 0, static _ => TimeOnDayZero(CurrentAccessLocalDateTime())));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEVALUE", 1, 1, static function => (function.Arg(0) is DateTime date ? date : ParseDate(ToText(function.Arg(0)))).Date));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATESERIAL", 3, 3, static function => DateSerial(ToVbaInteger(function.Arg(0)), ToVbaInteger(function.Arg(1)), ToVbaInteger(function.Arg(2)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEADD", 3, 3, static function => DateAdd(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), ToDateTime(function.Arg(2)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEDIFF", 3, 5, static function => DateDiff(ToText(function.Arg(0)), ToDateTime(function.Arg(1)), ToDateTime(function.Arg(2)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DATEPART", 2, 4, static function => DatePart(ToText(function.Arg(0)), ToDateTime(function.Arg(1)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "YEAR", 1, 1, static function => ToDateTime(function.Arg(0)).Year));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "MONTH", 1, 1, static function => ToDateTime(function.Arg(0)).Month));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "DAY", 1, 1, static function => ToDateTime(function.Arg(0)).Day));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "HOUR", 1, 1, static function => ToDateTime(function.Arg(0)).Hour));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "MINUTE", 1, 1, static function => ToDateTime(function.Arg(0)).Minute));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "SECOND", 1, 1, static function => ToDateTime(function.Arg(0)).Second));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMEVALUE", 1, 1, static function => TimeOnDayZero(ToDateTime(function.Arg(0)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMESERIAL", 3, 3, static function => EvaluateTimeSerial(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "TIMER", 0, 0, static _ => TimerSeconds(CurrentLocalDateTime())));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "MONTHNAME", 1, 2, static function => CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(checked((int)ToDecimal(function.Arg(0))))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "WEEKDAY", 1, 2, static function => Weekday(ToDateTime(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 1)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "WEEKDAYNAME", 1, 3, static function => WeekdayName(checked((int)ToDecimal(function.Arg(0))), function.Count > 1 && ToBoolean(function.Arg(1)), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : 1)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.DateTime, "CDATE", 1, 1, static function => ToDateTime(function.Arg(0)), "CVDATE"));
+        AddFunction(functions, "DATE", 0, 0, static _ => CurrentAccessLocalDateTime().Date, "TODAY");
+        AddFunction(functions, "NOW", 0, 0, static _ => CurrentAccessLocalDateTime());
+        AddFunction(functions, "TIME", 0, 0, static _ => TimeOnDayZero(CurrentAccessLocalDateTime()));
+        AddFunction(functions, "DATEVALUE", 1, 1, static function => (function.Arg(0) is DateTime date ? date : ParseDate(ToText(function.Arg(0)))).Date);
+        AddFunction(functions, "DATESERIAL", 3, 3, static function => DateSerial(ToVbaInteger(function.Arg(0)), ToVbaInteger(function.Arg(1)), ToVbaInteger(function.Arg(2))));
+        AddFunction(functions, "DATEADD", 3, 3, static function => DateAdd(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), ToDateTime(function.Arg(2))));
+        AddFunction(functions, "DATEDIFF", 3, 5, static function => DateDiff(ToText(function.Arg(0)), ToDateTime(function.Arg(1)), ToDateTime(function.Arg(2))));
+        AddFunction(functions, "DATEPART", 2, 4, static function => DatePart(ToText(function.Arg(0)), ToDateTime(function.Arg(1))));
+        AddFunction(functions, "YEAR", 1, 1, static function => ToDateTime(function.Arg(0)).Year);
+        AddFunction(functions, "MONTH", 1, 1, static function => ToDateTime(function.Arg(0)).Month);
+        AddFunction(functions, "DAY", 1, 1, static function => ToDateTime(function.Arg(0)).Day);
+        AddFunction(functions, "HOUR", 1, 1, static function => ToDateTime(function.Arg(0)).Hour);
+        AddFunction(functions, "MINUTE", 1, 1, static function => ToDateTime(function.Arg(0)).Minute);
+        AddFunction(functions, "SECOND", 1, 1, static function => ToDateTime(function.Arg(0)).Second);
+        AddFunction(functions, "TIMEVALUE", 1, 1, static function => TimeOnDayZero(ToDateTime(function.Arg(0))));
+        AddFunction(functions, "TIMESERIAL", 3, 3, static function => EvaluateTimeSerial(function));
+        AddFunction(functions, "TIMER", 0, 0, static _ => TimerSeconds(CurrentLocalDateTime()));
+        AddFunction(functions, "MONTHNAME", 1, 2, static function => CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(checked((int)ToDecimal(function.Arg(0)))));
+        AddFunction(functions, "WEEKDAY", 1, 2, static function => Weekday(ToDateTime(function.Arg(0)), function.Count > 1 ? checked((int)ToDecimal(function.Arg(1))) : 1));
+        AddFunction(functions, "WEEKDAYNAME", 1, 3, static function => WeekdayName(checked((int)ToDecimal(function.Arg(0))), function.Count > 1 && ToBoolean(function.Arg(1)), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : 1));
+        AddFunction(functions, "CDATE", 1, 1, static function => ToDateTime(function.Arg(0)), "CVDATE");
     }
 
 #pragma warning disable RS0030 // Access DATE/NOW/TIME/TIMER evaluate against the host local clock.

@@ -26,31 +26,31 @@ internal static partial class CalculatedExpressionTextFunctions
 
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "LEN", 1, 1, static function => ToText(function.Arg(0)).Length));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "LEFT", 2, 2, static function => Left(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "RIGHT", 2, 2, static function => Right(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "MID", 2, 3, static function => Mid(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : int.MaxValue)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "UCASE", 1, 1, static function => ToText(function.Arg(0)).ToUpperInvariant(), "UPPER"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "LCASE", 1, 1, static function => CultureInfo.InvariantCulture.TextInfo.ToLower(ToText(function.Arg(0))), "LOWER"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "TRIM", 1, 1, static function => ToText(function.Arg(0)).Trim()));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "LTRIM", 1, 1, static function => ToText(function.Arg(0)).TrimStart()));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "RTRIM", 1, 1, static function => ToText(function.Arg(0)).TrimEnd()));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "CSTR", 1, 1, static function => ToText(function.Arg(0))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "HEX", 1, 1, static function => Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture).ToString("X", CultureInfo.InvariantCulture)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "OCT", 1, 1, static function => Convert.ToString(Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture), 8) ?? string.Empty));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "VAL", 1, 1, static function => Val(ToText(function.Arg(0)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "ASC", 1, 1, static function => Asc(ToText(function.Arg(0)), asciiOnly: true)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "ASCW", 1, 1, static function => Asc(ToText(function.Arg(0)), asciiOnly: false)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "CHR", 1, 1, static function => char.ConvertFromUtf32(checked((int)ToDecimal(function.Arg(0)))), "CHRW"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "STR", 1, 1, static function => EvaluateStr(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "INSTR", 2, 4, static function => EvaluateInStr(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "INSTRREV", 2, 4, static function => EvaluateInStrRev(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "REPLACE", 3, 6, static function => EvaluateReplaceText(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "SPACE", 1, 1, static function => RepeatChar(checked((int)ToDecimal(function.Arg(0))), " ")));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "STRCOMP", 2, 3, static function => Math.Sign(string.Compare(ToText(function.Arg(0)), ToText(function.Arg(1)), CompareOptions(function.Count > 2 ? function.Arg(2) : null)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "STRING", 2, 2, static function => RepeatChar(checked((int)ToDecimal(function.Arg(0))), ToText(function.Arg(1)))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "STRREVERSE", 1, 1, static function => EvaluateStrReverse(function)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Text, "STRCONV", 2, 3, static function => IsNull(function.Arg(0)) ? DBNull.Value : StrConv(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))))));
+        AddFunction(functions, "LEN", 1, 1, static function => ToText(function.Arg(0)).Length);
+        AddFunction(functions, "LEFT", 2, 2, static function => Left(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
+        AddFunction(functions, "RIGHT", 2, 2, static function => Right(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
+        AddFunction(functions, "MID", 2, 3, static function => Mid(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1))), function.Count > 2 ? checked((int)ToDecimal(function.Arg(2))) : int.MaxValue));
+        AddFunction(functions, "UCASE", 1, 1, static function => ToText(function.Arg(0)).ToUpperInvariant(), "UPPER");
+        AddFunction(functions, "LCASE", 1, 1, static function => CultureInfo.InvariantCulture.TextInfo.ToLower(ToText(function.Arg(0))), "LOWER");
+        AddFunction(functions, "TRIM", 1, 1, static function => ToText(function.Arg(0)).Trim());
+        AddFunction(functions, "LTRIM", 1, 1, static function => ToText(function.Arg(0)).TrimStart());
+        AddFunction(functions, "RTRIM", 1, 1, static function => ToText(function.Arg(0)).TrimEnd());
+        AddFunction(functions, "CSTR", 1, 1, static function => ToText(function.Arg(0)));
+        AddFunction(functions, "HEX", 1, 1, static function => Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture).ToString("X", CultureInfo.InvariantCulture));
+        AddFunction(functions, "OCT", 1, 1, static function => Convert.ToString(Convert.ToInt64(function.Arg(0), CultureInfo.InvariantCulture), 8) ?? string.Empty);
+        AddFunction(functions, "VAL", 1, 1, static function => Val(ToText(function.Arg(0))));
+        AddFunction(functions, "ASC", 1, 1, static function => Asc(ToText(function.Arg(0)), asciiOnly: true));
+        AddFunction(functions, "ASCW", 1, 1, static function => Asc(ToText(function.Arg(0)), asciiOnly: false));
+        AddFunction(functions, "CHR", 1, 1, static function => char.ConvertFromUtf32(checked((int)ToDecimal(function.Arg(0)))), "CHRW");
+        AddFunction(functions, "STR", 1, 1, static function => EvaluateStr(function));
+        AddFunction(functions, "INSTR", 2, 4, static function => EvaluateInStr(function));
+        AddFunction(functions, "INSTRREV", 2, 4, static function => EvaluateInStrRev(function));
+        AddFunction(functions, "REPLACE", 3, 6, static function => EvaluateReplaceText(function));
+        AddFunction(functions, "SPACE", 1, 1, static function => RepeatChar(checked((int)ToDecimal(function.Arg(0))), " "));
+        AddFunction(functions, "STRCOMP", 2, 3, static function => Math.Sign(string.Compare(ToText(function.Arg(0)), ToText(function.Arg(1)), CompareOptions(function.Count > 2 ? function.Arg(2) : null))));
+        AddFunction(functions, "STRING", 2, 2, static function => RepeatChar(checked((int)ToDecimal(function.Arg(0))), ToText(function.Arg(1))));
+        AddFunction(functions, "STRREVERSE", 1, 1, static function => EvaluateStrReverse(function));
+        AddFunction(functions, "STRCONV", 2, 3, static function => IsNull(function.Arg(0)) ? DBNull.Value : StrConv(ToText(function.Arg(0)), checked((int)ToDecimal(function.Arg(1)))));
     }
 
     internal static string ConcatText(object left, object right)

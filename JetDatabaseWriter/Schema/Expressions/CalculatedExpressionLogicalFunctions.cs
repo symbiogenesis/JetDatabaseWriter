@@ -13,27 +13,27 @@ internal static class CalculatedExpressionLogicalFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IIF", 3, 3, EvaluateIIf, "IF"));
+        AddFunction(functions, "IIF", 3, 3, EvaluateIIf, "IF");
 
         // The word operators And, Or, Not, Xor, Eqv and Imp, which the parser
         // lowers to these calls: logical on Booleans, bitwise on numbers, and
         // three-valued with Null, as in VBA (AccessVariantOperators).
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "AND", 2, 2, static function => AccessVariantOperators.And(function.Arg(0), function.Arg(1))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "OR", 2, 2, static function => AccessVariantOperators.Or(function.Arg(0), function.Arg(1))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "NOT", 1, 1, static function => AccessVariantOperators.Not(function.Arg(0))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "XOR", 2, 2, static function => AccessVariantOperators.Xor(function.Arg(0), function.Arg(1))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "EQV", 2, 2, static function => AccessVariantOperators.Eqv(function.Arg(0), function.Arg(1))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IMP", 2, 2, static function => AccessVariantOperators.Imp(function.Arg(0), function.Arg(1))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "LIKE", 2, 2, EvaluateLike));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "BETWEEN", 3, 3, EvaluateBetween));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "IN", 2, int.MaxValue, EvaluateIn));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "CHOOSE", 2, int.MaxValue, EvaluateChoose));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "SWITCH", 2, int.MaxValue, EvaluateSwitch));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "NZ", 1, 2, EvaluateNz));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "ISNULL", 1, 1, static function => IsNull(function.Arg(0)), "ISBLANK"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "ISNUMERIC", 1, 1, static function => TryConvertDecimal(function.Arg(0), out _), "ISNUMBER"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "ISDATE", 1, 1, static function => IsDateValue(function.Arg(0))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Logical, "CBOOL", 1, 1, static function => ToBoolean(function.Arg(0))));
+        AddFunction(functions, "AND", 2, 2, static function => AccessVariantOperators.And(function.Arg(0), function.Arg(1)));
+        AddFunction(functions, "OR", 2, 2, static function => AccessVariantOperators.Or(function.Arg(0), function.Arg(1)));
+        AddFunction(functions, "NOT", 1, 1, static function => AccessVariantOperators.Not(function.Arg(0)));
+        AddFunction(functions, "XOR", 2, 2, static function => AccessVariantOperators.Xor(function.Arg(0), function.Arg(1)));
+        AddFunction(functions, "EQV", 2, 2, static function => AccessVariantOperators.Eqv(function.Arg(0), function.Arg(1)));
+        AddFunction(functions, "IMP", 2, 2, static function => AccessVariantOperators.Imp(function.Arg(0), function.Arg(1)));
+        AddFunction(functions, "LIKE", 2, 2, EvaluateLike);
+        AddFunction(functions, "BETWEEN", 3, 3, EvaluateBetween);
+        AddFunction(functions, "IN", 2, int.MaxValue, EvaluateIn);
+        AddFunction(functions, "CHOOSE", 2, int.MaxValue, EvaluateChoose);
+        AddFunction(functions, "SWITCH", 2, int.MaxValue, EvaluateSwitch);
+        AddFunction(functions, "NZ", 1, 2, EvaluateNz);
+        AddFunction(functions, "ISNULL", 1, 1, static function => IsNull(function.Arg(0)), "ISBLANK");
+        AddFunction(functions, "ISNUMERIC", 1, 1, static function => TryConvertDecimal(function.Arg(0), out _), "ISNUMBER");
+        AddFunction(functions, "ISDATE", 1, 1, static function => IsDateValue(function.Arg(0)));
+        AddFunction(functions, "CBOOL", 1, 1, static function => ToBoolean(function.Arg(0)));
     }
 
     private static object EvaluateIIf(CalculatedFunctionInvocation function)

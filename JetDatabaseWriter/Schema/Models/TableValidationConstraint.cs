@@ -8,5 +8,5 @@ using JetDatabaseWriter.Schema.Expressions;
 internal sealed record TableValidationConstraint(string Expression, string? ValidationText)
 {
     /// <summary>Gets or sets the parsed expression plan.</summary>
-    public CalculatedExpressionPlan? Plan { get; set; }
+    public CalculatedExpressionNode? Plan { get; set; }
 }

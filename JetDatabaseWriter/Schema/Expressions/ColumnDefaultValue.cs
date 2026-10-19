@@ -25,9 +25,9 @@ internal sealed class ColumnDefaultValue
 
     private readonly object? literal;
     private readonly NumericLiteral? number;
-    private readonly CalculatedExpressionPlan? plan;
+    private readonly CalculatedExpressionNode? plan;
 
-    private ColumnDefaultValue(object? literal, NumericLiteral? number, CalculatedExpressionPlan? plan)
+    private ColumnDefaultValue(object? literal, NumericLiteral? number, CalculatedExpressionNode? plan)
     {
         this.literal = literal;
         this.number = number;
@@ -66,7 +66,7 @@ internal sealed class ColumnDefaultValue
 
         try
         {
-            return new ColumnDefaultValue(null, null, CalculatedExpressionPlan.Parse(text, isCalculatedColumn: false));
+            return new ColumnDefaultValue(null, null, CalculatedExpressionParser.Parse(text, isCalculatedColumn: false));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or InvalidOperationException or FormatException)
         {
@@ -155,7 +155,7 @@ internal sealed class ColumnDefaultValue
 
         try
         {
-            object raw = this.number?.ForOtherTypes ?? this.literal ?? this.plan!.Root.Evaluate(createContext());
+            object raw = this.number?.ForOtherTypes ?? this.literal ?? this.plan!.Evaluate(createContext());
             if (IsNull(raw))
             {
                 return true;

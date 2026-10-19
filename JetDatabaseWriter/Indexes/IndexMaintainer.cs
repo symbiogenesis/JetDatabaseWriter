@@ -2361,15 +2361,7 @@ internal sealed class IndexMaintainer(
         {
             return this.EncodeCompositeKey(keyColInfos, cells);
         }
-        catch (NotSupportedException)
-        {
-            return null;
-        }
-        catch (ArgumentException)
-        {
-            return null;
-        }
-        catch (OverflowException)
+        catch (Exception ex) when (ex is NotSupportedException or ArgumentException or OverflowException)
         {
             return null;
         }

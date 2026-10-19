@@ -12,14 +12,14 @@ public sealed class CalculatedExpressionRadixSubtypeTests
     [Fact]
     public void RadixTextInBracketedFieldName_IsPreserved()
     {
-        var plan = CalculatedExpressionPlan.Parse("[&H10] & \"&O17\"");
+        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse("[&H10] & \"&O17\"");
         var context = new CalculatedExpressionEvaluationContext(
             new TableDef { Columns = [new ColumnInfo { Name = "&H10" }] },
             [new ColumnConstraint { Name = "&H10", ClrType = typeof(string) }],
             ["field"],
             force: false);
 
-        Assert.Equal("field&O17", Assert.IsType<string>(plan.Root.Evaluate(context)));
+        Assert.Equal("field&O17", Assert.IsType<string>(plan.Evaluate(context)));
     }
 
     [Theory]
@@ -62,7 +62,7 @@ public sealed class CalculatedExpressionRadixSubtypeTests
                 ClrType = typeof(string),
                 IsCalculated = true,
                 CalculationExpression = expression,
-                CalculatedExpressionPlan = CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false),
+                CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false),
             },
         ];
         object[] values = [DBNull.Value];

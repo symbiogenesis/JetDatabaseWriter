@@ -557,13 +557,12 @@ internal static class LongRowSuffixProbe
         IndexMetadata index = indexes.First(idx => idx.Columns.Count == 1 && idx.Columns[0].Name.Equals("data", StringComparison.OrdinalIgnoreCase));
         IndexColumnReference keyColumn = index.Columns[0];
 
-        List<LeafEntryDetail> leafEntries = await CollectDetailedLeafEntriesFromRootAsync(
+        (List<LeafEntryDetail> leafEntries, List<RawLeafPageSummary> rawLeafPages) = await CollectDetailedLeafEntriesFromRootAsync(
             reader,
             layout,
             pageSize,
             index.FirstDp,
             ct);
-        List<RawLeafPageSummary> rawLeafPages = await CollectRawLeafPageSummariesAsync(reader, layout, pageSize, index.FirstDp, ct);
         Dictionary<long, PhysicalRowSnapshot> rowByPointer = await BuildPhysicalRowSnapshotMapAsync(reader, tableName, ct);
 
         var rows = new List<SuffixPatternRow>();
@@ -6424,7 +6423,7 @@ internal static class LongRowSuffixProbe
         return result;
     }
 
-    private static async Task<List<LeafEntryDetail>> CollectDetailedLeafEntriesFromRootAsync(
+    private static async Task<(List<LeafEntryDetail> Entries, List<RawLeafPageSummary> Summaries)> CollectDetailedLeafEntriesFromRootAsync(
         ProbeDatabase reader,
         IndexPageLayout layout,
         int pageSize,
@@ -6458,6 +6457,7 @@ internal static class LongRowSuffixProbe
         }
 
         var result = new List<LeafEntryDetail>();
+        var summaries = new List<RawLeafPageSummary>();
         int position = 0;
         long visitGuard = 0;
         while (current != 0)
@@ -6475,12 +6475,13 @@ internal static class LongRowSuffixProbe
             }
 
             result.AddRange(DecodeLeafEntryDetails(layout, page, pageSize, current, ref position));
+            summaries.Add(SummarizeRawLeafPage(layout, page, pageSize, current));
 
             (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
             current = next;
         }
 
-        return result;
+        return (result, summaries);
     }
 
     private static List<LeafEntryDetail> DecodeLeafEntryDetails(
@@ -6628,64 +6629,6 @@ internal static class LongRowSuffixProbe
 
     private static long EncodeDataPointer(long page, byte row) => (page << 8) | row;
 
-    private static async Task<List<RawLeafPageSummary>> CollectRawLeafPageSummariesAsync(
-        ProbeDatabase reader,
-        IndexPageLayout layout,
-        int pageSize,
-        long rootPage,
-        CancellationToken ct)
-    {
-        long current = rootPage;
-        for (int depth = 0; depth < 32; depth++)
-        {
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
-            byte pageType = page[0];
-            if (pageType == Constants.IndexLeafPage.PageTypeLeaf)
-            {
-                break;
-            }
-
-            if (pageType != Constants.IndexLeafPage.PageTypeIntermediate)
-            {
-                throw new InvalidOperationException(
-                    $"Unexpected page_type 0x{pageType:X2} at page {current} (expected 0x03 or 0x04).");
-            }
-
-            List<DecodedIntermediateEntry> entries =
-                IndexPageCodec.DecodeIntermediateEntries(layout, page, pageSize);
-            if (entries.Count == 0)
-            {
-                throw new InvalidOperationException($"Intermediate page {current} has no entries.");
-            }
-
-            current = entries[0].ChildPage;
-        }
-
-        var result = new List<RawLeafPageSummary>();
-        long visitGuard = 0;
-        while (current != 0)
-        {
-            if (++visitGuard > 100_000)
-            {
-                throw new InvalidOperationException("Leaf chain exceeds visit guard; possible cycle.");
-            }
-
-            byte[] page = await reader.GetRawPageBytesAsync(current, ct);
-            if (page[0] != Constants.IndexLeafPage.PageTypeLeaf)
-            {
-                throw new InvalidOperationException(
-                    $"Expected leaf page (0x04) at page {current}; got 0x{page[0]:X2}.");
-            }
-
-            result.Add(SummarizeRawLeafPage(layout, page, pageSize, current));
-
-            (long _, long next, long _) = IndexPageCodec.ReadSiblingPointers(layout, page);
-            current = next;
-        }
-
-        return result;
-    }
-
     private static RawLeafPageSummary SummarizeRawLeafPage(
         IndexPageLayout layout,
         byte[] page,
@@ -6794,29 +6737,7 @@ internal static class LongRowSuffixProbe
     }
 
     private static int CompareBytesUnsignedPrefix(byte[] left, byte[] right)
-    {
-        int prefixLength = Math.Min(Math.Min(left.Length, right.Length), PrefixMatchLength);
-        for (int byteIndex = 0; byteIndex < prefixLength; byteIndex++)
-        {
-            int diff = left[byteIndex] - right[byteIndex];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        int minLength = Math.Min(left.Length, right.Length);
-        for (int byteIndex = prefixLength; byteIndex < minLength; byteIndex++)
-        {
-            int diff = left[byteIndex] - right[byteIndex];
-            if (diff != 0)
-            {
-                return diff;
-            }
-        }
-
-        return left.Length - right.Length;
-    }
+        => left.AsSpan().SequenceCompareTo(right);
 
     private static string GetV2010Fixture(string fixturesDir)
         => Path.Combine(fixturesDir, "Jackcess", "V2010", "testIndexCodesV2010.accdb");

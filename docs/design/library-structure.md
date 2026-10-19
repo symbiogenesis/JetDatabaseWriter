@@ -274,12 +274,10 @@ JetDatabaseWriter/
 │   │   ├── CalculatedExpressionNode.cs             (base calculated-expression AST node)
 │   │   ├── CalculatedExpressionParser.cs           (direct Access-precedence AST parsing: fields, literals and operators)
 │   │   ├── CalculatedExpressionNumericFunctions.cs (numeric function catalog)
-│   │   ├── CalculatedExpressionPlan.cs
 │   │   ├── CalculatedExpressionTextFunctions.cs    (text function catalog)
 │   │   ├── CalculatedExpressionUnaryNode.cs        (unary operator AST node)
 │   │   ├── CalculatedExpressionValueNode.cs        (literal value AST node)
-│   │   ├── CalculatedFunctionDescriptor.cs         (function alias, domain, and argument metadata)
-│   │   ├── CalculatedFunctionDomain.cs             (calculated-function domain enum)
+│   │   ├── CalculatedFunctionDescriptor.cs         (function evaluator and argument bounds)
 │   │   ├── CalculatedFunctionEvaluator.cs          (function evaluator delegate)
 │   │   ├── CalculatedFunctionInvocation.cs         (bound function invocation context)
 │   │   ├── ColumnDefaultValue.cs                   (persisted column DefaultValue expression, evaluated on insert)

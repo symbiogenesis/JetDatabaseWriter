@@ -30,14 +30,27 @@ internal static class CalculatedExpressionFunctionRegistry
         }
 
         descriptor.ValidateArgumentCount(normalizedName, args.Count);
-        return descriptor.Evaluator(new CalculatedFunctionInvocation(name, normalizedName, args, context));
+        return descriptor.Evaluator(new CalculatedFunctionInvocation(name, args, context));
     }
 
-    internal static void AddFunction(Dictionary<string, CalculatedFunctionDescriptor> descriptors, CalculatedFunctionDescriptor descriptor)
+    internal static void AddFunction(
+        Dictionary<string, CalculatedFunctionDescriptor> descriptors,
+        string name,
+        int minArgs,
+        int maxArgs,
+        CalculatedFunctionEvaluator evaluator,
+        params string[] aliases)
     {
-        foreach (string name in descriptor.Names)
+        var descriptor = new CalculatedFunctionDescriptor(minArgs, maxArgs, evaluator);
+        AddName(name);
+        foreach (string alias in aliases)
         {
-            string normalizedName = NormalizeFunctionName(name);
+            AddName(alias);
+        }
+
+        void AddName(string registeredName)
+        {
+            string normalizedName = NormalizeFunctionName(registeredName);
             if (!descriptors.TryAdd(normalizedName, descriptor))
             {
                 throw new InvalidOperationException($"Calculated-column function '{normalizedName}' is registered more than once.");

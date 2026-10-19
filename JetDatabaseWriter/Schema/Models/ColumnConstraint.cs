@@ -68,7 +68,7 @@ internal sealed class ColumnConstraint
     /// </summary>
     public long? NextAutoValue { get; set; }
 
-    internal CalculatedExpressionPlan? CalculatedExpressionPlan { get; set; }
+    internal CalculatedExpressionNode? CalculatedExpressionPlan { get; set; }
 
     /// <summary>
     /// Gets or sets the parsed <see cref="DefaultValueExpression"/>, or

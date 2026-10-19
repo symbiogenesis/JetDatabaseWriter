@@ -443,21 +443,8 @@ internal static class FkDaoBaselineProbe
     };
 
     private static string ToHex(byte[] bytes)
-    {
-        int take = Math.Min(bytes.Length, 160);
-        var sb = new StringBuilder((take * 2) + 3);
-        for (int i = 0; i < take; i++)
-        {
-            _ = sb.Append(bytes[i].ToString("X2", CultureInfo.InvariantCulture));
-        }
-
-        if (take < bytes.Length)
-        {
-            _ = sb.Append("...");
-        }
-
-        return sb.ToString();
-    }
+        => Convert.ToHexString(bytes.AsSpan(0, Math.Min(bytes.Length, 160)))
+            + (bytes.Length > 160 ? "..." : string.Empty);
 
     private static string BuildDaoAuthoringScript(string path)
     {

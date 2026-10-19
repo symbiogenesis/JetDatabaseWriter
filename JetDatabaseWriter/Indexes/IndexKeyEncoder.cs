@@ -560,9 +560,9 @@ internal static class IndexKeyEncoder
     /// 1 sign byte + 16-byte big-endian unsigned mantissa.
     /// <para>
     /// All values within a single index rebuild MUST be encoded with the same
-    /// <paramref name="targetScale"/> to be byte-comparable. Callers should
-    /// scan the snapshot to find the maximum natural scale present and pass it
-    /// here. Values whose natural scale is less than <paramref name="targetScale"/>
+    /// <paramref name="targetScale"/> to be byte-comparable. Production callers use
+    /// <see cref="EncodeNumericEntryAtDeclaredScale"/> to match the column descriptor.
+    /// Values whose natural scale is less than <paramref name="targetScale"/>
     /// are multiplied by <c>10^(targetScale - naturalScale)</c>; values whose mantissa exceeds the
     /// 16-byte (128-bit unsigned) field after scaling throw
     /// <see cref="NotSupportedException"/>, which lets index maintenance use
@@ -758,43 +758,6 @@ internal static class IndexKeyEncoder
         }
 
         return composite;
-    }
-
-    /// <summary>
-    /// Returns the maximum natural scale (decimal places) across the supplied
-    /// values. Null and <see cref="DBNull"/> are skipped. Used by
-    /// <see cref="EncodeNumericEntry"/> callers to compute a per-rebuild
-    /// canonical <c>targetScale</c>.
-    /// </summary>
-    /// <param name="values">The values.</param>
-    public static int ComputeMaxNumericScale(System.Collections.Generic.IEnumerable<object?> values)
-    {
-        Guard.NotNull(values, nameof(values));
-        int max = 0;
-#if NET5_0_OR_GREATER
-        Span<int> bits = stackalloc int[4];
-#endif
-        foreach (object? v in values)
-        {
-            if (v is null or DBNull)
-            {
-                continue;
-            }
-
-            decimal d = ToDecimal(v);
-#if NET5_0_OR_GREATER
-            _ = decimal.GetBits(d, bits);
-#else
-            int[] bits = decimal.GetBits(d);
-#endif
-            int scale = (bits[3] >> 16) & 0x7F;
-            if (scale > max)
-            {
-                max = scale;
-            }
-        }
-
-        return max;
     }
 
     private static void FlipBytes(byte[] arr)

@@ -23,6 +23,8 @@ public sealed class CalculatedExpressionParserTests
     [InlineData("\"say \"\"hi\"\" [Null]\"", "say \"hi\" [Null]")]
     [InlineData("'a\"b' & \"c'd\"", "a\"bc'd")]
     [InlineData("  =  mId$ ('ABCD', 2, 2)  ", "BC")]
+    [InlineData("iF$(True, 'yes', 'no')", "yes")]
+    [InlineData("UCASE$('abc')", "ABC")]
     public void TextLiteralsAndFunctionSuffixes_EvaluateAsAccessSyntax(string expression, string expected)
         => Assert.Equal(expected, Assert.IsType<string>(Evaluate(expression)));
 
@@ -59,15 +61,31 @@ public sealed class CalculatedExpressionParserTests
     [InlineData("[T].")]
     [InlineData("[T].[A].[B]")]
     public void MalformedExpression_ThrowsArgumentException(string expression)
-        => Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+        => Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
 
     [Fact]
     public void UnknownFunction_IsRejectedWhenEvaluated()
     {
-        var plan = CalculatedExpressionPlan.Parse("UnknownAccessFunction(1)");
+        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse("UnknownAccessFunction(1)");
 
-        Assert.Throws<NotSupportedException>(() => plan.Root.Evaluate(Context()));
+        Assert.Throws<NotSupportedException>(() => plan.Evaluate(Context()));
     }
+
+    [Theory]
+    [InlineData("AtN$(0)", 0d)]
+    [InlineData("sQrT$(9)", 3d)]
+    public void NumericFunctionAliases_KeepCaseAndSuffixNormalization(string expression, double expected)
+        => Assert.Equal(expected, Assert.IsType<double>(Evaluate(expression)));
+
+    [Theory]
+    [InlineData("Abs()", "ABS", "1", 0)]
+    [InlineData("sQrT$(1, 2)", "SQRT", "1", 2)]
+    [InlineData("iF$(True, 1)", "IF", "3", 2)]
+    [InlineData("Mid$('abcd')", "MID", "2..3", 1)]
+    public void FunctionArity_ReportsNormalizedCalledName(string expression, string name, string expectedArity, int actualCount)
+        => Assert.Equal(
+            $"Calculated-column function '{name}' expects {expectedArity} argument(s), got {actualCount}.",
+            Assert.Throws<ArgumentException>(() => Evaluate(expression)).Message);
 
     [Fact]
     public void Evaluation_PreservesOriginalExpressionText()
@@ -98,7 +116,7 @@ public sealed class CalculatedExpressionParserTests
         string literal = new('a', CalculatedExpressionLimits.MaxExpressionLength - 2);
         Assert.Equal(literal, Assert.IsType<string>(Evaluate("\"" + literal + "\"")));
 
-        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("\"" + literal + "a\""));
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse("\"" + literal + "a\""));
     }
 
     [Fact]
@@ -114,16 +132,16 @@ public sealed class CalculatedExpressionParserTests
     {
         string expression = new string('(', CalculatedExpressionLimits.MaxExpressionNesting) + "1" + new string(')', CalculatedExpressionLimits.MaxExpressionNesting);
         Assert.Equal(1d, Assert.IsType<double>(Evaluate(expression)));
-        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("(" + expression + ")"));
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse("(" + expression + ")"));
     }
 
     [Fact]
     public void FunctionArgumentLimit_IsCheckedWhileParsing()
     {
         string arguments = string.Join(",", Enumerable.Repeat("1", CalculatedExpressionLimits.MaxFunctionArguments));
-        Assert.NotNull(CalculatedExpressionPlan.Parse("Choose(" + arguments + ")"));
+        Assert.NotNull(CalculatedExpressionParser.Parse("Choose(" + arguments + ")"));
 
-        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("Choose(" + arguments + ",1)"));
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse("Choose(" + arguments + ",1)"));
     }
 
     [Fact]
@@ -132,7 +150,7 @@ public sealed class CalculatedExpressionParserTests
         string arguments = string.Join(",", Enumerable.Repeat("1", CalculatedExpressionLimits.MaxFunctionArguments - 1));
         Assert.True(Assert.IsType<bool>(Evaluate("1 In (" + arguments + ")")));
 
-        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse("1 In (" + arguments + ",1)"));
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse("1 In (" + arguments + ",1)"));
     }
 
     [Fact]
@@ -140,13 +158,13 @@ public sealed class CalculatedExpressionParserTests
     {
         string expression = new string('-', CalculatedExpressionLimits.MaxExpressionNesting + 1) + "1";
 
-        Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+        Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
     }
 
     private static object Evaluate(string expression, string columnName = "Value")
     {
-        var plan = CalculatedExpressionPlan.Parse(expression);
-        return plan.Root.Evaluate(Context(columnName));
+        CalculatedExpressionNode plan = CalculatedExpressionParser.Parse(expression);
+        return plan.Evaluate(Context(columnName));
     }
 
     private static CalculatedExpressionEvaluationContext Context(string columnName = "Value")

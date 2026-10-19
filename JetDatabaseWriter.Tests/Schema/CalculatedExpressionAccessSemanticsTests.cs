@@ -210,7 +210,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("IsNull([A]) = TRUE%")]
     public void Parse_PercentOperator_ThrowsArgumentExceptionNamingExpression(string expression)
     {
-        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
 
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
         Assert.Contains("'%'", exception.Message, StringComparison.Ordinal);
@@ -234,7 +234,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("{1, 2}")]
     public void Parse_TrailingOrSpreadsheetSyntax_ThrowsArgumentExceptionNamingExpression(string expression)
     {
-        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
 
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
     }
@@ -622,7 +622,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("1 + &H")]
     public void RadixLiteral_Invalid_ThrowsArgumentExceptionNamingExpression(string expression)
     {
-        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
 
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
     }
@@ -669,7 +669,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
     [InlineData("[A] & 'x")]
     public void SingleQuotedString_Unterminated_ThrowsArgumentException(string expression)
     {
-        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionPlan.Parse(expression));
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CalculatedExpressionParser.Parse(expression));
 
         Assert.Contains(expression, exception.Message, StringComparison.Ordinal);
     }
@@ -905,7 +905,7 @@ public sealed class CalculatedExpressionAccessSemanticsTests
             ClrType = resultType,
             IsCalculated = true,
             CalculationExpression = expression,
-            CalculatedExpressionPlan = CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false),
+            CalculatedExpressionPlan = CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false),
         });
         values[^1] = DBNull.Value;
 

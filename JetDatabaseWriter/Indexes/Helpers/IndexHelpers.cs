@@ -474,9 +474,9 @@ internal static class IndexHelpers
     /// <summary>
     /// Encodes the composite seek key for a single FK-side row using the
     /// parent-side column types and the per-column ascending flags captured
-    /// at index resolution. Returns <see langword="null"/> when any column
-    /// is null (Access permits partial-null FK tuples — caller already
-    /// short-circuited on this path) or when the encoder rejects any value.
+    /// at index resolution, including Null components of partial-Null keys.
+    /// Returns <see langword="null"/> when a source column is absent or the
+    /// encoder rejects any value.
     /// </summary>
     /// <param name="idx">The index.</param>
     /// <param name="values">The values.</param>
@@ -494,37 +494,15 @@ internal static class IndexHelpers
                     return null;
                 }
 
-                object? v = values[col.ForeignColumnIndex];
-                if (v is DBNull)
-                {
-                    v = null;
-                }
-
-                if (v == null)
-                {
-                    // Partial-Null composite relationships match the same
-                    // Null component in a nullable unique parent index.
-                    pieces[i] = EncodeSeekKeyColumn(
-                        col.ColumnType,
-                        null,
-                        col.Ascending,
-                        col.NumericScale,
-                        col.LegacyNumeric,
-                        col.TextSortOrder,
-                        col.FixedBinaryLength);
-                }
-                else
-                {
-                    pieces[i] = EncodeSeekKeyColumn(
-                        col.ColumnType,
-                        v,
-                        col.Ascending,
-                        col.NumericScale,
-                        col.LegacyNumeric,
-                        col.TextSortOrder,
-                        col.FixedBinaryLength);
-                }
-
+                // Partial-Null composite relationships retain the parent's Null marker.
+                pieces[i] = EncodeSeekKeyColumn(
+                    col.ColumnType,
+                    values[col.ForeignColumnIndex],
+                    col.Ascending,
+                    col.NumericScale,
+                    col.LegacyNumeric,
+                    col.TextSortOrder,
+                    col.FixedBinaryLength);
                 total += pieces[i].Length;
             }
         }
@@ -569,15 +547,9 @@ internal static class IndexHelpers
             for (int i = 0; i < idx.KeyColumns.Count; i++)
             {
                 ChildSeekKeyColumn col = idx.KeyColumns[i];
-                object? v = parentPkValues[i];
-                if (v is DBNull)
-                {
-                    v = null;
-                }
-
                 pieces[i] = EncodeSeekKeyColumn(
                     col.ColumnType,
-                    v,
+                    parentPkValues[i],
                     col.Ascending,
                     col.NumericScale,
                     col.LegacyNumeric,

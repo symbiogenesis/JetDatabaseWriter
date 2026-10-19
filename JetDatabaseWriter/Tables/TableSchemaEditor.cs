@@ -82,7 +82,7 @@ internal sealed class TableSchemaEditor(
         if (rule != null)
         {
             Guard.NotNullOrEmpty(rule.Expression, nameof(rule));
-            var candidate = new TableValidationConstraint(rule.Expression, rule.ValidationText) { Plan = CalculatedExpressionPlan.Parse(rule.Expression, isCalculatedColumn: false) };
+            var candidate = new TableValidationConstraint(rule.Expression, rule.ValidationText) { Plan = CalculatedExpressionParser.Parse(rule.Expression, isCalculatedColumn: false) };
             foreach (LocatedRow row in await snapshots.ReadRowsAsync(table.Entry.TDefPage, cancellationToken).ConfigureAwait(false))
             {
                 await constraints.ValidateTableRuleAsync(tableName, table.Definition, row.Values, candidate, cancellationToken).ConfigureAwait(false);
@@ -568,7 +568,7 @@ internal sealed class TableSchemaEditor(
 
         try
         {
-            _ = CalculatedExpressionPlan.Parse(expression);
+            _ = CalculatedExpressionParser.Parse(expression);
         }
         catch (ArgumentException ex)
         {

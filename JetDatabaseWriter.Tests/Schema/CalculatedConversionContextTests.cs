@@ -29,9 +29,9 @@ public sealed class CalculatedConversionContextTests
     [InlineData("cstr$ ([Amount])")]
     public void Conversion_RefusedOnlyInCalculatedField(string expression)
     {
-        NotSupportedException exception = Assert.Throws<NotSupportedException>(() => CalculatedExpressionPlan.Parse(expression));
+        NotSupportedException exception = Assert.Throws<NotSupportedException>(() => CalculatedExpressionParser.Parse(expression));
         Assert.Contains("calculated columns", exception.Message, StringComparison.Ordinal);
-        Assert.NotNull(CalculatedExpressionPlan.Parse(expression, isCalculatedColumn: false));
+        Assert.NotNull(CalculatedExpressionParser.Parse(expression, isCalculatedColumn: false));
     }
 
     [Theory]
@@ -42,7 +42,7 @@ public sealed class CalculatedConversionContextTests
     [InlineData("[CInt] & \"CDate(1)\" & 'CByte(2)'")]
     [InlineData("&H10")]
     public void CalculatedField_AdmitsAlternativesAndLiteralText(string expression)
-        => Assert.NotNull(CalculatedExpressionPlan.Parse(expression));
+        => Assert.NotNull(CalculatedExpressionParser.Parse(expression));
 
     [Theory]
     [InlineData("CByte([Flag])")]

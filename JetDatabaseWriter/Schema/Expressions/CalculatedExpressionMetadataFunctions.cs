@@ -11,12 +11,12 @@ internal static class CalculatedExpressionMetadataFunctions
 {
     internal static void AddFunctions(Dictionary<string, CalculatedFunctionDescriptor> functions)
     {
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Metadata, "GENGUID", 0, 0, static _ => Guid.NewGuid()));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Metadata, "CURRENTUSER", 0, 0, static _ => "Admin"));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Metadata, "CVAR", 1, 1, static function => function.Arg(0)));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Metadata, "VARTYPE", 1, 1, static function => VarType(function.Arg(0))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Metadata, "TYPENAME", 1, 1, static function => TypeName(function.Arg(0))));
-        AddFunction(functions, new CalculatedFunctionDescriptor(CalculatedFunctionDomain.Metadata, "DLOOKUP", 0, MaxFunctionArguments, EvaluateDomainAggregate, "DCOUNT", "DSUM", "DAVG", "DMIN", "DMAX"));
+        AddFunction(functions, "GENGUID", 0, 0, static _ => Guid.NewGuid());
+        AddFunction(functions, "CURRENTUSER", 0, 0, static _ => "Admin");
+        AddFunction(functions, "CVAR", 1, 1, static function => function.Arg(0));
+        AddFunction(functions, "VARTYPE", 1, 1, static function => VarType(function.Arg(0)));
+        AddFunction(functions, "TYPENAME", 1, 1, static function => TypeName(function.Arg(0)));
+        AddFunction(functions, "DLOOKUP", 0, MaxFunctionArguments, EvaluateDomainAggregate, "DCOUNT", "DSUM", "DAVG", "DMIN", "DMAX");
     }
 
     private static object EvaluateDomainAggregate(CalculatedFunctionInvocation function)

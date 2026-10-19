@@ -31,7 +31,7 @@ internal sealed class CalculatedExpressionParser
         this.end = end;
     }
 
-    public static CalculatedExpressionNode Parse(string expression, bool isCalculatedColumn)
+    public static CalculatedExpressionNode Parse(string expression, bool isCalculatedColumn = true)
     {
         ValidateExpressionShape(expression, MaxExpressionLength, "Calculated-column expression");
         List<Token> tokens = Tokenize(expression, isCalculatedColumn, skipLeadingEquals: true);

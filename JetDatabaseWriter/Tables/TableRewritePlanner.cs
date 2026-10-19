@@ -556,7 +556,7 @@ internal sealed class TableRewritePlanner(
 
                 if (!string.Equals(projected, expression, StringComparison.Ordinal))
                 {
-                    _ = CalculatedExpressionPlan.Parse(projected);
+                    _ = CalculatedExpressionParser.Parse(projected);
                     entry.Value = (target.TextEncoding ?? format.PropertyTextEncoding).GetBytes(projected);
                     changed = true;
                 }
