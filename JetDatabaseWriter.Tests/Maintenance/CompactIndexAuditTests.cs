@@ -47,6 +47,7 @@ public sealed class CompactIndexAuditTests
         CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
         Assert.True(terminal.NavigableGraphAcyclic);
         Assert.True(terminal.EntryEdgeFencesValidated);
+        Assert.True(terminal.AllObservedEdgeFencesValidated);
         Assert.True(terminal.ObservedLeafChainOrdered);
         Assert.True(terminal.ObservedKeyRoutingValidated);
         Assert.True(terminal.BookmarkInclusiveOrderValidated);
@@ -307,11 +308,11 @@ public sealed class CompactIndexAuditTests
     {
         var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
         MemoryPages source = CreateAliasGraph(format, cycle: false);
-        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxGraphSteps = 27 }));
+        JetLimitationException error = await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxGraphSteps = 28 }));
         Assert.Equal(4, source.Reads);
         Assert.Contains("MaxGraphSteps", error.ErrorInfo.Reason, StringComparison.Ordinal);
         source = CreateAliasGraph(format, cycle: false);
-        List<CompactIndexRecord> records = await ScanAsync(source, format, new() { MaxGraphSteps = 28 });
+        List<CompactIndexRecord> records = await ScanAsync(source, format, new() { MaxGraphSteps = 29 });
         Assert.True(Assert.Single(records, static record => record.Kind == "index-terminal").NavigableGraphAcyclic);
     }
 
@@ -325,7 +326,7 @@ public sealed class CompactIndexAuditTests
         long pages = source.PageCount - 1;
         long edges = Math.Min(maxReferences, maxEntries + pages);
         long retained = Math.Min(new CompactIndexBudget().MaxRetainedKeyBytes, 6 * pages * format.PageSize);
-        long storage = (512 * pages) + (16 * edges) + retained + (16 * format.PageSize) + 65_536;
+        long storage = (576 * pages) + (16 * edges) + retained + (16 * format.PageSize) + 65_536;
         await Assert.ThrowsAsync<JetLimitationException>(async () => await ScanAsync(source, format, new() { MaxEntries = maxEntries, MaxReferences = maxReferences, MaxWorkingBytes = storage - 1 }));
         Assert.Equal(0, source.Reads);
         List<CompactIndexRecord> records = await ScanAsync(source, format, new() { MaxEntries = maxEntries, MaxReferences = maxReferences, MaxWorkingBytes = storage });
@@ -489,6 +490,74 @@ public sealed class CompactIndexAuditTests
         Assert.Contains("all tail edges are excluded", terminal.Coverage, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(DatabaseFormat.Jet3Mdb, false)]
+    [InlineData(DatabaseFormat.Jet3Mdb, true)]
+    [InlineData(DatabaseFormat.Jet4Mdb, false)]
+    [InlineData(DatabaseFormat.Jet4Mdb, true)]
+    [InlineData(DatabaseFormat.AceAccdb, false)]
+    [InlineData(DatabaseFormat.AceAccdb, true)]
+    public async Task CompleteObservedFences_IncludeDistinctTailDescendantsWithoutRefusingUncertainLayouts(DatabaseFormat kind, bool exceedsFence)
+    {
+        var format = JetFormat.ForNewDatabase(kind);
+        var source = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([2], 9, 0), 4)], 0, 0, 5),
+            [4] = Leaf(format, [new([2], 9, 0)]),
+            [5] = TailIntermediate(format, 6),
+            [6] = Leaf(format, [new(exceedsFence ? [1] : [3], 9, 1)]),
+        });
+        byte[][] original = source.Images.Values.Select(static page => page.ToArray()).ToArray();
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.EntryEdgeFencesValidated);
+        Assert.Equal(!exceedsFence, terminal.AllObservedEdgeFencesValidated);
+        Assert.False(terminal.TreeCompletenessProven);
+        Assert.Equal(4, source.Reads);
+        Assert.All(records.Where(static record => record.Kind != "index-terminal"), static record => Assert.False(record.AllObservedEdgeFencesValidated));
+        Assert.Equal(2, records.Count(static record => record.Kind == "leaf-entry"));
+        for (int i = 0; i < original.Length; i++)
+        {
+            Assert.Equal(original[i], source.Images.Values.ElementAt(i));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompleteObservedFences_IncludeNestedTailsWithinAncestorEntryFence(bool exceedsFence)
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([2], 9, 0), 4)], 0, 0, 0),
+            [4] = TailIntermediate(format, 5),
+            [5] = Leaf(format, [new(exceedsFence ? [3] : [1], 9, 0)]),
+        });
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.EntryEdgeFencesValidated);
+        Assert.Equal(!exceedsFence, terminal.AllObservedEdgeFencesValidated);
+        Assert.False(terminal.TreeCompletenessProven);
+    }
+
+    [Fact]
+    public async Task CompleteObservedFences_UseKeysOnlyWhenNativeDuplicateBookmarksHaveUncertainOrder()
+    {
+        var format = JetFormat.ForNewDatabase(DatabaseFormat.Jet4Mdb);
+        var source = new MemoryPages(format.PageSize, new()
+        {
+            [3] = IndexPageCodec.BuildIntermediatePage(format.IndexPage, format.PageSize, 2, [new(new([1], 9, 2), 4)], 0, 0, 5),
+            [4] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 2)], 0, 5, 0, true),
+            [5] = IndexPageCodec.BuildLeafPage(format.IndexPage, format.PageSize, 2, [new([1], 9, 1)], 4, 0, 0, true),
+        });
+        List<CompactIndexRecord> records = await ScanAsync(source, format);
+        CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
+        Assert.True(terminal.AllObservedEdgeFencesValidated);
+        Assert.False(terminal.BookmarkInclusiveOrderValidated);
+        Assert.False(terminal.TreeCompletenessProven);
+    }
+
     [Fact]
     public async Task NonRightmostIntermediateTailAlias_DoesNotExpandItsEntryChildFence()
     {
@@ -506,6 +575,7 @@ public sealed class CompactIndexAuditTests
         Assert.Equal(6, source.Reads);
         CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
         Assert.True(terminal.EntryEdgeFencesValidated);
+        Assert.False(terminal.AllObservedEdgeFencesValidated);
         Assert.True(terminal.ObservedLeafChainOrdered);
         Assert.True(terminal.ObservedKeyRoutingValidated);
     }
@@ -573,6 +643,7 @@ public sealed class CompactIndexAuditTests
         List<CompactIndexRecord> records = await ScanAsync(source, format);
         CompactIndexRecord terminal = Assert.Single(records, static record => record.Kind == "index-terminal");
         Assert.True(terminal.ObservedKeyRoutingValidated);
+        Assert.True(terminal.AllObservedEdgeFencesValidated);
         Assert.False(terminal.TreeCompletenessProven);
         Assert.Contains("present in the observed leaves", terminal.Coverage, StringComparison.Ordinal);
     }

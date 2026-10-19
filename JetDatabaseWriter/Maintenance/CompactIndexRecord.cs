@@ -57,6 +57,10 @@ internal sealed record CompactIndexRecord
     /// <summary>Gets a value indicating whether keys reached solely through entry-child edges satisfy inclusive separator fences; all tail edges are excluded, including non-alias paths.</summary>
     public bool EntryEdgeFencesValidated { get; init; }
 
+    /// <summary>Gets a value indicating whether complete observed leaf-key envelopes satisfy inclusive local separator fences on every entry-child and intermediate-tail edge, including aliases.</summary>
+    /// <remarks>False withholds this proof without refusing uncertain native layouts. Bookmark tie breakers, missing pages and stored-key/row correspondence remain unverified.</remarks>
+    public bool AllObservedEdgeFencesValidated { get; init; }
+
     /// <summary>Gets a value indicating whether every observed leaf belongs to one closed, reciprocal sibling chain in nondecreasing key order.</summary>
     /// <remarks>This covers observed leaves only; missing ownership or incoming references remain unverified.</remarks>
     public bool ObservedLeafChainOrdered { get; init; }

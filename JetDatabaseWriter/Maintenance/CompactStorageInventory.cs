@@ -93,7 +93,7 @@ internal static class CompactStorageInventory
         using var definitions = new TableDefReader(bounded, format, cacheResults: false, Math.Min(maxLogicalBytes, budget.MaxSchemaBytes), budget.MaxSchemaBytes);
         using var owned = new OwnedDataPages(bounded, format, cacheResults: false);
         var catalog = new CatalogRowReader(format, definitions, owned);
-        await new Scanner(bounded, format, definitions, catalog, budget, visitor, definitionVisitor).RunAsync(cancellationToken).ConfigureAwait(false);
+        await new Scanner(bounded, format, definitions, catalog, budget, visitor, definitionVisitor, reservation).RunAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static JetLimitationException Limit(string reason, long? page = null)
@@ -102,8 +102,9 @@ internal static class CompactStorageInventory
     private static JetCorruptDataException Corrupt(long page, string reason)
         => new(JetErrorCode.CorruptTableDefinition, reason, new JetErrorInfo { PageNumber = page, Reason = reason });
 
-    private sealed class Scanner(IPageSource pages, JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor)
+    private sealed class Scanner(IPageSource pages, JetFormat format, TableDefReader tableDefs, CatalogRowReader catalogRows, CompactTraversalBudget budget, Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor, long inventoryReservation)
     {
+        private readonly HashSet<long> recoveredCatalogPages = [];
         private long references;
         private int diagnostics;
         private long mapSteps;
@@ -132,6 +133,51 @@ internal static class CompactStorageInventory
                 maxNameLength: 64,
                 scanPhysicalPages: true,
                 admitRow: location => budget.Accounting?.Charge(CompactDiscoveryCharge.CatalogObjects, 1, location.PageNumber)).ConfigureAwait(false);
+            CompactCatalogRecovery.Result recovered = await CompactCatalogRecovery.ScanAsync(pages, format, catalog, catalogRows, budget, rows, budget.MaxReferences - this.references, budget.MaxMapSteps - this.mapSteps, budget.MaxWorkingBytes - inventoryReservation, cancellationToken).ConfigureAwait(false);
+            this.references += recovered.References;
+            this.mapSteps += recovered.DirectorySlots;
+            var recoveredCounts = new Dictionary<long, int>();
+            foreach (CompactCatalogRecovery.RecoveredRow evidence in recovered.Rows)
+            {
+                CatalogRow identity = evidence.Identity;
+                if (rows.Count >= budget.MaxObjects || rows.Count >= Math.Max(1, tableDefs.MaxSchemaTraversalBytes / 64))
+                {
+                    throw Limit("The recovered catalog object count exceeds its object or schema allowance.", identity.PageNumber);
+                }
+
+                rows.Add(identity);
+                recoveredCounts.TryGetValue(identity.PageNumber, out int count);
+                recoveredCounts[identity.PageNumber] = count + 1;
+                if (count == 0)
+                {
+                    await this.DiagnosticAsync(identity.PageNumber, "Catalog identities are recovered from an Id index bookmark and matching stored Id despite physical owner " + evidence.PhysicalOwner + "; this proves neither exclusive ownership nor complete catalog coverage. All storage remains pinned.", cancellationToken).ConfigureAwait(false);
+                }
+
+                if (count + 1 == evidence.LiveRowsOnPage)
+                {
+                    _ = this.recoveredCatalogPages.Add(identity.PageNumber);
+                }
+
+                await this.EmitAsync(
+                    new CompactStorageRecord
+                    {
+                        Kind = "recovery",
+                        Role = "catalog-recovered-bookmark",
+                        PageNumber = evidence.IndexPage,
+                        TargetPageNumber = identity.PageNumber,
+                        TargetRowIndex = identity.RowIndex,
+                        ObjectId = identity.Id,
+                        Detail = "Reconstructed native Id-index bookmark and matching direct live-row Id; the compressed bookmark does not have a single physical byte offset. The physical owner header is unchanged and ownership remains ambiguous.",
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach ((long page, string reason) in recovered.Diagnostics)
+            {
+                await this.DiagnosticAsync(page, reason, cancellationToken).ConfigureAwait(false);
+            }
+
+            rows.Sort(static (left, right) => left.PageNumber != right.PageNumber ? left.PageNumber.CompareTo(right.PageNumber) : left.RowIndex.CompareTo(right.RowIndex));
             if (rows.Count != catalog.Header.Counters.RowCount)
             {
                 await this.DiagnosticAsync(2, "The advisory catalog row count differs from physically discovered live rows; all discovered identities are retained and all storage remains pinned.", cancellationToken).ConfigureAwait(false);
@@ -280,7 +326,11 @@ internal static class CompactStorageInventory
                         long owner = Ru32(page, 4);
                         if (owner is > 1 and not 0x4C41564C)
                         {
-                            await this.ReferenceAsync(pageNumber, 4, "page-owner-tdef", "uint32-le", owner, null, owner, null, cancellationToken).ConfigureAwait(false);
+                            await this.ReferenceAsync(pageNumber, 4, "page-owner-tdef", "uint32-le", owner, null, owner, null, cancellationToken, allowInvalid: true).ConfigureAwait(false);
+                            if (owner >= pages.PageCount)
+                            {
+                                await this.DiagnosticAsync(pageNumber, "The physical owner header points outside the database; its unresolved reference remains pinned and independent catalog identity evidence is still inspected.", cancellationToken).ConfigureAwait(false);
+                            }
                         }
                     }
                 }
@@ -346,14 +396,28 @@ internal static class CompactStorageInventory
                 return;
             }
 
-            await this.DefinitionReferenceAsync(root, chain, offset, role + "-map", "row8-page24-le", pointer.PageNumber, pointer.RowIndex, cancellationToken).ConfigureAwait(false);
-            await this.ScanMapAsync(pointer.PageNumber, pointer.RowIndex, root, role, cancellationToken).ConfigureAwait(false);
+            bool catalogHint = root == 2 && role is "table-owned" or "table-free";
+            await this.DefinitionReferenceAsync(root, chain, offset, role + "-map", "row8-page24-le", pointer.PageNumber, pointer.RowIndex, cancellationToken, allowInvalid: catalogHint).ConfigureAwait(false);
+            if (catalogHint && (pointer.PageNumber <= 0 || pointer.PageNumber >= pages.PageCount))
+            {
+                await this.DiagnosticAsync(root, "The catalog allocation hint points outside usable physical storage and remains an unresolved pinned reference; independently recovered identities do not prove complete coverage.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                await this.ScanMapAsync(pointer.PageNumber, pointer.RowIndex, root, role, cancellationToken).ConfigureAwait(false);
+            }
+            catch (JetCorruptDataException error) when (root == 2 && role is "table-owned" or "table-free" && error.ErrorCode == JetErrorCode.CorruptTableDefinition)
+            {
+                await this.DiagnosticAsync(root, "The catalog allocation hint is malformed and remains pinned: " + error.Message + " Physical owners and independently matched Id-index bookmarks are retained; complete coverage is unproven.", cancellationToken).ConfigureAwait(false);
+            }
         }
 
-        private ValueTask DefinitionReferenceAsync(long root, LogicalTDefChain chain, int offset, string role, string encoding, long target, int? row, CancellationToken cancellationToken)
+        private ValueTask DefinitionReferenceAsync(long root, LogicalTDefChain chain, int offset, string role, string encoding, long target, int? row, CancellationToken cancellationToken, bool allowInvalid = false)
         {
             (int pageIndex, int pageOffset) = LogicalTDefChain.LogicalToPhysicalOffset(format.PageSize, offset);
-            return this.ReferenceAsync(chain.PageNumbers[pageIndex], pageOffset, role, encoding, target, row, root, offset, cancellationToken);
+            return this.ReferenceAsync(chain.PageNumbers[pageIndex], pageOffset, role, encoding, target, row, root, offset, cancellationToken, allowInvalid);
         }
 
         private async ValueTask ScanMapAsync(long pageNumber, int rowIndex, long owner, string role, CancellationToken cancellationToken)
@@ -458,6 +522,11 @@ internal static class CompactStorageInventory
             byte[] page = await pages.ReadPageAsync(pageNumber, cancellationToken).ConfigureAwait(false);
             try
             {
+                if (page[0] == Constants.PageTypes.Data && this.recoveredCatalogPages.Contains(pageNumber))
+                {
+                    return;
+                }
+
                 if (page[0] != Constants.PageTypes.Data || Ru32(page, format.DataPage.TDefOff) != 2)
                 {
                     // A positive map bit cannot prove ownership, but contradicting
@@ -477,9 +546,10 @@ internal static class CompactStorageInventory
             }
         }
 
-        private ValueTask ReferenceAsync(long source, int offset, string role, string encoding, long target, int? row, long? owner, int? logicalOffset, CancellationToken cancellationToken)
+        private ValueTask ReferenceAsync(long source, int offset, string role, string encoding, long target, int? row, long? owner, int? logicalOffset, CancellationToken cancellationToken, bool allowInvalid = false)
         {
-            if (target < 0 || target >= pages.PageCount || (row.HasValue && target <= 0))
+            bool valid = target >= 0 && target < pages.PageCount && (!row.HasValue || target > 0);
+            if (!valid && !allowInvalid)
             {
                 throw Corrupt(owner ?? source, "A known reference points outside the physical database.");
             }
@@ -494,7 +564,7 @@ internal static class CompactStorageInventory
             return this.EmitAsync(
                 new CompactStorageRecord
                 {
-                    Kind = "reference",
+                    Kind = valid ? "reference" : "unresolved-reference",
                     Role = role,
                     PageNumber = source,
                     ByteOffset = offset,

@@ -47,6 +47,7 @@ public sealed class CompactNativeIndexCorpusTests(ITestOutputHelper output)
         int leafBookmarks = 0;
         int intermediateBookmarks = 0;
         int movedBookmarks = 0;
+        int completeObservedFences = 0;
         foreach ((long owner, long root) in roots)
         {
             await CompactIndexBookmarkAudit.ScanAsync(
@@ -64,6 +65,7 @@ public sealed class CompactNativeIndexCorpusTests(ITestOutputHelper output)
                         Assert.True(record.EntryEdgeFencesValidated);
                         Assert.True(record.BookmarkTargetsValidated);
                         Assert.False(record.TreeCompletenessProven);
+                        completeObservedFences += record.AllObservedEdgeFencesValidated ? 1 : 0;
                         terminals++;
                     }
 
@@ -84,7 +86,8 @@ public sealed class CompactNativeIndexCorpusTests(ITestOutputHelper output)
         }
 
         Assert.Equal(roots.Count, terminals);
+        Assert.Equal(roots.Count, completeObservedFences);
         Assert.True(leafBookmarks > 0);
-        output.WriteLine($"Validated {roots.Count} roots, {leafBookmarks} leaf bookmarks, {intermediateBookmarks} intermediate bookmarks and {movedBookmarks} moved payloads.");
+        output.WriteLine($"Validated {roots.Count} roots, {leafBookmarks} leaf bookmarks, {intermediateBookmarks} intermediate bookmarks and {movedBookmarks} moved payloads; {completeObservedFences} roots satisfy complete observed edge fences.");
     }
 }

@@ -2,6 +2,7 @@ namespace JetDatabaseWriter.Maintenance;
 
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,7 +26,6 @@ using JetDatabaseWriter.ValueDecoding;
 /// </remarks>
 internal sealed class CompactDiscoverySession
 {
-    private readonly JetFormat format;
     private readonly CompactDiscoveryBudget budget;
     private readonly IPageSource source;
     private readonly DiscoveryPageSource pages;
@@ -49,7 +49,7 @@ internal sealed class CompactDiscoverySession
         Guard.Positive(budget.MaxDefinitionBytes, nameof(budget));
         Guard.InRange(budget.MaxOverflowTargets, 0, int.MaxValue, nameof(budget));
         this.Accounting = new CompactDiscoveryAccounting(budget);
-        this.format = format;
+        this.SourceFormat = format;
         this.budget = budget;
         this.source = pages;
         pages.ThrowIfDisposed();
@@ -71,6 +71,9 @@ internal sealed class CompactDiscoverySession
 
     /// <summary>Gets the session's cumulative work and current storage admission.</summary>
     internal CompactDiscoveryAccounting Accounting { get; }
+
+    /// <summary>Gets the verified format retained by this session.</summary>
+    internal JetFormat SourceFormat { get; }
 
     /// <summary>Inventories physical storage and discovered catalog identities using the session's persistent allowances.</summary>
     /// <param name="visitor">The awaited observation consumer, which may audit or copy a long value.</param>
@@ -119,7 +122,7 @@ internal sealed class CompactDiscoverySession
         {
             await this.ScanDatabaseCoreAsync(
                 storageVisitor,
-                (root, _, location, bytes, token) => rowVisitor(root, location, bytes, token),
+                (root, _, _, location, bytes, token) => rowVisitor(root, location, bytes, token),
                 indexVisitor,
                 ownershipVisitor ?? IgnoreOwnership,
                 cancellationToken).ConfigureAwait(false);
@@ -140,7 +143,8 @@ internal sealed class CompactDiscoverySession
     /// <returns>A task completing after the discovered fields, long values and index bookmarks have been audited.</returns>
     /// <remarks>
     /// Stored bytes are never converted or recalculated. Native envelope semantics, hidden catalog identities and incoming ownership remain unproven.
-    /// Assigned calculated storage without a hydrated result type is retained as a raw observation and then explicitly refused.
+    /// Calculated ResultType properties are hydrated through bounded raw catalog reads; expressions are never evaluated.
+    /// Assigned calculated storage without a supported persisted result type is retained as a raw observation and then explicitly refused.
     /// Visitors borrow memory only until their awaited call returns. All operations share cumulative work and simultaneous storage limits.
     /// Successful discovery does not authorize relocation, reclamation or publication.
     /// </remarks>
@@ -161,8 +165,8 @@ internal sealed class CompactDiscoverySession
         {
             await this.ScanDatabaseCoreAsync(
                 storageVisitor,
-                (root, image, location, bytes, token) => CompactRawFieldReader.ScanAsync(
-                    this.format,
+                (root, image, columns, location, bytes, token) => CompactRawFieldReader.ScanAsync(
+                    this.SourceFormat,
                     image,
                     location,
                     bytes,
@@ -174,7 +178,7 @@ internal sealed class CompactDiscoverySession
                         this.pages.CheckGeometry(location.PageNumber, fieldToken);
                         if (field.Kind == CompactRawFieldKind.Stored && !field.IsStorageTypeKnown)
                         {
-                            const string reason = "Automatic long-value discovery requires bounded hydration of the calculated column's persisted ResultType; its stored bytes remain opaque and pinned.";
+                            const string reason = "Automatic long-value discovery requires a supported persisted ResultType for the calculated column; its stored bytes remain opaque and pinned.";
                             throw new JetLimitationException(
                                 JetErrorCode.FeatureNotSupported,
                                 reason,
@@ -189,10 +193,12 @@ internal sealed class CompactDiscoverySession
                                 fieldToken).ConfigureAwait(false);
                         }
                     },
-                    token),
+                    token,
+                    columns),
                 indexVisitor,
                 ownershipVisitor ?? IgnoreOwnership,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                hydrateCalculated: true).ConfigureAwait(false);
         }
         finally
         {
@@ -269,7 +275,7 @@ internal sealed class CompactDiscoverySession
         {
             await CompactLongValueAudit.AuditAsync(
                 this.pages,
-                this.format,
+                this.SourceFormat,
                 column,
                 new()
                 {
@@ -310,7 +316,7 @@ internal sealed class CompactDiscoverySession
             }
 
             ReadOnlyMemory<byte> inline = column[Constants.LongValue.HeaderSize..];
-            LongValueStore.ValidatePayload(descriptor, inline.Length, this.format.PageSize, this.budget.MaxValueBytes, this.budget.MaxChainRows);
+            LongValueStore.ValidatePayload(descriptor, inline.Length, this.SourceFormat.PageSize, this.budget.MaxValueBytes, this.budget.MaxChainRows);
             if (!destination.CanWrite)
             {
                 throw new ArgumentException("The raw long-value staging destination must be writable.", nameof(destination));
@@ -318,16 +324,16 @@ internal sealed class CompactDiscoverySession
 
             this.Accounting.Charge(CompactDiscoveryCharge.LongValues, 1);
             this.Accounting.Charge(CompactDiscoveryCharge.LongValuePayloadBytes, descriptor.Length);
-            int capacity = (this.format.PageSize - this.format.DataPage.RowsStart) / 2;
-            long storage = 65_536L + (2L * this.format.PageSize) + (32L * capacity) + (descriptor.IsInline ? 0 : 64L * this.budget.MaxChainRows);
+            int capacity = (this.SourceFormat.PageSize - this.SourceFormat.DataPage.RowsStart) / 2;
+            long storage = 65_536L + (2L * this.SourceFormat.PageSize) + (32L * capacity) + (descriptor.IsInline ? 0 : 64L * this.budget.MaxChainRows);
             using IDisposable admission = this.Accounting.ReserveWorkingBytes(storage);
-            using var cache = new ReaderPageCache(this.format, new CopyPageSource(this.pages, this.format, this.Accounting), 0);
-            var decoder = new LongValueDecoder(this.format, cache, this.budget.MaxValueBytes);
+            using var cache = new ReaderPageCache(this.SourceFormat, new CopyPageSource(this.pages, this.SourceFormat, this.Accounting), 0);
+            var decoder = new LongValueDecoder(this.SourceFormat, cache, this.budget.MaxValueBytes);
             await LongValueStore.CopyPayloadAsync(
                 descriptor,
                 inline,
                 destination,
-                this.format.PageSize,
+                this.SourceFormat.PageSize,
                 this.budget.MaxValueBytes,
                 this.budget.MaxChainRows,
                 LocateAsync,
@@ -364,10 +370,10 @@ internal sealed class CompactDiscoverySession
     private async ValueTask ScanInventoryCoreAsync(Func<CompactStorageRecord, CancellationToken, ValueTask> visitor, CancellationToken cancellationToken, Func<long, TDefImage, CancellationToken, ValueTask>? definitionVisitor = null)
     {
         int schemaBytes = checked((int)Math.Min(int.MaxValue, this.budget.MaxSchemaBytes));
-        using var definitions = new TableDefReader(this.source, this.format, cacheResults: false, this.budget.MaxDefinitionBytes, schemaBytes);
+        using var definitions = new TableDefReader(this.source, this.SourceFormat, cacheResults: false, this.budget.MaxDefinitionBytes, schemaBytes);
         await CompactStorageInventory.ScanAsync(
             this.source,
-            this.format,
+            this.SourceFormat,
             definitions,
             new()
             {
@@ -390,11 +396,13 @@ internal sealed class CompactDiscoverySession
 
     private async ValueTask ScanDatabaseCoreAsync(
         Func<CompactStorageRecord, CancellationToken, ValueTask> storageVisitor,
-        Func<long, TDefImage, RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> rowVisitor,
+        Func<long, TDefImage, IReadOnlyList<ColumnInfo>?, RowLocation, ReadOnlyMemory<byte>, CancellationToken, ValueTask> rowVisitor,
         Func<CompactIndexRecord, CancellationToken, ValueTask> indexVisitor,
         Func<CompactIndexOwnershipRecord, CancellationToken, ValueTask> ownershipVisitor,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool hydrateCalculated = false)
     {
+        using CompactCalculatedColumnHydrator? hydrator = hydrateCalculated ? new CompactCalculatedColumnHydrator(this.SourceFormat, this.budget, this.Accounting, this.ScanRowsCoreAsync, this.AuditLongValueAsync) : null;
         using var ownership = new CompactIndexOwnershipAudit(
             this.pages.PageCount,
             new()
@@ -412,7 +420,20 @@ internal sealed class CompactDiscoverySession
             cancellationToken,
             async (root, image, token) =>
             {
-                await this.ScanRowsCoreAsync(root, (location, bytes, rowToken) => rowVisitor(root, image, location, bytes, rowToken), token).ConfigureAwait(false);
+                if (root == 2)
+                {
+                    hydrator?.SetCatalog(image);
+                }
+
+                if (hydrator is null)
+                {
+                    await ScanTableRowsAsync(null, token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await hydrator.WithColumnsAsync(root, image, ScanTableRowsAsync, token).ConfigureAwait(false);
+                }
+
                 for (int ordinal = 0; ordinal < image.RealIndexes.Count; ordinal++)
                 {
                     token.ThrowIfCancellationRequested();
@@ -432,6 +453,9 @@ internal sealed class CompactDiscoverySession
                             token).ConfigureAwait(false);
                     }
                 }
+
+                ValueTask ScanTableRowsAsync(IReadOnlyList<ColumnInfo>? columns, CancellationToken rowToken)
+                    => this.ScanRowsCoreAsync(root, (location, bytes, fieldToken) => rowVisitor(root, image, columns, location, bytes, fieldToken), rowToken);
             }).ConfigureAwait(false);
         await ownership.CompleteAsync(ownershipVisitor, cancellationToken).ConfigureAwait(false);
         this.pages.CheckGeometry(0, cancellationToken);
@@ -442,7 +466,7 @@ internal sealed class CompactDiscoverySession
         this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, ownerTDefPage);
         return CompactRawRowReader.ScanAsync(
             this.pages,
-            this.format,
+            this.SourceFormat,
             ownerTDefPage,
             new()
             {
@@ -463,7 +487,7 @@ internal sealed class CompactDiscoverySession
         this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, rootPage);
         return CompactIndexAudit.ScanAsync(
             this.pages,
-            this.format,
+            this.SourceFormat,
             ownerTDefPage,
             rootPage,
             this.CreateIndexBudget(),
@@ -476,7 +500,7 @@ internal sealed class CompactDiscoverySession
         this.Accounting.Charge(CompactDiscoveryCharge.Objects, 1, rootPage);
         return CompactIndexBookmarkAudit.ScanAsync(
             this.pages,
-            this.format,
+            this.SourceFormat,
             ownerTDefPage,
             rootPage,
             this.CreateIndexBudget(),

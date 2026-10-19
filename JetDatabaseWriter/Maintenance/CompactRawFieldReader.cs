@@ -1,6 +1,7 @@
 namespace JetDatabaseWriter.Maintenance;
 
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using JetDatabaseWriter.Enums;
@@ -22,6 +23,7 @@ internal static class CompactRawFieldReader
     /// <param name="row">The complete borrowed row payload, starting at offset zero.</param>
     /// <param name="visitor">Consumes each field before returning, without retaining borrowed memory.</param>
     /// <param name="cancellationToken">Cancels geometry checks and delivery between fields.</param>
+    /// <param name="hydratedColumns">Optional column projections carrying bounded catalog ResultType metadata; all storage coordinates remain original.</param>
     /// <returns>A task completing after every field visitor has returned.</returns>
     /// <remarks>
     /// The existing native row slicer defines fixed widths and Jet3 jump-table geometry. All variable
@@ -36,14 +38,15 @@ internal static class CompactRawFieldReader
         RowLocation location,
         ReadOnlyMemory<byte> row,
         Func<CompactRawField, CancellationToken, ValueTask> visitor,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<ColumnInfo>? hydratedColumns = null)
     {
         Guard.NotNull(format, nameof(format));
         Guard.NotNull(definition, nameof(definition));
         Guard.NotNull(visitor, nameof(visitor));
         cancellationToken.ThrowIfCancellationRequested();
         RowLayout layout = ValidateLayout(format, definition, location, row.Span, cancellationToken);
-        foreach (ColumnInfo column in definition.Columns)
+        foreach (ColumnInfo column in hydratedColumns ?? definition.Columns)
         {
             cancellationToken.ThrowIfCancellationRequested();
             CompactRawField field = Resolve(format, column, location, row, layout);

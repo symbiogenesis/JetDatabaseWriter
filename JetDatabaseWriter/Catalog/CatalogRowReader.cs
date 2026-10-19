@@ -39,7 +39,6 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
     internal async ValueTask<List<CatalogRow>> GetCatalogRowsAsync(TableDef msys, CancellationToken cancellationToken, int maxEntries = int.MaxValue, int maxNameLength = int.MaxValue, bool scanPhysicalPages = false, Action<RowLocation>? admitRow = null)
     {
         ColumnInfo? idColumn = msys.FindColumn("Id");
-        ColumnInfo? parentIdColumn = msys.FindColumn("ParentId");
         ColumnInfo? nameColumn = msys.FindColumn("Name");
         ColumnInfo? typeColumn = msys.FindColumn("Type");
         ColumnInfo? flagsColumn = msys.FindColumn("Flags");
@@ -71,40 +70,7 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
                         throw new JetLimitationException(JetErrorCode.ComplexDiscoveryBudgetExceeded, "Catalog discovery exceeds MaxComplexDiscoveryEntries.");
                     }
 
-                    byte[] page = row.Page;
-                    RowLocation location = row.Location;
-                    if (!this.CanDecodeRow(page, location))
-                    {
-                        throw CorruptRow(location, "The catalog row layout cannot be decoded.");
-                    }
-
-                    string name = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn);
-                    if (name.Length > maxNameLength)
-                    {
-                        throw CorruptRow(location, "A catalog object name exceeds the inventory name limit.");
-                    }
-
-                    if (string.IsNullOrEmpty(name)
-                        || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn), out long id)
-                        || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn), out int objectType)
-                        || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn), out long flags))
-                    {
-                        throw CorruptRow(location, "A required catalog row value is missing or malformed.");
-                    }
-
-                    long parentId = parentIdColumn is null
-                        ? 0
-                        : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, parentIdColumn));
-                    result.Add(new CatalogRow(
-                        PageNumber: location.PageNumber,
-                        RowIndex: location.RowIndex,
-                        Name: name,
-                        ObjectType: objectType,
-                        Flags: flags,
-                        TDefPage: CatalogValueReader.TdefPageFromId(id),
-                        Id: id,
-                        ParentId: parentId,
-                        IsDecoded: true));
+                    result.Add(this.DecodeRow(msys, row.Page, row.Location, maxNameLength));
                     return new ValueTask<bool>(true);
                 },
                 cancellationToken,
@@ -121,6 +87,45 @@ internal sealed class CatalogRowReader(JetFormat format, TableDefReader tableDef
         }
 
         return result;
+    }
+
+    /// <summary>Decodes one structurally validated catalog row without asserting its physical owner.</summary>
+    /// <param name="msys">The verified catalog schema.</param>
+    /// <param name="page">The borrowed page containing the row payload.</param>
+    /// <param name="location">The original bookmark and payload bounds.</param>
+    /// <param name="maxNameLength">The maximum retained name length.</param>
+    /// <returns>The catalog identity; ownership requires separate evidence.</returns>
+    /// <exception cref="JetCorruptDataException">The required columns, row layout or values are malformed.</exception>
+    internal CatalogRow DecodeRow(TableDef msys, byte[] page, RowLocation location, int maxNameLength)
+    {
+        ColumnInfo idColumn = msys.FindColumn("Id") ?? throw CorruptRow(location, "MSysObjects is missing its Id column.");
+        ColumnInfo nameColumn = msys.FindColumn("Name") ?? throw CorruptRow(location, "MSysObjects is missing its Name column.");
+        ColumnInfo typeColumn = msys.FindColumn("Type") ?? throw CorruptRow(location, "MSysObjects is missing its Type column.");
+        ColumnInfo flagsColumn = msys.FindColumn("Flags") ?? throw CorruptRow(location, "MSysObjects is missing its Flags column.");
+        ColumnInfo? parentIdColumn = msys.FindColumn("ParentId");
+        if (!this.CanDecodeRow(page, location))
+        {
+            throw CorruptRow(location, "The catalog row layout cannot be decoded.");
+        }
+
+        string name = ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, nameColumn);
+        if (name.Length > maxNameLength)
+        {
+            throw CorruptRow(location, "A catalog object name exceeds the inventory name limit.");
+        }
+
+        if (string.IsNullOrEmpty(name)
+            || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, idColumn), out long id)
+            || !CatalogValueReader.TryParseInt32(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, typeColumn), out int objectType)
+            || !CatalogValueReader.TryParseInt64(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, flagsColumn), out long flags))
+        {
+            throw CorruptRow(location, "A required catalog row value is missing or malformed.");
+        }
+
+        long parentId = parentIdColumn is null
+            ? 0
+            : CatalogValueReader.ParseInt64OrZero(ScalarColumnReader.DecodeSimpleColumnValue(format, page, location.RowStart, location.RowSize, parentIdColumn));
+        return new CatalogRow(location.PageNumber, location.RowIndex, name, objectType, flags, CatalogValueReader.TdefPageFromId(id), id, parentId, IsDecoded: true);
     }
 
     /// <summary>Validates all local table references, including hidden system tables and ODBC definitions.</summary>

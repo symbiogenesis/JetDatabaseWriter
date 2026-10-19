@@ -240,40 +240,57 @@ public sealed class CompactDatabaseFieldTests
     }
 
     [Fact]
-    public async Task DatabaseFields_CalculatedFixtureRefusesUnhydratedStorageTypesAfterRetainingRawField()
+    public async Task DatabaseFields_CalculatedFixtureHydratesResultTypesAndDiscoversMemoStorage()
     {
         string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Databases", "Jackcess", "V2010", "calcFieldTestV2010.accdb");
         byte[] bytes = await File.ReadAllBytesAsync(path, Ct);
         byte[] original = SHA256.HashData(bytes);
         await using DatabaseFile file = Open(bytes);
         var session = new CompactDiscoverySession(file.Pages, file.Format, new());
-        string? column = null;
+        int calculated = 0;
+        int memoTerminals = 0;
+        int memoExternalRows = 0;
         bool ownershipCompleted = false;
-        JetLimitationException failure = await Assert.ThrowsAsync<JetLimitationException>(async () => await session.ScanDatabaseFieldsAsync(
+        await session.ScanDatabaseFieldsAsync(
             (_, _) => ValueTask.CompletedTask,
             (_, field, _) =>
             {
                 if (field.Column.IsCalculated && field.Kind == CompactRawFieldKind.Stored)
                 {
-                    column = field.Column.Name;
+                    calculated++;
+                    Assert.True(field.IsStorageTypeKnown);
                     Assert.NotEmpty(field.RawBytes.ToArray());
+                    if (field.Column.Name == "AllNames")
+                    {
+                        Assert.Equal(ColumnType.TextType, field.Column.Type);
+                        Assert.Equal(ColumnType.MemoType, field.Column.CalculatedResultType);
+                        Assert.True(field.IsLongValue);
+                    }
                 }
 
                 return ValueTask.CompletedTask;
             },
-            (_, _, _, _) => ValueTask.CompletedTask,
+            (_, field, record, _) =>
+            {
+                if (field.Column.Name == "AllNames")
+                {
+                    memoTerminals += record.Kind == "lval-terminal" ? 1 : 0;
+                    memoExternalRows += record.Kind == "lval-row" ? 1 : 0;
+                }
+
+                return ValueTask.CompletedTask;
+            },
             (_, _) => ValueTask.CompletedTask,
             Ct,
             (record, _) =>
             {
                 ownershipCompleted |= record.Kind == "ownership-terminal";
                 return ValueTask.CompletedTask;
-            }));
-        Assert.NotNull(column);
-        Assert.Equal(JetErrorCode.FeatureNotSupported, failure.ErrorCode);
-        Assert.Equal(column, failure.ErrorInfo.ColumnName);
-        Assert.True(failure.ErrorInfo.PageNumber > 0);
-        Assert.False(ownershipCompleted);
+            });
+        Assert.True(calculated > 4);
+        Assert.Equal(4, memoTerminals);
+        Assert.Equal(3, memoExternalRows);
+        Assert.True(ownershipCompleted);
         Assert.Equal(0, session.Accounting.ActiveWorkingBytes);
         Assert.Equal(original, SHA256.HashData(bytes));
     }

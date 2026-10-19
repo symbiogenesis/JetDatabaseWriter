@@ -13,7 +13,8 @@ using JetDatabaseWriter.Pages.Paging;
 /// <summary>Observes bounded raw index-tree references and canonical keys without trusting allocation hints.</summary>
 /// <remarks>
 /// Completion covers one root's intermediate-entry children, intermediate tails, in-page key order
-/// and inclusive entry-edge-only separator fences. Separate flags describe bookmark-inclusive ordering and key routing.
+/// and inclusive entry-edge-only separator fences. Separate flags describe complete observed-edge fences,
+/// bookmark-inclusive ordering and key routing.
 /// Observed leaf links are checked for decreasing keys;
 /// a separate terminal flag identifies one closed reciprocal chain containing every observed leaf.
 /// Header references and ordering proofs do not establish ownership. This does not validate bookmark target rows,
@@ -57,7 +58,8 @@ internal static class CompactIndexAudit
         }
 
         // Include dictionary/list capacity growth, per-page graph state, pending
-        // DFS/topological stacks and routing envelopes, every navigable edge, one pooled page, and key scratch.
+        // DFS/topological stacks, routing and complete-descendant envelopes,
+        // every navigable edge, one pooled page, and key scratch.
         // Each stored entry consumes at least one payload byte even when its
         // prefix includes the complete pointer trailer; each page adds one tail.
         long pageAllowance = Math.Min(budget.MaxTreePages, pageCount - 1);
@@ -69,7 +71,7 @@ internal static class CompactIndexAudit
         // when the shared prefix is reconstructed. Array overhead is included
         // in the per-node allowance; visitor copies remain caller-owned.
         long retainedAllowance = Math.Min(budget.MaxRetainedKeyBytes, 6L * pageAllowance * format.PageSize);
-        long storage = (512L * pageAllowance) + (16L * edgeAllowance) + retainedAllowance + (16L * format.PageSize) + 65_536;
+        long storage = (576L * pageAllowance) + (16L * edgeAllowance) + retainedAllowance + (16L * format.PageSize) + 65_536;
         if (storage > budget.MaxWorkingBytes)
         {
             throw Limit(rootPage, "The conservative index storage reservation exceeds MaxWorkingBytes.");
@@ -113,6 +115,7 @@ internal static class CompactIndexAudit
         private ReadOnlyMemory<byte>? leafMaximum;
         private bool emptyLeafObserved;
         private bool bookmarkOrderValidated = true;
+        private bool allObservedEdgeFencesValidated = true;
 
         private static int CompareKeys(ReadOnlyMemory<byte> left, ReadOnlyMemory<byte> right)
             => left.Span[..^4].SequenceCompareTo(right.Span[..^4]);
@@ -165,10 +168,11 @@ internal static class CompactIndexAudit
                 {
                     NavigableGraphAcyclic = true,
                     EntryEdgeFencesValidated = true,
+                    AllObservedEdgeFencesValidated = this.allObservedEdgeFencesValidated,
                     ObservedLeafChainOrdered = observedLeafChainOrdered,
                     ObservedKeyRoutingValidated = observedKeyRoutingValidated,
                     BookmarkInclusiveOrderValidated = observedLeafChainOrdered && this.bookmarkOrderValidated,
-                    Coverage = "One root's entry-child/intermediate-tail graph is acyclic with no repeated entry children. Stored keys satisfy in-page order and inclusive separator fences along entry-edge-only paths; all tail edges are excluded from these fences, including paths not proven to be aliases. ObservedLeafChainOrdered identifies one closed reciprocal chain containing every observed leaf in key order. BookmarkInclusiveOrderValidated additionally certifies bookmark tie breakers for in-page order, entry-edge-only fences and that chain; false withholds that proof without rejecting uncertain native duplicate ordering. ObservedKeyRoutingValidated separately certifies that separator/tail descent for each encoded key present in the observed leaves can start at or before its first matching leaf and continue along that chain; false means this conservative routing proof is incomplete. Bookmark target coverage is identified separately by BookmarkTargetsValidated. Stored-key/row correspondence, missing leaves, shared roots, allocation and incoming-reference ownership remain unverified.",
+                    Coverage = "One root's entry-child/intermediate-tail graph is acyclic with no repeated entry children. Stored keys satisfy in-page order and inclusive separator fences along entry-edge-only paths; all tail edges are excluded from these fences, including paths not proven to be aliases. AllObservedEdgeFencesValidated separately certifies that complete observed leaf-key envelopes satisfy inclusive local fences on every entry-child and intermediate-tail edge, including aliases; false withholds this proof without rejecting uncertain native layouts. That proof compares encoded keys only and does not require separators to name stored leaf entries. ObservedLeafChainOrdered identifies one closed reciprocal chain containing every observed leaf in key order. BookmarkInclusiveOrderValidated additionally certifies bookmark tie breakers for in-page order, entry-edge-only fences and that chain; false withholds that proof without rejecting uncertain native duplicate ordering. ObservedKeyRoutingValidated separately certifies that separator/tail descent for each encoded key present in the observed leaves can start at or before its first matching leaf and continue along that chain; false means this conservative routing proof is incomplete. Bookmark target coverage is identified separately by BookmarkTargetsValidated. Stored-key/row correspondence, missing leaves, shared roots, allocation and incoming-reference ownership remain unverified.",
                 },
                 cancellationToken).ConfigureAwait(false);
         }
@@ -431,16 +435,32 @@ internal static class CompactIndexAudit
         private void ValidateFences(Node node, CancellationToken cancellationToken)
         {
             this.GraphStep(node.Page);
-            for (int i = 0; i < node.EntryChildCount; i++)
+            node.AllMinimum = node.Minimum;
+            node.AllMaximum = node.Maximum;
+            for (int i = 0; i < node.Targets.Count; i++)
             {
                 this.CheckSource(node.Page, cancellationToken);
                 this.GraphStep(node.Page);
                 Node child = node.Targets[i];
-                node.Minimum ??= child.Minimum;
-                if (child.Maximum.HasValue)
+                bool tail = i == node.EntryChildCount;
+                if (!tail)
                 {
-                    node.Maximum = child.Maximum;
+                    node.Minimum ??= child.Minimum;
+                    if (child.Maximum.HasValue)
+                    {
+                        node.Maximum = child.Maximum;
+                    }
                 }
+
+                // All descendants are included even when another branch or a
+                // tail reaches the same node. Reuse existing canonical buffers;
+                // a wider alias envelope may withhold this optional proof.
+                node.AllMinimum = MinimumUpper(node.AllMinimum, child.AllMinimum);
+                node.AllMaximum = MaximumLower(node.AllMaximum, child.AllMaximum);
+                ReadOnlyMemory<byte>? lower = tail ? node.LastSeparator : child.LowerBound;
+                ReadOnlyMemory<byte>? upper = tail ? null : child.UpperBound;
+                this.allObservedEdgeFencesValidated &= (!child.AllMinimum.HasValue || !lower.HasValue || CompareKeys(child.AllMinimum.Value, lower.Value) >= 0)
+                    && (!child.AllMaximum.HasValue || !upper.HasValue || CompareKeys(child.AllMaximum.Value, upper.Value) <= 0);
             }
 
             if ((node.Minimum.HasValue && node.LowerBound.HasValue && CompareKeys(node.Minimum.Value, node.LowerBound.Value) < 0)
@@ -670,6 +690,10 @@ internal static class CompactIndexAudit
             internal ReadOnlyMemory<byte>? Minimum { get; set; }
 
             internal ReadOnlyMemory<byte>? Maximum { get; set; }
+
+            internal ReadOnlyMemory<byte>? AllMinimum { get; set; }
+
+            internal ReadOnlyMemory<byte>? AllMaximum { get; set; }
 
             internal ReadOnlyMemory<byte>? PreviousLeafMaximum { get; set; }
 
